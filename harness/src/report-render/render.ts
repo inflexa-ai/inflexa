@@ -8,8 +8,8 @@
  *
  * One shared `ReferenceLedger` threads through the whole walk. Thus a claim marker and a citation marker
  * count by first appearance across the page, and a reference that two blocks share keeps one number and one
- * list entry. The ledger holds one ladder for the artifact footnotes and one ladder for the literature,
- * thus the two marker sequences count apart.
+ * list entry. The ledger holds one ladder over both reference kinds, thus the page carries one marker
+ * notation and one appendix.
  *
  * The output is a pure function of the two inputs. The renderer reads no clock, no random value, and no
  * locale. Thus the same document and the same values give the same bytes.
@@ -18,13 +18,14 @@
 import { err, ok, type Result } from "neverthrow";
 
 import type { Block, ReportDocument } from "../contracts/report-blocks.js";
+import { serializeReference, type ArtifactTableReference } from "../contracts/report-reference.js";
 import { citationRecordOf, type CitationRecords } from "../report-model/reference-resolver.js";
 import { renderChart } from "./views/chart-view.js";
-import { deriveChartOption } from "./chart.js";
+import { deriveChartRender } from "./chart.js";
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
 import { citationKeyOf, derivationChains, ReferenceLedger, type DerivationChain } from "./references.js";
-import { encodeTablePayload, tableDataAsset, type DataAsset } from "./table-data.js";
+import { encodeTablePayload, tableDataAsset, type TablePayload } from "./table-data.js";
 import type { RenderedPage, RenderProblem, RenderValue, RenderValues } from "./types.js";
 import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable, tableColumns, tableDisplay } from "./views/values.js";
 
@@ -40,10 +41,14 @@ import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTab
  *
  * The derivations are the chains of the session, and they are optional too. An appendix entry whose path a
  * chain names states its sources and its script. A document that binds no derived path renders
- * byte-identically with the chains and without them.
+ * byte-identically with the chains and without them. A chain carries the relative source of its staged
+ * script and of its derived file as data, thus the entry links both and this module stages nothing.
  *
  * The renderer writes no file. The data assets ride the result, and the caller stages them beside the page.
  * Thus the render stays pure, and two renders of one document give byte-identical assets.
+ *
+ * One artifact gives one payload. A table block and a chart block that bind it read that one asset, and a
+ * chart under the inline bound carries its rows in its own option and registers none.
  */
 export function renderReportPage(
     document: ReportDocument,
@@ -53,19 +58,62 @@ export function renderReportPage(
 ): Result<RenderedPage, RenderProblem[]> {
     const problems: RenderProblem[] = [];
     const ledger = new ReferenceLedger();
-    const dataAssets: DataAsset[] = [];
+    const data: PageData = { payloads: new Map(), mounts: 0 };
 
     const content: string[] = [];
     for (const [index, section] of document.sections.entries()) {
-        content.push(renderBand(index, renderBlock(section, values, ledger, records, dataAssets, 0, problems)));
+        content.push(renderBand(index, renderBlock(section, values, ledger, records, data, 0, problems)));
     }
     if (problems.length > 0) {
         return err(problems);
     }
 
+    const dataAssets = [...data.payloads.values()].map((entry) => tableDataAsset(entry.ids, entry.payload));
     const nav = renderNav(document.sections);
     const references = renderReferenceSection(ledger, document.sections.length, records, derivationChains(derivations));
-    return ok({ html: assemblePage(document.title, nav, content.join(""), references, dataAssets), dataAssets });
+    return ok({ html: assemblePage(document.title, nav, content.join(""), references, dataAssets, data.mounts > 0), dataAssets });
+}
+
+/**
+ * One registered payload: the blocks that read it, in document order, and the encoded table.
+ *
+ * A table block and a chart block over one artifact read one payload, thus the page holds one copy of the
+ * rows and each block finds it under its own id.
+ */
+interface PayloadRegistration {
+    readonly ids: string[];
+    readonly payload: TablePayload;
+}
+
+/**
+ * The page-level collection of one walk: the payload of each bound artifact, and the count of the grid
+ * mounts.
+ *
+ * The payloads key on the stable serialization of the binding. Two blocks whose bindings differ in any
+ * field resolve different rows, thus they take different payloads.
+ *
+ * `mounts` counts the table cards. The grid runtime weighs about two megabytes, thus a page that builds no
+ * grid references neither the runtime nor its boot.
+ */
+interface PageData {
+    readonly payloads: Map<string, PayloadRegistration>;
+    mounts: number;
+}
+
+/**
+ * Register the payload of one bound artifact, and name this block as a reader of it.
+ *
+ * The first block of an artifact encodes the payload. A later block over the same binding adds its id and
+ * encodes nothing, thus the page carries one copy of the rows.
+ */
+function registerPayload(data: PageData, binding: ArtifactTableReference, blockId: string, encode: () => TablePayload): void {
+    const key = serializeReference(binding);
+    const registered = data.payloads.get(key);
+    if (registered !== undefined) {
+        registered.ids.push(blockId);
+        return;
+    }
+    data.payloads.set(key, { ids: [blockId], payload: encode() });
 }
 
 /**
@@ -78,7 +126,7 @@ function renderBlock(
     values: RenderValues,
     ledger: ReferenceLedger,
     records: CitationRecords | undefined,
-    dataAssets: DataAsset[],
+    data: PageData,
     depth: number,
     problems: RenderProblem[],
 ): string {
@@ -115,8 +163,9 @@ function renderBlock(
             // carries the column order, thus a cell of an encoded row names its column by position and the
             // display entry of that column sits at the same index.
             const columns = tableColumns(entry);
-            dataAssets.push(tableDataAsset(block.id, encodeTablePayload(columns, entry.rows, tableDisplay(block, entry, columns))));
-            return renderTable(block, ledger, entry.rows.length);
+            data.mounts += 1;
+            registerPayload(data, block.binding, block.id, () => payloadOf(block.binding, entry, columns));
+            return renderTable(block, ledger, entry.rows.length, entry.total);
         }
         case "figure": {
             const entry = values[block.id];
@@ -140,16 +189,34 @@ function renderBlock(
                 problems.push(wrongShape(block.id, entry.type, "table"));
                 return "";
             }
-            const option = deriveChartOption(block, entry.rows, entry.columns);
-            if (option.isErr()) {
-                problems.push(option.error);
+            // A chart whose inline option would carry every row reads the payload of its artifact instead.
+            // The payload key is the block id, thus a chart and a table over one artifact read one payload
+            // under two ids. One binding resolves one row set, thus the column places and the row places of
+            // the descriptors address the registered payload whichever block encoded it.
+            const columns = tableColumns(entry);
+            const derived = deriveChartRender(block, entry.rows, entry.columns, { key: block.id, columns });
+            if (derived.isErr()) {
+                problems.push(derived.error);
                 return "";
             }
-            return renderChart(block, ledger, option.value);
+            if (derived.value.readsPayload) {
+                registerPayload(data, block.binding, block.id, () => payloadOf(block.binding, entry, columns));
+            }
+            return renderChart(block, ledger, derived.value.option);
         }
         case "section":
-            return renderSection(block, depth, renderChildren(block.blocks, values, ledger, records, dataAssets, depth + 1, problems));
+            return renderSection(block, depth, renderChildren(block.blocks, values, ledger, records, data, depth + 1, problems));
     }
+}
+
+/**
+ * The payload of one bound artifact: the encoded rows, the display of each column, and the pre-bound total.
+ *
+ * A table and a chart bind the same whole-table reference, thus one function serves both and the two read
+ * one shape. The binding gives the declared labels and meanings, and the value gives the rows.
+ */
+function payloadOf(binding: ArtifactTableReference, entry: Extract<RenderValue, { type: "table" }>, columns: readonly string[]): TablePayload {
+    return encodeTablePayload(columns, entry.rows, tableDisplay(binding, entry, columns), entry.total);
 }
 
 /**
@@ -163,7 +230,7 @@ function renderChildren(
     values: RenderValues,
     ledger: ReferenceLedger,
     records: CitationRecords | undefined,
-    dataAssets: DataAsset[],
+    data: PageData,
     depth: number,
     problems: RenderProblem[],
 ): string {
@@ -173,7 +240,7 @@ function renderChildren(
         const run = metricRunLength(blocks, index);
         const rendered: string[] = [];
         for (let offset = 0; offset < Math.max(run, 1); offset += 1) {
-            rendered.push(renderBlock(blocks[index + offset], values, ledger, records, dataAssets, depth, problems));
+            rendered.push(renderBlock(blocks[index + offset], values, ledger, records, data, depth, problems));
         }
         parts.push(run > 1 ? renderMetricGrid(rendered.join("")) : rendered.join(""));
         index += Math.max(run, 1);

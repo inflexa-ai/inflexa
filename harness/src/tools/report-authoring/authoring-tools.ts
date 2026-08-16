@@ -38,7 +38,8 @@ import {
 } from "../../report-model/draft-operations.js";
 import { buildOutline, childOutline, readBlock, type OutlineEntry, type ReadableBlock } from "../../report-model/draft-read.js";
 import { finishDraft, type FinishResult } from "../../report-model/draft-finish.js";
-import { DraftBlockSchema, type DraftDocument } from "../../report-model/draft.js";
+import { AuthoringBlockSchema } from "../../report-model/authoring-grammar.js";
+import type { DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
@@ -46,17 +47,21 @@ import { defineTool, type Tool, type ToolContext, type ToolError } from "../defi
 /**
  * The block payload.
  *
- * The published JSON Schema carries the whole draft grammar, because a tool is self-describing at attach
- * time and the schema is the only place where the model learns the shape of the eight block kinds. A bare
- * `z.unknown()` emits the empty schema, which tells the model nothing and leaves it to discover each
+ * The published JSON Schema carries the whole authoring grammar, because a tool is self-describing at
+ * attach time and the schema is the only place where the model learns the shape of the eight block kinds.
+ * A bare `z.unknown()` emits the empty schema, which tells the model nothing and leaves it to discover each
  * required field through one refusal at a time.
  *
+ * The grammar is the authoring one, thus no artifact reference of the published schema carries a hash. The
+ * pinned snapshot owns that value, and the land path stamps it from the path.
+ *
  * The `z.unknown()` member keeps the runtime parse permissive. Thus a malformed payload still reaches the
- * core, which parses it with the same grammar and refuses `malformed-block` as typed data in the ok
+ * core, which parses it with the draft grammar and refuses `malformed-block` as typed data in the ok
  * channel. A strict input schema would turn that designed refusal into a hard input-validation error from
- * the loop.
+ * the loop. A payload that carries a hash rides the same arm, and the stamp drops the value before the
+ * parse.
  */
-const blockPayload = z.union([DraftBlockSchema, z.unknown()]);
+const blockPayload = z.union([AuthoringBlockSchema, z.unknown()]);
 
 /**
  * A flat field that the model can leave out.
@@ -755,7 +760,8 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
     const read_block = defineTool({
         id: "read_block",
         description:
-            "Read one block by its id. An atom gives the full block with its bindings. A section gives its title and the id of each child, " +
+            "Read one block by its id. An atom gives the full block with its bindings. A binding gives its path and no hash, " +
+            "because the session owns the hash. A section gives its title and the id of each child, " +
             "because the outline already names every block under it. Use it when the outline label is not enough.",
         inputSchema: readBlockInput,
         executionMode: AUTHORING_EXECUTION_MODE,

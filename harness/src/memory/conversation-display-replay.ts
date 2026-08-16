@@ -29,13 +29,19 @@ export function storedMessagesToCortex(messages: readonly StoredMessage[]): Cort
             append = conversationUIToCortexMessages(row.displayEnvelope.messages);
             out.push(...append);
         }
-        // The turn's reported rollup rides the model row that ENDED the turn, not the
-        // display projection — it is a fact about what the turn cost, not about what it
-        // showed, and persisting it in both places would let the two disagree. Fold it
-        // onto the assistant reply a reader associates with the figure.
-        if (row.usage && append) {
+        // The reported rollup of the turn and its duration both ride the model row that
+        // ENDED the turn, and not the display projection. Each one is a fact about what the
+        // turn cost, and not about what the turn showed. A write in both places would let
+        // the two disagree. Thus the replay folds them onto the assistant reply that a
+        // reader ties to the figures. The duration reads against `undefined`, and never
+        // against falsiness: a measured zero is a figure, and an absent value alone means
+        // that nobody measured the turn.
+        if (append && (row.usage || row.durationMs !== undefined)) {
             const last = append.at(-1);
-            if (last?.role === "assistant") last.usage = row.usage;
+            if (last?.role === "assistant") {
+                if (row.usage) last.usage = row.usage;
+                if (row.durationMs !== undefined) last.durationMs = row.durationMs;
+            }
         }
     }
     return out;

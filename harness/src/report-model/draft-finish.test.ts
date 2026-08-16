@@ -157,6 +157,92 @@ describe("the finish warnings", () => {
         expect(result.valid).toBe(true);
     });
 
+    it("warns about an exponent form that the page never prints, and the draft still finishes", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [{ kind: "text", id: "t1", content: { prose: "The corrected value reads 4.3e-05 in the table." } }],
+                },
+            ],
+        };
+        const result = finishDraft(draft, snapshot);
+
+        // The page prints `4.3e-5`, thus the sentence and the cell would read differently.
+        expect(result.warnings).toContainEqual({ blockId: "t1", kind: "exponent-form", detail: "4.3e-05" });
+        // A warning decides no outcome, thus the draft finishes.
+        expect(result.valid).toBe(true);
+    });
+
+    it("warns about an exponent form inside an item of a list", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [{ kind: "text", id: "t1", content: { prose: "The points follow.", list: { ordered: false, items: ["The bound is 1e-06."] } } }],
+                },
+            ],
+        };
+        const result = finishDraft(draft, snapshot);
+
+        expect(result.warnings).toContainEqual({ blockId: "t1", kind: "exponent-form", detail: "1e-06" });
+    });
+
+    it("warns about an exponent form that a claim carries", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [{ kind: "claim", id: "c1", content: { prose: "The signal holds at 2.7e+8 counts." }, bindings: [valueReference()] }],
+                },
+            ],
+        };
+        const result = finishDraft(draft, snapshot);
+
+        expect(result.warnings).toContainEqual({ blockId: "c1", kind: "exponent-form", detail: "2.7e+8" });
+    });
+
+    it("stays quiet on the exponent form that the page prints", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [{ kind: "text", id: "t1", content: { prose: "The corrected value reads 4.3e-5 in the table." } }],
+                },
+            ],
+        };
+        const result = finishDraft(draft, snapshot);
+
+        expect(result.warnings.filter((warning) => warning.kind === "exponent-form")).toEqual([]);
+    });
+
+    it("carries the exponent warning beside the gaps of a draft that does not finish", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                { kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "The bound is 1e-06." } }] },
+                { kind: "section", id: "s2", title: "Empty", blocks: [] },
+            ],
+        };
+        const result = finishDraft(draft, snapshot);
+
+        // The gaps decide the outcome, and the warning names the block in either case.
+        expect(result.valid).toBe(false);
+        expect(result.warnings).toContainEqual({ blockId: "t1", kind: "exponent-form", detail: "1e-06" });
+    });
+
     it("keeps the digits of a gene symbol out of the warnings", () => {
         const draft: DraftDocument = {
             title: "Report",

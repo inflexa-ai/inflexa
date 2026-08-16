@@ -30,8 +30,14 @@ let pool: Pool;
 let drop: () => Promise<void>;
 let history: ThreadHistory;
 
-function stored(seq: number, message: ModelMessage, usage?: TokenUsageRollup): StoredMessage {
-    return { seq, envelope: envelopeMessage(message), message, ...(usage === undefined ? {} : { usage }) };
+function stored(seq: number, message: ModelMessage, usage?: TokenUsageRollup, durationMs?: number): StoredMessage {
+    return {
+        seq,
+        envelope: envelopeMessage(message),
+        message,
+        ...(usage === undefined ? {} : { usage }),
+        ...(durationMs === undefined ? {} : { durationMs }),
+    };
 }
 
 beforeEach(async () => {
@@ -318,6 +324,77 @@ describe("contentToCortexMessages", () => {
         expect(cortex).toHaveLength(2);
         expect("usage" in cortex[0]!).toBe(false);
         expect("usage" in cortex[1]!).toBe(false);
+    });
+
+    it("carries a stored duration onto the message its row produces", async () => {
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "user", content: "run it" }),
+            stored(1, { role: "assistant", content: [{ type: "text", text: "done" }] }, undefined, 4321),
+        ]);
+
+        expect(cortex[1]!.durationMs).toBe(4321);
+        // The user's own message never carries the time of the turn — it did not take it.
+        expect("durationMs" in cortex[0]!).toBe(false);
+    });
+
+    it("keeps the duration its last row carried when an assistant run is coalesced", async () => {
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "run_pca", input: {} }] }),
+            stored(1, { role: "assistant", content: [{ type: "text", text: "here are the results" }] }, undefined, 4321),
+        ]);
+
+        expect(cortex).toHaveLength(1);
+        expect(cortex[0]!.durationMs).toBe(4321);
+    });
+
+    it("folds the duration onto the prior assistant run when its row renders no parts", async () => {
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "assistant", content: [{ type: "text", text: "here are the results" }] }),
+            stored(
+                1,
+                { role: "assistant", content: [{ type: "reasoning", text: "wrapping up", providerOptions: { anthropic: { signature: "sig" } } }] },
+                undefined,
+                4321,
+            ),
+        ]);
+
+        expect(cortex).toHaveLength(1);
+        expect(cortex[0]!.durationMs).toBe(4321);
+    });
+
+    it("keeps a measured zero, because only an absent value means that nobody measured", async () => {
+        const cortex = await contentToCortexMessages([stored(0, { role: "assistant", content: [{ type: "text", text: "fast" }] }, undefined, 0)]);
+
+        expect(cortex[0]!.durationMs).toBe(0);
+    });
+
+    it("omits the duration field entirely on rows stored without one", async () => {
+        const usage: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "user", content: "hi" }),
+            stored(1, { role: "assistant", content: [{ type: "text", text: "hello" }] }, usage),
+        ]);
+
+        // The rollup lands, thus the two figures stay independent of each other.
+        expect(cortex[1]!.usage).toEqual(usage);
+        expect("durationMs" in cortex[0]!).toBe(false);
+        expect("durationMs" in cortex[1]!).toBe(false);
+    });
+
+    it("delivers a reloaded turn's duration beside its rollup, through the public message type", async () => {
+        const usage: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
+        const turn: ModelMessage[] = [
+            { role: "user", content: [{ type: "text", text: "Run PCA" }] },
+            { role: "assistant", content: [{ type: "text", text: "Here are the results." }] },
+        ];
+        (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [], turnUsage: usage, turnDurationMs: 8765 }))._unsafeUnwrap();
+
+        const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
+        const cortex: CortexMessage[] = await contentToCortexMessages(page.messages);
+
+        // A display consumer reads the time of the turn off the message, with no second query.
+        expect(cortex[1]!.usage).toEqual(usage);
+        expect(cortex[1]!.durationMs).toBe(8765);
     });
 
     it("delivers a reloaded turn's rollup end to end, through the public message type", async () => {

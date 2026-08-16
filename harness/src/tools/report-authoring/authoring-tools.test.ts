@@ -29,8 +29,11 @@ const stampStubs = {
     stampSeen: (): Promise<StampResult> => Promise.resolve({ outcome: "stamped" }),
 };
 
-/** An empty snapshot. No test here needs a resolvable artifact, thus the map holds nothing. */
+/** An empty snapshot. Most tests here need no resolvable artifact, thus the map holds nothing. */
 const snapshot: ReportSnapshot = { artifacts: {} };
+
+/** The hash of the one pinned artifact of a test that binds a block. */
+const PINNED_HASH = `sha256:${"a".repeat(64)}`;
 
 /** An empty draft, as a legal draft state. */
 function emptyDraft(): DraftDocument {
@@ -187,6 +190,31 @@ describe("add_block", () => {
         for (const kind of ["section", "text", "claim", "metric", "table", "chart", "figure", "citation"]) {
             expect(schema).toContain(`"const":"${kind}"`);
         }
+    });
+
+    it("publishes no hash field on a reference of its input schema", () => {
+        const tools = createReportAuthoringTools(makeFakeGateway());
+
+        for (const tool of [tools.add_block, tools.change_block]) {
+            const schema = JSON.stringify(tool.jsonSchema);
+            // The pinned snapshot owns the hash, thus the model reads no field that it could fill wrong.
+            expect(schema).not.toContain('"hash"');
+            expect(schema).toContain('"path"');
+        }
+    });
+
+    it("lands a binding that echoes a stored hash, because the stamp decides the value", async () => {
+        const path = "runs/r1/s1/output/de.csv";
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot: { artifacts: { [path]: { hash: PINNED_HASH, fileType: "output" } } } });
+        const tools = createReportAuthoringTools(gateway);
+        const block = { kind: "table", id: "tb1", binding: { kind: "artifact-table", path, hash: `sha256:${"c".repeat(64)}` } };
+
+        const value = (await tools.add_block.execute({ block, parentId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(value.applied).toBe(true);
+        const landed = gateway.peek("t1")!.document.sections[0]!.blocks[0]!;
+        expect(landed.kind === "table" ? landed.binding.hash : undefined).toBe(PINNED_HASH);
     });
 
     it("decodes a block payload that arrives as a JSON string", async () => {
@@ -567,6 +595,31 @@ describe("read_block", () => {
         const value = (await tools.read_block.execute({ targetId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value).toEqual({ found: true, block: { kind: "section", id: "s1", title: "Intro", childIds: ["t1"] } });
+    });
+
+    it("gives an atom whose binding carries no hash", async () => {
+        const path = "runs/r1/s1/output/de.csv";
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            document: {
+                title: "",
+                sections: [
+                    {
+                        kind: "section",
+                        id: "s1",
+                        title: "Intro",
+                        blocks: [{ kind: "table", id: "tb1", binding: { kind: "artifact-table", path, hash: PINNED_HASH } }],
+                    },
+                ],
+            },
+            snapshot,
+        });
+        const tools = createReportAuthoringTools(gateway);
+
+        const value = (await tools.read_block.execute({ targetId: "tb1" }, ctxForThread("t1")))._unsafeUnwrap();
+
+        // The session owns the hash, thus an echo-back of this block can carry no stale value.
+        expect(value).toEqual({ found: true, block: { kind: "table", id: "tb1", binding: { kind: "artifact-table", path } } });
     });
 
     it("gives `found: false` for an unknown id", async () => {

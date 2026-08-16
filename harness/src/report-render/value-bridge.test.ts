@@ -32,6 +32,15 @@ describe("bridgeValues mappings", () => {
         expect(values.tbl).toEqual({ type: "table", rows, columns });
     });
 
+    it("carries the pre-bound total of a bounded table onto the render value", () => {
+        const rows = [{ gene: "TP53", padj: 0.01 }];
+        const resolutions: BlockResolution[] = [{ blockId: "tbl", kind: "table", resolved: { type: "table", rows, total: 14201 } }];
+        const values = bridgeValues(resolutions, stageAsset)._unsafeUnwrap();
+        // The resolution is the one step that reads the whole artifact, thus the renderer takes the count
+        // and never counts again.
+        expect(values.tbl).toEqual({ type: "table", rows, total: 14201 });
+    });
+
     it("maps a resolved table onto a chart value, the same as a table", () => {
         const rows = [
             { day: "Mon", count: 5 },

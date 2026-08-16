@@ -379,11 +379,24 @@ describe("production resolver, the row bound", () => {
 
         const result = await resolver.resolve(reference, snapshotOf([{ path: "bound.csv", hash }]));
 
-        const rows = (result._unsafeUnwrap() as { type: "table"; rows: Row[] }).rows;
+        const resolved = result._unsafeUnwrap() as { type: "table"; rows: Row[]; total?: number };
         // The resolved table is the bounded table. Thus the card, the data asset, and the gate read one set.
-        expect(rows.length).toBe(20);
-        expect(rows[0].gene).toBe("G0");
-        expect(rows[19].gene).toBe("G19");
+        expect(resolved.rows.length).toBe(20);
+        expect(resolved.rows[0].gene).toBe("G0");
+        expect(resolved.rows[19].gene).toBe("G19");
+        // This read is the one step that holds the whole artifact, thus it carries the pre-bound total out
+        // and the page states the shown count against it.
+        expect(resolved.total).toBe(14201);
+    });
+
+    test("carries no total for a reference that no bound cut", async () => {
+        const hash = await writeArtifact("whole.csv", rankedCsv(5));
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+
+        const result = await resolver.resolve(tableRef("whole.csv", hash), snapshotOf([{ path: "whole.csv", hash }]));
+
+        // A whole table gives every row that the artifact holds, thus the row count is the total.
+        expect(result._unsafeUnwrap()).not.toHaveProperty("total");
     });
 
     test("an ascending bound reads the numeric magnitude of a text cell", async () => {

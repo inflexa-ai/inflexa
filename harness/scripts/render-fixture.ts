@@ -15,7 +15,7 @@ import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ASSETS_DIR, PAGE_ASSETS } from "../src/report-render/assets.js";
+import { ASSETS_DIR, DEPS_DIR, PAGE_ASSETS } from "../src/report-render/assets.js";
 import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "../src/report-render/fixture.js";
 import { renderReportPage } from "../src/report-render/render.js";
 import { resolvePageAssetFromInstallation } from "../src/report-render/asset-lookup.js";
@@ -27,7 +27,8 @@ if (rendered.isErr()) {
 
 const pageDir = join(tmpdir(), "inflexa-report-fixture");
 const assetsDir = join(pageDir, ASSETS_DIR);
-await mkdir(assetsDir, { recursive: true });
+// Each manifest entry names a subpath under the deps directory, and the recursive make covers both levels.
+await mkdir(join(assetsDir, DEPS_DIR), { recursive: true });
 // The fixture stages what the preview stages, because one lookup answers for both. Thus a manifest entry
 // that the preview resolves cannot be an entry that the fixture page misses.
 for (const asset of PAGE_ASSETS) {

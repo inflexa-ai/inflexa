@@ -22,6 +22,10 @@
  * A table resolves one kind for each whole column with `selectColumnKind`, and the data asset ships that
  * kind. `formatTableCell` then reads the cell under it. The page script holds a twin of that one function,
  * and a shared test vector pins the two together.
+ *
+ * `holdsADriftedExponent` reads one written form against the same rules. A prose sentence can state an
+ * exponent in a notation that no shown form gives. Such a sentence drifts from the page, and the advisory
+ * scan of a draft reports it.
  */
 
 import type { ColumnMeaning } from "../contracts/report-reference.js";
@@ -84,6 +88,9 @@ const DIGIT_RUN = /^[0-9]+$/;
 
 /** Each group comma of a compact form. */
 const GROUP_COMMAS = /,/g;
+
+/** The exponent of one written or shown form, for example the `-05` of `4.3e-05`. */
+const EXPONENT_PART = /[eE]([+-]?\d+)$/;
 
 /**
  * The form of a stored zero that no positive neighbor bounds. It claims nearness, and it claims no bound,
@@ -320,6 +327,32 @@ export function smallestPositiveValue(cells: readonly (string | number | undefin
         if (smallest === undefined || value < smallest) smallest = value;
     }
     return smallest;
+}
+
+/**
+ * True when one written form states an exponent that no shown form of this module gives.
+ *
+ * A shown exponent comes out of `tidy` in every kind that prints one, thus it carries no plus sign and no
+ * leading zero. A written form such as `4.3e-05` states the same value in a notation that the page never
+ * prints. Thus the prose and the page read differently for one number.
+ *
+ * The test reads the shown form of the same value and compares the two exponents. Thus it follows the
+ * printer, and it repeats none of the rules of the printer. The mantissa stays out of the comparison,
+ * because the digits of a written value are a matter of rounding and not of notation.
+ *
+ * A text that carries no exponent, and a text that holds no finite number, both give false.
+ */
+export function holdsADriftedExponent(text: string): boolean {
+    const written = EXPONENT_PART.exec(text.trim());
+    if (written === null) {
+        return false;
+    }
+    const value = finiteValue(text);
+    if (value === null) {
+        return false;
+    }
+    const shown = EXPONENT_PART.exec(formatNumberCell(value, "scientific").text);
+    return shown !== null && shown[1] !== written[1];
 }
 
 /**

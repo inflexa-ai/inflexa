@@ -385,18 +385,20 @@ describe("addBlock", () => {
         expect(draft).toEqual(before);
     });
 
-    it("refuses an explicit hash that differs from the snapshot with hash-mismatch", () => {
+    it("lands a stale hash that the payload carries, and stamps the snapshot hash over it", () => {
         const draft = baseDraft();
         const stale = `sha256:${"c".repeat(64)}`;
-        const failure = addBlock(
+        const landed = addBlock(
             draft,
             { block: { kind: "table", id: "table-2", binding: tableReference(OUTPUT_PATH, stale) }, destination: { parentId: "sec-2" } },
             snapshot,
-        )._unsafeUnwrapErr();
+        )._unsafeUnwrap();
 
-        expect(failure.reason).toBe("unresolved-reference");
-        if (failure.reason === "unresolved-reference") {
-            expect(failure.unresolved[0].reason).toBe("hash-mismatch");
+        // The snapshot owns the hash, thus an echoed stored binding lands and it cannot mismatch.
+        const block = findById(landed, "table-2");
+        expect(block?.kind).toBe("table");
+        if (block?.kind === "table" && block.binding.kind === "artifact-table") {
+            expect(block.binding.hash).toBe(OUTPUT_HASH);
         }
     });
 });
@@ -539,6 +541,23 @@ describe("changeBlock", () => {
         expect(failure.reason).toBe("unresolved-reference");
         expect(failure.detail).toContain(ABSENT_PATH);
         expect(draft).toEqual(before);
+    });
+
+    it("lands a payload that echoes a stale hash, and stamps the snapshot hash over it", () => {
+        const draft = chartDraft();
+        const stale = `sha256:${"c".repeat(64)}`;
+        const landed = changeBlock(
+            draft,
+            { targetId: "table-1", block: { kind: "table", title: "Top genes", binding: tableReference(OUTPUT_PATH, stale) } },
+            snapshot,
+        )._unsafeUnwrap();
+
+        // An agent that reads a block and sends it back must land, thus the stamp decides the hash.
+        const block = findById(landed, "table-1");
+        expect(block?.kind).toBe("table");
+        if (block?.kind === "table" && block.binding.kind === "artifact-table") {
+            expect(block.binding.hash).toBe(OUTPUT_HASH);
+        }
     });
 });
 

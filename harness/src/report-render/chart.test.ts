@@ -1,10 +1,18 @@
 import { describe, expect, it } from "bun:test";
 
-import type { ChartBlock, ChartComposition } from "../contracts/report-blocks.js";
+import type { ChartBlock, ChartComposition, ChartTransform } from "../contracts/report-blocks.js";
 import { renderChart } from "./views/chart-view.js";
-import { deriveChartOption, type ChartRow, type EchartOption } from "./chart.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, transformColumn, type ChartDataSource, type ChartRow, type EchartOption } from "./chart.js";
 import { MANHATTAN_P_THRESHOLD, VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "./chart-presets.js";
-import { DESIGN_CSS, MUTED_CHART_COLOR } from "./design.js";
+import {
+    CHART_INLINE_OPTION_BOUND,
+    DESIGN_CSS,
+    MUTED_CHART_COLOR,
+    SCATTER_CROWD_OPACITY,
+    SCATTER_CROWD_SYMBOL_SIZE,
+    SCATTER_HOVER_SYMBOL_SIZE,
+} from "./design.js";
+import { CHART_SERIES_BUILDER } from "./page.js";
 import { ReferenceLedger } from "./references.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -665,7 +673,7 @@ describe("the composition derivation", () => {
         const dense: ChartRow[] = Array.from({ length: 2001 }, (_entry, index) => ({ t: index, v: index }));
         const block = composedBlock({ series: [{ form: "scatter", encoding: { x: "t", y: "v" } }] });
         expect("symbolSize" in asObj(asArr(derive(block, sparse).series)[0])).toBe(false);
-        expect(asObj(asArr(derive(block, dense).series)[0]).symbolSize).toBe(12);
+        expect(asObj(asArr(derive(block, dense).series)[0]).symbolSize).toBe(SCATTER_HOVER_SYMBOL_SIZE);
     });
 });
 
@@ -1003,10 +1011,12 @@ describe("the preset expansion", () => {
 
     it("derives a volcano as a scatter over the effect and the transformed p, with the guide lines", () => {
         const option = derive(chartBlock("volcano", { x: "lfc", y: "p", label: "gene" }), rows);
-        const series = asObj(asArr(option.series)[0]);
-        expect(series.type).toBe("scatter");
-        expect(asArr(series.data)[0]).toEqual({ value: [2.94, 3], name: "CA9" });
-        expect(asArr(asObj(series.markLine).data)).toEqual([
+        // The classification splits the rows, and the up category holds the one significant row.
+        const up = asObj(asArr(option.series)[1]);
+        expect(up.type).toBe("scatter");
+        expect(asArr(up.data)[0]).toEqual({ value: [2.94, 3], name: "CA9" });
+        // The up category holds a point, thus it carries the guides and the empty down category does not.
+        expect(asArr(asObj(up.markLine).data)).toEqual([
             { yAxis: -Math.log10(VOLCANO_P_THRESHOLD), label: { formatter: `p ${VOLCANO_P_THRESHOLD}` } },
             // A vertical guide labels at the axis end, thus its value reads clear of the y-axis title.
             { xAxis: -VOLCANO_EFFECT_THRESHOLD, label: { position: "start" } },
@@ -1076,6 +1086,184 @@ describe("the preset expansion", () => {
     });
 });
 
+describe("the volcano classification", () => {
+    /** One row for each of the three categories, plus one row that sits on each guide. */
+    const rows: ChartRow[] = [
+        { gene: "CA9", lfc: 2.94, p: 0.001 },
+        { gene: "TP53", lfc: -2.41, p: 0.002 },
+        { gene: "ACTB", lfc: 0.1, p: 0.9 },
+        { gene: "BIGP", lfc: 3.5, p: 0.4 },
+        { gene: "ONLINE", lfc: 1, p: 0.05 },
+    ];
+
+    it("gives three series, and it mutes the null series alone", () => {
+        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", label: "gene" }), rows).series);
+        expect(series.map((entry) => asObj(entry).name)).toEqual(["Down", "Up", "Not significant"]);
+        expect("itemStyle" in asObj(series[0])).toBe(false);
+        expect("itemStyle" in asObj(series[1])).toBe(false);
+        expect(asObj(series[2]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
+    });
+
+    it("classifies each row against the guide pair, and a point on a guide states no finding", () => {
+        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", label: "gene" }), rows).series);
+        const names = (entry: unknown): unknown[] => asArr(asObj(entry).data).map((point) => asObj(point).name);
+        expect(names(series[0])).toEqual(["TP53"]);
+        expect(names(series[1])).toEqual(["CA9"]);
+        // `ACTB` fails both cuts, `BIGP` fails the p cut, and `ONLINE` sits on both guides.
+        expect(names(series[2])).toEqual(["ACTB", "BIGP", "ONLINE"]);
+    });
+
+    it("moves the guide and the split together when the block declares the thresholds", () => {
+        const block: ChartBlock = { ...chartBlock("volcano", { x: "lfc", y: "p", label: "gene" }), thresholds: { significance: 0.5, effect: 3 } };
+        const option = derive(block, rows);
+        const series = asArr(option.series);
+        const names = (entry: unknown): unknown[] => asArr(asObj(entry).data).map((point) => asObj(point).name);
+        // The wider cuts take `BIGP` into the up category, and they leave `CA9` under the effect cut.
+        expect(names(series[1])).toEqual(["BIGP"]);
+        expect(names(series[0])).toEqual([]);
+        expect(names(series[2])).toEqual(["CA9", "TP53", "ACTB", "ONLINE"]);
+        // The guides read the same pair, thus the split lands on the drawn lines.
+        expect(asArr(asObj(asObj(series[1]).markLine).data)).toEqual([
+            { yAxis: -Math.log10(0.5), label: { formatter: "p 0.5" } },
+            { xAxis: -3, label: { position: "start" } },
+            { xAxis: 3, label: { position: "start" } },
+        ]);
+    });
+
+    it("keeps the guides off an empty classified series", () => {
+        const block: ChartBlock = { ...chartBlock("volcano", { x: "lfc", y: "p" }), thresholds: { significance: 0.5, effect: 3 } };
+        const series = asArr(derive(block, rows).series);
+        // The down category holds no row, thus the guides ride the first category that draws a point.
+        expect("markLine" in asObj(series[0])).toBe(false);
+        expect(asArr(asObj(asObj(series[1]).markLine).data).length).toBe(3);
+    });
+
+    it("keeps a declared group channel over the classification", () => {
+        const grouped: ChartRow[] = [
+            { gene: "A", lfc: 2.9, p: 0.001, arm: "tumor" },
+            { gene: "B", lfc: -2.4, p: 0.002, arm: "normal" },
+        ];
+        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", group: "arm" }), grouped).series);
+        // The author asked for the split, thus the preset draws no split of its own beside it.
+        expect(series.map((entry) => asObj(entry).name)).toEqual(["tumor", "normal"]);
+    });
+
+    it("refuses a thresholds member beside a chart type that reads none", () => {
+        const block: ChartBlock = { ...chartBlock("bar", { x: "gene", y: "lfc" }, { id: "t1" }), thresholds: { significance: 0.05, effect: 1 } };
+        const problem = deriveChartOption(block, rows)._unsafeUnwrapErr();
+        expect(problem.blockId).toBe("t1");
+        expect(problem.detail).toContain("bar");
+        expect(problem.detail).toContain("thresholds");
+    });
+
+    it("refuses a thresholds member beside a composition", () => {
+        const block: ChartBlock = {
+            ...composedBlock({ series: [{ form: "scatter", encoding: { x: "lfc", y: "p" } }] }, { id: "t2" }),
+            thresholds: { significance: 0.05, effect: 1 },
+        };
+        const problem = deriveChartOption(block, rows)._unsafeUnwrapErr();
+        expect(problem.blockId).toBe("t2");
+        expect(problem.detail).toContain("thresholds");
+    });
+
+    it("derives the same bytes two times", () => {
+        const block = chartBlock("volcano", { x: "lfc", y: "p", label: "gene" });
+        expect(JSON.stringify(derive(block, rows))).toBe(JSON.stringify(derive(block, rows)));
+    });
+});
+
+describe("the point labels across a series split", () => {
+    /** Six rows over two groups. The rank column orders them, and the two groups interleave. */
+    const rows: ChartRow[] = [
+        { gene: "A", lfc: 2.9, score: 9, arm: "one" },
+        { gene: "B", lfc: -2.4, score: 8, arm: "two" },
+        { gene: "C", lfc: 1.1, score: 7, arm: "one" },
+        { gene: "D", lfc: -1.2, score: 6, arm: "two" },
+        { gene: "E", lfc: 0.4, score: 5, arm: "one" },
+        { gene: "F", lfc: -0.3, score: 4, arm: "two" },
+    ];
+
+    /** The names of the labeled points of one option, series by series. */
+    function labeledNames(option: EchartOption): string[] {
+        const names: string[] = [];
+        for (const entry of asArr(option.series)) {
+            for (const point of asArr(asObj(entry).data)) {
+                if (typeof point === "object" && point !== null && "label" in point) names.push(String(asObj(point).name));
+            }
+        }
+        return names;
+    }
+
+    it("carries each flagged row into the series that holds it, and the count lands on the declared count", () => {
+        const option = derive(
+            composedBlock({
+                series: [{ form: "scatter", encoding: { x: "lfc", y: "score", group: "arm", label: "gene" } }],
+                annotations: [{ kind: "point-labels", column: "score", order: "desc", n: 3 }],
+            }),
+            rows,
+        );
+        const series = asArr(option.series);
+        expect(series.map((entry) => asObj(entry).name)).toEqual(["one", "two"]);
+        // `A` and `C` sit in the first series, and `B` sits in the second one.
+        expect(labeledNames(option)).toEqual(["A", "C", "B"]);
+        expect(labeledNames(option).length).toBe(3);
+    });
+
+    it("ranks the rows that a series draws, thus a dropped row spends no place", () => {
+        // A stored zero in a p column takes no logarithm, thus its point drops. The rank of a naive rule
+        // would spend every place on such a row, and the plot would then show no label at all.
+        const zeroed: ChartRow[] = [
+            { gene: "Z1", lfc: 2, p: 0 },
+            { gene: "Z2", lfc: 3, p: 0 },
+            { gene: "S1", lfc: 1.5, p: 0.0001 },
+            { gene: "S2", lfc: 1.4, p: 0.001 },
+        ];
+        const option = derive(
+            composedBlock({
+                series: [{ form: "scatter", encoding: { x: "lfc", y: { column: "p", transform: "neg_log10" }, label: "gene" } }],
+                annotations: [{ kind: "point-labels", column: "p", order: "asc", n: 2 }],
+            }),
+            zeroed,
+        );
+        expect(labeledNames(option)).toEqual(["S1", "S2"]);
+    });
+});
+
+describe("the scatter symbol ladder", () => {
+    /** One scatter composition over `count` rows. */
+    function scatterOf(count: number): EchartOption {
+        const rows: ChartRow[] = Array.from({ length: count }, (_entry, index) => ({ t: index, v: index }));
+        return derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "t", y: "v" } }] }), rows);
+    }
+
+    it("keeps the runtime symbol under the hover count", () => {
+        expect("symbolSize" in asObj(asArr(scatterOf(10).series)[0])).toBe(false);
+    });
+
+    it("takes the larger hit symbol over the hover count", () => {
+        const series = asObj(asArr(scatterOf(2001).series)[0]);
+        expect(series.symbolSize).toBe(SCATTER_HOVER_SYMBOL_SIZE);
+        expect("itemStyle" in series).toBe(false);
+    });
+
+    it("takes the small symbol at a reduced opacity over the crowd count", () => {
+        const series = asObj(asArr(scatterOf(10001).series)[0]);
+        expect(series.symbolSize).toBe(SCATTER_CROWD_SYMBOL_SIZE);
+        expect(series.symbolSize).not.toBe(SCATTER_HOVER_SYMBOL_SIZE);
+        expect(asObj(series.itemStyle).opacity).toBe(SCATTER_CROWD_OPACITY);
+    });
+
+    it("holds the muted color beside the crowd opacity, thus neither field drops the other", () => {
+        const rows: ChartRow[] = Array.from({ length: 10001 }, (_entry, index) => ({
+            t: index,
+            v: index,
+            sig: index === 0 ? "up" : "ns",
+        }));
+        const series = asArr(derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "t", y: "v", group: "sig" } }] }), rows).series);
+        expect(asObj(asObj(series[1]).itemStyle)).toEqual({ color: MUTED_CHART_COLOR, opacity: SCATTER_CROWD_OPACITY });
+    });
+});
+
 describe("the chart text", () => {
     const rows: ChartRow[] = [
         { gene: "A", lfc: 2.9, p: 0.001, sig: "up_in_nonresponders" },
@@ -1112,12 +1300,40 @@ describe("the chart text", () => {
         expect("itemStyle" in asObj(series[0])).toBe(false);
     });
 
-    it("leaves the null category of an authored composition on the palette", () => {
+    it("mutes the null category of an authored composition too, because the value reads as the null token", () => {
         const option = derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "lfc", y: "p", group: "sig" } }] }), rows);
         const series = asArr(option.series);
         expect(asObj(series[1]).name).toBe("ns");
-        // The rule reads the significance split that a preset draws itself, thus no authored series mutes.
+        // An agent derives the split into a column of its own, thus the null group recedes there as well.
+        expect(asObj(series[1]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
+        expect("itemStyle" in asObj(series[0])).toBe(false);
+    });
+
+    it("reads the null token in each of its forms, and it folds the case", () => {
+        for (const token of ["ns", "NS", "n.s.", "N.S.", "not significant", "Not Significant", "not_significant"]) {
+            const tokenRows: ChartRow[] = [
+                { gene: "A", lfc: 2.9, p: 0.001, sig: "up" },
+                { gene: "B", lfc: -2.4, p: 0.5, sig: token },
+            ];
+            const series = asArr(derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "lfc", y: "p", group: "sig" } }] }), tokenRows).series);
+            expect(asObj(series[1]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
+        }
+    });
+
+    it("leaves a category that reads as a finding on the palette", () => {
+        const otherRows: ChartRow[] = [
+            { gene: "A", lfc: 2.9, p: 0.001, sig: "up" },
+            { gene: "B", lfc: -2.4, p: 0.5, sig: "nonsignificant" },
+        ];
+        const series = asArr(derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "lfc", y: "p", group: "sig" } }] }), otherRows).series);
+        // The token set is closed. A near miss states a category of its own, thus it keeps its palette color.
         expect("itemStyle" in asObj(series[1])).toBe(false);
+    });
+
+    it("mutes the null category of a grouped quick-path chart", () => {
+        const series = asArr(derive(chartBlock("scatter", { x: "gene", y: "lfc", group: "sig" }), rows).series);
+        expect(asObj(series[1]).name).toBe("ns");
+        expect(asObj(series[1]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
     });
 
     it("labels a vertical guide at the axis end, and keeps a horizontal guide at the right edge", () => {
@@ -1137,7 +1353,12 @@ describe("the chart text", () => {
     });
 
     it("names a group-less preset series with the preset title, thus the tooltip reads no machine text", () => {
-        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p" }), rows).series);
+        const positions: ChartRow[] = [
+            { position: 10, p: 0.001 },
+            { position: 20, p: 0.5 },
+        ];
+        // A manhattan splits its rows by no rule of its own, thus one series takes the name of the y channel.
+        const series = asArr(derive(chartBlock("manhattan", { x: "position", y: "p" }), positions).series);
         // The `{a}` of the tooltip template reads this name, and the y axis reads the same text.
         expect(asObj(series[0]).name).toBe("−log10(p)");
     });
@@ -1305,7 +1526,7 @@ describe("renderChart", () => {
         const html = renderChart(block, new ReferenceLedger(), derive(block, [{ day: "Mon", count: 1 }]));
         // The title line carries the marker of the whole-table binding, thus the card names its appendix
         // entry beside its title.
-        expect(html).toContain(`<div class="report-chart-title">Panel title<sup class="report-marker"><a href="#ref-1">1</a></sup></div>`);
+        expect(html).toContain(`<div class="report-chart-title">Panel title<span class="report-marker"><a href="#ref-1">[1]</a></span></div>`);
         expect(html).toContain(`class="report-chart-card corner-accents"`);
     });
 
@@ -1350,5 +1571,185 @@ describe("the chart container style rule", () => {
         const heights = rules.flatMap((body) => [...body.matchAll(/(?:^|;)\s*height\s*:\s*([^;]+)/g)].map((match) => match[1].trim()));
         expect(heights.length).toBeGreaterThan(0);
         expect(heights.some((height) => /^[1-9][\d.]*(?:px|rem|em|vh|%)$/.test(height))).toBe(true);
+    });
+});
+
+describe("the dense chart reads the shared payload", () => {
+    const COLUMNS = ["gene", "log2fc", "padj", "arm"];
+
+    /** A differential-expression table of `count` rows: a name, an effect, a p-value, and one of two arms. */
+    function denseRows(count: number): ChartRow[] {
+        const rows: ChartRow[] = [];
+        for (let index = 0; index < count; index += 1) {
+            rows.push({ gene: `G${index}`, log2fc: (index % 400) / 100 - 2, padj: (index + 1) / (count * 10), arm: index % 3 === 0 ? "a" : "b" });
+        }
+        return rows;
+    }
+
+    /** The volcano of the bound table, with a name on each point. */
+    const volcano: ChartBlock = chartBlock("volcano", { x: "log2fc", y: "padj", label: "gene" });
+
+    /** The payload that a dense chart reads: the block id, and the columns of the encoded table. */
+    const target = { key: "c1", columns: COLUMNS };
+
+    /** The data source of one derived option, or `undefined` where the option carries its rows. */
+    function sourceOf(option: EchartOption): ChartDataSource | undefined {
+        return option[CHART_SOURCE_MEMBER] as ChartDataSource | undefined;
+    }
+
+    it("keeps a chart under the bound byte-identical to the inline derivation", () => {
+        const rows = denseRows(20);
+        const render = deriveChartRender(volcano, rows, COLUMNS, target)._unsafeUnwrap();
+
+        // A small chart carries its own rows, exactly as it did before the payload rule. The bytes are the
+        // page, thus the test compares the serialization and not the shape.
+        expect(render.readsPayload).toBe(false);
+        expect(JSON.stringify(render.option)).toBe(JSON.stringify(derive(volcano, rows, COLUMNS)));
+        expect(sourceOf(render.option)).toBeUndefined();
+    });
+
+    it("ships no per-row data past the bound, and names the payload of its artifact", () => {
+        const rows = denseRows(6000);
+        const inline = derive(volcano, rows, COLUMNS);
+        const render = deriveChartRender(volcano, rows, COLUMNS, target)._unsafeUnwrap();
+
+        // The inline form of this chart is the fault that the rule exists for.
+        expect(JSON.stringify(inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
+        expect(render.readsPayload).toBe(true);
+        for (const series of asArr(render.option.series)) {
+            expect(asObj(series).data).toEqual([]);
+        }
+        const json = JSON.stringify(render.option);
+        expect(json.length).toBeLessThan(CHART_INLINE_OPTION_BOUND);
+        // No cell of the table reaches the option, thus the page holds one copy of the rows.
+        expect(json).not.toContain("G4001");
+        expect(sourceOf(render.option)?.payload).toBe("c1");
+    });
+
+    it("describes each series by the payload columns, the transform, and the classification", () => {
+        const source = sourceOf(deriveChartRender(volcano, denseRows(6000), COLUMNS, target)._unsafeUnwrap().option);
+
+        // The preset splits the rows itself, thus each series names its category and the rule carries the
+        // two cuts that the guides draw.
+        expect(source?.rule).toEqual({ kind: "volcano", cut: -Math.log10(VOLCANO_P_THRESHOLD), effect: VOLCANO_EFFECT_THRESHOLD });
+        expect(source?.series.map((entry) => entry.category)).toEqual([0, 1, 2]);
+        for (const entry of source?.series ?? []) {
+            expect(entry.x).toEqual({ column: 1 });
+            expect(entry.y).toEqual({ column: 2, transform: "neg_log10" });
+            expect(entry.label).toBe(0);
+        }
+    });
+
+    it("names the group value and the flagged rows of a composition series", () => {
+        const composed = composedBlock({
+            series: [{ form: "line", encoding: { x: { column: "padj", transform: "rank" }, y: "log2fc", group: "arm", label: "gene" } }],
+            annotations: [{ kind: "point-labels", column: "padj", order: "asc", n: 6 }],
+        });
+        const source = sourceOf(deriveChartRender(composed, denseRows(6000), COLUMNS, target)._unsafeUnwrap().option);
+
+        expect(source?.series.map((entry) => entry.value)).toEqual(["a", "b"]);
+        expect(source?.series[0].group).toEqual({ column: 3 });
+        // A line draws along the x axis, thus the page sorts its points as the derivation does.
+        expect(source?.series[0].sort).toBe(true);
+        // The flags name the rows of the payload, thus each split carries the labels of the rows that it
+        // holds and the two lists together hold the declared count.
+        expect([...(source?.series[0].flags ?? []), ...(source?.series[1].flags ?? [])].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
+        expect(source?.rule).toBeUndefined();
+    });
+
+    it("keeps a band inline, because no descriptor states the difference of two columns", () => {
+        const band = composedBlock({
+            series: [{ form: "area", encoding: { x: "log2fc", y: "padj", y0: "padj" } }],
+        });
+        const rows = denseRows(9000);
+        const render = deriveChartRender(band, rows, COLUMNS, target)._unsafeUnwrap();
+
+        expect(render.readsPayload).toBe(false);
+        expect(JSON.stringify(render.option)).toBe(JSON.stringify(derive(band, rows, COLUMNS)));
+    });
+
+    it("keeps a base chart type inline, because its data is no per-row pair of the payload", () => {
+        const histogram = chartBlock("histogram", { x: "log2fc" });
+        const rows = denseRows(6000);
+
+        // A histogram bins its rows, thus no descriptor rebuilds its bars from the columns.
+        expect(deriveChartRender(histogram, rows, COLUMNS, target)._unsafeUnwrap().readsPayload).toBe(false);
+    });
+
+    it("keeps a chart inline when the payload holds no column of a channel", () => {
+        const rows = denseRows(6000);
+        const render = deriveChartRender(volcano, rows, COLUMNS, { key: "c1", columns: ["gene", "padj"] })._unsafeUnwrap();
+
+        // A page-side build reads the columns of the payload. A channel that names none of them describes
+        // nothing, thus the chart keeps its own rows.
+        expect(render.readsPayload).toBe(false);
+    });
+
+    it("gives one option for one input, thus two derivations match", () => {
+        const rows = denseRows(6000);
+        const first = deriveChartRender(volcano, rows, COLUMNS, target)._unsafeUnwrap();
+        const second = deriveChartRender(volcano, rows, COLUMNS, target)._unsafeUnwrap();
+
+        expect(JSON.stringify(second.option)).toBe(JSON.stringify(first.option));
+    });
+});
+
+/**
+ * The shared vector of the channel transforms.
+ *
+ * A chart that reads the payload transforms its columns in the browser. Thus one rule has two
+ * realizations: `transformColumn` here, and the `reportTransform` fragment that the chart bootstrap
+ * inlines. Each entry runs through both, and the two must give one list of numbers.
+ */
+describe("the channel transform", () => {
+    /** One entry of the vector: the cells of one column, the transform, and the values that it gives. */
+    interface Entry {
+        readonly cells: (string | number)[];
+        readonly transform: ChartTransform;
+        readonly expected: (number | null)[];
+    }
+
+    const VECTOR: readonly Entry[] = [
+        // `log10` and `neg_log10` give no value for a cell that is not positive, thus such a point drops.
+        { cells: [1, 10, 0.001], transform: "log10", expected: [0, 1, -3] },
+        { cells: [0, -2, "0.01"], transform: "log10", expected: [null, null, -2] },
+        { cells: [0.05, 1e-8, "2.7e-10"], transform: "neg_log10", expected: [-Math.log10(0.05), 8, -Math.log10(2.7e-10)] },
+        { cells: ["NA", "", 0], transform: "neg_log10", expected: [null, null, null] },
+        // `abs` reads a negative cell and a numeric text alike.
+        { cells: [-3.5, 2, "-1.25"], transform: "abs", expected: [3.5, 2, 1.25] },
+        // A competition rank shares a place on a tie, thus the place after a tie of two skips one number.
+        { cells: [5, 1, 5, 2], transform: "rank", expected: [3, 1, 3, 2] },
+        { cells: ["10", "9", "NA", "9"], transform: "rank", expected: [3, 1, null, 1] },
+        { cells: [0, -0, 2], transform: "rank", expected: [1, 1, 3] },
+    ];
+
+    /**
+     * The client transform, as the page runs it.
+     *
+     * The fragment is browser source text. A read of that text would state the serialization and not the
+     * numbers that a chart plots, thus the test runs the fragment and calls its one entry point.
+     */
+    const transformOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportTransform;`)() as (
+        cells: (string | number)[],
+        transform: ChartTransform,
+    ) => (number | null)[];
+
+    /** The server transform of one column of cells. The helper reads rows, thus each cell rides one row. */
+    function transformOnTheServer(entry: Entry): (number | null)[] {
+        return transformColumn(
+            entry.cells.map((cell) => ({ value: cell })),
+            "value",
+            entry.transform,
+        );
+    }
+
+    it("gives the stated values on the server", () => {
+        expect(VECTOR.map(transformOnTheServer)).toEqual(VECTOR.map((entry) => entry.expected));
+    });
+
+    it("gives the same values on the page as on the server, for every entry", () => {
+        const server = VECTOR.map(transformOnTheServer);
+        const page = VECTOR.map((entry) => transformOnThePage(entry.cells, entry.transform));
+        expect(page).toEqual(server);
     });
 });

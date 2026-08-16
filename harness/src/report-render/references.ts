@@ -2,18 +2,21 @@
  * The reference ledger state.
  *
  * A claim binds to evidence, and a citation block points at an external source. The ledger collects each
- * reference in first-appearance order, and it gives one marker number to each distinct reference. A claim
- * marker and a citation marker read from the same ledger, thus one reference that two blocks share gets
- * one number and one list entry.
+ * reference in first-appearance order, and it gives one bracket number to each distinct reference. Every
+ * marker of the page reads from this one ladder, thus a reference that two blocks share gets one number and
+ * one appendix entry.
  *
- * The ledger holds two ladders. A citation reference numbers in the citation ladder, and every other
- * reference numbers in the provenance ladder. Thus the prose footnotes point at the provenance appendix,
- * the bracket markers point at the bibliography, and a page reads the way that a paper reads.
+ * One ladder holds both kinds. A reader of a report follows one notation, and the appendix lists flat in
+ * number order. Two ladders give one page two notations, and a reader must then learn which marker points
+ * at which list.
  *
- * Each ladder holds its own identity. A provenance identity is the canonical serialization of the
- * reference: `serializeReference` sorts the keys at every depth, thus two references match only when every
- * field matches, and two locators of one file stay apart. A citation identity is the citation key alone,
- * because the key names the paper and the display text is authored beside it.
+ * The identity of a reference depends on its kind. An artifact identity is the canonical serialization of
+ * the reference: `serializeReference` sorts the keys at every depth, thus two references match only when
+ * every field matches, and two locators of one file stay apart. A citation identity is the citation key
+ * alone, because the key names the paper and the display text is authored beside it.
+ *
+ * The two identity forms cannot collide. A serialization is a JSON object, and a citation key is the
+ * prefixed `idKind:id` text. Thus one map holds both.
  */
 
 import { serializeReference, type CitationReference, type Reference } from "../contracts/report-reference.js";
@@ -22,9 +25,6 @@ import { serializeReference, type CitationReference, type Reference } from "../c
 export function citationKeyOf(reference: CitationReference): string {
     return `${reference.idKind}:${reference.id}`;
 }
-
-/** The two ladders of a page: the numeric footnote ladder, and the bracket ladder of the literature. */
-export type ReferenceLadder = "provenance" | "citation";
 
 /** One source of a derivation: the pinned path that the script read, and the content hash of those bytes. */
 export interface DerivationChainSource {
@@ -38,11 +38,18 @@ export interface DerivationChainSource {
  * The renderer declares the shape that the appendix reads, and never the durable record that carries it.
  * Thus a caller passes the stored records straight through, and the render stays a pure function of plain
  * data.
+ *
+ * The two sources are the links of the chain, and both are optional. `scriptSource` is the relative source
+ * of the staged script asset, and `outputSource` is the relative source of the derived file. The caller
+ * stages the script and it knows where the derived file sits, thus the caller states both and the renderer
+ * reads no disk. A chain that carries neither renders its hashes alone.
  */
 export interface DerivationChain {
     readonly outputPath: string;
     readonly sources: readonly DerivationChainSource[];
     readonly scriptHash: string;
+    readonly scriptSource?: string;
+    readonly outputSource?: string;
 }
 
 /** The chain of each derived path of one render, keyed by the output path that the bindings name. */
@@ -65,66 +72,47 @@ export function derivationChains(records: readonly DerivationChain[] | undefined
     return chains;
 }
 
-/** Each reference kind that the provenance ladder holds, which is every kind except a citation. */
-export type ProvenanceReference = Exclude<Reference, CitationReference>;
-
-/** One marked reference: the ladder that holds it, and its number inside that ladder. */
-export interface ReferenceMark {
-    ladder: ReferenceLadder;
-    n: number;
-}
+/**
+ * Each reference kind that names data, which is every kind except a citation.
+ *
+ * A derivation joins this set, because it computes over pinned artifacts and it names no paper.
+ */
+export type ArtifactReference = Exclude<Reference, CitationReference>;
 
 /**
  * The mutable ledger of references.
  *
- * The page walk makes one ledger, and it threads the ledger through each claim and each citation. The
- * order of the entries of a ladder is the order of the first mark, thus the marker numbers count up by
- * first appearance inside that ladder.
+ * The page walk makes one ledger, and it threads the ledger through each claim, each card, and each
+ * citation. The order of the entries is the order of the first mark, thus the marker numbers count up by
+ * first appearance across the whole page.
  */
 export class ReferenceLedger {
-    private readonly provenance: ProvenanceReference[] = [];
-    private readonly citations: CitationReference[] = [];
-    private readonly provenanceMarks = new Map<string, ReferenceMark>();
-    private readonly citationMarks = new Map<string, ReferenceMark>();
+    private readonly references: Reference[] = [];
+    private readonly marks = new Map<string, number>();
 
     /**
-     * Give the mark of a reference. A new reference gets the next number of its ladder, and it joins the
-     * order of that ladder. A reference that matches an earlier one gives the earlier mark, thus the list
-     * holds it one time.
+     * Give the marker number of a reference. A new reference gets the next number of the ladder, and it
+     * joins the order of the ladder. A reference that matches an earlier one gives the earlier number, thus
+     * the appendix holds it one time.
      *
      * A citation matches on its key alone. The `raw` text and the display fields of a citation are the
      * words of the author, and two blocks over one paper carry different words. The key names the paper,
-     * thus one paper takes one number and the bibliography holds it one time.
+     * thus one paper takes one number and the appendix holds it one time.
      */
-    mark(reference: Reference): ReferenceMark {
-        // `push` gives back the new length of the array, which is the number of the entry that it added.
-        if (reference.kind === "citation") {
-            const key = citationKeyOf(reference);
-            const seen = this.citationMarks.get(key);
-            if (seen !== undefined) {
-                return seen;
-            }
-            const mark: ReferenceMark = { ladder: "citation", n: this.citations.push(reference) };
-            this.citationMarks.set(key, mark);
-            return mark;
-        }
-        const key = serializeReference(reference);
-        const seen = this.provenanceMarks.get(key);
+    mark(reference: Reference): number {
+        const key = reference.kind === "citation" ? citationKeyOf(reference) : serializeReference(reference);
+        const seen = this.marks.get(key);
         if (seen !== undefined) {
             return seen;
         }
-        const mark: ReferenceMark = { ladder: "provenance", n: this.provenance.push(reference) };
-        this.provenanceMarks.set(key, mark);
-        return mark;
+        // `push` gives back the new length of the array, which is the number of the entry that it added.
+        const n = this.references.push(reference);
+        this.marks.set(key, n);
+        return n;
     }
 
-    /** The provenance references in first-appearance order. The marker of an entry is its position plus one. */
-    provenanceEntries(): readonly ProvenanceReference[] {
-        return this.provenance;
-    }
-
-    /** The citation references in first-appearance order. The marker of an entry is its position plus one. */
-    citationEntries(): readonly CitationReference[] {
-        return this.citations;
+    /** Every reference in first-appearance order. The marker of an entry is its position plus one. */
+    entries(): readonly Reference[] {
+        return this.references;
     }
 }

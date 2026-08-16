@@ -13,7 +13,7 @@ import { raw } from "hono/html";
 
 import type { ClaimBlock, SectionBlock, TextBlock, TextList } from "../../contracts/report-blocks.js";
 import type { ReferenceLedger } from "../references.js";
-import { LadderMarker } from "./references-view.js";
+import { Marker } from "./references-view.js";
 
 /** The paragraph class of a text block and a claim block. The paragraph fills the content column. */
 const PARAGRAPH_CLASS = "report-prose";
@@ -72,12 +72,11 @@ export function renderText(block: TextBlock): string {
 /**
  * Render a claim block as escaped paragraphs plus evidence markers. The markers attach to the last
  * paragraph, thus they sit at the end of the claim text. The ledger marks each binding, thus a shared
- * reference keeps one number across the page. A binding of an artifact gives a superscript, and a binding
- * of a citation gives a bracket, because the two ladders count apart.
+ * reference keeps one number across the page. An artifact binding and a citation binding read the same
+ * bracket, because one ladder counts them both.
  */
 export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger): string {
-    const marks = block.bindings.map((reference) => ledger.mark(reference));
-    const markers = marks.map((mark) => <LadderMarker mark={mark} />);
+    const markers = block.bindings.map((reference) => <Marker n={ledger.mark(reference)} />);
     const paragraphs = splitParagraphs(block.content.prose);
     if (paragraphs.length === 0) {
         return String(<p class={PARAGRAPH_CLASS}>{markers}</p>);

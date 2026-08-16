@@ -2,14 +2,17 @@
  * The tests of the hash stamp.
  *
  * The stamp runs before the grammar parse, thus each test drives it with a plain payload and reads the
- * value that it gives back. The tests cover the fill, the unknown path, the explicit hash, a derivation
- * input, a value that is not a reference, the faithful copy, and the intact input.
+ * value that it gives back. The tests cover the fill, the unknown path, a hash that the payload carries, a
+ * derivation input, a value that is not a reference, the faithful copy, and the intact input.
+ *
+ * The elision is the other direction, thus its tests read a landed block and assert that no binding gives a
+ * hash back.
  */
 
 import { describe, expect, it } from "bun:test";
 
 import type { ReportSnapshot } from "./reference-resolver.js";
-import { stampReferenceHashes } from "./reference-stamp.js";
+import { stampReferenceHashes, stripReferenceHashes } from "./reference-stamp.js";
 
 const OUTPUT_PATH = "runs/run-1/step-a/output/de.csv";
 const OUTPUT_HASH = `sha256:${"a".repeat(64)}`;
@@ -133,8 +136,8 @@ describe("the unknown path", () => {
     });
 });
 
-describe("the explicit hash", () => {
-    it("keeps a hash that the author gave, even when it differs from the snapshot", () => {
+describe("the hash that a payload carries", () => {
+    it("drops a stale hash, and stamps the hash of the snapshot over it", () => {
         const stale = `sha256:${"c".repeat(64)}`;
         const payload = {
             kind: "table",
@@ -144,21 +147,43 @@ describe("the explicit hash", () => {
 
         const stamped = stampReferenceHashes(payload, snapshot)._unsafeUnwrap();
 
-        // The stamp fills an absent hash only, thus the structural tier still reads the stale hash and
-        // refuses it as a mismatch.
-        expect(field(stamped, "binding", "hash")).toBe(stale);
+        // The snapshot owns the hash, thus an echoed stored binding lands and it cannot mismatch.
+        expect(field(stamped, "binding", "hash")).toBe(OUTPUT_HASH);
     });
 
-    it("keeps an explicit hash whose path the snapshot does not hold, and it refuses nothing", () => {
+    it("drops the hash of each derivation input too", () => {
+        const stale = `sha256:${"c".repeat(64)}`;
+        const payload = {
+            kind: "metric",
+            id: "metric-1",
+            label: "ratio",
+            value: {
+                kind: "derivation",
+                op: "ratio",
+                inputs: [
+                    { kind: "artifact-value", path: OUTPUT_PATH, hash: stale, locator: { column: "padj", row: 0 } },
+                    { kind: "artifact-value", path: SECOND_PATH, hash: stale, locator: { column: "padj", row: 1 } },
+                ],
+            },
+        };
+
+        const stamped = stampReferenceHashes(payload, snapshot)._unsafeUnwrap();
+
+        expect(field(stamped, "value", "inputs", 0, "hash")).toBe(OUTPUT_HASH);
+        expect(field(stamped, "value", "inputs", 1, "hash")).toBe(SECOND_HASH);
+    });
+
+    it("refuses a path that the snapshot does not hold, and the hash of the payload changes nothing", () => {
         const payload = {
             kind: "table",
             id: "table-1",
             binding: { kind: "artifact-table", path: ABSENT_PATH, hash: OUTPUT_HASH },
         };
 
-        const stamped = stampReferenceHashes(payload, snapshot);
+        const refusal = stampReferenceHashes(payload, snapshot)._unsafeUnwrapErr();
 
-        expect(stamped.isOk()).toBe(true);
+        expect(refusal.reason).toBe("unresolved-reference");
+        expect(refusal.detail).toContain(ABSENT_PATH);
     });
 });
 
@@ -204,6 +229,60 @@ describe("the faithful copy", () => {
         expect(Object.hasOwn(stamped as object, "__proto__")).toBe(true);
         expect(field(stamped, "__proto__", "note")).toBe("an own key");
         expect(Object.getPrototypeOf(stamped)).toBe(Object.prototype);
+    });
+});
+
+describe("the elision", () => {
+    it("removes the hash of each artifact reference, and keeps the path and the locator", () => {
+        const block = {
+            kind: "metric",
+            id: "metric-1",
+            label: "padj",
+            value: { kind: "artifact-value", path: OUTPUT_PATH, hash: OUTPUT_HASH, locator: { column: "padj", row: 0 } },
+        };
+
+        const read = stripReferenceHashes(block);
+
+        expect(read).toEqual({
+            kind: "metric",
+            id: "metric-1",
+            label: "padj",
+            value: { kind: "artifact-value", path: OUTPUT_PATH, locator: { column: "padj", row: 0 } },
+        });
+    });
+
+    it("removes the hash of each input of a derivation, and of each binding of a list", () => {
+        const block = {
+            kind: "claim",
+            id: "claim-1",
+            content: { prose: "The signal holds." },
+            bindings: [
+                { kind: "citation", idKind: "pmid", id: "12345", raw: "A paper" },
+                { kind: "artifact-table", path: OUTPUT_PATH, hash: OUTPUT_HASH },
+                {
+                    kind: "derivation",
+                    op: "ratio",
+                    inputs: [
+                        { kind: "artifact-value", path: OUTPUT_PATH, hash: OUTPUT_HASH, locator: { column: "padj", row: 0 } },
+                        { kind: "artifact-value", path: SECOND_PATH, hash: SECOND_HASH, locator: { column: "padj", row: 1 } },
+                    ],
+                },
+            ],
+        };
+
+        const read = stripReferenceHashes(block);
+
+        expect(JSON.stringify(read)).not.toContain(OUTPUT_HASH);
+        expect(JSON.stringify(read)).not.toContain(SECOND_HASH);
+        // A citation pins no artifact, thus the walk leaves it as it is.
+        expect(field(read, "bindings", 0)).toEqual({ kind: "citation", idKind: "pmid", id: "12345", raw: "A paper" });
+        expect(field(read, "bindings", 2, "inputs", 0, "path")).toBe(OUTPUT_PATH);
+    });
+
+    it("gives the same value back when the block carries no pin, and it changes no input", () => {
+        const block = { kind: "text", id: "text-1", content: { prose: "Intro." } };
+
+        expect(stripReferenceHashes(block)).toBe(block);
     });
 });
 

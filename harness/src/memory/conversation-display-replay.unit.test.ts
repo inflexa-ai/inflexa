@@ -145,6 +145,49 @@ describe("recorded conversation display replay", () => {
         expect(replay.map((m) => m.usage)).toEqual([undefined, usage]);
     });
 
+    it("folds a stored duration onto the append's assistant reply, beside the rollup", () => {
+        const user = { role: "user" as const, content: "q" };
+        const assistant = { role: "assistant" as const, content: "a" };
+        const usage = { inputTokens: 10, outputTokens: 5 };
+        const replay = storedMessagesToCortex([
+            {
+                seq: 0,
+                envelope: envelopeMessage(user),
+                message: user,
+                displayEnvelope: envelopeDisplayMessages([
+                    { id: "u", role: "user", parts: [{ type: "text", text: "q" }] },
+                    { id: "a", role: "assistant", parts: [{ type: "text", text: "a" }] },
+                ]),
+            },
+            { seq: 1, envelope: envelopeMessage(assistant), message: assistant, usage, durationMs: 4321 },
+        ]);
+
+        expect(replay.map((m) => m.durationMs)).toEqual([undefined, 4321]);
+        expect(replay.map((m) => m.usage)).toEqual([undefined, usage]);
+    });
+
+    it("folds a duration that no rollup accompanies, and keeps a measured zero", () => {
+        const user = { role: "user" as const, content: "q" };
+        const assistant = { role: "assistant" as const, content: "a" };
+        const replay = storedMessagesToCortex([
+            {
+                seq: 0,
+                envelope: envelopeMessage(user),
+                message: user,
+                displayEnvelope: envelopeDisplayMessages([
+                    { id: "u", role: "user", parts: [{ type: "text", text: "q" }] },
+                    { id: "a", role: "assistant", parts: [{ type: "text", text: "a" }] },
+                ]),
+            },
+            { seq: 1, envelope: envelopeMessage(assistant), message: assistant, durationMs: 0 },
+        ]);
+
+        // A turn that reported no quantity still took time, thus the two figures are
+        // independent. A measured zero is a figure, and it never reads as an absence.
+        expect(replay[1]!.durationMs).toBe(0);
+        expect("usage" in replay[1]!).toBe(false);
+    });
+
     it("skips a row with no stored projection rather than reconstructing one", () => {
         const model = { role: "user" as const, content: "written before display was persisted" };
         expect(storedMessagesToCortex([{ seq: 0, envelope: envelopeMessage(model), message: model }])).toEqual([]);

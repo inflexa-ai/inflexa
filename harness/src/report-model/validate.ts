@@ -5,7 +5,7 @@
  * by construction, and a metric value slot admits one scalar reference only. Thus a schema parse failure
  * is the grammar rejection, and the validator does not re-implement it. The validator adds the three
  * checks that a schema cannot make: it makes sure that each block id occurs one time only, it resolves
- * each reference against the pinned evidence, and it warns about a free numeral in prose.
+ * each reference against the pinned evidence, and it warns about the prose of each block.
  */
 
 import { ReportDocumentSchema } from "../contracts/report-blocks.js";

@@ -7,8 +7,10 @@
  * and renders the page.
  *
  * The renderer writes no file. It gives the page and the data asset of each table, and this tool stages
- * them beside the figures. The stage is authoritative over the assets directory: what this preview wrote
- * stays, and each other file goes.
+ * them beside the figures. It also writes the script of each derivation that the document references, from
+ * the text of the durable record. The shipped libraries and fonts stage under `assets/deps/`, and each
+ * report-side file at the root of `assets/`. The stage is authoritative over that root: what this preview
+ * wrote stays, and each other file goes.
  *
  * The page and its staged assets land in `report-sessions/{threadId}/` under the workspace root. That
  * namespace belongs to this path alone, thus the tool never writes under the old `previews/` or `reports/`
@@ -32,6 +34,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { relative as relativePosix } from "node:path/posix";
 import { z } from "zod";
 
 import { reportSessionDir, resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
@@ -40,16 +43,19 @@ import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeFsError, tryFsWrite, type FsError } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
+import { referencedPaths, walkBlocks } from "../../report-model/block-walk.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
 import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
 import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
 import { resolvePageAssetFromInstallation } from "../../report-render/asset-lookup.js";
-import { ASSETS_DIR, PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
+import { ASSETS_DIR, DEPS_DIR, derivationScriptName, PAGE_ASSETS, stagedSource, tableSidecarName } from "../../report-render/assets.js";
+import type { DerivationChain } from "../../report-render/references.js";
 import { renderReportPage } from "../../report-render/render.js";
 import type { DataAsset } from "../../report-render/table-data.js";
 import type { RenderProblem } from "../../report-render/types.js";
+import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
@@ -203,6 +209,53 @@ function collectTableSidecars(blocks: readonly Block[]): TableSidecar[] {
 }
 
 /**
+ * The derivation records that the document references, in the order that they landed.
+ *
+ * A binding names an output path, thus the used set is the intersection of the recorded paths and the paths
+ * of the document. The record of a dropped block stays in the durable state, and this walk leaves it out.
+ * Thus the page states the chain of what it shows, and the stage writes the script of what it states.
+ */
+function referencedDerivations(document: ReportDocument, derivations: readonly DerivationRecord[]): DerivationRecord[] {
+    if (derivations.length === 0) {
+        return [];
+    }
+    const named = referencedPaths(walkBlocks(document.sections).references);
+    return derivations.filter((record) => named.has(record.outputPath));
+}
+
+/**
+ * The chain of one record, with the two relative links that its appendix entry carries.
+ *
+ * The script link names the staged asset through the shared name function, thus the link and the file that
+ * the stage writes cannot disagree. The output link is the path of the derived file against the directory of
+ * the page. The derived table already sits inside the session directory, thus the link needs no copy.
+ */
+function chainOf(record: DerivationRecord, sessionDir: string): DerivationChain {
+    return {
+        outputPath: record.outputPath,
+        sources: record.sources,
+        scriptHash: record.scriptHash,
+        scriptSource: stagedSource(derivationScriptName(record.scriptHash)),
+        outputSource: relativePosix(sessionDir, record.outputPath),
+    };
+}
+
+/**
+ * The script of each referenced derivation, keyed by its staged name.
+ *
+ * Two records of one script text carry one hash, thus they take one name and the map holds one entry. The
+ * name is content-addressed, thus an amended script stages beside no stale copy of itself and the sweep
+ * removes the name that the new page does not reference.
+ */
+function scriptAssets(records: readonly DerivationRecord[]): Map<string, string> {
+    const scripts = new Map<string, string>();
+    for (const record of records) {
+        scripts.set(derivationScriptName(record.scriptHash), record.script);
+    }
+    return scripts;
+}
+
+/**
  * Resolve each reference of the document, and split the resolutions from the unresolved references.
  *
  * The shared `resolveDocumentReferences` walks the tree, resolves each reference under the concurrency
@@ -239,12 +292,14 @@ type PreviewWriteFailure = { kind: "fs"; error: FsError } | { kind: "figure-out-
  * thus the containment test runs before any copy and reuses the one workspace-path resolver. A source
  * outside the root refuses and names the block, and no copy runs.
  *
- * The page references the chart runtime and the fonts under the same `assets/` directory, thus one copy
- * loop stages the figures, the table sidecars, and the manifest entries together. The manifest is never
- * empty, thus the assets directory exists beside every page.
+ * The page references the chart runtime and the fonts under `assets/deps/`, and each report-side file at
+ * the root of `assets/`. Each manifest entry names its own subpath, thus the copy loop reads the manifest
+ * and it spells no layout of its own. The manifest is never empty, thus both directories exist beside every
+ * page.
  *
- * The data assets are the one part that the renderer produces rather than the disk. They write after the
- * copies and before the page. The sweep then runs, and the directory holds the closure of this page alone.
+ * The data assets and the derivation scripts are the parts that this preview produces rather than the disk.
+ * They write after the copies and before the page. The sweep then runs, and the root of the directory holds
+ * the closure of this page alone.
  */
 async function renderToWorkspace(args: {
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
@@ -254,6 +309,7 @@ async function renderToWorkspace(args: {
     resolutions: readonly BlockResolution[];
     sidecars: readonly TableSidecar[];
     dataAssets: readonly DataAsset[];
+    scripts: ReadonlyMap<string, string>;
     page: string;
     logger: Logger;
 }): Promise<Result<string, PreviewWriteFailure>> {
@@ -268,44 +324,46 @@ async function renderToWorkspace(args: {
     // The page addresses each staged file through `assetSource`, which spells the same segment. Thus the
     // directory that receives the copies comes from that one constant, and never from a literal here.
     const assetsDir = join(sessionDir, ASSETS_DIR);
+    const depsDir = join(assetsDir, DEPS_DIR);
     const pagePath = join(sessionDir, "index.html");
 
     // Each bound figure, contained and deduplicated by its staged name, mapped to its host source.
-    const sources = new Map<string, string>();
+    const reportFiles = new Map<string, string>();
     for (const resolution of args.resolutions) {
         if (resolution.kind !== "figure" || resolution.resolved.type !== "file") {
             continue;
         }
         const file: ResolvedFile = resolution.resolved;
         const name = assetFileName(file);
-        if (sources.has(name)) {
+        if (reportFiles.has(name)) {
             continue;
         }
         const resolved = resolveWorkspacePath({ workspaceRoot: root, analysisId: args.analysisId, path: file.path });
         if (resolved.kind !== "ok") {
             return err({ kind: "figure-out-of-scope", blockId: resolution.blockId, path: file.path });
         }
-        sources.set(name, resolved.absolute);
+        reportFiles.set(name, resolved.absolute);
     }
 
     // Each table sidecar: the pinned bytes themselves, under the name that the download link of the card
     // spells. The path of a snapshot entry is untrusted, thus the containment test runs here too.
     for (const sidecar of args.sidecars) {
-        if (sources.has(sidecar.name)) {
+        if (reportFiles.has(sidecar.name)) {
             continue;
         }
         const resolved = resolveWorkspacePath({ workspaceRoot: root, analysisId: args.analysisId, path: sidecar.path });
         if (resolved.kind !== "ok") {
             return err({ kind: "figure-out-of-scope", blockId: sidecar.blockId, path: sidecar.path });
         }
-        sources.set(sidecar.name, resolved.absolute);
+        reportFiles.set(sidecar.name, resolved.absolute);
     }
 
-    // Each manifest entry, mapped from its staged name to the file that the asset lookup gives. A specifier
-    // that does not resolve is a fault of the installation, thus it rides the `fs` kind.
+    // Each manifest entry, mapped from its staged subpath to the file that the asset lookup gives. A
+    // specifier that does not resolve is a fault of the installation, thus it rides the `fs` kind.
+    const depsFiles = new Map<string, string>();
     for (const asset of PAGE_ASSETS) {
         try {
-            sources.set(asset.file, args.resolvePageAsset(asset.specifier));
+            depsFiles.set(asset.file, args.resolvePageAsset(asset.specifier));
         } catch (cause) {
             return err({ kind: "fs", error: { type: "read_failed", op: "preview.resolveAsset", path: asset.specifier, cause } });
         }
@@ -315,20 +373,23 @@ async function renderToWorkspace(args: {
     if (madeSession.isErr()) {
         return err({ kind: "fs", error: madeSession.error });
     }
-    const madeAssets = await tryFsWrite("preview.mkdir", () => mkdir(assetsDir, { recursive: true }), { path: assetsDir });
+    // The recursive make covers the assets directory itself, thus one call answers for both levels.
+    const madeAssets = await tryFsWrite("preview.mkdir", () => mkdir(depsDir, { recursive: true }), { path: depsDir });
     if (madeAssets.isErr()) {
         return err({ kind: "fs", error: madeAssets.error });
     }
-    for (const [name, source] of sources) {
+    for (const [name, source] of [...reportFiles, ...depsFiles]) {
         const copied = await tryFsWrite("preview.copyFile", () => copyFile(source, join(assetsDir, name)), { path: source });
         if (copied.isErr()) {
             return err({ kind: "fs", error: copied.error });
         }
     }
-    // Each data asset is source text that the renderer derived, thus it writes and never copies.
-    for (const asset of args.dataAssets) {
-        const assetPath = join(assetsDir, asset.name);
-        const wroteAsset = await tryFsWrite("preview.writeFile", () => writeFile(assetPath, asset.bytes, "utf8"), { path: assetPath });
+    // A data asset is source text that the renderer derived, and a script is the text of a durable record.
+    // Neither one sits on disk under its staged name, thus both write and neither one copies.
+    const texts: Array<[string, string]> = [...args.dataAssets.map((asset): [string, string] => [asset.name, asset.bytes]), ...args.scripts];
+    for (const [name, text] of texts) {
+        const assetPath = join(assetsDir, name);
+        const wroteAsset = await tryFsWrite("preview.writeFile", () => writeFile(assetPath, text, "utf8"), { path: assetPath });
         if (wroteAsset.isErr()) {
             return err({ kind: "fs", error: wroteAsset.error });
         }
@@ -338,18 +399,21 @@ async function renderToWorkspace(args: {
         return err({ kind: "fs", error: wrote.error });
     }
 
-    const staged = new Set<string>([...sources.keys(), ...args.dataAssets.map((asset) => asset.name)]);
+    const staged = new Set<string>([...reportFiles.keys(), ...texts.map(([name]) => name)]);
     await sweepAssets(assetsDir, staged, args.logger);
     return ok(pagePath);
 }
 
 /**
- * Remove each file of the assets directory that this preview did not stage.
+ * Remove each report-side file of the assets directory that this preview did not stage.
  *
- * The stage is authoritative: the directory holds the closure of the page and nothing else. A block that
- * goes leaves a stale data asset, a stale sidecar, and a stale figure behind, and each one costs disk and
- * misleads a reader who opens the directory. The staged set is what this run wrote, thus the sweep needs no
- * read of the page.
+ * The stage is authoritative: the root of the directory holds the closure of the page and nothing else. A
+ * block that goes leaves a stale data asset, a stale sidecar, a stale figure, and the script of a derivation
+ * that nothing binds. Each one costs disk and misleads a reader who opens the directory. The staged set is
+ * what this run wrote, thus the sweep needs no read of the page.
+ *
+ * The `deps/` directory holds the shipped libraries and fonts. The manifest governs that set, and the stage
+ * writes each entry of it on every run. Thus the sweep passes over the directory whole.
  *
  * A sweep fault costs the cleanup alone. The page and its assets are on disk and complete, thus a failed
  * listing and a failed removal each log and the preview still reports the page.
@@ -361,7 +425,7 @@ async function sweepAssets(assetsDir: string, staged: ReadonlySet<string>, logge
         return;
     }
     for (const entry of listed.value) {
-        if (staged.has(entry)) {
+        if (entry === DEPS_DIR || staged.has(entry)) {
             continue;
         }
         const stale = join(assetsDir, entry);
@@ -438,8 +502,16 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
 
             // The citation records are the bibliography of the pin, and the derivation records are the chain
             // of each derived path. Both ride the render call and never the value map, because the appendix
-            // reads them beside the cards and the value map is keyed by block.
-            const rendered = renderReportPage(document, bridged.value, snapshot.citationRecords, derivations);
+            // reads them beside the cards and the value map is keyed by block. The chain carries the two
+            // relative links of its entry, thus the renderer states them and it stages nothing.
+            const used = referencedDerivations(document, derivations);
+            const sessionDir = reportSessionDir(threadId);
+            const rendered = renderReportPage(
+                document,
+                bridged.value,
+                snapshot.citationRecords,
+                used.map((record) => chainOf(record, sessionDir)),
+            );
             if (rendered.isErr()) {
                 return ok({ outcome: "render-problems", problems: rendered.error });
             }
@@ -452,6 +524,7 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 resolutions,
                 sidecars: collectTableSidecars(document.sections),
                 dataAssets: rendered.value.dataAssets,
+                scripts: scriptAssets(used),
                 page: rendered.value.html,
                 logger,
             });

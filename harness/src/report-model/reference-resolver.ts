@@ -69,10 +69,14 @@ export interface ReportSnapshot {
  * The concrete value that a reference resolves to. A scalar comes from one artifact cell or one
  * derivation. A table comes from a whole-table artifact. A file echoes the pin of a whole-file artifact,
  * for example an image. A citation echo confirms that an external id is in the pinned evidence.
+ *
+ * A table carries `total` when a row bound cut the rows. The resolution is the one step that reads the
+ * whole artifact, thus it is the one step that knows the count before the cut. A table with no bound
+ * carries none, and the row count answers for it.
  */
 export type ResolvedValue =
     | { type: "scalar"; value: string | number }
-    | { type: "table"; rows: Array<Record<string, string | number>>; columns?: string[] }
+    | { type: "table"; rows: Array<Record<string, string | number>>; columns?: string[]; total?: number }
     | { type: "file"; path: string; hash: string }
     | { type: "citation"; id: string };
 

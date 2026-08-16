@@ -117,9 +117,12 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
         return fail(reference, "locator-out-of-range", `the row bound names column ${bound.column}, which the table at ${reference.path} does not hold`);
     }
     const rows = bound === undefined ? allRows : applyRowBound(allRows, bound);
+    // The page states the shown count against the count of the artifact. This read is the one place that
+    // holds both, thus a bounded table carries the pre-bound total out with its rows.
+    const total = bound === undefined ? {} : { total: allRows.length };
     const columns = reference.columns;
     if (columns === undefined) {
-        return ok({ type: "table", rows });
+        return ok({ type: "table", rows, ...total });
     }
 
     // A name that no row holds addresses nothing. Without this check a projection onto an invented column
@@ -141,7 +144,7 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
         }
         return projected;
     });
-    return ok({ type: "table", rows: projectedRows, columns });
+    return ok({ type: "table", rows: projectedRows, columns, ...total });
 }
 
 function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {

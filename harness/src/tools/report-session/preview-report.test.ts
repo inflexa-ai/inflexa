@@ -18,7 +18,7 @@ import type { DraftDocument } from "../../report-model/draft.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
-import { PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
+import { DEPS_DIR, derivationScriptName, PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
@@ -239,6 +239,27 @@ describe("the pass path", () => {
         expect(PAGE_ASSETS.length).toBeGreaterThan(0);
     });
 
+    it("groups each manifest static under the deps directory, and keeps the report-side files at the root", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        // The shipped libraries and fonts sit in one directory of their own, thus a reader of the directory
+        // tells them from the files that the report produced.
+        const assetsDir = join(root, "report-sessions", "t1", "assets");
+        const inDeps = await readdir(join(assetsDir, DEPS_DIR));
+        expect(inDeps.sort()).toEqual(PAGE_ASSETS.map((asset) => asset.file.slice(DEPS_DIR.length + 1)).sort());
+        expect(await readdir(assetsDir)).toEqual([DEPS_DIR]);
+    });
+
     it("stages the bytes that the injected asset lookup names", async () => {
         const root = await makeRoot();
         // An embedder that ships the asset bytes packed materializes them to disk and binds its own lookup.
@@ -323,6 +344,62 @@ describe("the derivation records of the session", () => {
             expect(page).toContain(`<div class="report-ref-chain">`);
             expect(page).toContain("data/y.csv");
             expect(page).toContain(`<code class="report-ref-hash">${"c".repeat(12)}</code>`);
+        }
+    });
+
+    it("stages the script of the referenced derivation, and the chain links it beside the derived file", async () => {
+        const root = await makeRoot();
+        await mkdir(join(root, "report-sessions", "t1", "derived"), { recursive: true });
+        await writeFile(join(root, DERIVED), "gene,padj\nTP53,0.004\n", "utf8");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: derivedDoc(), snapshot: derivedSnapshot });
+        gateway.seedDerivations("t1", [record]);
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            // The script text of the record lands under its content-addressed name, thus a reader opens the
+            // script that made the table from the page itself.
+            const script = derivationScriptName(record.scriptHash);
+            const assetsDir = join(root, "report-sessions", "t1", "assets");
+            expect(await readFile(join(assetsDir, script), "utf8")).toBe(record.script);
+
+            // The derived file already sits in the session directory, thus the chain links it in place.
+            const page = await readFile(result.pagePath, "utf8");
+            expect(page).toContain(`href="assets/${script}"`);
+            expect(page).toContain(`href="derived/merged.csv"`);
+        }
+    });
+
+    it("removes the script of a derivation that the amended document no longer binds", async () => {
+        const root = await makeRoot();
+        await mkdir(join(root, "report-sessions", "t1", "derived"), { recursive: true });
+        await writeFile(join(root, DERIVED), "gene,padj\nTP53,0.004\n", "utf8");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: derivedDoc(), snapshot: derivedSnapshot });
+        gateway.seedDerivations("t1", [record]);
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+        const assetsDir = join(root, "report-sessions", "t1", "assets");
+        const script = derivationScriptName(record.scriptHash);
+
+        const first = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        expect(first.outcome).toBe("rendered");
+        expect(await readdir(assetsDir)).toContain(script);
+
+        // The block that bound the derived path goes. The record stays in the durable state, and the page
+        // states no chain for it, thus the script of that record leaves the directory.
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        gateway.seedDerivations("t1", [record]);
+        const second = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(second.outcome).toBe("rendered");
+        const afterSecond = await readdir(assetsDir);
+        expect(afterSecond).not.toContain(script);
+        expect(afterSecond).toContain(DEPS_DIR);
+        if (second.outcome === "rendered") {
+            expect(await readFile(second.pagePath, "utf8")).not.toContain(`<div class="report-ref-chain">`);
         }
     });
 
@@ -516,8 +593,10 @@ describe("the staged table data", () => {
         expect(afterSecond).not.toContain("t-000000000000.data.js");
         expect(afterSecond.filter((name) => name.endsWith(".data.js")).length).toBe(1);
         expect(afterSecond).toContain(tableSidecarName(TABLE_HASH, TABLE_PATH));
+        // The manifest governs the deps directory, thus the sweep of the page closure passes over it whole.
+        const inDeps = await readdir(join(assetsDir, DEPS_DIR));
         for (const asset of PAGE_ASSETS) {
-            expect(afterSecond).toContain(asset.file);
+            expect(inDeps).toContain(asset.file.slice(DEPS_DIR.length + 1));
         }
     });
 });

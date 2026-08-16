@@ -1,9 +1,9 @@
 /**
  * The record tool of a report session.
  *
- * The tool records one version of the report. The store is append-only with no delete, thus a version that
- * the gate did not accept must never exist. The tool runs the whole gate first, and only a pass reaches the
- * store.
+ * The tool records one version of the report. A version that the gate did not accept must never stand, thus
+ * the tool runs the whole gate first, and only a pass reaches the store. The gate and the look rule run on
+ * every record, the first and each later one alike.
  *
  * The gate has three parts, in order of cost. The finish gates the schema, the unique ids, and the
  * structural tier, and a gap list returns as data. The look-before-record rule then compares the seen hash
@@ -18,8 +18,10 @@
  * before the resolver constructs.
  *
  * On a pass the store records the document that the gate validated, the pinned snapshot, and the anchor from
- * the thread row. The one-per-thread rule of the store bounds a concurrent race, and that refusal returns as
- * data. The outcome of a pass carries the version id.
+ * the thread row. A record on a thread that holds a version replaces that version whole, under the same
+ * version id. Thus the loop is unbounded: the agent amends, looks again, and records again, and the stored
+ * version equals the page that the last look accepted. A refused record leaves the stored version as it was.
+ * The outcome of a pass carries the version id, and it names a replacement.
  *
  * The prune runs after the version lands. It removes the output file of each derivation that the recorded
  * document does not reference, under the `derived/` directory of the session alone. The records stay
@@ -61,8 +63,8 @@ export type RecordVersionInput = z.infer<typeof recordVersionInput>;
  * `gaps` names each completeness gap of the draft. `never-seen` means that no eyes ran on the current draft.
  * `stale-look` means that the eyes ran, and the agent then changed the draft. `root-unresolvable` means that
  * the resolver construction cannot resolve the workspace root. `invalid` names each gate failure, and a
- * resolution failure carries the block that holds it. `already-recorded` means that the thread already holds
- * a version. `recorded` carries the version id.
+ * resolution failure carries the block that holds it. `recorded` carries the version id, and `replaced` is
+ * true when the record wrote over the earlier version of the thread.
  */
 export type RecordVersionResult =
     | { outcome: "refused"; refusal: SessionRefusal }
@@ -72,14 +74,13 @@ export type RecordVersionResult =
     | { outcome: "resolver-unavailable" }
     | { outcome: "root-unresolvable"; detail: string }
     | { outcome: "invalid"; schemaIssues?: SchemaIssue[]; duplicateIds?: string[]; resolutionFailures?: ResolutionFailure[] }
-    | { outcome: "already-recorded" }
     | { outcome: "record-failed"; detail: string }
-    | { outcome: "recorded"; versionId: string };
+    | { outcome: "recorded"; versionId: string; replaced: boolean };
 
 /**
  * The construction deps of the record tool.
  *
- * `store` is the append-only version store. `threads` reads the anchor of the report thread, thus the
+ * `store` is the version store. `threads` reads the anchor of the report thread, thus the
  * version carries the parent conversation and the transcript position. `makeResolver` is optional, because a
  * resolver realization can be absent, and the gate needs one. It binds one analysis, thus the tool makes the
  * resolver over the scope of the call.
@@ -106,8 +107,6 @@ function describeRecordFailure(error: RecordVersionError): string {
             return "the pinned snapshot is malformed";
         case "parent_analysis_mismatch":
             return "the parent version belongs to a different analysis";
-        case "thread_already_holds_version":
-            return "the thread already holds a recorded version";
         default:
             return describeDbError(error);
     }
@@ -194,14 +193,18 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
             "Record the current draft as one report version. The tool runs the whole gate first: it finishes the draft, " +
             "resolves each reference, matches each chart encoding, and matches each assert. An incomplete draft gives back the gap list, " +
             "and a failed reference gives back the block that broke. The tool records a version only after the eyes look at the current page. " +
-            "A thread holds one version, thus a second record gives back that the thread already holds one. " +
+            "A thread holds one version, thus a later record replaces it whole. Amend the draft, look at the page again, and record again. " +
             "After the version lands, the tool removes the file of each derived table that no block of the recorded report binds.",
         inputSchema: recordVersionInput,
         executionMode: "inline",
         describeCall: "none",
-        // The version id is the one durable product of the call, thus the recorded arm names it. Each
-        // other arm is a gate that refused, and the kind of the arm is what a watcher must read.
-        describeResult: (_input, result): string => (result.outcome === "recorded" ? `version ${result.versionId}` : result.outcome),
+        // The version id is the one durable product of the first record, thus the created arm names it. A
+        // later record writes over that same id, thus the line names the update and never reads as a
+        // refusal. Each other arm is a gate that refused, and the kind of the arm is what a watcher reads.
+        describeResult: (_input, result): string => {
+            if (result.outcome !== "recorded") return result.outcome;
+            return result.replaced ? "version updated" : `version ${result.versionId}`;
+        },
         execute: async (_input, ctx): Promise<Result<RecordVersionResult, ToolError>> => {
             const opened = await openReportThread(deps.gateway, ctx.session.scope);
             if (opened.isErr()) {
@@ -271,7 +274,8 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
             });
             if (recorded.isOk()) {
                 // The version stands from here. The prune reclaims the bytes of each derivation that the
-                // recorded document ignores, and it decides nothing about the outcome.
+                // recorded document ignores, and it decides nothing about the outcome. It runs on each
+                // record, thus an output that an amend unbound goes at the next record.
                 await pruneUnusedDerivations({
                     resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
                     analysisId,
@@ -282,11 +286,8 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
                 });
             }
             return recorded.match(
-                (ref): Result<RecordVersionResult, ToolError> => ok({ outcome: "recorded", versionId: ref.versionId }),
+                (ref): Result<RecordVersionResult, ToolError> => ok({ outcome: "recorded", versionId: ref.versionId, replaced: ref.outcome === "replaced" }),
                 (error): Result<RecordVersionResult, ToolError> => {
-                    if (error.type === "thread_already_holds_version") {
-                        return ok({ outcome: "already-recorded" });
-                    }
                     logger.warn("the version did not record", { threadId, analysisId, reason: error.type });
                     return ok({ outcome: "record-failed", detail: describeRecordFailure(error) });
                 },

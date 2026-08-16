@@ -14,10 +14,13 @@ import type { DataAsset } from "./table-data.js";
  * The value that one block resolves to, as a closed union. A `scalar` gives one number or one string. A
  * `table` gives the rows and the optional column order. A `figure` gives a ready source string. A
  * `citation` echoes one external id.
+ *
+ * A `table` carries `total` when a row bound cut the rows of the artifact. The renderer states the shown
+ * count against it. A table with no bound carries none, and the row count answers for it.
  */
 export type RenderValue =
     | { type: "scalar"; value: string | number }
-    | { type: "table"; rows: Array<Record<string, string | number>>; columns?: string[] }
+    | { type: "table"; rows: Array<Record<string, string | number>>; columns?: string[]; total?: number }
     | { type: "figure"; src: string }
     | { type: "citation"; id: string };
 

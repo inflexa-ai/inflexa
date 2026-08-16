@@ -27,10 +27,10 @@
 import { raw } from "hono/html";
 
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
-import { declaredForColumn } from "../../contracts/report-reference.js";
+import { declaredForColumn, type ArtifactTableReference } from "../../contracts/report-reference.js";
 import type { CitationRecord } from "../../report-model/reference-resolver.js";
 import { stagedSource, tableSidecarName } from "../assets.js";
-import { LadderMarker } from "./references-view.js";
+import { Marker } from "./references-view.js";
 import { formatNumberCell, formatTableCell, holdsANumber, selectColumnKind, selectNumberKind, smallestPositiveValue } from "../number-format.js";
 import { citationKeyOf, type ReferenceLedger } from "../references.js";
 import type { ColumnDisplay, ColumnFilter } from "../table-data.js";
@@ -84,12 +84,12 @@ type FigureValue = Extract<RenderValue, { type: "figure" }>;
  * A metric reads one cell and it has no column, thus no neighbor bounds a zero here. A zero under a
  * p-value label reads as the near-zero form.
  *
- * The value binding joins the provenance ladder, thus the label line carries the marker and the appendix
+ * The value binding joins the reference ladder, thus the label line carries the marker and the appendix
  * names the cell. The marker sits on the label and never on the value, because the value line is the one
  * figure that a reader takes from the card.
  */
 export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value: ScalarValue): string {
-    const mark = ledger.mark(block.value);
+    const n = ledger.mark(block.value);
     const shown = formatNumberCell(value.value, selectNumberKind(block.label, value.value));
     return String(
         <div class="stat-card corner-accents">
@@ -98,7 +98,7 @@ export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value:
             </div>
             <div class="stat-card-label">
                 {block.label}
-                <LadderMarker mark={mark} />
+                <Marker n={n} />
             </div>
         </div>,
     );
@@ -150,14 +150,16 @@ function columnLabel(column: string, labels: TableBlock["binding"]["columnLabels
  * each column, and the data asset ships them. Thus the page formats a cell with no read of a declaration
  * and no second pass over a column.
  *
+ * The argument is the binding and not the block, because a chart binds the same whole-table reference. A
+ * chart that reads the shared payload then resolves its columns through this one helper.
+ *
  * The filter reads the cells and not the kind. A column of gene names carries no number, thus it takes the
  * text filter and a reader finds a gene by its name. A column where one cell parses takes the number filter.
  *
  * A probability column carries the smallest positive value of its own rows as the bound. A column with no
  * positive value takes no bound, and its zero then reads as the near-zero form.
  */
-export function tableDisplay(block: TableBlock, value: TableValue, columns: readonly string[]): ColumnDisplay[] {
-    const binding = block.binding;
+export function tableDisplay(binding: ArtifactTableReference, value: TableValue, columns: readonly string[]): ColumnDisplay[] {
     return columns.map((column) => {
         // One pass over the column serves the filter and the bound alike, thus a wide table reads no column
         // twice.
@@ -204,6 +206,18 @@ function boundText(binding: TableBlock["binding"]): string | undefined {
 }
 
 /**
+ * The status of a table card: the shown count against the pre-bound total of the artifact.
+ *
+ * A bound cut the rows, thus the shown count and the total differ and the line names both. A whole table
+ * shows every row that it holds, thus the line states the one count. The page script writes the same two
+ * forms after each filter, thus the first paint and every later one read alike.
+ */
+export function tableStatusText(shown: number, total: number): string {
+    const whole = `${formatTableCell(total, "compact-scientific")} ${GRID_ROWS_WORD}`;
+    return shown === total ? whole : `${formatTableCell(shown, "compact-scientific")} of ${whole}`;
+}
+
+/**
  * Render a table block as the grid mount and the download of its raw bytes.
  *
  * The rows ride a data asset beside the page. A page that stamped 14,201 rows into its markup weighed
@@ -214,8 +228,9 @@ function boundText(binding: TableBlock["binding"]): string | undefined {
  * empty, thus the card keeps its title, its status, and its download, and the page throws nothing.
  *
  * The footer holds one status line and the download button. The status states the count of the resolved
- * rows, and the row bound of the binding beside it. The page script writes the count again after each
- * filter, thus a reader of a narrowed table sees what the grid shows and what the table holds.
+ * rows against the pre-bound total of the artifact, and the row bound of the binding beside it. The page
+ * script writes the count again after each filter, thus a reader of a narrowed table sees what the grid
+ * shows and what the artifact holds.
  *
  * The note under the status stays empty on the screen. A print of a table that passes the print bound writes
  * the bound into it, thus the paper states what it shows and what it leaves out.
@@ -223,27 +238,27 @@ function boundText(binding: TableBlock["binding"]): string | undefined {
  * The download names the staged copy of the pinned artifact. The link is relative and the browser saves
  * the file, thus the page fetches nothing when it opens and the reader still gets the whole table.
  *
- * The whole-table binding joins the provenance ladder, thus the title line carries the marker and the
+ * The whole-table binding joins the reference ladder, thus the title line carries the marker and the
  * appendix names the artifact. Every evidentiary block ledgers this way, and a card with no title still
  * shows its marker on the same line.
  */
-export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount: number): string {
+export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount: number, total?: number): string {
     const binding = block.binding;
-    const mark = ledger.mark(binding);
+    const n = ledger.mark(binding);
     const download = tableSidecarName(binding.hash, binding.path);
     const bound = boundText(binding);
     return String(
         <div class="report-table">
             <div class="report-table-title">
                 {block.title}
-                <LadderMarker mark={mark} />
+                <Marker n={n} />
             </div>
             <div class="corner-accents">
                 <div class="report-grid" {...{ [GRID_MOUNT_ATTRIBUTE]: block.id }}></div>
                 <div class="report-table-footer">
                     <div class="report-table-footer-row">
                         <span class="report-table-status">
-                            <span class={GRID_COUNT_CLASS}>{`${formatTableCell(rowCount, "compact-scientific")} ${GRID_ROWS_WORD}`}</span>
+                            <span class={GRID_COUNT_CLASS}>{tableStatusText(rowCount, total ?? rowCount)}</span>
                             {bound !== undefined ? <span class="report-table-bound">{bound}</span> : null}
                         </span>
                         <a class="report-table-download" href={stagedSource(download)} download={download}>
@@ -263,19 +278,19 @@ export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount
  * renders below the image. The caption also fills the `alt` attribute, thus the escape keeps a hostile
  * source and a hostile caption inside their slots.
  *
- * The whole-file binding joins the provenance ladder, thus the caption line carries the marker and the
+ * The whole-file binding joins the reference ladder, thus the caption line carries the marker and the
  * appendix names the image. A figure with no caption still shows its marker on that line. The marker stays
  * out of the `alt` text, because a screen reader reads the alt as the picture and not as a footnote.
  */
 export function renderFigure(block: FigureBlock, ledger: ReferenceLedger, value: FigureValue): string {
-    const mark = ledger.mark(block.binding);
+    const n = ledger.mark(block.binding);
     const caption = block.caption;
     return String(
         <figure class="report-figure corner-accents">
             <img src={value.src} alt={caption !== undefined ? caption : ""} class="report-figure-image" />
             <figcaption class="report-caption">
                 {caption}
-                <LadderMarker mark={mark} />
+                <Marker n={n} />
             </figcaption>
         </figure>,
     );
@@ -288,7 +303,7 @@ export function renderFigure(block: FigureBlock, ledger: ReferenceLedger, value:
 const PUBMED_BASE = "https://pubmed.ncbi.nlm.nih.gov/";
 
 /**
- * Render a citation block as a bibliography card. The binding joins the citation ladder like a claim
+ * Render a citation block as a bibliography card. The binding joins the one reference ladder like a claim
  * binding, thus one shared source keeps one bracket number. The card shows the marker, the short citation
  * of the pinned record, the optional note, and the citation key.
  *
@@ -297,12 +312,12 @@ const PUBMED_BASE = "https://pubmed.ncbi.nlm.nih.gov/";
  * alone, because absence is a normal condition and no text stands in for the paper.
  */
 export function renderCitation(block: CitationBlock, ledger: ReferenceLedger, record?: CitationRecord): string {
-    const mark = ledger.mark(block.binding);
+    const n = ledger.mark(block.binding);
     const binding = block.binding;
     const key = citationKeyOf(binding);
     return String(
         <div class="report-citation corner-accents">
-            <LadderMarker mark={mark} />
+            <Marker n={n} />
             {record !== undefined ? (
                 <>
                     {" "}

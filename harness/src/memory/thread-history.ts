@@ -75,6 +75,13 @@ export interface StoredMessage {
      * the state-init DDL).
      */
     readonly usage?: TokenUsageRollup;
+    /**
+     * The time that the whole TURN this row completed took, in milliseconds —
+     * present only on the last assistant row of a turn appended with a duration,
+     * absent everywhere else. It has a column of its own, thus a turn that
+     * reported no quantity still reads back with the duration that it took.
+     */
+    readonly durationMs?: number;
 }
 
 /**
@@ -99,6 +106,14 @@ export interface ConversationTurn {
      * must not read back as a turn that cost zero.
      */
     readonly turnUsage?: TokenUsageRollup;
+    /**
+     * The time that the turn took, in milliseconds, as the live header measured
+     * it. Stored beside the rollup, on the same last assistant message. A caller
+     * that supplies none leaves the row without one, and nothing reconstructs a
+     * value later. The duration keeps a column of its own, thus a turn that
+     * reported no quantity still keeps the duration that it took.
+     */
+    readonly turnDurationMs?: number;
 }
 
 /**
@@ -163,8 +178,9 @@ export interface ThreadHistory {
      * Append one {@link ConversationTurn} — every message written in a single
      * transaction with a `seq` monotonically increasing per thread.
      *
-     * A turn writing no assistant message stores no rollup and still succeeds:
-     * there is no row on which the figure would mean anything.
+     * A turn writing no assistant message stores neither the rollup nor the
+     * duration and still succeeds: there is no row on which the two figures
+     * would mean anything.
      */
     appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError>;
     /**
@@ -384,7 +400,7 @@ export const EVICTION_BLOCK_TURNS = 4;
  */
 export function createThreadHistory(pool: Pool): ThreadHistory {
     function appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError> {
-        const { modelMessages: messages, displayMessages, turnUsage } = turn;
+        const { modelMessages: messages, displayMessages, turnUsage, turnDurationMs } = turn;
         if (messages.length === 0) return okVoid();
         // The display projection rides the append's FIRST row, so one SELECT of a
         // thread's rows yields every envelope in order with no join and no grouping.
@@ -397,12 +413,17 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         // `hasReportedUsage` is the loop's own predicate for the same question,
         // reused rather than restated so the write and the loop cannot drift.
         const rollup = hasReportedUsage(turnUsage) ? JSON.stringify(turnUsage) : null;
-        // The rollup describes the turn, and the assistant reply is the row a reader
-        // associates with the answer. The LAST assistant row, not any of them: a
+        // The duration takes no predicate of its own, and it keeps its own column.
+        // A measured zero is a figure, thus only an absent value means that nobody
+        // measured the turn. The rollup goes absent under its own predicate above,
+        // and the duration does not go with it.
+        const duration = turnDurationMs ?? null;
+        // The two figures describe the turn, and the assistant reply is the row a
+        // reader associates with the answer. The LAST assistant row, not any of them: a
         // serial-tool turn writes one assistant row per step and only the last ends
         // the turn. -1 (a turn that persisted no reply — an abort before any output)
         // matches no index below, so nothing is written and the append still succeeds.
-        const rollupRow = messages.reduce((last, m, i) => (m.role === "assistant" ? i : last), -1);
+        const lastAssistantRow = messages.reduce((last, m, i) => (m.role === "assistant" ? i : last), -1);
         return withTransaction(pool, "thread-history.appendTurn", (client) =>
             // Serialize concurrent appends on this thread — without the lock, two
             // transactions can both read the same MAX(seq) and collide on the
@@ -430,20 +451,22 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                                         // `message_envelope::json`, never `::jsonb`; `display_envelope` and
                                         // `reported_usage::jsonb`, never `::json` — see the column comments
                                         // in the state-init DDL.
-                                        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens, reported_usage)
-                     VALUES ($1, $2, $3::json, $4::jsonb, $5, $6::jsonb)
+                                        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens, reported_usage, turn_duration_ms)
+                     VALUES ($1, $2, $3::json, $4::jsonb, $5, $6::jsonb, $7)
                      ON CONFLICT (thread_id, seq) DO UPDATE
                        SET message_envelope = EXCLUDED.message_envelope,
                            display_envelope = EXCLUDED.display_envelope,
                            tokens = EXCLUDED.tokens,
-                           reported_usage = EXCLUDED.reported_usage`,
+                           reported_usage = EXCLUDED.reported_usage,
+                           turn_duration_ms = EXCLUDED.turn_duration_ms`,
                                         [
                                             threadId,
                                             startSeq + i,
                                             serializeEnvelope(message),
                                             i === 0 ? displayEnvelope : null,
                                             countTokens(message.content),
-                                            i === rollupRow ? rollup : null,
+                                            i === lastAssistantRow ? rollup : null,
+                                            i === lastAssistantRow ? duration : null,
                                         ],
                                     ),
                                 ).map(() => undefined),
@@ -606,12 +629,16 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                 // from a `TokenUsageRollup` — and null is preserved as null by the
                 // spread below rather than read as a rollup.
                 reported_usage: TokenUsageRollup | null;
+                // The driver hands a bigint back as text, and the `::text` cast below
+                // says so. `Number` makes the crossing in one place — the way every
+                // other read of a bigint column in this module does.
+                turn_duration_ms: string | null;
             }>(
                 // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
                 // `seq::text AS seq` output alias (Postgres resolves an unqualified
                 // ORDER BY name to the output column), sorting the bigint as text:
                 // "10" before "2". The qualified name forces the bigint column.
-                `SELECT seq::text AS seq, message_envelope, display_envelope, reported_usage
+                `SELECT seq::text AS seq, message_envelope, display_envelope, reported_usage, turn_duration_ms::text AS turn_duration_ms
          FROM messages WHERE thread_id = $1
          ORDER BY messages.seq ASC`,
                 [threadId],
@@ -619,6 +646,7 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
 
             // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
             // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
+            // The duration obeys the same rule, and it reads from its own column.
             const stored: StoredMessage[] = await Promise.all(
                 rows.map(async (r) => {
                     const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
@@ -630,6 +658,7 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                         message: envelope.message,
                         ...(displayEnvelope ? { displayEnvelope } : {}),
                         ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
+                        ...(r.turn_duration_ms === null ? {} : { durationMs: Number(r.turn_duration_ms) }),
                     };
                 }),
             );

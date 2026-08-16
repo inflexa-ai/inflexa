@@ -38,6 +38,25 @@ const ChartTransformSchema = z.enum(["log10", "neg_log10", "abs", "rank"]);
  */
 const ChartOrientationSchema = z.enum(["vertical", "horizontal"]);
 
+/**
+ * The threshold pair of a preset that classifies its rows.
+ *
+ * One declaration moves the guide lines and the color split together. Thus the split always lands on the
+ * drawn lines, and no second declaration can disagree with the first one.
+ */
+const ChartThresholdsSchema = z.strictObject({
+    significance: z
+        .number()
+        .positive()
+        .describe(
+            "The significance cut of the p column, for example `0.05`. The guide line sits at the transformed value of it, and a point past the line reads as significant.",
+        ),
+    effect: z
+        .number()
+        .positive()
+        .describe("The effect cut, for example `1`. One guide line sits at each side of zero, and a point past a line reads as a signal on that side."),
+});
+
 /** The teaching text of the orientation. The quick path and the bar series form both carry it. */
 const ORIENTATION_DESCRIPTION =
     "The arrangement of the bars. `vertical` is the default, and it draws the categories along the bottom. `horizontal` draws them up the left side, and it is the form to reach for when a category name is long, for example a gene-set name: a long name reads on the y axis, and it is unreadable slanted under a vertical bar. The channels do not move with the orientation. `x` names the category column and `y` names the value column in both.";
@@ -226,19 +245,30 @@ export const ChartBlockSchema = z
         orientation: ChartOrientationSchema.optional().describe(
             `${ORIENTATION_DESCRIPTION} The field belongs to the \`bar\` chart type, and every other type refuses it.`,
         ),
+        thresholds: ChartThresholdsSchema.optional().describe(
+            "The threshold pair of a `volcano`. It replaces the preset defaults of `0.05` and `1`, and it moves the guide lines and the color split together. State it to draw the volcano of a corrected significance column. Every other chart type reads no threshold, thus every other type refuses the field.",
+        ),
         composition: ChartCompositionSchema.optional().describe("The full grammar. Omit `chartType` and `encoding` with it."),
         caption: z.string().optional(),
     })
     .refine(
         (block) => {
             const quickPath = block.chartType !== undefined && block.encoding !== undefined;
-            // The orientation is a quick-path field. A composition states the arrangement on its own bar
-            // series, thus a block-level orientation beside one names an arrangement that nothing reads.
-            const partialQuickPath = block.chartType !== undefined || block.encoding !== undefined || block.orientation !== undefined;
+            // The orientation and the thresholds are quick-path fields. A composition states the arrangement
+            // on its own bar series, and it draws its own guide lines. Thus either field beside a composition
+            // names a rule that nothing reads.
+            const partialQuickPath =
+                block.chartType !== undefined || block.encoding !== undefined || block.orientation !== undefined || block.thresholds !== undefined;
             return block.composition !== undefined ? !partialQuickPath : quickPath;
         },
-        { message: "A chart carries either `chartType` with `encoding`, or `composition`. The `orientation` belongs to the quick path." },
-    );
+        { message: "A chart carries either `chartType` with `encoding`, or `composition`. The `orientation` and the `thresholds` belong to the quick path." },
+    )
+    .refine((block) => block.thresholds === undefined || block.chartType === "volcano", {
+        // The member is a pair, and the volcano is the one type that reads both values. A silent ignore
+        // would teach the author a field that does nothing, thus the parse states the fault.
+        message: "`thresholds` is legal beside the `volcano` chart type alone. Every other type reads no threshold pair.",
+        path: ["thresholds"],
+    });
 
 /** A static image artifact. An image has no per-cell address, thus it is pinned whole-file. */
 export const FigureBlockSchema = z.strictObject({
@@ -338,6 +368,7 @@ export type ChartEncoding = z.infer<typeof ChartEncodingSchema>;
 export type ChartSeries = z.infer<typeof ChartSeriesSchema>;
 export type ChartAnnotation = z.infer<typeof ChartAnnotationSchema>;
 export type ChartAxes = z.infer<typeof ChartAxesSchema>;
+export type ChartThresholds = z.infer<typeof ChartThresholdsSchema>;
 export type ChartComposition = z.infer<typeof ChartCompositionSchema>;
 export type ChartType = z.infer<typeof ChartTypeSchema>;
 export type TextList = z.infer<typeof TextListSchema>;

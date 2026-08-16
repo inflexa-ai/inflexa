@@ -254,9 +254,66 @@ describe("buildOutline", () => {
 });
 
 describe("readBlock", () => {
-    it("reads an atom in full, with its binding", () => {
+    it("reads an atom in full, with its binding, and elides the stamped hash", () => {
         const found = readBlock(nestedDraft, "m1");
-        expect(found).toEqual({ kind: "metric", id: "m1", label: "Coverage", value: valueReference() });
+        // The pinned snapshot owns the hash, thus the agent never reads a value that it could mistype.
+        expect(found).toEqual({
+            kind: "metric",
+            id: "m1",
+            label: "Coverage",
+            value: { kind: "artifact-value", path: OUTPUT_PATH, locator: { column: "padj", rowFilter: { column: "gene", op: "eq", value: "TP53" } } },
+        });
+    });
+
+    it("elides the hash of every binding of a claim, and of each derivation input", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Results",
+                    blocks: [
+                        {
+                            kind: "claim",
+                            id: "c1",
+                            content: { prose: "The signal holds." },
+                            bindings: [
+                                citationReference(),
+                                tableReference(),
+                                {
+                                    kind: "derivation",
+                                    op: "ratio",
+                                    inputs: [valueReference(), valueReference()],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        const found = readBlock(draft, "c1");
+
+        expect(JSON.stringify(found)).not.toContain(OUTPUT_HASH);
+        // A citation pins no artifact, thus the read gives it whole.
+        expect(found).toEqual({
+            kind: "claim",
+            id: "c1",
+            content: { prose: "The signal holds." },
+            bindings: [
+                citationReference(),
+                { kind: "artifact-table", path: OUTPUT_PATH },
+                {
+                    kind: "derivation",
+                    op: "ratio",
+                    inputs: [
+                        { kind: "artifact-value", path: OUTPUT_PATH, locator: { column: "padj", rowFilter: { column: "gene", op: "eq", value: "TP53" } } },
+                        { kind: "artifact-value", path: OUTPUT_PATH, locator: { column: "padj", rowFilter: { column: "gene", op: "eq", value: "TP53" } } },
+                    ],
+                },
+            ],
+        });
     });
 
     it("reads a section as its own fields and the id of each child, and never the subtree", () => {

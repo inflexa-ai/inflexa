@@ -64,6 +64,7 @@ describe("createReportVersionStore", () => {
         const ref = (
             await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: "conv-anchor", parentSeq: 7 })
         )._unsafeUnwrap();
+        expect(ref.outcome).toBe("created");
 
         const version = (await store.getVersion(ref.versionId))._unsafeUnwrap();
         expect(version).not.toBeNull();
@@ -77,31 +78,85 @@ describe("createReportVersionStore", () => {
         expect(version!.createdAt).toBeInstanceOf(Date);
     });
 
-    it("refuses a second record on one thread, and holds one row", async () => {
+    it("replaces the triple of one thread on a later record, and holds one row", async () => {
         const analysisId = "analysis-one-per-thread";
         await seedAnalysis(analysisId);
         const threadId = "thread-one-per-thread";
 
-        const first = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const first = (
+            await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: "first-anchor", parentSeq: 1 })
+        )._unsafeUnwrap();
 
-        const failure = (
-            await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
-        )._unsafeUnwrapErr();
-        expect(failure.type).toBe("thread_already_holds_version");
-        if (failure.type === "thread_already_holds_version") {
-            expect(failure.threadId).toBe(threadId);
-        }
+        const amendedDocument: ReportDocument = {
+            title: "An amended report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Findings",
+                    blocks: [{ kind: "text", id: "t1", content: { prose: "An amended finding." } }],
+                },
+            ],
+        };
+        const amendedSnapshot: ReportSnapshot = { artifacts: { "runs/r2/output/de.csv": { hash: "def456", fileType: "output" } } };
 
-        // The thread still holds only the first version.
+        const second = (
+            await store.record({
+                document: amendedDocument,
+                snapshot: amendedSnapshot,
+                analysisId,
+                threadId,
+                parentThreadId: "second-anchor",
+                parentSeq: 9,
+            })
+        )._unsafeUnwrap();
+
+        // The replace lands on the row that stood, thus the version keeps its name.
+        expect(second.versionId).toBe(first.versionId);
+        expect(second.outcome).toBe("replaced");
+
+        // The whole triple carries the second record: the document, the snapshot, and the anchor.
         const version = (await store.getThreadVersion(threadId))._unsafeUnwrap();
         expect(version).not.toBeNull();
         expect(version!.versionId).toBe(first.versionId);
+        expect(version!.document).toEqual(amendedDocument);
+        expect(version!.snapshot).toEqual(amendedSnapshot);
+        expect(version!.parentThreadId).toBe("second-anchor");
+        expect(version!.parentSeq).toBe(9);
 
         const { rows } = await pool.query<{ n: number }>({
             text: "SELECT COUNT(*)::int AS n FROM cortex_report_versions WHERE thread_id = $1",
             values: [threadId],
         });
         expect(rows[0]!.n).toBe(1);
+    });
+
+    it("names a creation, then a replacement, on the two records of one thread", async () => {
+        const analysisId = "analysis-record-outcome";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-record-outcome";
+
+        const first = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        expect(first.outcome).toBe("created");
+
+        const second = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        expect(second.outcome).toBe("replaced");
+        expect(second.versionId).toBe(first.versionId);
+    });
+
+    it("keeps the record time of the first record across a replace", async () => {
+        const analysisId = "analysis-replace-time";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-replace-time";
+
+        const ref = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const created = (await store.getVersion(ref.versionId))._unsafeUnwrap()!.createdAt;
+
+        (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+
+        // The row keeps the time of its first record, thus the column reads as its name states.
+        const replaced = (await store.getVersion(ref.versionId))._unsafeUnwrap()!.createdAt;
+        expect(replaced.getTime()).toBe(created.getTime());
     });
 
     it("records the first version of each of two threads, and reads each back", async () => {

@@ -1141,6 +1141,118 @@ describe("appendTurn turn usage rollup", () => {
     });
 });
 
+// --- turn duration ----------------------------------------------------------
+
+describe("appendTurn turn duration", () => {
+    const ROLLUP: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
+    const DURATION_MS = 8_412;
+
+    /**
+     * Every row's stored duration, oldest-first, as the column holds it. Asserted
+     * at the column rather than through `loadPage`, because "on this row and on NO
+     * other" is a storage fact: a read that folded the figure onto a neighbour
+     * would satisfy a display-level assertion while the write placed it wrong.
+     */
+    async function storedDurations(threadId = THREAD): Promise<(string | null)[]> {
+        const { rows } = await pool.query<{ turn_duration_ms: string | null }>(
+            "SELECT turn_duration_ms::text AS turn_duration_ms FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC",
+            [threadId],
+        );
+        return rows.map((r) => r.turn_duration_ms);
+    }
+
+    it("stores the duration on the turn's last assistant row and reads it back beside the rollup", async () => {
+        // A serial-tool turn: two assistant rows, and only the LAST one ends the turn.
+        const turn = [
+            userText("run the comparison"),
+            assistantToolUse("call-1", "run_pca", { k: 2 }),
+            userToolResult("call-1", "done"),
+            assistantText("here are the results"),
+        ];
+        (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [], turnUsage: ROLLUP, turnDurationMs: DURATION_MS }))._unsafeUnwrap();
+
+        expect(await storedDurations()).toEqual([null, null, null, String(DURATION_MS)]);
+
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.messages.map((m) => m.durationMs)).toEqual([undefined, undefined, undefined, DURATION_MS]);
+        // The two figures ride one row, thus a reloaded header carries both of them.
+        expect(page.messages.at(-1)!.usage).toEqual(ROLLUP);
+    });
+
+    it("keeps the duration of a turn that reported no quantity", async () => {
+        // The rollup goes absent under its own predicate. The duration holds a
+        // column of its own, thus the measured time survives that absence — the
+        // reason the two figures are not one stored record.
+        (
+            await history.appendTurn(THREAD, {
+                modelMessages: [userText("question one"), assistantText("answer one")],
+                displayMessages: [],
+                turnUsage: {},
+                turnDurationMs: DURATION_MS,
+            })
+        )._unsafeUnwrap();
+
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.messages[1]!.durationMs).toBe(DURATION_MS);
+        expect(page.messages[1]!.usage).toBeUndefined();
+    });
+
+    it("stores no duration when the caller supplies none", async () => {
+        (await append(THREAD, [userText("question one"), assistantText("answer one")], ROLLUP))._unsafeUnwrap();
+
+        expect(await storedDurations()).toEqual([null, null]);
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.messages[1]!.durationMs).toBeUndefined();
+        // Absent, not present-and-undefined: a consumer that spreads the row must
+        // not acquire a `durationMs` key that overwrites one.
+        expect("durationMs" in page.messages[1]!).toBe(false);
+    });
+
+    it("reads a row written before the column existed back as absent", async () => {
+        // The migration is additive with no backfill, thus a row that predates the
+        // column is indistinguishable from a turn that nobody measured. An INSERT
+        // that names neither the column nor a default is exactly that row.
+        await pool.query("INSERT INTO messages (thread_id, seq, message_envelope, tokens) VALUES ($1, 0, $2::json, 4)", [
+            THREAD,
+            JSON.stringify(envelopeMessage(userText("written before durations existed"))),
+        ]);
+
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.messages[0]!.durationMs).toBeUndefined();
+        expect("durationMs" in page.messages[0]!).toBe(false);
+    });
+
+    it("takes the duration with it when the tail turn is retracted", async () => {
+        // Free by construction — the duration is a column on the row — and pinned
+        // here so a later move to a side table cannot orphan the time of a turn
+        // behind a transcript that no longer holds that turn.
+        (
+            await history.appendTurn(THREAD, {
+                modelMessages: [userText("first question"), assistantText("first answer")],
+                displayMessages: [],
+                turnUsage: ROLLUP,
+                turnDurationMs: DURATION_MS,
+            })
+        )._unsafeUnwrap();
+        (
+            await history.appendTurn(THREAD, {
+                modelMessages: [userText("second question"), assistantText("second answer")],
+                displayMessages: [],
+                turnUsage: ROLLUP,
+                turnDurationMs: 2_000,
+            })
+        )._unsafeUnwrap();
+        expect(await storedDurations()).toEqual([null, String(DURATION_MS), null, "2000"]);
+
+        (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+
+        expect(await storedDurations()).toEqual([null, String(DURATION_MS)]);
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.messages.map((m) => m.durationMs)).toEqual([undefined, DURATION_MS]);
+        expect(page.messages.map((m) => m.usage)).toEqual([undefined, ROLLUP]);
+    });
+});
+
 // --- latestSeq --------------------------------------------------------------
 
 describe("latestSeq", () => {

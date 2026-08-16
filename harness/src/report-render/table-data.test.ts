@@ -122,7 +122,7 @@ describe("tableDataAsset", () => {
     }
 
     it("registers the payload under the global map, keyed by the block id", () => {
-        const asset = tableDataAsset("tbl-1", payload);
+        const asset = tableDataAsset(["tbl-1"], payload);
 
         expect(asset.bytes).toContain(`window.${TABLE_DATA_GLOBAL}`);
         expect(asset.bytes).toContain(`[${JSON.stringify("tbl-1")}]=`);
@@ -132,7 +132,7 @@ describe("tableDataAsset", () => {
     it("parses the payload instead of writing an object literal, thus a prototype key stays a column", () => {
         const columns = ["__proto__", "constructor"];
         const rows = JSON.parse('[{"__proto__":"a","constructor":"b"}]') as Record<string, string | number>[];
-        const asset = tableDataAsset("tbl-1", encodeTablePayload(columns, rows, displayOf(columns)));
+        const asset = tableDataAsset(["tbl-1"], encodeTablePayload(columns, rows, displayOf(columns)));
 
         // An object literal with a `__proto__` key sets the prototype of the object. The parse defines an
         // own property for every key, thus the payload reaches the page with the columns that it declares.
@@ -142,26 +142,45 @@ describe("tableDataAsset", () => {
     });
 
     it("names the file by the content hash of its bytes", () => {
-        const asset = tableDataAsset("tbl-1", payload);
+        const asset = tableDataAsset(["tbl-1"], payload);
 
         expect(asset.name).toMatch(/^t-[0-9a-f]{12}\.data\.js$/);
         // The name is the address of the bytes, thus one payload gives one name.
-        expect(tableDataAsset("tbl-1", payload).name).toBe(asset.name);
+        expect(tableDataAsset(["tbl-1"], payload).name).toBe(asset.name);
     });
 
     it("gives a different name to a different payload and to a different block", () => {
         const other = encodeTablePayload(["gene"], [{ gene: "MYC" }], displayOf(["gene"]));
 
-        expect(tableDataAsset("tbl-1", other).name).not.toBe(tableDataAsset("tbl-1", payload).name);
-        expect(tableDataAsset("tbl-2", payload).name).not.toBe(tableDataAsset("tbl-1", payload).name);
+        expect(tableDataAsset(["tbl-1"], other).name).not.toBe(tableDataAsset(["tbl-1"], payload).name);
+        expect(tableDataAsset(["tbl-2"], payload).name).not.toBe(tableDataAsset(["tbl-1"], payload).name);
     });
 
     it("keeps a hostile block id and a hostile cell as data", () => {
         const hostile = encodeTablePayload(["gene"], [{ gene: "</script><script>alert(1)</script>" }], displayOf(["gene"]));
-        const asset = tableDataAsset("</script>", hostile);
+        const asset = tableDataAsset(["</script>", "</script>-2"], hostile);
 
         // The payload rides JSON, and the escape of the sink covers the one sequence that closes an element.
+        // Each id of the asset takes the same escape, thus a second reader opens no hole.
         expect(asset.bytes).not.toContain("</script>");
         expect(asset.bytes).toContain("\\u003c/script>");
+    });
+
+    it("registers one payload under each reader, thus two blocks read one object", () => {
+        const asset = tableDataAsset(["tbl-1", "cht-1"], payload);
+        const registry = registryOf(asset.bytes);
+
+        // The rows parse one time. The second id takes the same object, thus the page holds one copy of the
+        // table however many blocks read it.
+        expect(registry["tbl-1"]).toEqual(payload);
+        expect(registry["cht-1"]).toBe(registry["tbl-1"]);
+        // The name addresses the bytes, and the readers are part of them.
+        expect(asset.name).not.toBe(tableDataAsset(["tbl-1"], payload).name);
+    });
+
+    it("carries the pre-bound total, and the row count where the caller knows no larger one", () => {
+        const rows = [{ gene: "TP53" }, { gene: "MYC" }];
+        expect(encodeTablePayload(["gene"], rows, displayOf(["gene"]), 14201).total).toBe(14201);
+        expect(encodeTablePayload(["gene"], rows, displayOf(["gene"])).total).toBe(2);
     });
 });

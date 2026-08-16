@@ -7,6 +7,7 @@
  */
 
 import { AG_GRID_ASSET, assetSource, ECHARTS_ASSET } from "./assets.js";
+import { CHART_SOURCE_MEMBER, POINT_LABEL } from "./chart.js";
 import {
     ECHARTS_THEME_NAME,
     GRID_HEADER_BORDER_PX,
@@ -89,10 +90,185 @@ const NAV_ACTIVE_CLASS = "report-nav-link-active";
 const SPY_BOTTOM_MARGIN_PERCENT = 70;
 
 /**
+ * The client twin of the chart data derivation, as browser source text.
+ *
+ * A dense chart ships no row. Its option states, for each series, the columns of the payload that it reads,
+ * the transform of each column, the split that it holds, and the rows that carry a point label. This
+ * fragment reads those descriptors and builds the data of each series.
+ *
+ * The fragment writes its own constants, because a page script reads no module binding. Each rule here is
+ * the twin of one rule of the server derivation: the number read of a cell, the four transforms, the
+ * competition rank, the compare of a sort, and the three-way classification of a preset. A shared test
+ * vector runs the transforms of both sides over one set of cells, thus the two cannot drift in silence.
+ *
+ * The build reads the decoded rows of the payload. The decoder runs before this script, thus a row is a
+ * record and a cell reads by its column name.
+ */
+export const CHART_SERIES_BUILDER = `function reportNumber(cell) {
+  if (typeof cell === "number") {
+    return isFinite(cell) ? cell : null;
+  }
+  if (typeof cell === "string") {
+    var trimmed = cell.trim();
+    if (trimmed === "") {
+      return null;
+    }
+    var parsed = Number(trimmed);
+    return isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+function reportRank(values) {
+  var counts = Object.create(null);
+  var distinct = [];
+  for (var i = 0; i < values.length; i++) {
+    if (values[i] === null) {
+      continue;
+    }
+    var key = String(values[i]);
+    if (counts[key] === undefined) {
+      counts[key] = 0;
+      distinct.push(values[i]);
+    }
+    counts[key] += 1;
+  }
+  distinct.sort(function (a, b) {
+    return a - b;
+  });
+  var places = Object.create(null);
+  var place = 1;
+  for (var d = 0; d < distinct.length; d++) {
+    places[String(distinct[d])] = place;
+    place += counts[String(distinct[d])];
+  }
+  var ranked = [];
+  for (var r = 0; r < values.length; r++) {
+    ranked.push(values[r] === null ? null : places[String(values[r])]);
+  }
+  return ranked;
+}
+function reportTransform(cells, name) {
+  var values = [];
+  for (var i = 0; i < cells.length; i++) {
+    values.push(reportNumber(cells[i]));
+  }
+  if (name === "rank") {
+    return reportRank(values);
+  }
+  var out = [];
+  for (var j = 0; j < values.length; j++) {
+    var value = values[j];
+    if (value === null) {
+      out.push(null);
+    } else if (name === "log10") {
+      out.push(value > 0 ? Math.log10(value) : null);
+    } else if (name === "neg_log10") {
+      out.push(value > 0 ? -Math.log10(value) : null);
+    } else {
+      out.push(Math.abs(value));
+    }
+  }
+  return out;
+}
+function reportColumn(payload, index) {
+  var name = payload.columns[index];
+  var rows = payload.rows || [];
+  var cells = [];
+  for (var i = 0; i < rows.length; i++) {
+    var cell = rows[i][name];
+    cells.push(cell === undefined ? null : cell);
+  }
+  return cells;
+}
+function reportChannel(payload, spec) {
+  var cells = reportColumn(payload, spec.column);
+  return spec.transform === undefined ? cells : reportTransform(cells, spec.transform);
+}
+function reportCompare(a, b) {
+  var left = reportNumber(a);
+  var right = reportNumber(b);
+  if (left !== null && right !== null) {
+    return left - right;
+  }
+  var x = String(a);
+  var y = String(b);
+  if (x < y) {
+    return -1;
+  }
+  return x > y ? 1 : 0;
+}
+function reportCategory(rule, xValue, yValue) {
+  // The rule gives the place of the category, and the descriptor of a series names the same place. Thus
+  // the two sides compare numbers and no category name rides the page.
+  var x = reportNumber(xValue);
+  var y = reportNumber(yValue);
+  if (!rule || x === null || y === null) {
+    return -1;
+  }
+  if (y <= rule.cut) {
+    return 2;
+  }
+  if (x < -rule.effect) {
+    return 0;
+  }
+  return x > rule.effect ? 1 : 2;
+}
+function reportSeriesData(payload, source, rule) {
+  var x = reportChannel(payload, source.x);
+  var y = reportChannel(payload, source.y);
+  var group = source.group === undefined ? null : reportChannel(payload, source.group);
+  var labels = source.label === undefined ? null : reportColumn(payload, source.label);
+  var flags = Object.create(null);
+  var declared = source.flags || [];
+  for (var f = 0; f < declared.length; f++) {
+    flags[declared[f]] = true;
+  }
+  var points = [];
+  for (var r = 0; r < x.length; r++) {
+    if (x[r] === null || y[r] === null) {
+      continue;
+    }
+    if (group !== null && group[r] !== source.value) {
+      continue;
+    }
+    if (source.category !== undefined && reportCategory(rule, x[r], y[r]) !== source.category) {
+      continue;
+    }
+    points.push({ index: r, x: x[r], y: y[r] });
+  }
+  if (source.sort) {
+    points.sort(function (a, b) {
+      return reportCompare(a.x, b.x);
+    });
+  }
+  var data = [];
+  for (var p = 0; p < points.length; p++) {
+    var point = points[p];
+    var pair = source.swap ? [point.y, point.x] : [point.x, point.y];
+    var label = labels === null ? null : labels[point.index];
+    var named = label !== null && label !== undefined;
+    if (!named && flags[point.index] !== true) {
+      data.push(pair);
+      continue;
+    }
+    var item = { value: pair, name: named ? String(label) : String(point.x) };
+    if (flags[point.index] === true) {
+      item.label = ${JSON.stringify(POINT_LABEL)};
+    }
+    data.push(item);
+  }
+  return data;
+}`;
+
+/**
  * The page-side script that wires each chart. It finds every chart container, reads the option JSON from
  * the sibling `<script type="application/json">` element, and initializes ECharts with the registered
  * theme. The skeleton registers the theme before this script runs. A resize handler keeps each chart
  * fit to the window.
+ *
+ * An option that carries the data-source member holds no row. The script then reads the registered payload
+ * of the artifact and builds the data of each series from the descriptors. A mount whose payload the
+ * registry does not hold keeps its empty card, and the walk continues.
  *
  * The script signals readiness when the bootstrap completes, and immediately when no chart exists. It sets
  * the `window.__inflexaThemeReady` sentinel and dispatches the `inflexa-theme-ready` event on the document.
@@ -107,6 +283,7 @@ const SPY_BOTTOM_MARGIN_PERCENT = 70;
  * diagnose, thus it must never stop a sibling chart and it must never withhold the readiness signal.
  */
 export const CHART_BOOTSTRAP = `(function () {
+  ${CHART_SERIES_BUILDER}
   function signalReady() {
     window.${THEME_READY_SENTINEL} = true;
     document.dispatchEvent(new Event(${JSON.stringify(THEME_READY_EVENT)}));
@@ -123,6 +300,7 @@ export const CHART_BOOTSTRAP = `(function () {
     whenRevealed(signalReady);
     return;
   }
+  var registry = window.${TABLE_DATA_GLOBAL};
   var containers = document.querySelectorAll("[data-echarts-id]");
   for (var i = 0; i < containers.length; i++) {
     var container = containers[i];
@@ -132,6 +310,19 @@ export const CHART_BOOTSTRAP = `(function () {
     }
     try {
       var option = JSON.parse(optionScript.textContent || "{}");
+      var source = option.${CHART_SOURCE_MEMBER};
+      if (source) {
+        // The member is no field of the chart runtime, thus it leaves the option before the runtime reads it.
+        delete option.${CHART_SOURCE_MEMBER};
+        var payload = registry && Object.prototype.hasOwnProperty.call(registry, source.payload) ? registry[source.payload] : null;
+        if (!payload || !payload.columns) {
+          continue;
+        }
+        var series = option.series || [];
+        for (var s = 0; s < series.length && s < source.series.length; s++) {
+          series[s].data = reportSeriesData(payload, source.series[s], source.rule);
+        }
+      }
       var chart = echarts.init(container, ${JSON.stringify(ECHARTS_THEME_NAME)});
       chart.setOption(option);
     } catch (cause) {
@@ -680,6 +871,9 @@ export const GRID_BOOTSTRAP = `(function () {
         columns.push(columnOf(payload.columns[c], payload.display[c] || {}));
       }
       var rows = payload.rows || [];
+      // The total is the row count of the artifact before a row bound cut it. A payload that carries none
+      // states the whole artifact already, thus the row count answers.
+      var total = typeof payload.total === "number" ? payload.total : rows.length;
       var shown = rows.length < ${GRID_VISIBLE_ROWS} ? rows.length : ${GRID_VISIBLE_ROWS};
       var rowSpace = ${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX} + shown * ${GRID_ROW_HEIGHT_PX};
       mount.style.height = rowSpace + "px";
@@ -693,7 +887,7 @@ export const GRID_BOOTSTRAP = `(function () {
         // delay is short and the value arrives while the pointer is still on the cell.
         tooltipShowDelay: ${GRID_TOOLTIP_DELAY_MS},
         onFirstDataRendered: onFirstRender(mount, rowSpace),
-        onModelUpdated: onModelUpdate(count, rows.length)
+        onModelUpdated: onModelUpdate(count, total)
       });
       bindPrint(api, mount, note, rows);
     } catch (cause) {

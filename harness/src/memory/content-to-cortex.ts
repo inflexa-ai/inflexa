@@ -128,8 +128,9 @@ async function rowToParts(message: StoredMessage["message"], outcomes: Map<strin
  * optional and each tool-call part reports its outcome either way.
  * A row carrying the interruption marker sets `interrupted: true` on the message
  * it lands in, including when coalesced into an assistant run; a row carrying a
- * stored turn rollup sets `usage` the same way, so a reloaded conversation shows
- * the cost the live turn showed without a second query.
+ * stored turn rollup sets `usage` the same way. A row that carries a stored turn
+ * duration sets `durationMs` the same way too. Thus a reloaded conversation shows
+ * the cost and the time that the live turn showed, with no second query.
  *
  * Coalescing mirrors the live SSE shape. The agent loop persists each assistant
  * step (typically a single `tool_use`) as its own row, and the `tool_result`
@@ -172,16 +173,17 @@ export async function contentToCortexMessages(messages: readonly StoredMessage[]
         // assistant run it trailed, so fold the flag onto the previous emitted assistant.
         const interrupted = isInterruptedMessage(message.message);
         if (parts.length === 0) {
-            // A row's stored rollup is a fact about the turn, not about what the row
-            // renders — so like the interruption marker it is read before the
-            // zero-parts drop and folded onto the assistant run it trailed. Without
-            // this, a turn whose last assistant row held only unrendered blocks
-            // (reasoning alone) would lose the figure to the drop, which is the exact
-            // disappearance persisting it exists to fix.
+            // The stored rollup of a row and its stored duration are facts about the turn,
+            // and not about what the row renders. Thus the read of both comes before the
+            // zero-parts drop, exactly as the read of the interruption marker does. The
+            // fold then puts them on the assistant run that they trailed. Without the fold,
+            // a turn whose last assistant row held unrendered blocks alone would lose the
+            // two figures to the drop. That loss is the one that the stored figures end.
             const prev = out[out.length - 1];
             if (prev && prev.role === "assistant") {
                 if (interrupted) prev.interrupted = true;
                 if (message.usage) prev.usage = message.usage;
+                if (message.durationMs !== undefined) prev.durationMs = message.durationMs;
             }
             continue;
         }
@@ -199,16 +201,20 @@ export async function contentToCortexMessages(messages: readonly StoredMessage[]
         if (prev && prev.role === role && role === "assistant") {
             prev.parts.push(...parts);
             if (interrupted) prev.interrupted = true;
-            // Coalescing is what rebuilds the one-bubble-per-turn shape, and the rollup
-            // rides the turn's LAST assistant row — so the run keeps whichever of its
-            // rows carried one. Assigning rather than merging is deliberate: two rollups
-            // in one run would mean two turns were merged, which coalescing never does.
+            // Coalescing rebuilds the one-bubble-per-turn shape, and the two figures ride
+            // the LAST assistant row of the turn. Thus the run keeps the figures of
+            // whichever row carried them. An assignment, and not a merge, is deliberate:
+            // two rollups in one run would mean that coalescing merged two turns, and it
+            // never does. The duration reads against `undefined`, because a measured zero
+            // is a figure and an absent value alone means that nobody measured the turn.
             if (message.usage) prev.usage = message.usage;
+            if (message.durationMs !== undefined) prev.durationMs = message.durationMs;
             continue;
         }
         const cortex: CortexMessage = { id: String(message.seq), role, parts };
         if (interrupted) cortex.interrupted = true;
         if (message.usage) cortex.usage = message.usage;
+        if (message.durationMs !== undefined) cortex.durationMs = message.durationMs;
         out.push(cortex);
     }
     return out;

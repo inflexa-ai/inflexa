@@ -40,12 +40,28 @@ import {
 } from "../contracts/report-blocks.js";
 import { declaredForColumn, type ArtifactTableReference } from "../contracts/report-reference.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
-import { expandPreset, isPresetChartType, presetAxisTitles, type PresetAxisTitles, type PresetChartType } from "./chart-presets.js";
-import { MUTED_CHART_COLOR } from "./design.js";
+import {
+    expandPreset,
+    isPresetChartType,
+    presetAxisTitles,
+    type PresetAxisTitles,
+    type PresetChartType,
+    type PresetClassification,
+    type PresetRule,
+} from "./chart-presets.js";
+import {
+    CHART_INLINE_OPTION_BOUND,
+    MUTED_CHART_COLOR,
+    SCATTER_CROWD_OPACITY,
+    SCATTER_CROWD_ROWS,
+    SCATTER_CROWD_SYMBOL_SIZE,
+    SCATTER_HOVER_ROWS,
+    SCATTER_HOVER_SYMBOL_SIZE,
+} from "./design.js";
 import type { RenderProblem } from "./types.js";
 
 /** One cell of a resolved row. A cell is one string or one number. */
-type Cell = string | number;
+export type Cell = string | number;
 
 /** One resolved row of the bound table, keyed by column name. */
 export type ChartRow = Record<string, Cell>;
@@ -66,10 +82,32 @@ type ColumnLabels = ArtifactTableReference["columnLabels"];
 type ChartOrientation = ChartSeries["orientation"];
 
 /**
- * The category value that carries no finding. A preset draws the significance split itself, thus the
- * convention writes the insignificant group with this one literal.
+ * The category values that carry no finding.
+ *
+ * A preset draws the significance split itself, and an agent derives the same split into a column of its
+ * own. Such a column writes the null group with one of these three forms.
  */
-const NULL_CATEGORY = "ns";
+const NULL_CATEGORY_TOKENS: ReadonlySet<string> = new Set(["ns", "n.s.", "not significant"]);
+
+/**
+ * True when one category value states no finding.
+ *
+ * The test reads the prettified form of the value and it folds the case, thus `NS` and `not_significant`
+ * both match. `toLowerCase` reads no locale, thus one value gives one answer on every host.
+ */
+function isNullCategory(value: Cell | undefined): boolean {
+    return value !== undefined && NULL_CATEGORY_TOKENS.has(categoryName(value).trim().toLowerCase());
+}
+
+/**
+ * The item style of one grouped series of a base chart type.
+ *
+ * A null category states no finding, thus it recedes behind the categories that do. Every other series
+ * names no color, and the theme palette assigns one by the series order.
+ */
+function nullCategoryStyle(name: Cell | undefined): EchartOption {
+    return isNullCategory(name) ? { itemStyle: { color: MUTED_CHART_COLOR } } : {};
+}
 
 /**
  * True when one declared series draws its bars across the plot.
@@ -206,13 +244,72 @@ export function deriveChartOption(block: ChartBlock, rows: readonly ChartRow[], 
 }
 
 /**
+ * Derive the option of one chart, and read the shared payload of its artifact where the inline form grows
+ * too large.
+ *
+ * A chart under the bound keeps its inline data, byte for byte as `deriveChartOption` gives it. Past the
+ * bound the series carry no row, and the option states how the page builds each series from the columnar
+ * payload of the artifact. Thus one dense chart costs the page one option and no second copy of the rows.
+ *
+ * A chart whose series describes no page-side build stays inline. A base chart type bins, summarizes, or
+ * addresses a pair, thus no descriptor states its data and the whole option rides the page.
+ */
+export function deriveChartRender(
+    block: ChartBlock,
+    rows: readonly ChartRow[],
+    columns: readonly string[] | undefined,
+    target: ChartPayloadTarget,
+): Result<ChartRender, RenderProblem> {
+    const collector: SourceCollector = { columns: target.columns, series: [], failed: false };
+    return deriveRaw(block, rows, columns, collector).map((raw) => {
+        const option = normalizeEchartSpec(raw, { title: block.title });
+        const series = option.series;
+        if (!Array.isArray(series) || JSON.stringify(option).length <= CHART_INLINE_OPTION_BOUND) {
+            return { option, readsPayload: false };
+        }
+        if (collector.failed || collector.series.length === 0 || collector.series.length !== series.length) {
+            return { option, readsPayload: false };
+        }
+        return { option: sourcedOption(option, series, collector, target.key), readsPayload: true };
+    });
+}
+
+/**
+ * The option of a chart that reads the payload: the derived option with no row, and the data source.
+ *
+ * Each series keeps every field that the derivation gave it, and it loses its data alone. Thus the axes,
+ * the names, the colors, and the symbol ladder of a dense chart read as they read inline, and the page
+ * fills one member of each series.
+ */
+function sourcedOption(option: EchartOption, series: readonly unknown[], collector: SourceCollector, key: string): EchartOption {
+    const source: ChartDataSource = {
+        payload: key,
+        ...(collector.rule !== undefined ? { rule: collector.rule } : {}),
+        series: collector.series,
+    };
+    return {
+        ...option,
+        series: series.map((entry) => ({ ...(entry as EchartOption), data: [] })),
+        [CHART_SOURCE_MEMBER]: source,
+    };
+}
+
+/**
  * Dispatch the grammar of one chart block.
  *
  * A composition derives directly. A preset expands into a composition first. A quick path that names a
  * point routes through a one-series composition, because a base rule builds a bare pair and only a
  * composition item carries a name. Every other quick path reaches the fixed rule of its base type.
+ *
+ * The collector rides the composition path alone. A base rule collects nothing, thus its chart keeps its
+ * inline data whatever its size.
  */
-function deriveRaw(block: ChartBlock, rows: readonly ChartRow[], columns?: readonly string[]): Result<EchartOption, RenderProblem> {
+function deriveRaw(
+    block: ChartBlock,
+    rows: readonly ChartRow[],
+    columns?: readonly string[],
+    collector?: SourceCollector,
+): Result<EchartOption, RenderProblem> {
     const labels = block.binding.columnLabels;
     const orientation = block.orientation;
     if (orientation !== undefined && block.composition !== undefined) {
@@ -221,8 +318,12 @@ function deriveRaw(block: ChartBlock, rows: readonly ChartRow[], columns?: reado
         // its own bar series and this one would otherwise drop in silence.
         return err(problem(block.id, "A composition states the arrangement on its own bar series, thus the chart carries no orientation beside it."));
     }
+    if (block.thresholds !== undefined && block.composition !== undefined) {
+        // A composition draws its own guide lines, thus a declared pair beside one moves nothing.
+        return err(problem(block.id, "A composition draws its own guide lines, thus the chart carries no thresholds beside it."));
+    }
     if (block.composition !== undefined) {
-        return deriveComposition(block.id, block.composition, rows, columns, labels);
+        return deriveComposition(block.id, block.composition, rows, columns, labels, { collector });
     }
     const chartType = block.chartType;
     const encoding = block.encoding;
@@ -235,11 +336,15 @@ function deriveRaw(block: ChartBlock, rows: readonly ChartRow[], columns?: reado
         // A silent ignore would teach the author a field that does nothing, thus the fault is stated.
         return err(problem(block.id, `The ${chartType} chart takes no orientation. An orientation is a rule of the bar alone.`));
     }
+    if (block.thresholds !== undefined && chartType !== "volcano") {
+        // The pair states a significance cut and an effect cut. The volcano is the one type that reads both.
+        return err(problem(block.id, `The ${chartType} chart takes no thresholds. A threshold pair is a rule of the volcano alone.`));
+    }
     if (isPresetChartType(chartType)) {
-        return derivePreset(block.id, chartType, encoding, rows, columns, labels);
+        return derivePreset(block.id, chartType, encoding, rows, columns, labels, block.thresholds, collector);
     }
     if (encoding.label !== undefined) {
-        return deriveLabeled(block.id, chartType, encoding, rows, columns, labels, orientation);
+        return deriveLabeled(block.id, chartType, encoding, rows, columns, labels, orientation, collector);
     }
     const quick = resolveQuickPath(block.id, chartType, encoding, rows, columns, labels, orientation);
     if (quick.isErr()) return err(quick.error);
@@ -274,13 +379,19 @@ function derivePreset(
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
     labels: ColumnLabels,
+    thresholds: ChartBlock["thresholds"],
+    collector: SourceCollector | undefined,
 ): Result<EchartOption, RenderProblem> {
     const x = requireChannel(blockId, preset, encoding, "x");
     if (x.isErr()) return err(x.error);
     const y = requireChannel(blockId, preset, encoding, "y");
     if (y.isErr()) return err(y.error);
-    const composition = expandPreset(preset, x.value, y.value, encoding);
-    return deriveComposition(blockId, composition, rows, columns, labels, presetAxisTitles(preset, x.value));
+    const expansion = expandPreset(preset, x.value, y.value, encoding, thresholds);
+    return deriveComposition(blockId, expansion.composition, rows, columns, labels, {
+        preset: presetAxisTitles(preset, x.value),
+        classification: expansion.classification,
+        collector,
+    });
 }
 
 /** The quick-path types that map onto one series form. A point of such a chart can carry a name. */
@@ -300,6 +411,7 @@ function deriveLabeled(
     columns: readonly string[] | undefined,
     labels: ColumnLabels,
     orientation: ChartOrientation,
+    collector: SourceCollector | undefined,
 ): Result<EchartOption, RenderProblem> {
     const form = LABELED_FORMS[chartType];
     if (form === undefined) {
@@ -325,7 +437,7 @@ function deriveLabeled(
             },
         ],
     };
-    return deriveComposition(blockId, composition, rows, columns, labels);
+    return deriveComposition(blockId, composition, rows, columns, labels, { collector });
 }
 
 /**
@@ -428,6 +540,7 @@ function deriveBar(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     const series = groupedSeries(rows, block.encoding.group, (groupRows, name) => ({
         type: "bar",
         ...(name !== undefined ? { name: categoryName(name) } : {}),
+        ...nullCategoryStyle(name),
         barGap: 0,
         data: groupRows.map((row) => (horizontal ? [row[y], row[x]] : [row[x], row[y]])),
     }));
@@ -459,6 +572,7 @@ function deriveLine(block: ResolvedChartBlock, rows: readonly ChartRow[], column
     const series = groupedSeries(rows, block.encoding.group, (groupRows, name) => ({
         type: "line",
         ...(name !== undefined ? { name: categoryName(name) } : {}),
+        ...nullCategoryStyle(name),
         showSymbol: false,
         data: sortByX(groupRows.map((row) => [row[x], row[y]])),
     }));
@@ -482,6 +596,7 @@ function deriveScatter(block: ResolvedChartBlock, rows: readonly ChartRow[], col
     const series = groupedSeries(rows, block.encoding.group, (groupRows, name) => ({
         type: "scatter",
         ...(name !== undefined ? { name: categoryName(name) } : {}),
+        ...nullCategoryStyle(name),
         large: true,
         largeThreshold: 2000,
         data: groupRows.map((row) => [row[x], row[y]]),
@@ -685,11 +800,20 @@ function derivePie(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
 
 // ── The composition derivation ──────────────────────────────────────────────
 
-/** The row count from which a scatter takes the larger hit radius. */
-const DENSE_SCATTER_ROWS = 2000;
+/**
+ * The density tier of a scatter, over the row count of the bound table.
+ *
+ * `hover` keeps each point reachable under the pointer. `crowd` gives that up: a cloud of ten thousand
+ * points cannot answer one hover, thus the shape of the cloud is what a reader gets.
+ */
+type ScatterDensity = "normal" | "hover" | "crowd";
 
-/** The symbol size of a dense scatter. The ECharts default is 10, thus a dense point takes one step up. */
-const DENSE_SCATTER_SYMBOL_SIZE = 12;
+/** The tier of one row count. The two counts are constants of the design source. */
+function scatterDensity(rowCount: number): ScatterDensity {
+    if (rowCount > SCATTER_CROWD_ROWS) return "crowd";
+    if (rowCount > SCATTER_HOVER_ROWS) return "hover";
+    return "normal";
+}
 
 /** The point count from which the scatter renderer takes its large path. */
 const LARGE_SCATTER_THRESHOLD = 2000;
@@ -711,14 +835,26 @@ const PLAIN_TOOLTIP: EchartOption = { trigger: "item", formatter: "{a}: {c}" };
 /** The tooltip of a composition whose points carry a name. `{b}` is the name of the item. */
 const NAMED_TOOLTIP: EchartOption = { trigger: "item", formatter: "{b}<br/>{a}: {c}" };
 
-/** The label of one named point. `{b}` is the name of the item, thus the label needs no function. */
-const POINT_LABEL: EchartOption = { show: true, formatter: "{b}" };
+/**
+ * The label of one named point. `{b}` is the name of the item, thus the label needs no function.
+ *
+ * A page-side series build writes the same member onto a flagged point, thus one constant answers for the
+ * inline form and the payload form alike.
+ */
+export const POINT_LABEL: EchartOption = { show: true, formatter: "{b}" };
 
-/** One resolved channel: the name that an axis reads, and the value that each row gives. */
+/**
+ * One resolved channel: the name that an axis reads, and the value that each row gives.
+ *
+ * `column` and `transform` are the source of the channel. The name of a transformed channel carries the
+ * transform, thus it names no column of the table and a page-side build needs the two source fields.
+ */
 interface ResolvedChannel {
     name: string;
     values: readonly (Cell | null)[];
     transformed: boolean;
+    column: string;
+    transform?: ChartTransform;
 }
 
 /** One resolved series: the declared series, and the channels that it reads. */
@@ -731,6 +867,102 @@ interface ResolvedSeries {
     label?: readonly (Cell | null)[];
 }
 
+/**
+ * One split of one declared series: the category name, the rows that it holds, and the muted flag.
+ *
+ * `indices` names the rows of the bound table, and never a place inside the split. Thus a per-row flag of
+ * the whole table finds its row in whichever split holds it.
+ *
+ * `muted` is present when the split comes from a preset classification, which states the null category
+ * itself. A split that comes from a group channel leaves it absent, and the null-token test answers.
+ *
+ * `category` is the place of the category in the classification, and it is present under the same
+ * condition. A page-side build reads the place and never the name, thus the two sides compare numbers.
+ */
+interface SeriesSplit {
+    name: Cell | undefined;
+    indices: readonly number[];
+    muted?: boolean;
+    category?: number;
+}
+
+/**
+ * One column that a page-side series build reads: the place of the column in the payload, and the per-row
+ * transform of the channel.
+ */
+export interface ChartColumnSource {
+    readonly column: number;
+    readonly transform?: ChartTransform;
+}
+
+/**
+ * One runtime series, as the page builds it from the columnar payload.
+ *
+ * `value` is the group value of a split by a group channel, and `category` is the place of a preset
+ * category. A series takes one of the two, or neither when it holds every row.
+ *
+ * `label` names the column that names each point, and `flags` names the rows that carry a point label. The
+ * flags are row places of the payload, thus a split carries the flags of its own rows alone.
+ *
+ * `sort` states that the form draws along the x axis, and `swap` states that the pair leads with the value
+ * of a horizontal bar.
+ */
+export interface ChartSeriesSource {
+    readonly x: ChartColumnSource;
+    readonly y: ChartColumnSource;
+    readonly group?: ChartColumnSource;
+    readonly value?: Cell;
+    readonly category?: number;
+    readonly label?: number;
+    readonly flags?: readonly number[];
+    readonly sort?: boolean;
+    readonly swap?: boolean;
+}
+
+/**
+ * The data source of one chart: the payload that it reads, the classification rule where a preset splits
+ * the rows, and one descriptor for each runtime series in series order.
+ */
+export interface ChartDataSource {
+    readonly payload: string;
+    readonly rule?: PresetRule;
+    readonly series: readonly ChartSeriesSource[];
+}
+
+/**
+ * The member of the option that carries the data source.
+ *
+ * The chart runtime reads no member of this name, and the page bootstrap removes it before it sets the
+ * option. The name leads with two underscores, thus no reader mistakes it for a field of the runtime.
+ */
+export const CHART_SOURCE_MEMBER = "__reportData";
+
+/**
+ * The collector of the page-side descriptors of one derivation.
+ *
+ * The derivation builds the option and the descriptors in one pass. `failed` states that one series
+ * describes no page-side build, for example a band that draws two series from one row set. A collector
+ * whose entries do not match the series of the option describes nothing, thus the chart stays inline.
+ */
+interface SourceCollector {
+    readonly columns: readonly string[];
+    readonly series: ChartSeriesSource[];
+    rule?: PresetRule;
+    failed: boolean;
+}
+
+/** The payload that a dense chart reads: the key of the registry, and the columns of the payload. */
+export interface ChartPayloadTarget {
+    readonly key: string;
+    readonly columns: readonly string[];
+}
+
+/** The option of one chart, and whether it reads the registered payload of its artifact. */
+export interface ChartRender {
+    readonly option: EchartOption;
+    readonly readsPayload: boolean;
+}
+
 /** One plotted point. `index` names the row that it came from, thus a rank rule can find it again. */
 interface Point {
     index: number;
@@ -740,13 +972,17 @@ interface Point {
 }
 
 /**
- * One runtime series, whether it can carry the mark members of the annotations, and whether it draws in the
- * muted color. A muted series states no finding, thus it makes a poor carrier of a guide.
+ * One runtime series, whether it can carry the mark members of the annotations, whether it draws in the
+ * muted color, and whether it holds a point.
+ *
+ * A muted series states no finding, thus it makes a poor carrier of a guide. A classification emits one
+ * series for each of its categories, thus a category that no row reaches emits an empty one.
  */
 interface EmittedSeries {
     option: EchartOption;
     carriesMarks: boolean;
     muted: boolean;
+    empty: boolean;
 }
 
 /**
@@ -759,18 +995,28 @@ interface EmittedSeries {
  * The axes come from the first declared series. A composition plots one pair of axes, thus a later series
  * shares them.
  *
- * `preset` is present when a preset expanded this composition. It carries the semantic axis titles, and its
- * presence states that the null-category rule applies. Thus an authored composition keeps every series on
- * the palette, and a `ns` group of it carries no muted color.
+ * `preset` is present when a preset expanded this composition, and it carries the semantic axis titles.
+ * `classification` is present when that preset splits the rows itself. A series that names a group channel
+ * keeps the channel, because the author asked for that split.
+ *
+ * `collector` is present when the caller can send the rows to the page as a payload. Each series then
+ * states its own page-side build beside its option.
  */
+interface CompositionExtras {
+    readonly preset?: PresetAxisTitles;
+    readonly classification?: PresetClassification;
+    readonly collector?: SourceCollector;
+}
+
 function deriveComposition(
     blockId: string,
     composition: ChartComposition,
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
     labels: ColumnLabels,
-    preset?: PresetAxisTitles,
+    extras: CompositionExtras = {},
 ): Result<EchartOption, RenderProblem> {
+    const { preset, classification, collector } = extras;
     if (composition.series.length > 1 && composition.series.some(isHorizontalBar)) {
         // A horizontal bar reads its categories up the y axis, and every other form reads a value there.
         // The two share no honest axis pair on one grid, thus the mix refuses instead of plotting a lie.
@@ -791,14 +1037,18 @@ function deriveComposition(
     }
 
     const annotations = composition.annotations ?? [];
-    const labeled = pointLabelRows(blockId, annotations, rows, columns);
+    const labeled = pointLabelRows(blockId, annotations, rows, columns, plottedRows(resolved, rows.length));
     if (labeled.isErr()) return err(labeled.error);
 
-    const dense = rows.length > DENSE_SCATTER_ROWS;
+    if (collector !== undefined && classification !== undefined) {
+        // The page splits the rows against the same two cuts, thus the rule rides beside the descriptors.
+        collector.rule = classification.rule;
+    }
+    const density = scatterDensity(rows.length);
     const emitted: EmittedSeries[] = [];
     for (const entry of resolved) {
-        for (const group of splitByChannel(rows, entry.group)) {
-            const built = buildSeries(blockId, entry, group, labeled.value, dense, emitted.length, labels, preset);
+        for (const split of splitSeries(rows, entry, classification)) {
+            const built = buildSeries(blockId, entry, split, labeled.value, density, emitted.length, labels, preset, collector);
             if (built.isErr()) return err(built.error);
             emitted.push(...built.value);
         }
@@ -870,9 +1120,9 @@ function resolveChannel(
 
     const transform = channelTransform(channel);
     if (transform === undefined) {
-        return ok({ name: column, values: rows.map((row) => row[column] ?? null), transformed: false });
+        return ok({ name: column, values: rows.map((row) => row[column] ?? null), transformed: false, column });
     }
-    return ok({ name: transformedName(transform, column), values: transformColumn(rows, column, transform), transformed: true });
+    return ok({ name: transformedName(transform, column), values: transformColumn(rows, column, transform), transformed: true, column, transform });
 }
 
 /** The refusal for a column that no row holds, or `undefined` when the column is present. */
@@ -884,12 +1134,48 @@ function requirePresent(blockId: string, column: string, rows: readonly ChartRow
 }
 
 /**
+ * The splits of one declared series.
+ *
+ * A declared group channel splits the rows, because the author asked for that split. A preset that carries
+ * a classification splits them where no channel does. A series with neither takes every row.
+ */
+function splitSeries(rows: readonly ChartRow[], entry: ResolvedSeries, classification: PresetClassification | undefined): SeriesSplit[] {
+    if (entry.group === undefined && classification !== undefined) {
+        return splitByClassification(rows, entry, classification);
+    }
+    return splitByChannel(rows, entry.group);
+}
+
+/**
+ * Split the row indices by the classification of a preset, one row at a time.
+ *
+ * Each category takes one split, in the order that the preset declares. Thus an empty category still emits
+ * a series, and the legend of one preset reads the same on every table. The classification reads the
+ * plotted pair of the row, thus it computes no aggregate and it compares against the drawn guides.
+ */
+function splitByClassification(rows: readonly ChartRow[], entry: ResolvedSeries, classification: PresetClassification): SeriesSplit[] {
+    const splits: Array<{ name: Cell; indices: number[]; muted: boolean; category: number }> = classification.categories.map((category, place) => ({
+        name: category.name,
+        indices: [],
+        muted: category.muted,
+        category: place,
+    }));
+    const byName = new Map(splits.map((split) => [String(split.name), split]));
+    for (let index = 0; index < rows.length; index += 1) {
+        const category = classification.categoryOf(toNumber(entry.x.values[index]), toNumber(entry.y.values[index]));
+        if (category === undefined) continue;
+        byName.get(category)?.indices.push(index);
+    }
+    return splits;
+}
+
+/**
  * Split the row indices by the group channel, in first-appearance order.
  *
  * A row whose group cell gives no value belongs to no series, thus it drops. A series with no group
  * channel takes every row.
  */
-function splitByChannel(rows: readonly ChartRow[], group: ResolvedChannel | undefined): Array<{ name: Cell | undefined; indices: readonly number[] }> {
+function splitByChannel(rows: readonly ChartRow[], group: ResolvedChannel | undefined): SeriesSplit[] {
     if (group === undefined) {
         return [{ name: undefined, indices: rows.map((_row, index) => index) }];
     }
@@ -912,11 +1198,12 @@ function splitByChannel(rows: readonly ChartRow[], group: ResolvedChannel | unde
 }
 
 /**
- * Build the runtime series of one declared series over one group of rows.
+ * Build the runtime series of one declared series over one split of rows.
  *
  * A series of the null category takes the muted chart color, thus it recedes behind the categories that
- * carry a finding. Every other series takes no color of its own, and the theme palette assigns one by the
- * series order.
+ * carry a finding. A preset classification states its null category itself, and a group channel of an
+ * agent-derived column answers through the null-token test. Every other series takes no color of its own,
+ * and the theme palette assigns one by the series order.
  *
  * A band draws two stacked line series, and no preset emits a band. Thus the null-category color never
  * reaches one, and neither half of a band reports as muted.
@@ -924,44 +1211,113 @@ function splitByChannel(rows: readonly ChartRow[], group: ResolvedChannel | unde
 function buildSeries(
     blockId: string,
     entry: ResolvedSeries,
-    group: { name: Cell | undefined; indices: readonly number[] },
+    split: SeriesSplit,
     labeled: ReadonlySet<number>,
-    dense: boolean,
+    density: ScatterDensity,
     emittedCount: number,
     labels: ColumnLabels,
     preset: PresetAxisTitles | undefined,
+    collector: SourceCollector | undefined,
 ): Result<EmittedSeries[], RenderProblem> {
     const form = entry.declared.form;
-    const points = collectPoints(entry, group.indices);
+    const points = collectPoints(entry, split.indices);
     if (SORTED_FORMS.has(form)) {
         points.sort((a, b) => compareCell(a.x, b.x));
     }
-    const name = seriesName(entry, group.name, labels, preset?.y);
+    const name = seriesName(entry, split.name, labels, preset?.y);
 
     if (entry.y0 !== undefined) {
+        if (collector !== undefined) {
+            // A band draws two stacked series over one row set, and the upper one holds a difference that no
+            // cell of the table gives. Thus no descriptor states it, and the chart keeps its inline data.
+            collector.failed = true;
+        }
         const band = bandSeries(blockId, entry, name, points, `band-${emittedCount}`);
         if (band.isErr()) return err(band.error);
         return ok([
-            { option: band.value[0], carriesMarks: false, muted: false },
-            { option: band.value[1], carriesMarks: true, muted: false },
+            { option: band.value[0], carriesMarks: false, muted: false, empty: points.length === 0 },
+            { option: band.value[1], carriesMarks: true, muted: false, empty: points.length === 0 },
         ]);
     }
 
-    const muted = preset !== undefined && group.name === NULL_CATEGORY;
-    const color = muted ? { itemStyle: { color: MUTED_CHART_COLOR } } : {};
+    const muted = split.muted ?? isNullCategory(split.name);
     const { data, itemObjects } = seriesData(entry, points, labeled, isHorizontalBar(entry.declared));
-    return ok([{ option: { type: runtimeType(form), name, ...color, ...formOptions(form, dense, itemObjects), data }, carriesMarks: true, muted }]);
+    const option = { type: runtimeType(form), name, ...seriesItemStyle(muted, form, density), ...formOptions(form, density, itemObjects), data };
+    if (collector !== undefined) {
+        collectSource(collector, entry, split, labeled, form);
+    }
+    return ok([{ option, carriesMarks: true, muted, empty: data.length === 0 }]);
+}
+
+/**
+ * Collect the page-side build of one runtime series.
+ *
+ * The descriptor names each column by its place in the payload. A column that the payload does not hold
+ * describes nothing, thus such a series marks the whole collection as failed and the chart stays inline.
+ *
+ * The flags name the rows of this split alone. Thus a page-side build tests one small list for each series,
+ * and a split by a group channel or by a classification carries the labels of the rows that it holds.
+ */
+function collectSource(collector: SourceCollector, entry: ResolvedSeries, split: SeriesSplit, labeled: ReadonlySet<number>, form: ChartSeries["form"]): void {
+    const x = columnSource(collector, entry.x);
+    const y = columnSource(collector, entry.y);
+    const group = entry.group === undefined ? undefined : columnSource(collector, entry.group);
+    const labelColumn = entry.declared.encoding.label;
+    const label = labelColumn === undefined ? undefined : collector.columns.indexOf(labelColumn);
+    if (x === undefined || y === undefined || (entry.group !== undefined && group === undefined) || label === -1) {
+        collector.failed = true;
+        return;
+    }
+    const flags = split.indices.filter((index) => labeled.has(index));
+    collector.series.push({
+        x,
+        y,
+        ...(group !== undefined ? { group } : {}),
+        ...(split.category === undefined && split.name !== undefined ? { value: split.name } : {}),
+        ...(split.category !== undefined ? { category: split.category } : {}),
+        ...(label !== undefined ? { label } : {}),
+        ...(flags.length > 0 ? { flags } : {}),
+        ...(SORTED_FORMS.has(form) ? { sort: true } : {}),
+        ...(isHorizontalBar(entry.declared) ? { swap: true } : {}),
+    });
+}
+
+/** The payload column of one resolved channel, or `undefined` when the payload holds no such column. */
+function columnSource(collector: SourceCollector, channel: ResolvedChannel): ChartColumnSource | undefined {
+    const column = collector.columns.indexOf(channel.column);
+    if (column < 0) {
+        return undefined;
+    }
+    return channel.transform === undefined ? { column } : { column, transform: channel.transform };
+}
+
+/**
+ * The item style of one runtime series: the muted color, and the opacity of a crowd.
+ *
+ * One member owns the item style, thus a muted crowd keeps both fields. A series that states neither emits
+ * no item style, and the theme answers for it.
+ */
+function seriesItemStyle(muted: boolean, form: ChartSeries["form"], density: ScatterDensity): EchartOption {
+    const fields = {
+        ...(muted ? { color: MUTED_CHART_COLOR } : {}),
+        ...(form === "scatter" && density === "crowd" ? { opacity: SCATTER_CROWD_OPACITY } : {}),
+    };
+    return Object.keys(fields).length > 0 ? { itemStyle: fields } : {};
 }
 
 /**
  * The index of the series that carries the mark members, or `-1` when no series can carry them.
  *
  * The chart runtime takes the stroke of a guide from the item color of its carrier, wherever the mark states
- * no color of its own. A muted carrier would thus paint each guide in the null-category color. The first
- * carrier that draws in a palette color takes the marks. A chart whose every carrier is muted falls back to
- * the first one, thus each guide still reaches the page.
+ * no color of its own. A muted carrier would thus paint each guide in the null-category color, and a carrier
+ * that holds no point risks a guide that the runtime never lays out.
+ *
+ * Thus the ladder reads: a carrier with points and a palette color, then any carrier with a palette color,
+ * then any carrier at all. Each guide reaches the page under every one of the three.
  */
 function markCarrier(emitted: readonly EmittedSeries[]): number {
+    const drawn = emitted.findIndex((entry) => entry.carriesMarks && !entry.muted && !entry.empty);
+    if (drawn >= 0) return drawn;
     const colored = emitted.findIndex((entry) => entry.carriesMarks && !entry.muted);
     return colored >= 0 ? colored : emitted.findIndex((entry) => entry.carriesMarks);
 }
@@ -1089,8 +1445,8 @@ function runtimeType(form: ChartSeries["form"]): string {
     }
 }
 
-/** The fields that one form adds to its runtime series. */
-function formOptions(form: ChartSeries["form"], dense: boolean, itemObjects: boolean): EchartOption {
+/** The fields that one form adds to its runtime series. A scatter reads the density ladder here. */
+function formOptions(form: ChartSeries["form"], density: ScatterDensity, itemObjects: boolean): EchartOption {
     switch (form) {
         case "bar":
             // The base bar rule puts the bars of one category side by side with no gap between them. A bar
@@ -1104,7 +1460,7 @@ function formOptions(form: ChartSeries["form"], dense: boolean, itemObjects: boo
             return { showSymbol: false, areaStyle: {} };
         case "scatter":
             return {
-                ...(dense ? { symbolSize: DENSE_SCATTER_SYMBOL_SIZE } : {}),
+                ...(density === "normal" ? {} : { symbolSize: density === "crowd" ? SCATTER_CROWD_SYMBOL_SIZE : SCATTER_HOVER_SYMBOL_SIZE }),
                 // The large path draws a simplified point, and it drops a per-item style. Thus a series
                 // whose items carry a name or a label keeps the normal path.
                 ...(itemObjects ? {} : { large: true, largeThreshold: LARGE_SCATTER_THRESHOLD }),
@@ -1112,19 +1468,45 @@ function formOptions(form: ChartSeries["form"], dense: boolean, itemObjects: boo
     }
 }
 
-/** The row indices that the point-label annotations mark. An absent rank column is a refusal. */
+/**
+ * The row indices that one series at least can draw.
+ *
+ * A channel gives no value for a cell that it cannot read, and the point of such a row drops. Thus a rank
+ * rule that marked such a row would spend a place on a point that the plot never shows.
+ */
+function plottedRows(resolved: readonly ResolvedSeries[], rowCount: number): ReadonlySet<number> {
+    const plotted = new Set<number>();
+    for (let index = 0; index < rowCount; index += 1) {
+        for (const entry of resolved) {
+            if (entry.x.values[index] === null || entry.y.values[index] === null) continue;
+            if (entry.y0 !== undefined && entry.y0.values[index] === null) continue;
+            if (entry.group !== undefined && entry.group.values[index] === null) continue;
+            plotted.add(index);
+            break;
+        }
+    }
+    return plotted;
+}
+
+/**
+ * The row indices that the point-label annotations mark. An absent rank column is a refusal.
+ *
+ * The marks name rows of the bound table, and every split reads them under the same numbers. Thus a split
+ * by a group channel or by a preset classification carries each flag into the series that holds its row.
+ */
 function pointLabelRows(
     blockId: string,
     annotations: readonly ChartAnnotation[],
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
+    plotted: ReadonlySet<number>,
 ): Result<ReadonlySet<number>, RenderProblem> {
     const marked = new Set<number>();
     for (const annotation of annotations) {
         if (annotation.kind !== "point-labels") continue;
         const absent = requirePresent(blockId, annotation.column, rows, columns);
         if (absent !== undefined) return err(absent);
-        for (const index of topRows(rows, annotation.column, annotation.order, annotation.n)) {
+        for (const index of topRows(rows, annotation.column, annotation.order, annotation.n, plotted)) {
             marked.add(index);
         }
     }
@@ -1134,13 +1516,14 @@ function pointLabelRows(
 /**
  * The indices of the first `n` rows under the order of one column.
  *
- * A row whose cell is absent takes no place. The sort is stable, thus two equal cells keep the row order
- * and the subset is the same on every host.
+ * A row whose cell is absent takes no place, and a row that no series draws takes no place either. Thus the
+ * count of shown labels reaches the declared count wherever the table holds enough drawn rows. The sort is
+ * stable, thus two equal cells keep the row order and the subset is the same on every host.
  */
-function topRows(rows: readonly ChartRow[], column: string, order: "asc" | "desc", n: number): number[] {
+function topRows(rows: readonly ChartRow[], column: string, order: "asc" | "desc", n: number, plotted: ReadonlySet<number>): number[] {
     const ranked: number[] = [];
     for (let index = 0; index < rows.length; index += 1) {
-        if (rows[index][column] !== undefined) ranked.push(index);
+        if (plotted.has(index) && rows[index][column] !== undefined) ranked.push(index);
     }
     ranked.sort((a, b) => {
         const compared = compareCell(rows[a][column], rows[b][column]);
@@ -1354,8 +1737,14 @@ function transformedName(transform: ChartTransform, column: string): string {
     return `${transform}(${column})`;
 }
 
-/** The transformed value of one column, one entry for each row. A row with no usable cell gives `null`. */
-function transformColumn(rows: readonly ChartRow[], column: string, transform: ChartTransform): (number | null)[] {
+/**
+ * The transformed value of one column, one entry for each row. A row with no usable cell gives `null`.
+ *
+ * The page-side series build holds the twin of this function, because a chart that reads the payload
+ * transforms its columns in the browser. A shared test vector runs the two over one set of cells, thus the
+ * two cannot give different numbers in silence.
+ */
+export function transformColumn(rows: readonly ChartRow[], column: string, transform: ChartTransform): (number | null)[] {
     if (transform === "rank") {
         return rankColumn(rows, column);
     }
@@ -1411,8 +1800,8 @@ function columnPresent(column: string, rows: readonly ChartRow[], columns: reado
     return false;
 }
 
-/** Convert one cell to a finite number, or `null` when it is not numeric. */
-function toNumber(cell: Cell | undefined): number | null {
+/** Convert one cell to a finite number, or `null` when it is absent or not numeric. */
+function toNumber(cell: Cell | null | undefined): number | null {
     if (typeof cell === "number") return Number.isFinite(cell) ? cell : null;
     if (typeof cell === "string") {
         const trimmed = cell.trim();

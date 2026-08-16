@@ -11,7 +11,8 @@
  * four strings and one thousand small integers.
  *
  * The payload also carries the display of each column: the header label, the number kind, and the bound of
- * a stored zero. The server resolves the three, and the page formats each cell under them.
+ * a stored zero. The server resolves the three, and the page formats each cell under them. It carries the
+ * pre-bound row total of the artifact beside them, thus the footer states the shown count against it.
  *
  * The module is pure, and it reads no file. The renderer derives a payload, and the caller writes it.
  */
@@ -57,12 +58,16 @@ export interface ColumnDisplay {
  *
  * `display` holds one entry for each column, in the same order. A list and not a map, thus a column named
  * `__proto__` needs no guard on the page and the entry of a column sits at the index of its name.
+ *
+ * `total` is the row count of the artifact before a row bound cut it. The page states the shown count
+ * against it, thus a reader of a cut table never reads the cut as the whole artifact.
  */
 export interface TablePayload {
     columns: string[];
     rows: EncodedCell[][];
     dict: Record<string, string[]>;
     display: ColumnDisplay[];
+    total: number;
 }
 
 /** One data asset that the caller writes beside the page: the staged file name, and the source text of it. */
@@ -113,11 +118,15 @@ function columnDictionary(rows: ReadonlyArray<Record<string, string | number>>, 
  * the absence in place and never shifts the rest of the row.
  *
  * `display` arrives in the column order, thus the entry of a column sits at the index of its name.
+ *
+ * `total` is the row count of the artifact before a row bound cut it. A caller that resolved no bound knows
+ * no larger count, thus it gives none and the row count answers.
  */
 export function encodeTablePayload(
     columns: readonly string[],
     rows: ReadonlyArray<Record<string, string | number>>,
     display: readonly ColumnDisplay[],
+    total?: number,
 ): TablePayload {
     const dict: Record<string, string[]> = {};
     const indexes = new Map<string, Map<string, number>>();
@@ -141,7 +150,7 @@ export function encodeTablePayload(
             return index === undefined ? cell : index;
         }),
     );
-    return { columns: [...columns], rows: encodedRows, dict, display: [...display] };
+    return { columns: [...columns], rows: encodedRows, dict, display: [...display], total: total ?? rows.length };
 }
 
 /**
@@ -151,26 +160,34 @@ export function encodeTablePayload(
  * block id such as `constructor` stays an ordinary entry. The block id rides as JSON, thus hostile text is
  * data and never source.
  *
+ * A table block and a chart block over one artifact read one payload. The first id takes the parsed value,
+ * and each further id takes the same object. Thus the page holds one copy of the rows, and each reader
+ * finds it under its own block id.
+ *
  * The payload itself rides through `JSON.parse` and never as an object literal. An object literal with a
  * `__proto__` key sets the prototype of the object instead of an own entry, thus a column of that name
  * would arrive as a mangled object with no such column. `JSON.parse` defines an own property for every
  * key, thus each column name reaches the page as a column name.
  */
-function payloadSource(blockId: string, payload: TablePayload): string {
+function payloadSource(blockIds: readonly string[], payload: TablePayload): string {
     const registry = `window.${TABLE_DATA_GLOBAL}`;
     const json = scriptJson(JSON.stringify(payload));
-    return `${registry}=${registry}||Object.create(null);${registry}[${scriptJson(blockId)}]=JSON.parse(${json});\n`;
+    const primary = `${registry}[${scriptJson(blockIds[0])}]`;
+    const aliases = blockIds.slice(1).map((id) => `${registry}[${scriptJson(id)}]=${primary};`);
+    return `${registry}=${registry}||Object.create(null);${primary}=JSON.parse(${json});${aliases.join("")}\n`;
 }
 
 /**
- * The data asset of one table block: the content-addressed file name, and the source text.
+ * The data asset of one bound artifact: the content-addressed file name, and the source text.
  *
  * The name carries the hash of the bytes, in the content-address style of a staged figure. Thus two
  * previews of unchanged data give one name, a changed table gives a new name, and the sweep of the stage
  * removes the name that nothing references any more.
+ *
+ * The block ids are the readers of the payload, in document order.
  */
-export function tableDataAsset(blockId: string, payload: TablePayload): DataAsset {
-    const bytes = payloadSource(blockId, payload);
+export function tableDataAsset(blockIds: readonly string[], payload: TablePayload): DataAsset {
+    const bytes = payloadSource(blockIds, payload);
     const hash = createHash("sha256").update(bytes).digest("hex").slice(0, HASH_CHARS);
     return { name: `t-${hash}.data.js`, bytes };
 }

@@ -1,10 +1,11 @@
 /**
  * The one walk over a block tree.
  *
- * A block kind decides where a reference sits, which text carries a free numeral, and whether the block
- * holds children. Three consumers need that same knowledge: the mechanical validator, the draft finish,
- * and the draft operations. A switch for each consumer is a switch that a ninth block kind can miss in
- * silence, because each arm returns and none of them fails to build. Thus the walk lives here one time.
+ * A block kind decides where a reference sits, which text carries a free numeral or a drifted exponent
+ * form, and whether the block holds children. Three consumers need that same knowledge: the mechanical
+ * validator, the draft finish, and the draft operations. A switch for each consumer is a switch that a
+ * ninth block kind can miss in silence, because each arm returns and none of them fails to build. Thus the
+ * walk lives here one time.
  *
  * The walk reads a finished `Block` tree and a relaxed `DraftBlock` tree alike. The two differ only in the
  * section rules, and the section arm reads the children of either one.
@@ -15,6 +16,7 @@
 
 import { channelColumn, type Block, type ChartBlock, type ChartChannel } from "../contracts/report-blocks.js";
 import type { Reference } from "../contracts/report-reference.js";
+import { holdsADriftedExponent } from "../report-render/number-format.js";
 import type { DraftBlock } from "./draft.js";
 
 /** A block of a finished report, or a block of a draft. The atoms are the same shape in both. */
@@ -42,6 +44,19 @@ export interface FreeNumeralWarning {
 }
 
 /**
+ * An advisory warning about one exponent form that the prose of a block carries and the page never prints.
+ * The detail is the written form.
+ */
+export interface ExponentFormWarning {
+    blockId: string;
+    kind: "exponent-form";
+    detail: string;
+}
+
+/** One advisory warning about the prose of a block. */
+export type ProseWarning = FreeNumeralWarning | ExponentFormWarning;
+
+/**
  * An advisory warning about one derivation that no binding of the document names. The detail is the output
  * path of the record. The record stays, and the bytes are reproducible from the script and the sources.
  */
@@ -51,7 +66,7 @@ export interface UnusedDerivationWarning {
 }
 
 /** One advisory warning about a report. A warning never makes a report invalid. */
-export type ReportWarning = FreeNumeralWarning | UnusedDerivationWarning;
+export type ReportWarning = ProseWarning | UnusedDerivationWarning;
 
 /** What one walk over a block tree found. */
 export interface BlockWalk {
@@ -59,8 +74,8 @@ export interface BlockWalk {
     references: CollectedReference[];
     /** Each id that more than one block holds, named one time, in sorted order. */
     repeatedIds: string[];
-    /** Each free numeral that prose carries. */
-    warnings: FreeNumeralWarning[];
+    /** Each free numeral and each drifted exponent form that prose carries. */
+    warnings: ProseWarning[];
 }
 
 /**
@@ -77,6 +92,14 @@ export interface BlockWalk {
  */
 const NUMERAL_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?%?/g;
 
+/**
+ * A free-standing token that states a number in an exponent form, for example `4.3e-05`.
+ *
+ * The left boundary is the one of the numeral scan, thus a token inside a name never matches. The exponent
+ * itself carries an optional sign, because a written form gives one and a shown form never does.
+ */
+const EXPONENT_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?[eE][+-]?\d+/g;
+
 /** Warn for each free-standing numeral that the prose of one block carries. */
 export function numeralWarnings(blockId: string, prose: string): FreeNumeralWarning[] {
     const warnings: FreeNumeralWarning[] = [];
@@ -84,6 +107,31 @@ export function numeralWarnings(blockId: string, prose: string): FreeNumeralWarn
         warnings.push({ blockId, kind: "free-numeral", detail: match[0] });
     }
     return warnings;
+}
+
+/**
+ * Warn for each exponent form of one block that the page never prints.
+ *
+ * The page owns the notation of a value. Thus a sentence that writes a second notation of the same number
+ * disagrees with the card beside it. The renderer answers which forms it prints, thus this scan states no
+ * rule of its own.
+ *
+ * The check is advisory, exactly as the numeral scan is. A prose exponent can be a quoted threshold that no
+ * cell carries, thus a hit warns and it never fails the report.
+ */
+export function exponentWarnings(blockId: string, prose: string): ExponentFormWarning[] {
+    const warnings: ExponentFormWarning[] = [];
+    for (const match of prose.matchAll(EXPONENT_PATTERN)) {
+        if (holdsADriftedExponent(match[0])) {
+            warnings.push({ blockId, kind: "exponent-form", detail: match[0] });
+        }
+    }
+    return warnings;
+}
+
+/** Each advisory warning that the prose of one block carries. */
+function proseWarnings(blockId: string, prose: string): ProseWarning[] {
+    return [...numeralWarnings(blockId, prose), ...exponentWarnings(blockId, prose)];
 }
 
 /**
@@ -138,7 +186,7 @@ function chartColumns(block: ChartBlock): string[] {
  */
 export function walkBlocks(blocks: readonly AnyBlock[]): BlockWalk {
     const references: CollectedReference[] = [];
-    const warnings: FreeNumeralWarning[] = [];
+    const warnings: ProseWarning[] = [];
     const seenIds = new Set<string>();
     const repeated = new Set<string>();
 
@@ -155,15 +203,15 @@ export function walkBlocks(blocks: readonly AnyBlock[]): BlockWalk {
                 }
                 return;
             case "text":
-                warnings.push(...numeralWarnings(block.id, block.content.prose));
+                warnings.push(...proseWarnings(block.id, block.content.prose));
                 // An item of a list states a point, the same as a sentence of the prose. Thus a free
                 // figure inside an item carries the same honesty concern, and the walk reads both.
                 for (const item of block.content.list?.items ?? []) {
-                    warnings.push(...numeralWarnings(block.id, item));
+                    warnings.push(...proseWarnings(block.id, item));
                 }
                 return;
             case "claim":
-                warnings.push(...numeralWarnings(block.id, block.content.prose));
+                warnings.push(...proseWarnings(block.id, block.content.prose));
                 for (const binding of block.bindings) {
                     references.push({ blockId: block.id, reference: binding });
                 }

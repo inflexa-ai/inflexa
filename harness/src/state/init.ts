@@ -133,15 +133,15 @@ CREATE TABLE IF NOT EXISTS cortex_plans (
 CREATE INDEX IF NOT EXISTS idx_cortex_plans_analysis
   ON cortex_plans(analysis_id, created_at DESC);
 
--- Report versions — one immutable row for each recorded report version. A row
--- holds the block document, the pinned snapshot, and the anchor. A thread holds
--- at most one version. The named unique constraint on thread_id enforces the
--- rule, because the report policy binds one version to each report session. The
--- row outlives its thread. Thus the table has no foreign key to
--- cortex_analysis_threads, and the row carries the anchor columns (thread_id,
--- parent_thread_id, parent_seq) directly. A purge of the analysis removes the row
--- through the analysis_id cascade. The table is append-only, and a correction is
--- a new version, never an update to a recorded row.
+-- Report versions — one row for each recorded report version. A row holds the
+-- block document, the pinned snapshot, and the anchor. A thread holds at most one
+-- version. The named unique constraint on thread_id enforces the rule, because
+-- the report policy binds one version to each report session. A record on a
+-- thread that holds a version replaces that row whole, under the same version_id
+-- and the same created_at. The row outlives its thread. Thus the table has no
+-- foreign key to cortex_analysis_threads, and the row carries the anchor columns
+-- (thread_id, parent_thread_id, parent_seq) directly. A purge of the analysis
+-- removes the row through the analysis_id cascade.
 CREATE TABLE IF NOT EXISTS cortex_report_versions (
   version_id        TEXT PRIMARY KEY,
   analysis_id       TEXT NOT NULL
@@ -322,6 +322,17 @@ CREATE INDEX IF NOT EXISTS idx_cortex_regulatory_chunks_metadata
 -- forces JSON on the envelope is about model content that is re-sent to the
 -- provider. This record is harness-generated, has a fixed field set, and never
 -- reaches a prompt, so it does not share that requirement.
+--
+-- turn_duration_ms holds the time that a whole turn took, in milliseconds, on
+-- the same row as reported_usage. It is a column of its own, and not a member of
+-- the rollup. The rollup is absent when a provider reported no quantity, and the
+-- host measures the duration apart from the token counts. Thus a member of the
+-- rollup would disappear with it. BIGINT, as cortex_step_executions.duration_ms
+-- is, because an int4 duration overflowed there.
+--
+-- Nullable with no default: absent means that nobody measured the turn, and a
+-- zero would claim that a turn took no time. A row written before this column
+-- existed is absent for the same reason, thus the migration needs no backfill.
 CREATE TABLE IF NOT EXISTS messages (
   thread_id     TEXT NOT NULL,
   seq           BIGINT NOT NULL,
@@ -333,6 +344,7 @@ CREATE TABLE IF NOT EXISTS messages (
   display_envelope JSONB,
   tokens        INTEGER NOT NULL,
   reported_usage JSONB,
+  turn_duration_ms BIGINT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (thread_id, seq)
 );
@@ -600,6 +612,11 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 // row and every pre-existing message reads back with no rollup — which
                 // is the honest value, the figures having never been recorded.
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS reported_usage JSONB",
+                // The turn's measured duration (see the CREATE TABLE comment). Purely
+                // additive: nullable with no default, thus the column rewrites no row,
+                // and every earlier message reads back with no duration — which is the
+                // honest value, because nobody measured those turns.
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS turn_duration_ms BIGINT",
                 // Demote an existing JSONB envelope column to JSON (see the CREATE
                 // TABLE comment). Type-guarded because ALTER ... TYPE rewrites the
                 // whole table and this runs at every boot; scoped to

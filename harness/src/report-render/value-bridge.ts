@@ -119,12 +119,16 @@ export function bridgeValues(resolutions: readonly BlockResolution[], figureSrc:
 /**
  * Map a resolved table onto a render table. The explicit column order carries through when it is present,
  * and it stays absent otherwise, thus the renderer keeps its first-row order as the default.
+ *
+ * The pre-bound total carries through the same way. The resolution is the one step that reads the whole
+ * artifact, thus the renderer takes that count and never counts again.
  */
 function tableValue(value: Extract<ResolvedValue, { type: "table" }>): RenderValue {
+    const total = value.total === undefined ? {} : { total: value.total };
     if (value.columns !== undefined) {
-        return { type: "table", rows: value.rows, columns: value.columns };
+        return { type: "table", rows: value.rows, columns: value.columns, ...total };
     }
-    return { type: "table", rows: value.rows };
+    return { type: "table", rows: value.rows, ...total };
 }
 
 /** Make one mismatch that names the block, its kind, the resolved type that it needs, and the type that arrived. */

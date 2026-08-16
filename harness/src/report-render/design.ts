@@ -367,9 +367,11 @@ img {
 .report-list-item {
   margin-bottom: 6px;
 }
+/* The bracket marker of the one reference ladder. It sits inline beside 16px prose, thus it reads at the
+   size of a small inline word and never at the size of a superscript. */
 .report-marker {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 .report-marker a {
   color: var(--color-primary-500);
@@ -554,19 +556,6 @@ img {
   font-size: 14px;
   color: var(--color-text-secondary);
 }
-/* The bracket marker of the literature ladder. It reads beside the text and not above it, thus it stays a
-   span and never a superscript. */
-.report-cite-marker {
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-.report-cite-marker a {
-  color: var(--color-primary-500);
-  text-decoration: none;
-}
-.report-cite-marker a:hover {
-  text-decoration: underline;
-}
 /* The short citation is the name of the paper, thus it carries the weight of the card. */
 .report-citation-source {
   font-weight: 600;
@@ -606,9 +595,10 @@ a.report-citation-source:hover {
   height: 400px;
 }
 
-/* ── Provenance appendix ──────────────────────────────── */
+/* ── References appendix ──────────────────────────────── */
 /* The appendix is a record of where each value came from. A reader consults it, and a reader does not read
-   it through. Thus it stays smaller and quieter than the body of the report. */
+   it through. Thus it stays smaller and quieter than the body of the report. One list holds both reference
+   kinds, thus one set of rules styles an artifact entry and a paper entry alike. */
 .report-ref-title {
   color: var(--color-text-secondary);
 }
@@ -644,22 +634,19 @@ a.report-citation-source:hover {
   margin-top: 2px;
   color: var(--color-text-muted);
 }
+/* A link of the chain: the staged script, and the derived file. The link carries the code span of its
+   subject, thus the underline arrives on hover alone and the line stays quiet. */
+.report-ref-link {
+  text-decoration: none;
+}
+.report-ref-link:hover {
+  text-decoration: underline;
+}
 /* The head of a content hash. It reads smaller than a path, because it identifies bytes and a reader
    compares it against a staged file name instead of reading it. */
 .report-ref-hash {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--color-text-muted);
-}
-/* The bibliography holds its own bracket number, thus the list shows no decimal marker of its own. */
-.report-citations {
-  padding-left: 0;
-  list-style: none;
-  color: var(--color-text-muted);
-}
-.report-cite-index {
-  font-family: var(--font-mono);
-  font-size: 12px;
   color: var(--color-text-muted);
 }
 .report-cite-source {
@@ -931,6 +918,37 @@ export const ECHARTS_THEME_NAME = "inflexa";
  * custom property and the color is written again here.
  */
 export const MUTED_CHART_COLOR = "#94a3b8";
+
+/**
+ * The symbol ladder of a scatter, as one row count and one symbol size for each tier.
+ *
+ * A sparse scatter keeps the symbol of the chart runtime. Past the hover count the points sit close, thus
+ * the series takes a larger symbol and a point stays hoverable. Past the crowd count the plot is a cloud.
+ * A larger symbol paints one blob there, thus the series takes a small symbol at a reduced opacity. The
+ * shape of the cloud then reads. Per-point hover is lost in a crowd, and shape legibility wins.
+ */
+export const SCATTER_HOVER_ROWS = 2000;
+
+/** The symbol size of a scatter past the hover count. The ECharts default is 10, thus a point grows one step. */
+export const SCATTER_HOVER_SYMBOL_SIZE = 12;
+
+/** The row count from which a scatter recedes into a cloud. */
+export const SCATTER_CROWD_ROWS = 10000;
+
+/** The symbol size of a crowded scatter. It matches the outlier dot of a box plot. */
+export const SCATTER_CROWD_SYMBOL_SIZE = 4;
+
+/** The opacity of a crowded scatter point. An overlap then reads darker than a lone point. */
+export const SCATTER_CROWD_OPACITY = 0.5;
+
+/**
+ * The size bound of an inline chart option, in characters of serialized JSON.
+ *
+ * A small option reads well inside the page, and it costs one element. A dense scatter of many thousands of
+ * points writes each pair again inside the markup, and one such chart then holds most of the bytes of the
+ * page. Past this bound the option carries no row, and the chart reads the columnar payload of its artifact.
+ */
+export const CHART_INLINE_OPTION_BOUND = 100_000;
 
 /**
  * The ECharts theme as a plain object. The renderer serializes this object and registers it, thus the theme

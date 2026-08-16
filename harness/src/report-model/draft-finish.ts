@@ -14,6 +14,10 @@
  * channel a caller could not read the one signal that catches a figure typed into prose with no metric
  * block behind it.
  *
+ * The exponent-form scan rides the same channel. A sentence can state a number in a notation that the page
+ * never prints, and such a sentence disagrees with the card beside it. Thus the prose notation and the page
+ * notation cannot drift in silence.
+ *
  * The unused-derivation scan rides the same channel. The records and the draft both sit in memory, thus the
  * scan opens no file either. A derivation whose output path no binding names warns, and the derived bytes
  * stay until the record prunes them.
@@ -91,7 +95,8 @@ function unusedDerivationWarnings(derivations: readonly SessionDerivation[], ref
 /**
  * Finish a draft. The finish validates the schema, the unique ids, and the structural resolution of each
  * reference, and it reports each gap as data. It warns about each free numeral in prose, and about each
- * derivation of the session that no binding names.
+ * exponent form that the page never prints. It warns about each derivation of the session that no binding
+ * names.
  */
 export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot, derivations: readonly SessionDerivation[] = []): FinishResult {
     const gaps: FinishGap[] = [];

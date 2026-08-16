@@ -69,4 +69,14 @@ export interface CortexMessage {
      * nothing" stay distinguishable.
      */
     usage?: TokenUsageRollup;
+    /**
+     * How long the TURN this message completed took, in milliseconds, as the live
+     * header measured it. It rides beside {@link usage} and it carries the same
+     * rule: only the assistant message that ended a turn holds one.
+     *
+     * Absent means that nobody measured the turn — a message stored before the
+     * duration was persisted, or any message that did not end a turn. A measured
+     * zero is a figure, thus it stays a value and it never reads as an absence.
+     */
+    durationMs?: number;
 }

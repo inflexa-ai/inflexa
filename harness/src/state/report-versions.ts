@@ -1,14 +1,17 @@
 /**
- * The report version store -- the append-only record of report versions.
+ * The report version store -- the one recorded version of each report thread.
  *
- * A version is one immutable row. It holds the block document, the pinned
- * snapshot, and the anchor. The store records a version and reads a version. It
- * never updates a recorded row, thus a correction is a new version.
+ * A version is one row. It holds the block document, the pinned snapshot, and the
+ * anchor. The store records a version and reads a version. A record on a thread
+ * that holds a version replaces the document, the snapshot, and the anchor of that
+ * row, whole. The version id stays, thus a consumer that names the version keeps
+ * its name.
  *
  * A thread holds at most one version, and a named unique constraint on the thread
- * id enforces it. The record reads nothing before the insert. A second record for
- * one thread trips the constraint, and the store maps that trip to the typed
- * refusal thread_already_holds_version.
+ * id enforces it. The record reads nothing before the write, and the constraint
+ * routes it: a fresh thread takes the insert arm, and a thread that holds a version
+ * takes the replace arm. The store writes the full triple each time, thus a partial
+ * update is not representable.
  *
  * The store keeps the snapshot and the anchor as given, and it never pins a
  * snapshot. A read parses the stored document and the stored snapshot with the
@@ -35,9 +38,8 @@ import { parseSnapshot, reduceIssues, type SchemaIssue } from "./snapshot-parse.
 export type { SchemaIssue };
 
 /**
- * The name of the unique constraint on thread_id. Postgres reports it on a
- * duplicate-thread refusal, and the record matches it to map the trip to the
- * thread_already_holds_version refusal.
+ * The name of the unique constraint on thread_id. The write names it as its
+ * conflict target, thus the replace arm binds to the one row of the thread.
  */
 const THREAD_UNIQUE_CONSTRAINT = "cortex_report_versions_one_per_thread";
 
@@ -57,9 +59,14 @@ export interface RecordVersionInput {
     readonly parentVersionId?: string;
 }
 
-/** The stable reference of a freshly recorded version. */
+/** The stable reference of a recorded version, and how the record landed. */
 export interface RecordedVersionRef {
     readonly versionId: string;
+    /**
+     * `created` minted the row. `replaced` wrote over the one version of the
+     * thread, under the same version id.
+     */
+    readonly outcome: "created" | "replaced";
 }
 
 /**
@@ -70,9 +77,9 @@ export interface RecordedVersionRef {
  * refuses a malformed document or a malformed snapshot here as typed data, and
  * no row lands.
  *
- * A second record for one thread is `thread_already_holds_version`. The unique
- * constraint on the thread id trips, and the record maps that one constraint by
- * its name. Every other constraint trip stays a `DbError`.
+ * A second record for one thread is no refusal. The unique constraint on the
+ * thread id routes it into the replace arm, and the row carries the new triple.
+ * Every constraint trip stays a `DbError`.
  *
  * A `parentVersionId` naming no row is not one of these -- the self foreign key
  * refuses an unknown parent id, and `tryMutation` classifies that refusal as the
@@ -95,11 +102,6 @@ export type RecordVersionError =
           readonly analysisId: string;
           readonly parentVersionId: string;
           readonly parentAnalysisId: string;
-      }
-    | {
-          readonly type: "thread_already_holds_version";
-          readonly op: string;
-          readonly threadId: string;
       }
     | DbError;
 
@@ -140,8 +142,9 @@ export interface ReportVersionStore {
     /**
      * Record a version. The record parses the document, refuses a malformed value
      * as data with no row, and refuses a parent from a different analysis. It reads
-     * nothing before the insert. A second record for one thread refuses with
-     * thread_already_holds_version. The snapshot and the anchor store as given.
+     * nothing before the write. A record on a thread that holds a version replaces
+     * that row whole, under the same version id. The snapshot and the anchor store
+     * as given, and the reference names a creation or a replacement.
      */
     record(input: RecordVersionInput): ResultAsync<RecordedVersionRef, RecordVersionError>;
     /** One version by its id, or `null` when no row holds it. */
@@ -176,13 +179,30 @@ interface VersionRow {
 }
 
 /**
- * The insert. The row carries no ordinal, thus the statement writes the given
- * columns directly. `created_at` takes the column default.
+ * The write. The row carries no ordinal, thus the statement writes the given
+ * columns directly. A fresh thread takes the insert arm, and `created_at` takes
+ * the column default. A thread that holds a version trips the named constraint,
+ * and the conflict target turns the trip into the replace of that one row.
+ *
+ * The replace arm writes each given column, thus the stored row equals the input.
+ * It writes neither `version_id` nor `created_at`: the version keeps its name, and
+ * the row keeps the time of its first record.
+ *
+ * The returned id names the row that stands. It equals the minted id on the insert
+ * arm alone, thus the caller reads which arm ran.
  */
-const INSERT_SQL = `INSERT INTO cortex_report_versions
+const RECORD_SQL = `INSERT INTO cortex_report_versions
     (version_id, analysis_id, thread_id, parent_thread_id, parent_seq,
      parent_version_id, document, snapshot)
-  VALUES ($1, $2, $3, $4, $5::bigint, $6, $7::jsonb, $8::jsonb)`;
+  VALUES ($1, $2, $3, $4, $5::bigint, $6, $7::jsonb, $8::jsonb)
+  ON CONFLICT ON CONSTRAINT ${THREAD_UNIQUE_CONSTRAINT} DO UPDATE SET
+    analysis_id = EXCLUDED.analysis_id,
+    parent_thread_id = EXCLUDED.parent_thread_id,
+    parent_seq = EXCLUDED.parent_seq,
+    parent_version_id = EXCLUDED.parent_version_id,
+    document = EXCLUDED.document,
+    snapshot = EXCLUDED.snapshot
+  RETURNING version_id`;
 
 function rowToVersion(row: VersionRow): Result<RecordedVersion, VersionReadError> {
     const document = ReportDocumentSchema.safeParse(row.document);
@@ -207,17 +227,6 @@ function rowToVersion(row: VersionRow): Result<RecordedVersion, VersionReadError
 }
 
 /**
- * Map an insert failure to a record refusal. A trip of the thread constraint is
- * thread_already_holds_version. Every other DbError stays unchanged.
- */
-function mapInsertError(error: DbError, threadId: string): RecordVersionError {
-    if (error.type === "constraint_violation" && error.constraint === THREAD_UNIQUE_CONSTRAINT) {
-        return { type: "thread_already_holds_version", op: "report-versions.record", threadId };
-    }
-    return error;
-}
-
-/**
  * Create a `ReportVersionStore` bound to a Postgres pool. The
  * `cortex_report_versions` table is provisioned by the state-init DDL.
  */
@@ -225,7 +234,7 @@ export function createReportVersionStore({ pool }: ReportVersionStoreDeps): Repo
     /**
      * The analysis scope of a parent version, or `null` when no such row exists.
      * Absence is not a verdict here: an unknown parent id falls through to the
-     * insert, where the self foreign key refuses it as a `DbError`.
+     * write, where the self foreign key refuses it as a `DbError`.
      */
     function parentAnalysis(parentVersionId: string): ResultAsync<string | null, DbError> {
         return tryQuery("report-versions.record.parentScope", () =>
@@ -250,13 +259,13 @@ export function createReportVersionStore({ pool }: ReportVersionStoreDeps): Repo
             return errAsync({ type: "malformed_snapshot", op: "report-versions.record", issues: parsedSnapshot.error });
         }
 
-        const insert = (): ResultAsync<RecordedVersionRef, RecordVersionError> => {
-            const versionId = randomUUID();
-            return tryMutation("report-versions.record.insert", async () => {
-                await pool.query({
-                    text: INSERT_SQL,
+        const write = (): ResultAsync<RecordedVersionRef, RecordVersionError> => {
+            const minted = randomUUID();
+            return tryMutation("report-versions.record.write", async (): Promise<RecordedVersionRef> => {
+                const { rows } = await pool.query<{ version_id: string }>({
+                    text: RECORD_SQL,
                     values: [
-                        versionId,
+                        minted,
                         input.analysisId,
                         input.threadId,
                         input.parentThreadId,
@@ -266,12 +275,16 @@ export function createReportVersionStore({ pool }: ReportVersionStoreDeps): Repo
                         JSON.stringify(input.snapshot),
                     ],
                 });
-                return { versionId };
-            }).mapErr((error) => mapInsertError(error, input.threadId));
+                // Each arm of the write returns its row. The replace arm keeps the
+                // version id of the row that stood, thus an id that differs from the
+                // minted one names a replacement.
+                const landed = rows[0]?.version_id ?? minted;
+                return { versionId: landed, outcome: landed === minted ? "created" : "replaced" };
+            });
         };
 
         if (input.parentVersionId === undefined) {
-            return insert();
+            return write();
         }
 
         const parentVersionId = input.parentVersionId;
@@ -285,7 +298,7 @@ export function createReportVersionStore({ pool }: ReportVersionStoreDeps): Repo
                     parentAnalysisId,
                 });
             }
-            return insert();
+            return write();
         });
     }
 

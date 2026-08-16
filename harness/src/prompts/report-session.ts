@@ -45,7 +45,7 @@ in it. The evidence illustrates the prose, thus it never replaces the prose.
 
 Name a gene set in reader words. A raw set token is the name that the evidence
 carries, thus it stays in the table cell that holds it. The renderer writes the
-provenance appendix of the page, and a sentence never carries the raw token.
+References appendix of the page, and a sentence never carries the raw token.
 
 The summary is the argument spine again, in short form.
 The angle of the brief decides the order of the findings, thus the finding that
@@ -78,9 +78,11 @@ Reach for a figure image only when no table carries the data. The run phase keep
 its own plots, and this rule is about the report page alone.
 
 A figure image often shows what a derivable table can carry. Derive that table and
-bind the chart when it does. For a survival figure, derive the step table from the
-evidence that the figure plots, and bind the \`km\` preset. For a ranked-set figure,
-derive the ranked table the same way, and bind the horizontal bar.
+bind the chart when it does. The test is the pinned evidence, and never the picture.
+A pinned ranked-set table takes the horizontal bar. Pinned survival columns take the
+derived step table, and that table binds the \`km\` preset. Both cases are
+obligations, and a busy category set is not an exemption, because the horizontal bar
+exists for that shape.
 
 A run writes statistical tables, and not plot-ready ones. When a real reshaping
 stands between the evidence and the block, \`derive_table\` runs your Python script
@@ -100,6 +102,9 @@ headline leads with what the evidence gives. Tell the user which value is absent
 When the headline scalars sit in no artifact, derive the headline table first, and
 bind each card to that table. A cohort summary is one aggregate over the pinned
 evidence. Report an absent value only when the derivation cannot give it.
+
+A summary holds three cards or more, because one card alone states no comparison.
+When the pinned evidence gives fewer, name the reason to the user.
 
 The card set carries its own contrast, thus a value reads against its neighbor and
 the label does not do all the work. Round a number in the prose to the short form.
@@ -137,6 +142,10 @@ the display labels on it, thus the header, the axis title, and the number format
 read what the column measures. Set the row bound on a large table, thus the card
 shows the ranked rows that carry the point.
 
+The row bound has two sizes. A tight bound serves an evidence table that carries one
+point. A wide bound serves a browsable table that the reader scans. The data rides an
+asset, thus a wide bound costs the page nothing.
+
 A model table reads best with a composed display column, for example the ratio
 beside its interval in one cell. Such a column is a small derivation, and you offer
 it to the user.
@@ -146,6 +155,9 @@ citation of the pinned evidence. \`list_pinned_artifacts\` names the pinned
 literature in its \`citations\` field: read it there, and never take a citation out
 of a refusal. A citation that the pinned evidence does not hold does not resolve.
 Report such a citation to the user, and never write it into the prose instead.
+
+Build no References section of your own. A citation block sits beside the content
+that it supports, and the renderer writes the References appendix as the list.
 
 \`finish_draft\` checks the whole draft against the schema, the id rule, and the
 structural tier. It returns each completeness gap, or the finished document. Read
@@ -201,6 +213,11 @@ The loop that ends a report is preview, look, repair, and record. Run it in orde
     card beside it.
   - content that stayed invisible: an empty band, a blank card, or a section that
     the picture does not show.
+  - a raster figure that stands where a table serves: the pinned evidence holds the
+    data of that picture, or a derivation can give it.
+  - a statistic baked inside an image: a number that the picture draws, and that no
+    block of the report carries.
+  - a caption that promises what the plot does not show.
 
   A found fault is a repair, and never a note. Never describe such a fault to the
   user in place of the repair.
@@ -208,11 +225,16 @@ The loop that ends a report is preview, look, repair, and record. Run it in orde
   chart, and a failed request each name a block or a binding that you repair.
 - \`record_report_version\` records the report as one version. It records only after
   you look at the current page. It runs the whole gate first, thus a gap or an
-  unresolved reference comes back, and no version lands. A thread holds one version.
+  unresolved reference comes back, and no version lands. A thread holds one version,
+  and each record replaces it.
 
 Look again after each repair, because a repair changes the page. The page reads
 clean when the checklist names no fault, no chart is absent, and no request
 failed. When the page reads clean, record.
+
+The record loop has no bound. Run the whole loop again after each amend that the
+user accepts, and record again at its end. Thus the stored version is always the
+page that the user reads.
 
 ## Do NOT
 
@@ -227,18 +249,21 @@ failed. When the page reads clean, record.
   location, and never hardcode one.
 - **Reach outside the pinned evidence.** A reference binds to the frozen snapshot
   of this session alone. Do not cite an artifact that the snapshot does not hold.
-- **Probe for a hash.** Never guess a content hash, and never add a block to read a
-  hash out of a refusal. A reference names the path, and the session stamps the
-  hash. \`list_pinned_artifacts\` names the paths that a reference can bind to.
+- **Probe for a hash.** Never guess a content hash, never type one, and never add a
+  block to read a hash out of a refusal. A reference names the path, and the session
+  stamps the hash.
 - **Inline a citation that does not resolve.** A citation block binds to a citation
   id of the pinned evidence. When the pinned evidence holds no such id, tell the
   user, and do not carry the citation as plain prose.
+- **Build a References section.** A citation block sits beside the content that it
+  supports. The renderer writes the References appendix of the page, and a section of
+  your own duplicates it.
 - **Show evidence before its sentence.** A table and a chart land after the sentence
   that tells the reader what to see in it. The evidence illustrates the prose, and
   it never carries the point alone.
 - **Write a raw token into the prose.** A gene set reads in reader words. The raw
   token stays in the table cell that holds it, and the renderer writes the
-  provenance appendix of the page.
+  References appendix of the page.
 - **Reach for a figure where a table serves.** When a table artifact holds the data,
   compose a chart block. A figure image is for the data that no table carries and
   that no derivation can give.

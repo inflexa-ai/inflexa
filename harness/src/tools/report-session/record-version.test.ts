@@ -167,6 +167,45 @@ function gatewayFor(
     };
 }
 
+/**
+ * A session whose draft a test amends between two records.
+ *
+ * The load reads the draft of the moment, thus the second record sees what the amend left. `amend` swaps the
+ * draft alone, the same as the durable row: a persist of a document touches no hash column, thus the seen
+ * hash stays on the page of the last look. `look` copies the hash of the current draft onto the seen hash,
+ * the same as the eyes tool after a capture.
+ */
+function mutableSession(
+    threadId: string,
+    document: DraftDocument,
+    snapshot: ReportSnapshot,
+    derivations: readonly DerivationRecord[] = [],
+): { gateway: ReportSessionStateGateway; amend: (next: DraftDocument) => void; look: () => void } {
+    let draft = document;
+    let seen = computeDraftHash(document);
+    const stamped = (): Promise<StampResult> => Promise.resolve({ outcome: "stamped" });
+    const gateway: ReportSessionStateGateway = {
+        load: (t): Promise<SessionStateLoad> =>
+            Promise.resolve(
+                t === threadId
+                    ? { outcome: "found", state: { document: draft, snapshot }, analysisId: ANALYSIS_ID, token: null, seenDocumentHash: seen, derivations }
+                    : { outcome: "absent" },
+            ),
+        persist: (): Promise<SessionStatePersist> => Promise.resolve({ outcome: "persisted" }),
+        stampRendered: stamped,
+        stampSeen: stamped,
+    };
+    return {
+        gateway,
+        amend: (next: DraftDocument): void => {
+            draft = next;
+        },
+        look: (): void => {
+            seen = computeDraftHash(draft);
+        },
+    };
+}
+
 /** A tool context whose scope names a report thread. */
 function ctxForThread(threadId: string): ToolContext {
     const { ctx } = makeToolContext();
@@ -208,6 +247,12 @@ describe("createRecordVersionTool", () => {
             makeResolver: () => createFixtureResolver(),
             ...(logger ? { logger } : {}),
         });
+    }
+
+    /** Anchor one report thread and its parent conversation, thus the record reaches the store. */
+    async function anchorThread(threadId: string, parentId: string): Promise<void> {
+        (await threads.createThread({ threadId: parentId, analysisId: ANALYSIS_ID }))._unsafeUnwrap();
+        (await threads.createThread({ threadId, analysisId: ANALYSIS_ID, type: "report", parentThreadId: parentId, parentSeq: 1 }))._unsafeUnwrap();
     }
 
     it("records nothing and names the block when an assert fails", async () => {
@@ -317,13 +362,83 @@ describe("createRecordVersionTool", () => {
         expect(stored!.document.title).toBe("Report");
     });
 
-    describe("the derivation prune", () => {
-        /** Anchor one report thread and its parent conversation, thus the record reaches the store. */
-        async function anchorThread(threadId: string, parentId: string): Promise<void> {
-            (await threads.createThread({ threadId: parentId, analysisId: ANALYSIS_ID }))._unsafeUnwrap();
-            (await threads.createThread({ threadId, analysisId: ANALYSIS_ID, type: "report", parentThreadId: parentId, parentSeq: 1 }))._unsafeUnwrap();
+    describe("the record loop", () => {
+        /** The draft of `metricDoc`, under a title that a test tells from the first one. */
+        function amendedDoc(title: string, assertValue?: number): DraftDocument {
+            const draft = metricDoc(assertValue);
+            draft.title = title;
+            return draft;
         }
 
+        it("replaces the one version on a record that follows an amend", async () => {
+            const threadId = "thread-rerecord";
+            await anchorThread(threadId, "parent-rerecord");
+            const session = mutableSession(threadId, metricDoc(), metricSnapshot);
+            const tool = makeTool(session.gateway);
+
+            const first = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+            expect(first.outcome).toBe("recorded");
+
+            session.amend(amendedDoc("An amended report"));
+            session.look();
+            const second = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+            expect(second.outcome).toBe("recorded");
+            if (first.outcome === "recorded" && second.outcome === "recorded") {
+                // The later record writes over the one version, thus the id that the first record gave
+                // still names the version that stands.
+                expect(second.versionId).toBe(first.versionId);
+                expect(first.replaced).toBe(false);
+                expect(second.replaced).toBe(true);
+            }
+
+            const stored = (await store.getThreadVersion(threadId))._unsafeUnwrap();
+            expect(stored!.document.title).toBe("An amended report");
+        });
+
+        it("keeps the stored version when a later record fails its gate", async () => {
+            const threadId = "thread-rerecord-invalid";
+            await anchorThread(threadId, "parent-rerecord-invalid");
+            const session = mutableSession(threadId, metricDoc(), metricSnapshot);
+            const tool = makeTool(session.gateway);
+
+            const first = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+            expect(first.outcome).toBe("recorded");
+
+            // The amend breaks the assert of the metric, and the eyes look at the broken page.
+            session.amend(amendedDoc("A broken report", 999));
+            session.look();
+            const second = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+            expect(second.outcome).toBe("invalid");
+            // The gate refused before the store, thus the earlier record still stands whole.
+            const stored = (await store.getThreadVersion(threadId))._unsafeUnwrap();
+            expect(stored!.document.title).toBe("Report");
+            if (first.outcome === "recorded") {
+                expect(stored!.versionId).toBe(first.versionId);
+            }
+        });
+
+        it("refuses a later record whose look is stale, and keeps the stored version", async () => {
+            const threadId = "thread-rerecord-stale";
+            await anchorThread(threadId, "parent-rerecord-stale");
+            const session = mutableSession(threadId, metricDoc(), metricSnapshot);
+            const tool = makeTool(session.gateway);
+
+            expect((await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap().outcome).toBe("recorded");
+
+            // The amend runs, and no look follows it. The seen hash names the page of the record, thus it
+            // does not name the amended draft.
+            session.amend(amendedDoc("An unseen report"));
+            const second = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+            expect(second.outcome).toBe("stale-look");
+            const stored = (await store.getThreadVersion(threadId))._unsafeUnwrap();
+            expect(stored!.document.title).toBe("Report");
+        });
+    });
+
+    describe("the derivation prune", () => {
         it("removes the unused output, keeps the used one, and keeps both records", async () => {
             const threadId = "thread-prune";
             await anchorThread(threadId, "parent-prune");
@@ -434,6 +549,34 @@ describe("createRecordVersionTool", () => {
             expect(result.outcome).toBe("recorded");
             expect(existsSync(stray)).toBe(true);
         });
+
+        it("removes at the later record the output that an amend unbound", async () => {
+            const threadId = "thread-prune-rerecord";
+            await anchorThread(threadId, "parent-prune-rerecord");
+            const root = await makeRoot("record-prune-rerecord-");
+
+            const bound = derivedPath(threadId, "bound.csv");
+            const boundFile = await stageFile(root, bound);
+            const records = [derivation(bound)];
+
+            const doc = docWithTable(bound);
+            const session = mutableSession(threadId, doc, snapshotWithDerived([bound]), records);
+            const tool = makeTool(session.gateway, root);
+
+            expect((await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap().outcome).toBe("recorded");
+            // The first record binds the output, thus the prune keeps its bytes.
+            expect(existsSync(boundFile)).toBe(true);
+
+            // The amend drops the one block that binds the derived output.
+            session.amend(metricDoc());
+            session.look();
+            const second = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+            expect(second.outcome).toBe("recorded");
+            // The prune runs again on the later record, thus the unbound output goes and the record stays.
+            expect(existsSync(boundFile)).toBe(false);
+            expect(records.map((record) => record.outputPath)).toEqual([bound]);
+        });
     });
 
     it("serves the preview and the record gate through one resolver factory on the same reference", async () => {
@@ -502,6 +645,24 @@ describe("createRecordVersionTool", () => {
             if (result.outcome === "recorded") {
                 expect(detailOf(tool, result)).toBe(`version ${result.versionId}`);
             }
+        });
+
+        it("names the update on a record that replaced the version", async () => {
+            const threadId = "thread-detail-update";
+            await anchorThread(threadId, "parent-detail-update");
+            const session = mutableSession(threadId, metricDoc(), metricSnapshot);
+            const tool = makeTool(session.gateway);
+
+            expect((await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap().outcome).toBe("recorded");
+
+            const amended = metricDoc();
+            amended.title = "An amended report";
+            session.amend(amended);
+            session.look();
+            const second = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+            // The line reads as an update, thus a watcher does not read the later record as a refusal.
+            expect(detailOf(tool, second)).toBe("version updated");
         });
 
         it("names the outcome kind of a gate that refused", async () => {

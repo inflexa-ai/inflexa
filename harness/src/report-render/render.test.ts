@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { load } from "cheerio";
 
-import type { Block, CitationBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
-import { AG_GRID_ASSET, ASSETS_DIR, PAGE_ASSETS, tableSidecarName } from "./assets.js";
+import type { Block, ChartBlock, CitationBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
+import { AG_GRID_ASSET, ASSETS_DIR, DEPS_DIR, ECHARTS_ASSET, PAGE_ASSETS, tableSidecarName } from "./assets.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption } from "./chart.js";
 import {
+    CHART_INLINE_OPTION_BOUND,
     DESIGN_CSS,
     GRID_HEADER_BORDER_PX,
     GRID_HEADER_HEIGHT_PX,
@@ -376,8 +378,9 @@ describe("the table data assets", () => {
 
         expect(rendered.dataAssets).toEqual([]);
         // A page with no payload registers no map, and it carries neither the decoder nor the grid boot,
-        // thus it stays what it was.
-        expect(rendered.html).not.toContain(TABLE_DATA_GLOBAL);
+        // thus it stays what it was. The chart bootstrap names the map, because a dense chart reads it.
+        expect(rendered.html).not.toContain(`window.${TABLE_DATA_GLOBAL}=`);
+        expect(rendered.html).not.toContain(TABLE_DATA_DECODER);
         expect(rendered.html).not.toContain(GRID_BOOTSTRAP);
         expect(rendered.html).not.toContain(".data.js");
         expect(rendered.html).toBe(renderReportPage(document, {})._unsafeUnwrap().html);
@@ -446,6 +449,24 @@ describe("the page stands alone", () => {
         // kinds together are what the preview writes beside the page.
         const unstaged = stagedReferences.filter((value) => !staged.has(value.slice(prefix.length)));
         expect(unstaged).toEqual([]);
+    });
+
+    it("names each library and each font under the deps directory, and each report-side file at the root", () => {
+        const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const deps = `${ASSETS_DIR}/${DEPS_DIR}/`;
+
+        // The shipped libraries and fonts sit apart from what the report produced. The manifest carries the
+        // subpath, thus the head tag, the font rule, and the stage step read one source.
+        expect(PAGE_ASSETS.filter((asset) => !asset.file.startsWith(`${DEPS_DIR}/`))).toEqual([]);
+        expect(rendered.html).toContain(`<script src="${deps}`);
+        expect(DESIGN_CSS).toContain(deps);
+
+        // A data asset is a file that this render produced, thus it stays at the root of the directory.
+        expect(rendered.dataAssets.length).toBeGreaterThan(0);
+        expect(rendered.dataAssets.filter((asset) => asset.name.includes("/"))).toEqual([]);
+        for (const asset of rendered.dataAssets) {
+            expect(rendered.html).toContain(`<script src="${ASSETS_DIR}/${asset.name}"></script>`);
+        }
     });
 });
 
@@ -636,7 +657,7 @@ describe("renderReportPage value validation", () => {
         expect(result.isOk()).toBe(true);
         const html = result._unsafeUnwrap().html;
         expect(html).toContain("A claim.");
-        expect(html).toContain(`href="#cite-1"`);
+        expect(html).toContain(`href="#ref-1"`);
     });
 });
 
@@ -674,10 +695,10 @@ describe("renderReportPage navigation and references", () => {
             ],
         };
         const html = renderReportPage(document, {})._unsafeUnwrap().html;
-        // The bibliography holds one entry.
-        expect(html.split(`<li id="cite-`).length - 1).toBe(1);
+        // The appendix holds one entry.
+        expect(html.split(`<li id="ref-`).length - 1).toBe(1);
         // The claim marker and the citation marker point at the same entry.
-        expect(html.split(`href="#cite-1"`).length - 1).toBe(2);
+        expect(html.split(`href="#ref-1"`).length - 1).toBe(2);
     });
 
     it("lists one entry for one paper that two blocks name with different display text", () => {
@@ -708,13 +729,18 @@ describe("renderReportPage navigation and references", () => {
 
         // The key names the paper, and the raw text is the words of the author. Thus one paper takes one
         // number, and the two markers point at the one entry.
-        expect(html.split(`<li id="cite-`).length - 1).toBe(1);
-        expect(html.split(`href="#cite-1"`).length - 1).toBe(2);
+        expect(html.split(`<li id="ref-`).length - 1).toBe(1);
+        expect(html.split(`href="#ref-1"`).length - 1).toBe(2);
     });
 });
 
-describe("the citation bibliography", () => {
-    /** One page whose section holds two artifact claims and two citation blocks. */
+describe("the citation card and its appendix entry", () => {
+    /**
+     * One page whose section holds two artifact claims and two citation blocks.
+     *
+     * One ladder counts the four references in document order. Thus the two artifact claims take `[1]` and
+     * `[2]`, and the two citation cards take `[3]` and `[4]`.
+     */
     const twoOfEach: ReportDocument = {
         title: "T",
         sections: [
@@ -750,7 +776,7 @@ describe("the citation bibliography", () => {
         )._unsafeUnwrap().html;
         const card = load(html)("div.report-citation").last();
 
-        expect(card.find("span.report-cite-marker").text()).toBe("[2]");
+        expect(card.find("span.report-marker").text()).toBe("[4]");
         expect(card.find("a.report-citation-source").text()).toBe("Hugo et al. 2016");
         expect(card.find("a.report-citation-source").attr("href")).toBe("https://pubmed.ncbi.nlm.nih.gov/26997480/");
         expect(card.find("span.report-citation-note").text()).toBe("the second paper");
@@ -759,7 +785,7 @@ describe("the citation bibliography", () => {
         expect(card.text()).not.toContain("The resistance paper.");
 
         // The appendix entry names the paper beside the key, and it carries the description under them.
-        const entry = load(html)("li#cite-2");
+        const entry = load(html)("li#ref-4");
         expect(entry.text()).toContain("Hugo et al. 2016");
         expect(entry.text()).toContain("pmid:26997480");
         expect(entry.find("div.report-cite-description").text()).toBe("The resistance paper.");
@@ -768,8 +794,8 @@ describe("the citation bibliography", () => {
     it("adds no description line to a record that carries none", () => {
         const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap().html;
 
-        expect(load(html)("li#cite-2").text()).toContain("Hugo et al. 2016");
-        expect(load(html)("li#cite-2 div.report-cite-description").length).toBe(0);
+        expect(load(html)("li#ref-4").text()).toContain("Hugo et al. 2016");
+        expect(load(html)("li#ref-4 div.report-cite-description").length).toBe(0);
     });
 
     it("shows the key and the note alone for a key that the record map does not hold", () => {
@@ -779,27 +805,28 @@ describe("the citation bibliography", () => {
         expect(card.find("a.report-citation-source").length).toBe(0);
         expect(card.find("span.report-citation-key").text()).toBe("pmid:12345");
         expect(card.find("span.report-citation-note").text()).toBe("the first paper");
-        // The bibliography entry of a record-less key names the key alone.
-        expect(load(html)("li#cite-1").text()).toContain("pmid:12345");
-        expect(load(html)("li#cite-1 span.report-cite-source").length).toBe(0);
+        // The appendix entry of a record-less key names the key alone.
+        expect(load(html)("li#ref-3").text()).toContain("pmid:12345");
+        expect(load(html)("li#ref-3 span.report-cite-source").length).toBe(0);
     });
 
-    it("counts the artifact markers and the citation markers in two ladders", () => {
+    it("counts the artifact markers and the citation markers in one ladder", () => {
         const page = load(renderReportPage(twoOfEach, {})._unsafeUnwrap().html);
 
+        // Every marker of the page counts in one sequence, in document order.
         expect(
-            page("sup.report-marker a")
+            page("span.report-marker a")
                 .toArray()
                 .map((node) => page(node).text()),
-        ).toEqual(["1", "2"]);
+        ).toEqual(["[1]", "[2]", "[3]", "[4]"]);
+        // One list holds the four entries, thus each marker points into it.
+        expect(page("ol.report-references li").length).toBe(4);
+        expect(page("ol.report-citations").length).toBe(0);
         expect(
-            page("span.report-cite-marker a")
+            page("ol.report-references li")
                 .toArray()
-                .map((node) => page(node).text()),
-        ).toEqual(["[1]", "[2]"]);
-        // The two appendix lists each hold two entries, thus no marker points across the ladders.
-        expect(page("ol.report-references li").length).toBe(2);
-        expect(page("ol.report-citations li").length).toBe(2);
+                .map((node) => page(node).attr("id")),
+        ).toEqual(["ref-1", "ref-2", "ref-3", "ref-4"]);
     });
 
     it("names PubMed as a navigation and never as a loaded resource", () => {
@@ -894,62 +921,100 @@ describe("the one content column", () => {
     });
 });
 
-describe("the appendix bands", () => {
-    /** A document whose one claim binds an artifact, thus the provenance ladder holds one entry. */
+describe("the References appendix", () => {
+    /** A document whose one claim binds an artifact, thus the ladder holds one artifact entry. */
     const artifactDocument: ReportDocument = {
         title: "T",
         sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "claim", id: "c1", content: { prose: "A claim." }, bindings: [scalarRef] }] }],
     };
 
-    /** A document whose one claim binds a paper, thus the citation ladder holds the only entry. */
+    /** A document whose one claim binds a paper, thus the ladder holds one literature entry. */
     const citationDocument: ReportDocument = {
         title: "T",
         sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "claim", id: "c1", content: { prose: "A claim." }, bindings: [citation] }] }],
     };
 
-    it("titles the provenance list Data provenance", () => {
+    /** A document whose one claim binds an artifact and a paper, in that order. */
+    const bothDocument: ReportDocument = {
+        title: "T",
+        sections: [
+            {
+                kind: "section",
+                id: "s",
+                title: "S",
+                blocks: [{ kind: "claim", id: "c1", content: { prose: "A claim." }, bindings: [scalarRef, citation] }],
+            },
+        ],
+    };
+
+    /** The text of each appendix heading of a page, in document order. */
+    function appendixTitles(html: string): string[] {
+        const page = load(html);
+        return page("h2.report-ref-title")
+            .toArray()
+            .map((node) => page(node).text());
+    }
+
+    it("titles the one appendix References on a page of artifacts alone", () => {
         const html = renderReportPage(artifactDocument, {})._unsafeUnwrap().html;
-        expect(html).toContain("Data provenance");
-        // A reader expects literature under "References". This list is provenance, thus no heading of the
-        // page carries that word.
-        expect(html).not.toContain(">References<");
-        expect(load(html)("h2.report-ref-title").length).toBe(1);
-        // The page cites no paper, thus it carries no bibliography band.
-        expect(html).not.toContain("Literature");
+
+        expect(appendixTitles(html)).toEqual(["References"]);
+        expect(load(html)("ol.report-references li").length).toBe(1);
     });
 
-    it("titles the bibliography Literature, and titles no provenance band over it", () => {
+    it("titles the one appendix References on a page of papers alone", () => {
         const html = renderReportPage(citationDocument, {})._unsafeUnwrap().html;
-        const titles = load(html)("h2.report-ref-title")
-            .toArray()
-            .map((node) => load(html)(node).text());
 
-        // The one appendix of the page holds papers, thus it wears the literature title alone. A reader
-        // never reads a paper under the provenance heading.
-        expect(titles).toEqual(["Literature"]);
-        expect(html).toContain(`<ol class="report-citations">`);
-        expect(html).not.toContain(`<ol class="report-references">`);
+        // One notation sends the reader to one list, thus a page of papers wears the same title as a page
+        // of artifacts.
+        expect(appendixTitles(html)).toEqual(["References"]);
+        expect(load(html)("ol.report-references li").length).toBe(1);
     });
 
-    it("titles the two bands apart when the page holds both kinds of reference", () => {
-        const both: ReportDocument = {
-            title: "T",
-            sections: [
-                {
-                    kind: "section",
-                    id: "s",
-                    title: "S",
-                    blocks: [{ kind: "claim", id: "c1", content: { prose: "A claim." }, bindings: [scalarRef, citation] }],
-                },
-            ],
-        };
-        const html = renderReportPage(both, {})._unsafeUnwrap().html;
-        const titles = load(html)("h2.report-ref-title")
-            .toArray()
-            .map((node) => load(html)(node).text());
+    it("holds both kinds in one list, in number order, each under its kind tag", () => {
+        const html = renderReportPage(bothDocument, {})._unsafeUnwrap().html;
+        const page = load(html);
+        const items = page("ol.report-references li").toArray();
 
-        // The provenance band comes first, and the literature band continues the band alternation.
-        expect(titles).toEqual(["Data provenance", "Literature"]);
+        expect(appendixTitles(html)).toEqual(["References"]);
+        // The claim binds the artifact first, thus the artifact entry sits at the first anchor. The kind
+        // tag of each entry states which shape it carries.
+        expect(items.map((node) => page(node).attr("id"))).toEqual(["ref-1", "ref-2"]);
+        expect(items.map((node) => page(node).find("span.report-ref-kind").first().text())).toEqual(["Artifact value", "Citation"]);
+    });
+
+    it("renders no appendix band for a page that binds nothing", () => {
+        const bare: ReportDocument = {
+            title: "T",
+            sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "text", id: "t", content: { prose: "Prose." } }] }],
+        };
+        const html = renderReportPage(bare, {})._unsafeUnwrap().html;
+
+        expect(appendixTitles(html)).toEqual([]);
+        expect(html).not.toContain(">References<");
+    });
+
+    it("carries one bracket notation and neither retired heading on the fixture page", () => {
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+        const page = load(html);
+        const markers = page("span.report-marker a")
+            .toArray()
+            .map((node) => page(node).text());
+
+        // Every marker of a page that holds each block kind reads as a bracket number.
+        expect(markers.length).toBeGreaterThan(0);
+        for (const marker of markers) {
+            expect(marker).toMatch(/^\[\d+\]$/);
+        }
+        // The superscript notation retires, thus no element of the page carries it.
+        expect(html).not.toContain("<sup");
+        // Neither retired title names a heading of the page, and the one appendix wears its own title.
+        const headings = page("h1, h2, h3, h4")
+            .toArray()
+            .map((node) => page(node).text());
+        expect(headings).not.toContain("Data provenance");
+        expect(headings).not.toContain("Literature");
+        expect(headings).toContain("References");
     });
 
     it("reads quieter than the body of the report", () => {
@@ -1307,7 +1372,7 @@ describe("the table grid", () => {
         // runtime nor the boot, and the chart runtime stays.
         expect(html).not.toContain(AG_GRID_ASSET.file);
         expect(html).not.toContain(GRID_BOOTSTRAP);
-        expect(html).toContain(`${ASSETS_DIR}/echarts.min.js`);
+        expect(html).toContain(`${ASSETS_DIR}/${ECHARTS_ASSET.file}`);
     });
 
     it("boots after the decode and before the readiness signal", () => {
@@ -1685,6 +1750,18 @@ describe("the grid boot", () => {
         expect(run.counts[0].textContent).toBe("1,201 rows");
     });
 
+    it("states the shown count against the pre-bound total of the artifact", () => {
+        const bounded = { ...genePayload(10), total: 14201 };
+        const run = boot({ one: bounded });
+
+        // The rows of the card are the bound of the binding, and the total is the artifact. Thus the footer
+        // never reads a cut table as the whole artifact.
+        expect(run.counts[0].textContent).toBe("10 of 14,201 rows");
+
+        run.grids[0].narrowTo(3);
+        expect(run.counts[0].textContent).toBe("3 of 14,201 rows");
+    });
+
     it("skips a mount whose block the registry does not hold, and it throws nothing", () => {
         const run = boot({ one: genePayload() }, ["one", "absent"]);
 
@@ -1866,5 +1943,214 @@ describe("renderReportPage escaping", () => {
         expect(html).toContain(">Report &lt;script&gt;alert(1)&lt;/script&gt;<");
         // The hostile tag never reaches the page as a live element.
         expect(html).not.toContain("<script>alert(1)");
+    });
+});
+
+describe("the shared chart payload", () => {
+    const CHART_PATH = "runs/run-1/step-a/output/de.csv";
+    const CHART_HASH = `sha256:${"b".repeat(64)}`;
+    const COLUMNS = ["gene", "log2fc", "padj", "arm"];
+
+    /** The binding that every block of this suite pins. */
+    const binding: TableBlock["binding"] = { kind: "artifact-table", path: CHART_PATH, hash: CHART_HASH };
+
+    /** A differential-expression table of `count` rows: a name, an effect, a p-value, and one of two arms. */
+    function denseRows(count: number): Record<string, string | number>[] {
+        const rows = [];
+        for (let index = 0; index < count; index += 1) {
+            rows.push({ gene: `G${index}`, log2fc: (index % 400) / 100 - 2, padj: (index + 1) / (count * 10), arm: index % 3 === 0 ? "a" : "b" });
+        }
+        return rows;
+    }
+
+    /** The volcano block of the bound table, with a name on each point. */
+    function volcanoBlock(id = "cht"): ChartBlock {
+        return { kind: "chart", id, binding, chartType: "volcano", encoding: { x: "log2fc", y: "padj", label: "gene" } };
+    }
+
+    /** One page over the given blocks, with the same dense table under each block id. */
+    function pageOf(blocks: Block[], count = 6000): { document: ReportDocument; values: RenderValues; rows: Record<string, string | number>[] } {
+        const rows = denseRows(count);
+        const values: RenderValues = {};
+        for (const block of blocks) {
+            values[block.id] = { type: "table", columns: COLUMNS, rows };
+        }
+        return { document: { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] }, values, rows };
+    }
+
+    /** The registry that the page holds after the assets and the decoder run. */
+    function registryOf(assets: readonly { bytes: string }[]): Record<string, { rows: Record<string, string | number>[]; total: number }> {
+        const window: Record<string, unknown> = {};
+        for (const asset of assets) {
+            new Function("window", asset.bytes)(window);
+        }
+        new Function("window", TABLE_DATA_DECODER)(window);
+        return window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[]; total: number }>;
+    }
+
+    it("holds one payload for one artifact, and a table and a chart both read it", () => {
+        const table: TableBlock = { kind: "table", id: "tbl", binding };
+        const page = pageOf([table, volcanoBlock()]);
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+
+        expect(rendered.dataAssets.length).toBe(1);
+        const registry = registryOf(rendered.dataAssets);
+        // One asset registers the rows one time. The second id takes the same object, thus the page carries
+        // one copy of the table and each block finds it under its own id.
+        expect(Object.keys(registry).sort()).toEqual(["cht", "tbl"]);
+        expect(registry["cht"]).toBe(registry["tbl"]);
+
+        // The table encoded the payload, and the chart reads it under its own id. Thus the shared payload
+        // plots the chart, and the grid of the table reads the same rows.
+        const json = load(rendered.html)("script[type='application/json']").text();
+        const built = bootChart(rendered.dataAssets, json);
+        expect(built.map((series) => series.data.length).reduce((sum, count) => sum + count, 0)).toBe(page.rows.length);
+    });
+
+    it("builds the series of a dense chart on the page, exactly as the inline derivation does", () => {
+        const page = pageOf([volcanoBlock()]);
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        const json = load(rendered.html)("script[type='application/json']").text();
+
+        // The option holds no row, thus the whole chart costs the page one small element.
+        expect(json.length).toBeLessThan(CHART_INLINE_OPTION_BOUND);
+        expect(json).not.toContain("G4001");
+
+        const built = bootChart(rendered.dataAssets, json);
+        const inline = deriveChartOption(volcanoBlock(), page.rows, COLUMNS)._unsafeUnwrap();
+        // The page reads the payload and rebuilds each series. The two forms are the same chart, thus the
+        // data of the page and the data of the inline derivation match cell for cell.
+        expect(JSON.stringify(built.map((series) => series.data))).toBe(JSON.stringify(asSeries(inline).map((series) => series.data)));
+    });
+
+    it("gives byte-identical assets and one page over two renders", () => {
+        const page = pageOf([volcanoBlock()]);
+        const first = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        const second = renderReportPage(page.document, page.values)._unsafeUnwrap();
+
+        expect(second.dataAssets).toEqual(first.dataAssets);
+        expect(second.html).toBe(first.html);
+    });
+
+    it("skips the grid runtime and the grid boot on a page whose payload feeds a chart alone", () => {
+        const page = pageOf([volcanoBlock()]);
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+
+        // The grid bundle weighs about two megabytes, and this page builds no grid. The decoder still rides,
+        // because the chart reads the decoded rows.
+        expect(rendered.dataAssets.length).toBe(1);
+        expect(rendered.html).not.toContain(AG_GRID_ASSET.file);
+        expect(rendered.html).not.toContain(GRID_BOOTSTRAP);
+        expect(rendered.html).toContain(TABLE_DATA_DECODER);
+    });
+
+    it("leaves a chart under the bound with its own rows and registers no payload", () => {
+        const page = pageOf([volcanoBlock()], 20);
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+
+        expect(rendered.dataAssets).toEqual([]);
+        const json = load(rendered.html)("script[type='application/json']").text();
+        expect(json).toContain("G19");
+        expect(json).not.toContain(CHART_SOURCE_MEMBER);
+    });
+
+    it("keeps two payloads for two bindings of one path, because they resolve different rows", () => {
+        const bounded: TableBlock = { kind: "table", id: "tbl", binding: { ...binding, rowBound: { column: "padj", count: 20, order: "asc" } } };
+        const page = pageOf([bounded, volcanoBlock()]);
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+
+        // The bound is part of the binding. Two bindings that differ in it name two row sets, thus one
+        // payload for both would ship the rows of one block under the id of the other.
+        expect(rendered.dataAssets.length).toBe(2);
+    });
+
+    /** The series that the chart bootstrap sets, over the payloads of the page and one option JSON. */
+    function bootChart(assets: readonly { bytes: string }[], json: string): { data: unknown[] }[] {
+        const win: Record<string, unknown> = { addEventListener: () => undefined };
+        for (const asset of assets) {
+            new Function("window", asset.bytes)(win);
+        }
+        new Function("window", TABLE_DATA_DECODER)(win);
+
+        const applied: Record<string, unknown>[] = [];
+        const container = { getAttribute: () => "cht", nextElementSibling: { getAttribute: () => "application/json", textContent: json } };
+        const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
+        const echarts = {
+            init: () => ({
+                setOption: (given: Record<string, unknown>) => {
+                    applied.push(given);
+                },
+            }),
+            getInstanceByDom: () => undefined,
+        };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        expect(errors).toEqual([]);
+        expect(applied.length).toBe(1);
+        // The member of the data source leaves the option before the chart runtime reads it.
+        expect(applied[0][CHART_SOURCE_MEMBER]).toBeUndefined();
+        return asSeries(applied[0]);
+    }
+
+    /** The series list of one option. */
+    function asSeries(option: Record<string, unknown>): { data: unknown[] }[] {
+        return (option.series ?? []) as { data: unknown[] }[];
+    }
+});
+
+describe("the pre-bound total of a table", () => {
+    const binding: TableBlock["binding"] = { kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:aaa", rowBound: { column: "padj", count: 10 } };
+
+    /** One page of one bounded table block over ten rows of a much larger artifact. */
+    function boundedPage(): { document: ReportDocument; values: RenderValues } {
+        const rows = [];
+        for (let index = 0; index < 10; index += 1) {
+            rows.push({ gene: `G${index}`, padj: index / 1000 });
+        }
+        return {
+            document: { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "table", id: "tbl", binding }] }] },
+            values: { tbl: { type: "table", columns: ["gene", "padj"], rows, total: 14201 } },
+        };
+    }
+
+    it("states the shown count against the total in the card footer, with the bound beside it", () => {
+        const page = boundedPage();
+        const card = load(renderReportPage(page.document, page.values)._unsafeUnwrap().html);
+
+        expect(card(`.${GRID_COUNT_CLASS}`).text()).toBe("10 of 14,201 rows");
+        expect(card(".report-table-bound").text()).toBe("top 10 by padj");
+    });
+
+    it("carries the total on the payload, thus the page states it after a filter", () => {
+        const page = boundedPage();
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        const window: Record<string, unknown> = {};
+        new Function("window", rendered.dataAssets[0].bytes)(window);
+
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { total: number; rows: unknown[] }>;
+        expect(registry["tbl"].total).toBe(14201);
+        expect(registry["tbl"].rows.length).toBe(10);
+    });
+
+    it("takes the row count as the total for a table that no bound cut", () => {
+        const document: ReportDocument = {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [{ kind: "table", id: "tbl", binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" } }],
+                },
+            ],
+        };
+        const values: RenderValues = { tbl: { type: "table", columns: ["gene"], rows: [{ gene: "TP53" }, { gene: "MYC" }] } };
+        const rendered = renderReportPage(document, values)._unsafeUnwrap();
+        const window: Record<string, unknown> = {};
+        new Function("window", rendered.dataAssets[0].bytes)(window);
+
+        // A whole table shows every row that it holds, thus the footer states the one count.
+        expect(load(rendered.html)(`.${GRID_COUNT_CLASS}`).text()).toBe("2 rows");
+        expect((window[TABLE_DATA_GLOBAL] as Record<string, { total: number }>)["tbl"].total).toBe(2);
     });
 });

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "bun:test";
 
-import { formatNumberCell, formatTableCell, selectColumnKind, selectNumberKind, smallestPositiveValue, type NumberKind } from "./number-format.js";
+import {
+    formatNumberCell,
+    formatTableCell,
+    holdsADriftedExponent,
+    selectColumnKind,
+    selectNumberKind,
+    smallestPositiveValue,
+    type NumberKind,
+} from "./number-format.js";
 import { TABLE_CELL_FORMATTER } from "./page.js";
 
 describe("formatNumberCell scientific", () => {
@@ -343,6 +351,38 @@ describe("selectColumnKind", () => {
         expect(selectColumnKind("log2FoldChange")).toBe("compact-scientific");
         expect(selectColumnKind("reads")).toBe("compact-scientific");
         expect(selectColumnKind("effect", "effect")).toBe("compact-scientific");
+    });
+});
+
+describe("holdsADriftedExponent", () => {
+    it("names a zero-padded exponent, which no shown form gives", () => {
+        expect(holdsADriftedExponent("4.3e-05")).toBe(true);
+        expect(holdsADriftedExponent("1e-06")).toBe(true);
+        expect(holdsADriftedExponent("2.7e-010")).toBe(true);
+    });
+
+    it("names a signed exponent, because the shown form drops the plus sign", () => {
+        expect(holdsADriftedExponent("1.5e+8")).toBe(true);
+    });
+
+    it("stays quiet on the form that the module prints", () => {
+        expect(holdsADriftedExponent(formatNumberCell(0.000043, "scientific").text)).toBe(false);
+        expect(holdsADriftedExponent("4.3e-5")).toBe(false);
+        expect(holdsADriftedExponent("1e-6")).toBe(false);
+        expect(holdsADriftedExponent("2.7e-10")).toBe(false);
+        expect(holdsADriftedExponent("1.5e8")).toBe(false);
+    });
+
+    it("stays quiet on a rounding, because the mantissa is no matter of notation", () => {
+        // The page prints `2.4e-7` for this value, thus the digits differ and the exponent agrees.
+        expect(holdsADriftedExponent("2.35e-7")).toBe(false);
+    });
+
+    it("stays quiet on a text that carries no exponent form", () => {
+        expect(holdsADriftedExponent("0.0043")).toBe(false);
+        expect(holdsADriftedExponent("14,201")).toBe(false);
+        expect(holdsADriftedExponent("TP53")).toBe(false);
+        expect(holdsADriftedExponent("")).toBe(false);
     });
 });
 

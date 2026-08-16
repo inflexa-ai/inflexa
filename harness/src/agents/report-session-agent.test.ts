@@ -161,18 +161,18 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("Write a raw token into the prose");
     });
 
-    test("the prompt teaches derive-and-chart with the two named cases", () => {
+    test("the prompt teaches derive-and-chart as an obligation with its artifact test", () => {
         // The rule and its two cases stay at the mechanism level, thus the assertion
         // pins the preset and the orientation and never a dataset or a column.
         expect(reportSessionPrompt).toContain("Derive that table and");
-        // The derivation reads the evidence and never the image, thus the wording
-        // names the evidence that the figure plots. The two substrings sit on two
-        // lines of the prompt, thus neither one crosses the wrap between them.
-        expect(reportSessionPrompt).toContain("For a survival figure, derive the step table from the");
-        expect(reportSessionPrompt).toContain("evidence that the figure plots");
+        // The pinned evidence decides the case, thus a figure image is not the test.
+        expect(reportSessionPrompt).toContain("The test is the pinned evidence");
+        expect(reportSessionPrompt).toContain("A pinned ranked-set table takes the horizontal bar");
+        expect(reportSessionPrompt).toContain("Pinned survival columns take the");
         expect(reportSessionPrompt).toContain("`km`");
-        expect(reportSessionPrompt).toContain("derive the ranked table the same way");
-        expect(reportSessionPrompt).toContain("horizontal");
+        // The two cases are obligations, and the busy category set is refused in words.
+        expect(reportSessionPrompt).toContain("Both cases are");
+        expect(reportSessionPrompt).toContain("a busy category set is not an exemption");
     });
 
     test("the prompt teaches the headline derivation", () => {
@@ -187,6 +187,11 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("Declare the column meanings and");
         expect(reportSessionPrompt).toContain("the display labels on it");
         expect(reportSessionPrompt).toContain("Set the row bound on a large table");
+        // The bound has two sizes, and the asset is the reason that a wide one is free.
+        expect(reportSessionPrompt).toContain("The row bound has two sizes");
+        expect(reportSessionPrompt).toContain("A tight bound serves an evidence table");
+        expect(reportSessionPrompt).toContain("A wide bound serves a browsable table");
+        expect(reportSessionPrompt).toContain("a wide bound costs the page nothing");
         // The composed display column is an offer, thus the agent proposes it.
         expect(reportSessionPrompt).toContain("composed display column");
     });
@@ -208,9 +213,16 @@ describe("createReportSessionAgent", () => {
         // The record gate is the look, thus the substring carries that clause and
         // not the bare "only after" that a line wrap cuts.
         expect(reportSessionPrompt).toContain("you look at the current page");
+        // The loop runs again after each accepted amend, thus the record has no bound
+        // and the stored version never trails the page.
+        expect(reportSessionPrompt).toContain("each record replaces it");
+        expect(reportSessionPrompt).toContain("The record loop has no bound");
+        expect(reportSessionPrompt).toContain("after each amend that the");
         // The anti-pattern entry names the visual spiral.
         expect(reportSessionPrompt).toContain("visual spiral");
         expect(reportSessionPrompt).toContain("cosmetic doubt");
+        // A thread holds one version, thus a record never refuses as a second one.
+        expect(reportSessionPrompt).not.toContain("A thread holds one version.");
     });
 
     test("the look step carries the fault checklist", () => {
@@ -226,6 +238,11 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("a printed zero probability");
         expect(reportSessionPrompt).toContain("a number that disagrees");
         expect(reportSessionPrompt).toContain("content that stayed invisible");
+        // A picture that carries the evidence of a table is the fault that the
+        // chart-first rule exists to end, and a caption states what the plot shows.
+        expect(reportSessionPrompt).toContain("a raster figure that stands where a table serves");
+        expect(reportSessionPrompt).toContain("a statistic baked inside an image");
+        expect(reportSessionPrompt).toContain("a caption that promises what the plot does not show");
         // A found fault ends in a repair, thus the agent never reports one instead.
         expect(reportSessionPrompt).toContain("A found fault is a repair, and never a note");
         // The spiral warning reads against the same checklist, thus the two agree.
@@ -240,6 +257,10 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("names the path alone");
         expect(reportSessionPrompt).toContain("stamps the hash");
         expect(reportSessionPrompt).toContain("Probe for a hash");
+        // The authoring input carries no hash field, thus the entry bans a typed hash
+        // and it no longer restates what the listing gives.
+        expect(reportSessionPrompt).toContain("never type one");
+        expect(reportSessionPrompt).not.toContain("names the paths that a reference can bind to");
     });
 
     test("the prompt teaches the citation blocks and their pinned-evidence bound", () => {
@@ -254,6 +275,17 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("`citations` field");
         expect(reportSessionPrompt).toContain("never take a citation out");
         expect(reportSessionPrompt).not.toContain("idKind");
+    });
+
+    test("the prompt bans the hand-built reference section", () => {
+        // The ban and its alternative are stable substrings, thus a report that carries
+        // its own list of sources cannot pass as guidance.
+        expect(reportSessionPrompt).toContain("Build no References section of your own");
+        expect(reportSessionPrompt).toContain("A citation block sits beside the content");
+        // The renderer owns the list, thus the appendix is not a block that the agent adds.
+        expect(reportSessionPrompt).toContain("the renderer writes the References appendix");
+        // The anti-pattern entry names the hand-built section.
+        expect(reportSessionPrompt).toContain("Build a References section");
     });
 
     test("the prompt carries the argument spine", () => {
@@ -314,6 +346,9 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("headline leads with what the evidence gives");
         expect(reportSessionPrompt).toContain("The card set carries its own contrast");
         expect(reportSessionPrompt).toContain("Round a number in the prose to the short form");
+        // A summary of fewer than three cards states no comparison, thus it names why.
+        expect(reportSessionPrompt).toContain("A summary holds three cards or more");
+        expect(reportSessionPrompt).toContain("name the reason to the user");
         // The anti-pattern entry names the caveated headline.
         expect(reportSessionPrompt).toContain("Lead with a caveated value");
     });

@@ -1,5 +1,5 @@
 /**
- * The page assembly: the hero, the bands, the appendix bands, and the footer.
+ * The page assembly: the hero, the bands, the appendix band, and the footer.
  *
  * The skeleton inlines the style rules in the head, and it puts the page scripts at the end of the body.
  * The script order is a contract. The theme registration runs before the chart bootstrap, thus each chart
@@ -25,7 +25,7 @@ import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
 import type { DataAsset } from "../table-data.js";
 import type { CitationRecords } from "../../report-model/reference-resolver.js";
 import type { DerivationChains, ReferenceLedger } from "../references.js";
-import { renderBibliography, renderReferenceList } from "./references-view.js";
+import { renderReferences } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
 
 /** The constant eyebrow of the hero. The render reads no clock, thus the hero carries no date. */
@@ -34,11 +34,8 @@ const HERO_EYEBROW = "INFLEXA · ANALYSIS REPORT";
 /** The constant note of the footer. */
 const FOOTER_NOTE = "Powered by Inflexa";
 
-/** The title of the provenance appendix. It holds where each value of the report came from. */
-const PROVENANCE_TITLE = "Data provenance";
-
-/** The title of the bibliography. It holds each paper that a citation of the report names. */
-const LITERATURE_TITLE = "Literature";
+/** The title of the one appendix. It holds each artifact and each paper that the report names. */
+const REFERENCES_TITLE = "References";
 
 /**
  * The theme object as script-safe JSON. `scriptJson` replaces every `<` with `\u003c`, thus a later edit
@@ -74,32 +71,24 @@ export function renderBand(index: number, inner: string): string {
     );
 }
 
-/** The heading of one appendix band. The two appendices read alike, thus one heading form serves both. */
-function appendixHeading(title: string): string {
-    return String(<h2 class="report-heading report-heading-3 report-ref-title">{title}</h2>);
-}
-
 /**
- * Wrap each appendix in a band of its own: the provenance of the values, then the literature. The two
- * answer different questions, thus each one wears its own title and a reader never reads a paper under
- * the provenance heading.
+ * Wrap the one appendix in a band of its own, under the one title.
  *
- * An empty ladder renders no band, thus a report with citations alone shows the literature title alone.
- * The index continues the band alternation of the sections, and a band that renders takes the next one.
- * The records carry the bibliography of each cited key, and a ledger with no citation reads none of them.
- * The chains carry the derivation of each derived path, and a provenance entry of such a path states it.
+ * The two reference kinds answer different questions, but one marker notation sends the reader to both.
+ * Thus one list serves them, and the kind tag of an entry states which question it answers.
+ *
+ * An empty ledger renders no band. The index continues the band alternation of the sections, thus the
+ * appendix takes the next surface. The records carry the bibliography of each cited key, and a ledger with
+ * no citation reads none of them. The chains carry the derivation of each derived path, and an entry of
+ * such a path states it.
  */
 export function renderReferenceSection(ledger: ReferenceLedger, index: number, records?: CitationRecords, chains?: DerivationChains): string {
-    const bands: string[] = [];
-    const provenance = renderReferenceList(ledger, chains);
-    if (provenance !== "") {
-        bands.push(renderBand(index, appendixHeading(PROVENANCE_TITLE) + provenance));
+    const references = renderReferences(ledger, records, chains);
+    if (references === "") {
+        return "";
     }
-    const literature = renderBibliography(ledger, records);
-    if (literature !== "") {
-        bands.push(renderBand(index + bands.length, appendixHeading(LITERATURE_TITLE) + literature));
-    }
-    return bands.join("");
+    const heading = String(<h2 class="report-heading report-heading-3 report-ref-title">{REFERENCES_TITLE}</h2>);
+    return renderBand(index, heading + references);
 }
 
 /**
@@ -108,10 +97,13 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
  * optional, thus an empty frame adds no markup.
  *
  * Each data asset rides a classic `script` tag at the end of the body, and the decoder runs after the last
- * of them. Thus every payload is registered before any reader looks. A table block always gives one data
- * asset, thus a page with no asset carries no tag, no decoder, no grid runtime, and no grid boot.
+ * of them. Thus every payload is registered before any reader looks. A page with no asset carries no tag
+ * and no decoder.
+ *
+ * `grids` states that the content holds a grid mount. The grid runtime weighs about two megabytes, thus a
+ * page whose only payload feeds a chart references neither the runtime nor the grid boot.
  */
-export function assemblePage(title: string, nav: string, content: string, references: string, dataAssets: readonly DataAsset[] = []): string {
+export function assemblePage(title: string, nav: string, content: string, references: string, dataAssets: readonly DataAsset[], grids: boolean): string {
     return (
         "<!doctype html>" +
         String(
@@ -121,7 +113,7 @@ export function assemblePage(title: string, nav: string, content: string, refere
                     <meta name="viewport" content="width=device-width, initial-scale=1" />
                     <title>{title}</title>
                     {raw(ASSET_HEAD)}
-                    {dataAssets.length > 0 ? raw(GRID_ASSET_HEAD) : null}
+                    {grids ? raw(GRID_ASSET_HEAD) : null}
                     <style>{raw(DESIGN_CSS)}</style>
                 </head>
                 <body>
@@ -152,7 +144,7 @@ export function assemblePage(title: string, nav: string, content: string, refere
                     {dataAssets.length > 0 ? <script>{raw(TABLE_DATA_DECODER)}</script> : null}
                     <script>{raw(THEME_REGISTRATION)}</script>
                     <script>{raw(FADE_IN_OBSERVER)}</script>
-                    {dataAssets.length > 0 ? <script>{raw(GRID_BOOTSTRAP)}</script> : null}
+                    {grids ? <script>{raw(GRID_BOOTSTRAP)}</script> : null}
                     <script>{raw(CHART_BOOTSTRAP)}</script>
                     <script>{raw(SECTION_SPY)}</script>
                 </body>

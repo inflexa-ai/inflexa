@@ -66,13 +66,13 @@ describe("renderMetric", () => {
         expect(html).toContain(`<div class="stat-card-value">0</div>`);
     });
 
-    it("marks the value binding in the provenance ladder, and shows the marker on the label", () => {
+    it("marks the value binding in the reference ladder, and shows the marker on the label", () => {
         const ledger = new ReferenceLedger();
         const html = renderMetric(metric("Genes tested"), ledger, { type: "scalar", value: 18432 });
 
         // The marker sits on the label line, thus the value line stays the one figure of the card.
-        expect(html).toContain(`<div class="stat-card-label">Genes tested<sup class="report-marker"><a href="#ref-1">1</a></sup></div>`);
-        expect(ledger.provenanceEntries()).toEqual([scalarBinding]);
+        expect(html).toContain(`<div class="stat-card-label">Genes tested<span class="report-marker"><a href="#ref-1">[1]</a></span></div>`);
+        expect(ledger.entries()).toEqual([scalarBinding]);
     });
 });
 
@@ -86,7 +86,7 @@ describe("tableDisplay", () => {
 
     /** The display of the named columns over the given rows, in the column order. */
     function displayOf(table: TableBlock, columns: string[], rows: Record<string, string | number>[]) {
-        return tableDisplay(table, { type: "table", rows }, columns);
+        return tableDisplay(table.binding, { type: "table", rows }, columns);
     }
 
     it("gives one entry for each column, in the column order", () => {
@@ -199,18 +199,18 @@ describe("renderTable", () => {
 
         // The title line carries the marker of the whole-table binding, thus the card names its appendix
         // entry beside its title.
-        expect(html).toContain(`<div class="report-table-title">Top genes<sup class="report-marker"><a href="#ref-1">1</a></sup></div>`);
+        expect(html).toContain(`<div class="report-table-title">Top genes<span class="report-marker"><a href="#ref-1">[1]</a></span></div>`);
         expect(html).toContain(`<p class="report-caption">The hypoxic group.</p>`);
     });
 
-    it("marks the whole-table binding in the provenance ladder, and shows the marker with no title", () => {
+    it("marks the whole-table binding in the reference ladder, and shows the marker with no title", () => {
         const ledger = new ReferenceLedger();
         const html = renderTable(block, ledger, 3);
 
         // Every evidentiary binding ledgers, thus the appendix names the artifact of a card that carries no
         // title of its own.
-        expect(html).toContain(`<div class="report-table-title"><sup class="report-marker"><a href="#ref-1">1</a></sup></div>`);
-        expect(ledger.provenanceEntries()).toEqual([tableBinding]);
+        expect(html).toContain(`<div class="report-table-title"><span class="report-marker"><a href="#ref-1">[1]</a></span></div>`);
+        expect(ledger.entries()).toEqual([tableBinding]);
     });
 
     it("states the row count of the table in the status line, grouped", () => {
@@ -218,6 +218,21 @@ describe("renderTable", () => {
 
         // The count reads as the number format of the page reads a count, thus the card and a cell agree.
         expect(html).toContain(`<span class="${GRID_COUNT_CLASS}">14,201 ${GRID_ROWS_WORD}</span>`);
+    });
+
+    it("states the shown count against the pre-bound total, with the bound beside it", () => {
+        const bounded: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, rowBound: { column: "padj", count: 10, order: "asc" } } };
+        const html = renderTable(bounded, new ReferenceLedger(), 10, 14201);
+
+        // The card shows the rows that the bound kept, and the artifact holds many more. Thus the footer
+        // states both, and a reader never reads the cut table as the whole artifact.
+        expect(html).toContain(`<span class="${GRID_COUNT_CLASS}">10 of 14,201 ${GRID_ROWS_WORD}</span>`);
+        expect(html).toContain(`<span class="report-table-bound">lowest 10 by padj</span>`);
+    });
+
+    it("states the one count for a table that no bound cut", () => {
+        // A whole table shows every row that it holds, thus the second count would repeat the first one.
+        expect(renderTable(block, new ReferenceLedger(), 14201, 14201)).toContain(`<span class="${GRID_COUNT_CLASS}">14,201 ${GRID_ROWS_WORD}</span>`);
     });
 
     it("names the row bound of the binding beside the count, and nothing where the binding carries none", () => {
@@ -297,16 +312,16 @@ describe("renderFigure", () => {
         expect(html).not.toContain(`onerror="alert(1)"`);
     });
 
-    it("marks the file binding in the provenance ladder, and shows the marker with no caption", () => {
+    it("marks the file binding in the reference ladder, and shows the marker with no caption", () => {
         const ledger = new ReferenceLedger();
         const block: FigureBlock = { kind: "figure", id: "f4", binding: figureBinding };
         const html = renderFigure(block, ledger, { type: "figure", src: "plot.png" });
 
         // A figure with no caption still ledgers, thus the appendix names the image that the page shows.
-        expect(html).toContain(`<figcaption class="report-caption"><sup class="report-marker"><a href="#ref-1">1</a></sup></figcaption>`);
+        expect(html).toContain(`<figcaption class="report-caption"><span class="report-marker"><a href="#ref-1">[1]</a></span></figcaption>`);
         // The alt text stays the picture, thus the marker never reaches a screen reader as caption text.
         expect(html).toContain(`alt=""`);
-        expect(ledger.provenanceEntries()).toEqual([figureBinding]);
+        expect(ledger.entries()).toEqual([figureBinding]);
     });
 });
 
@@ -318,8 +333,8 @@ describe("renderCitation", () => {
 
     it("renders the bracket marker, the key, and the optional note", () => {
         const html = renderCitation(citationBlock("pmid", "12345"), new ReferenceLedger());
-        expect(html).toContain(`href="#cite-1"`);
-        expect(html).toContain("[1]");
+        // The card joins the one ladder, thus its marker points at the References appendix.
+        expect(html).toContain(`<span class="report-marker"><a href="#ref-1">[1]</a></span>`);
         expect(html).toContain("pmid:12345");
         expect(html).toContain("see figure 2");
     });

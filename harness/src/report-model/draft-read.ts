@@ -9,11 +9,15 @@
  * section gives its own fields and the ids of its children, and never the subtree. The outline already
  * names every descendant, thus a subtree here would return the whole tree that the outline exists to keep
  * out.
+ *
+ * A read gives each binding with no hash. The pinned snapshot owns that value, thus an echoed hash would
+ * give the agent a value to mistype.
  */
 
-import type { AtomBlock } from "../contracts/report-blocks.js";
 import { locate } from "./draft-operations.js";
+import type { AuthoringAtomBlock } from "./authoring-grammar.js";
 import type { DraftBlock, DraftDocument } from "./draft.js";
+import { stripReferenceHashes } from "./reference-stamp.js";
 
 /** The label keeps a prose head of at most this many code points. A clipped label ends with the marker. */
 const PROSE_CLIP = 80;
@@ -46,8 +50,8 @@ export interface ShallowSection {
     childIds: string[];
 }
 
-/** One block as the read surface gives it. An atom reads in full, and a section reads shallow. */
-export type ReadableBlock = AtomBlock | ShallowSection;
+/** One block as the read surface gives it. An atom reads in full and hash-free, and a section reads shallow. */
+export type ReadableBlock = AuthoringAtomBlock | ShallowSection;
 
 /**
  * Clip a label to `PROSE_CLIP` code points, and mark a clipped label.
@@ -142,8 +146,8 @@ export function childOutline(blocks: readonly DraftBlock[], depth: number): Outl
 }
 
 /**
- * Read one block by its id. An atom gives the block as it is, with its bindings. A section gives its own
- * fields and the id of each child. A block that no id holds gives `undefined`.
+ * Read one block by its id. An atom gives the block with its bindings, and each binding gives no hash. A
+ * section gives its own fields and the id of each child. A block that no id holds gives `undefined`.
  */
 export function readBlock(draft: DraftDocument, id: string): ReadableBlock | undefined {
     const found = locate(draft, id)?.block;
@@ -153,5 +157,7 @@ export function readBlock(draft: DraftDocument, id: string): ReadableBlock | und
     if (found.kind === "section") {
         return { kind: "section", id: found.id, title: found.title, childIds: found.blocks.map((child) => child.id) };
     }
-    return found;
+    // The stored atom and the read atom differ in the stamped hash alone, and the walk removes that field.
+    // Thus the assertion states what the walk did.
+    return stripReferenceHashes(found) as AuthoringAtomBlock;
 }

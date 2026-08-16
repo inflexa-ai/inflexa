@@ -111,6 +111,46 @@ describe("the bar orientation", () => {
     });
 });
 
+describe("the preset thresholds", () => {
+    it("takes a pair beside the volcano, and the pair rides the parsed block", () => {
+        const parsed = ChartBlockSchema.safeParse(
+            chart({ chartType: "volcano", encoding: { x: "log2FoldChange", y: "padj" }, thresholds: { significance: 0.1, effect: 1 } }),
+        );
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.thresholds).toEqual({ significance: 0.1, effect: 1 });
+    });
+
+    it("takes a volcano with no pair, thus a stored block keeps parsing", () => {
+        const parsed = ChartBlockSchema.safeParse(chart({ chartType: "volcano", encoding: { x: "log2FoldChange", y: "padj" } }));
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.thresholds).toBeUndefined();
+    });
+
+    it("refuses a pair beside a type that reads none", () => {
+        // The pair states a significance cut and an effect cut. Every other type reads neither.
+        for (const chartType of ["bar", "scatter", "manhattan", "ma", "km"]) {
+            expect(parses({ chartType, encoding: { x: "pathway", y: "nes" }, thresholds: { significance: 0.05, effect: 1 } })).toBe(false);
+        }
+    });
+
+    it("refuses a value that is not positive", () => {
+        expect(parses({ chartType: "volcano", encoding: { x: "log2FoldChange", y: "padj" }, thresholds: { significance: 0, effect: 1 } })).toBe(false);
+        expect(parses({ chartType: "volcano", encoding: { x: "log2FoldChange", y: "padj" }, thresholds: { significance: 0.05, effect: -1 } })).toBe(false);
+    });
+
+    it("refuses a pair that names one value alone, because the member moves both surfaces", () => {
+        expect(parses({ chartType: "volcano", encoding: { x: "log2FoldChange", y: "padj" }, thresholds: { significance: 0.1 } })).toBe(false);
+    });
+
+    it("refuses a pair beside a composition, because a composition draws its own guides", () => {
+        expect(parses({ composition: scatterComposition(), thresholds: { significance: 0.05, effect: 1 } })).toBe(false);
+    });
+
+    it("refuses a pair that stands alone, with no chart type and no composition", () => {
+        expect(parses({ thresholds: { significance: 0.05, effect: 1 } })).toBe(false);
+    });
+});
+
 describe("the composition", () => {
     it("takes one series of each form", () => {
         for (const form of ["line", "scatter", "bar", "area", "step"]) {
