@@ -13,8 +13,10 @@ The prompt MUST carry the second-session obligations:
 - The agent quotes a number as the page prints it, and the look confirms the agreement.
 - A metric binds a numeric cell, and an enumeration of three or more parallel points composes as the typed list.
 - The agent declares the column meanings and the display labels on a table binding, and it sets the row bound on a large table.
+- A model table reads best with a composed display column, and the agent can offer that small derivation.
+- The agent settles the add arguments before the call, thus no block lands as a probe.
 
-The "Do NOT" list MUST name the zero-p transcription and the raw-token prose.
+The "Do NOT" list MUST name the zero-p transcription and the raw-token prose. The look checklist gains the printed zero probability as a named fault.
 
 #### Scenario: The prompt teaches the zero-p rule
 
