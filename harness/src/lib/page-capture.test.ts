@@ -24,7 +24,22 @@ function makeRecorder(): Recorder {
     return { steps: [], features: [], viewports: [], shots: [] };
 }
 
-function makeFakeBrowser(recorder: Recorder): Browser {
+/**
+ * How the page answers each screenshot call.
+ *
+ * A refusal names the cause that the call raises. Absent, the call gives its picture. The two arms carry a
+ * different picture, thus a test reads which of the two calls the result came from.
+ */
+interface ShotPlan {
+    readonly failFullPage?: Error;
+    readonly failViewport?: Error;
+}
+
+/** The picture of the full-page call, and the picture of the viewport call. */
+const FULL_PAGE_SHOT = "c2hvdA==";
+const VIEWPORT_SHOT = "dmlld3BvcnQ=";
+
+function makeFakeBrowser(recorder: Recorder, plan: ShotPlan = {}): Browser {
     const page = {
         on: () => {},
         setViewport: async (viewport: Viewport) => {
@@ -44,7 +59,9 @@ function makeFakeBrowser(recorder: Recorder): Browser {
         screenshot: async (options: ScreenshotOptions) => {
             recorder.steps.push("screenshot");
             recorder.shots.push(options);
-            return "c2hvdA==";
+            const refusal = options.fullPage === true ? plan.failFullPage : plan.failViewport;
+            if (refusal !== undefined) throw refusal;
+            return options.fullPage === true ? FULL_PAGE_SHOT : VIEWPORT_SHOT;
         },
     };
     const fake = {
@@ -80,7 +97,9 @@ describe("the settled capture", () => {
         // reader, and the page reveals its sections with each transition already collapsed.
         expect(recorder.steps).toEqual(["viewport", "emulate", "goto", "evaluate", "screenshot"]);
         expect(recorder.features).toEqual([[{ name: "prefers-reduced-motion", value: "reduce" }]]);
-        expect(capture.screenshotBase64).toBe("c2hvdA==");
+        expect(capture.screenshotBase64).toBe(FULL_PAGE_SHOT);
+        // The full-page call passed, thus the picture holds the whole document.
+        expect(capture.coverage).toBe("full");
     });
 });
 
@@ -96,5 +115,35 @@ describe("the framed capture", () => {
         // below the fold. Thus the two values together make the look checklist answerable.
         expect(recorder.viewports).toEqual([{ width: 1440, height: 900 }]);
         expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }]);
+    });
+});
+
+describe("the degraded capture", () => {
+    it("retries at the window when the full-page bitmap fails, and names the viewport coverage", async () => {
+        const recorder = makeRecorder();
+        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { failFullPage: new Error("the compositor refused the bitmap") }));
+
+        const capture = await capturePage({ browserUrl: "http://capture-degrade.test:9222" }, "http://page.test/report");
+
+        // The retry drops the full-page flag, and it runs on the page that already navigated. Thus one
+        // oversized page costs one more screenshot call and no second load.
+        expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }, { encoding: "base64" }]);
+        expect(recorder.steps.filter((step) => step === "goto")).toEqual(["goto"]);
+        // The picture came from the retry, and the coverage names what it holds.
+        expect(capture.screenshotBase64).toBe(VIEWPORT_SHOT);
+        expect(capture.coverage).toBe("viewport");
+    });
+
+    it("propagates the fault when the window bitmap also fails", async () => {
+        const recorder = makeRecorder();
+        restoreConnector = setBrowserConnector(async () =>
+            makeFakeBrowser(recorder, { failFullPage: new Error("the compositor refused the bitmap"), failViewport: new Error("the browser is broken") }),
+        );
+
+        const capture = capturePage({ browserUrl: "http://capture-broken.test:9222" }, "http://page.test/report");
+
+        // A window bitmap that also fails names a broken browser, thus the capture keeps its throw protocol.
+        await expect(capture).rejects.toThrow("the browser is broken");
+        expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }, { encoding: "base64" }]);
     });
 });

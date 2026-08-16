@@ -27,7 +27,9 @@
  *
  * On a capture the tool copies the rendered hash onto the seen hash through the gateway. Thus the look
  * counts, and the record tool lets the current draft record. The copy takes the rendered hash and never the
- * current one, thus a later edit makes the look stale and the record refuses.
+ * current one, thus a later edit makes the look stale and the record refuses. A picture of the window alone
+ * is a true picture of the current document, thus it stamps the same and the coverage of the result is what
+ * tells the agent what it saw.
  *
  * The gateway reports whether a rendered hash existed to copy. When the row holds none, no preview stamped
  * one and the look cannot count. The tool then gives a missed-stamp outcome that directs a new preview,
@@ -67,11 +69,13 @@ export type ExaminePageInput = z.infer<typeof examinePageInput>;
 
 /**
  * The typed outcome of the eyes tool. Each arm is ok-channel data, thus the tool never throws for a
- * degraded condition. `examined` carries the console errors, the failed requests, and the page path. The
- * screenshot does not ride the JSON. It rides the image path of the tool result, thus the model sees the
- * picture and the JSON text holds no bytes. `missed-stamp` means that the row holds no rendered hash, thus
- * no preview stamped one and the agent must run a new preview before the next look. `no-browser` means that
- * the composition gives no browser, thus no look is possible at all and a repeat gives the same answer.
+ * degraded condition. `examined` carries the coverage of the picture, the console errors, the failed
+ * requests, and the page path. The coverage names what the agent saw: the whole document, or the window
+ * alone when the browser refused a full-page bitmap. The screenshot does not ride the JSON. It rides the
+ * image path of the tool result, thus the model sees the picture and the JSON text holds no bytes.
+ * `missed-stamp` means that the row holds no rendered hash, thus no preview stamped one and the agent must
+ * run a new preview before the next look. `no-browser` means that the composition gives no browser, thus no
+ * look is possible at all and a repeat gives the same answer.
  */
 export type ExaminePageResult =
     | { outcome: "refused"; refusal: SessionRefusal }
@@ -79,7 +83,7 @@ export type ExaminePageResult =
     | { outcome: "no-page" }
     | { outcome: "missed-stamp" }
     | { outcome: "capture-failed"; detail: string }
-    | { outcome: "examined"; consoleErrors: string[]; failedRequests: FailedRequest[]; pagePath: string };
+    | { outcome: "examined"; coverage: PageCapture["coverage"]; consoleErrors: string[]; failedRequests: FailedRequest[]; pagePath: string };
 
 /**
  * The construction deps of the eyes tool.
@@ -407,6 +411,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 withToolResultImage(
                     {
                         outcome: "examined" as const,
+                        coverage: captured.coverage,
                         consoleErrors: captured.consoleErrors,
                         failedRequests: captured.failedRequests,
                         pagePath: relativePagePath,

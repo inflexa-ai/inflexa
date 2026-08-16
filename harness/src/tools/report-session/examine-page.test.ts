@@ -274,7 +274,7 @@ describe("the no-browser outcome", () => {
         await writePage(root, threadId);
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
         const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: { browserUrl: "http://localhost:9222" }, capture });
 
@@ -308,7 +308,7 @@ describe("the missed stamp", () => {
         const gateway = makeFakeGateway();
         // The preview stamped no rendered hash, thus the seen stamp finds none to copy.
         gateway.seed(threadId, null);
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
         const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
 
@@ -329,7 +329,12 @@ describe("the seen-stamp copy", () => {
         gateway.seed(threadId, "rendered-hash");
 
         let capturedUrl: string | undefined;
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", consoleErrors: ["boom"], failedRequests: [{ url: "assets/x.png", reason: "net" }] };
+        const stub: PageCapture = {
+            screenshotBase64: "BASE64PNG",
+            coverage: "full",
+            consoleErrors: ["boom"],
+            failedRequests: [{ url: "assets/x.png", reason: "net" }],
+        };
         const capture: CapturePage = (url) => {
             capturedUrl = url;
             return Promise.resolve(stub);
@@ -340,6 +345,7 @@ describe("the seen-stamp copy", () => {
 
         expect(result.outcome).toBe("examined");
         if (result.outcome === "examined") {
+            expect(result.coverage).toBe("full");
             expect(result.consoleErrors).toEqual(["boom"]);
             expect(result.failedRequests).toEqual([{ url: "assets/x.png", reason: "net" }]);
             expect(result.pagePath).toBe(join("report-sessions", threadId, "index.html"));
@@ -352,6 +358,30 @@ describe("the seen-stamp copy", () => {
         expect(capturedUrl).toBeDefined();
         expect(fileURLToPath(capturedUrl!)).toBe(join(root, "report-sessions", threadId, "index.html"));
         // The look copies the rendered hash onto the seen hash, thus the record lets the current draft record.
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+
+    it("carries the viewport coverage of a degraded picture, and stamps the seen hash as a full look does", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+
+        // The browser refused the full-page bitmap, thus the capture gives the window alone.
+        const stub: PageCapture = { screenshotBase64: "VIEWPORTPNG", coverage: "viewport", consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        if (result.outcome === "examined") {
+            // The coverage rides the JSON, thus the agent reads that the picture shows the window alone.
+            expect(result.coverage).toBe("viewport");
+        }
+        expect(readToolResultImage(result)).toEqual({ base64: "VIEWPORTPNG", mediaType: "image/png" });
+        // The agent saw the current document, thus the degraded look counts and the record path stays open.
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
     });
 });
@@ -513,7 +543,7 @@ describe("the transport precedence", () => {
         await writePage(root, threadId);
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
         const eyes = makeFakeEyes({ browserUrl: "http://examine-unused.test:9222" });
         const tool = createExaminePageTool({
@@ -568,7 +598,7 @@ describe("the result detail", () => {
         await writePage(root, threadId);
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
         const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
 

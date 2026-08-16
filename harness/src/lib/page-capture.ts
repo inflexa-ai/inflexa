@@ -18,6 +18,8 @@
  * outcome guards the call.
  */
 
+import type { Page } from "puppeteer-core";
+
 import { withPage, type ChromeConfig } from "./chrome.js";
 import { PAGE_NAV_TIMEOUT_MS, PAGE_READY_TIMEOUT_MS, THEME_READY_EVENT, THEME_READY_SENTINEL } from "../report-render/page.js";
 
@@ -30,6 +32,12 @@ export interface FailedRequest {
 /** The picture and the faults of one page capture. */
 export interface PageCapture {
     screenshotBase64: string;
+    /**
+     * What the picture holds. `full` is the whole document, and it is the shape of a capture that passed at
+     * the first attempt. `viewport` appears when the full-page screenshot threw and the retry at the window
+     * passed, thus the picture shows the top window alone and a section below the fold is absent from it.
+     */
+    coverage: "full" | "viewport";
     consoleErrors: string[];
     failedRequests: FailedRequest[];
 }
@@ -90,11 +98,35 @@ function waitForThemeReady(sentinel: string, event: string, timeout: number): Pr
     });
 }
 
+/** The picture of one screenshot call: the base64 bytes, and what the picture holds. */
+type Shot = Pick<PageCapture, "screenshotBase64" | "coverage">;
+
+/** The connection gives base64 text or raw bytes, and a caller of the capture reads base64 text alone. */
+function toBase64(shot: string | Uint8Array): string {
+    return typeof shot === "string" ? shot : Buffer.from(shot).toString("base64");
+}
+
+/**
+ * Take the picture of one settled page, at the whole document or at the window alone.
+ *
+ * The compositor can refuse a full-page bitmap of a tall page while the bitmap of the window is fine. A
+ * degraded picture beats a dead look, thus a refused full page retries one time at the window. A second throw
+ * names a broken browser and not a tall page, thus it propagates to the caller.
+ */
+async function captureShot(page: Page): Promise<Shot> {
+    try {
+        return { screenshotBase64: toBase64(await page.screenshot({ encoding: "base64", fullPage: true })), coverage: "full" };
+    } catch {
+        return { screenshotBase64: toBase64(await page.screenshot({ encoding: "base64" })), coverage: "viewport" };
+    }
+}
+
 /**
  * Capture one page: the screenshot, the console errors, and the failed requests.
  *
  * The picture holds the whole document, and not the window alone. Thus a caller can judge a section that a
- * reader reaches by a scroll.
+ * reader reaches by a scroll. A refused full-page bitmap degrades to the window, and the coverage of the
+ * result names which of the two pictures arrived.
  *
  * The readiness wait is best-effort. A page that never signals still captures at the readiness budget, thus
  * a broken page gives a picture that shows what broke.
@@ -139,9 +171,10 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
 
         // The picture must show the whole document at the layout that a reader gets. Thus a defect below the
         // fold is visible, and a question about content that never appeared has an answer.
-        const screenshot = await page.screenshot({ encoding: "base64", fullPage: true });
+        const shot = await captureShot(page);
         return {
-            screenshotBase64: typeof screenshot === "string" ? screenshot : Buffer.from(screenshot).toString("base64"),
+            screenshotBase64: shot.screenshotBase64,
+            coverage: shot.coverage,
             consoleErrors,
             failedRequests,
         };

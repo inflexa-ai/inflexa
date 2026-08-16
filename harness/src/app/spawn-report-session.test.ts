@@ -199,7 +199,12 @@ describe("the eyes rule", () => {
             true,
         );
         // A capture seam replaces the transport of the look.
-        expect(compositionHasEyes({ chrome: {}, capture: () => Promise.resolve({ screenshotBase64: "", consoleErrors: [], failedRequests: [] }) })).toBe(true);
+        expect(
+            compositionHasEyes({
+                chrome: {},
+                capture: () => Promise.resolve({ screenshotBase64: "", coverage: "full", consoleErrors: [], failedRequests: [] }),
+            }),
+        ).toBe(true);
         // A config that names a browser is the route of a standing sidecar.
         expect(compositionHasEyes({ chrome: WITH_BROWSER })).toBe(true);
     });
@@ -227,7 +232,7 @@ describe("spawnReportSession refusals", () => {
         const seamed = createReportSessionSpawn({
             pool,
             chrome: {},
-            capture: () => Promise.resolve({ screenshotBase64: "", consoleErrors: [], failedRequests: [] }),
+            capture: () => Promise.resolve({ screenshotBase64: "", coverage: "full", consoleErrors: [], failedRequests: [] }),
         });
 
         const child = (await seamed.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
