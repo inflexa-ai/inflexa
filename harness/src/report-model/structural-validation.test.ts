@@ -255,6 +255,22 @@ describe("validateReferenceStructure", () => {
             expect(failure?.detail).toContain("invented");
         });
 
+        it("refuses a row bound over an inherited member of a plain object", () => {
+            const bounded = { ...tableReference(ROWS_PATH, ROWS_HASH), rowBound: { column: "constructor", count: 20 } };
+
+            // A stored snapshot parses into a plain object. A membership test that read the prototype would
+            // admit this name as a column, and the value tier would then rank a function.
+            const failure = failureFor(bounded, rowSnapshot);
+            expect(failure?.reason).toBe("locator-out-of-range");
+            expect(failure?.detail).toContain("constructor");
+        });
+
+        it("refuses a chart column that names an inherited member of a plain object", () => {
+            const failure = columnFailure(["constructor"]);
+            expect(failure?.reason).toBe("locator-out-of-range");
+            expect(failure?.detail).toContain("constructor");
+        });
+
         it("passes a row bound against a snapshot that pins identity and holds no row", () => {
             const bounded = { ...tableReference(OUTPUT_PATH, OUTPUT_HASH), rowBound: { column: "invented", count: 20 } };
             expect(failureFor(bounded, rowSnapshot)).toBeUndefined();

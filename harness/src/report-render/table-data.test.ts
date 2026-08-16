@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "bun:test";
 
-import { encodeTablePayload, tableDataAsset, TABLE_DATA_GLOBAL } from "./table-data.js";
+import { encodeTablePayload, tableDataAsset, TABLE_DATA_GLOBAL, type TablePayload } from "./table-data.js";
 
 describe("encodeTablePayload", () => {
     it("writes each row as an array in column order", () => {
@@ -91,12 +91,31 @@ describe("encodeTablePayload", () => {
 describe("tableDataAsset", () => {
     const payload = encodeTablePayload(["gene"], [{ gene: "TP53" }]);
 
+    /** Run one asset as the page runs it, and give back the registry that it wrote. */
+    function registryOf(bytes: string): Record<string, TablePayload> {
+        const window: Record<string, unknown> = {};
+        new Function("window", bytes)(window);
+        return window[TABLE_DATA_GLOBAL] as Record<string, TablePayload>;
+    }
+
     it("registers the payload under the global map, keyed by the block id", () => {
         const asset = tableDataAsset("tbl-1", payload);
 
         expect(asset.bytes).toContain(`window.${TABLE_DATA_GLOBAL}`);
         expect(asset.bytes).toContain(`[${JSON.stringify("tbl-1")}]=`);
-        expect(asset.bytes).toContain(`"columns":["gene"]`);
+        expect(registryOf(asset.bytes)["tbl-1"]).toEqual(payload);
+    });
+
+    it("parses the payload instead of writing an object literal, thus a prototype key stays a column", () => {
+        const columns = ["__proto__", "constructor"];
+        const rows = JSON.parse('[{"__proto__":"a","constructor":"b"}]') as Record<string, string | number>[];
+        const asset = tableDataAsset("tbl-1", encodeTablePayload(columns, rows));
+
+        // An object literal with a `__proto__` key sets the prototype of the object. The parse defines an
+        // own property for every key, thus the payload reaches the page with the columns that it declares.
+        const registered = registryOf(asset.bytes)["tbl-1"];
+        expect(registered.columns).toEqual(columns);
+        expect(registered.rows).toEqual([["a", "b"]]);
     });
 
     it("names the file by the content hash of its bytes", () => {
