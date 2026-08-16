@@ -68,7 +68,12 @@ export type UIMessage = {
      */
     role: MessageRole;
     parts: Part[];
-    /** Assistant-only turn duration in ms, set when the turn finishes; undefined otherwise. */
+    /**
+     * Assistant-only turn duration in ms. Two writers feed one field: the live turn stamps it at
+     * settlement, and a transcript reload reads back what the turn append stored. Absent means that
+     * nothing measured the turn, which a row written before the field became durable also reads as.
+     * A measured zero stays a figure, thus the readers test the field against `undefined`.
+     */
     durationMs?: number;
     /**
      * Assistant-only: what the whole turn consumed, sub-agent loops included, set when the turn
@@ -1097,17 +1102,23 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
     // Re-derive the live abort flag from the durable field, set only when true (matching the live path,
     // which leaves it absent otherwise) — so a restarted app renders the muted marker the live view showed.
     //
-    // Same treatment for the turn's stored rollup: `appendTurn` writes it onto the turn's assistant row
-    // and the harness hands it back here, so a reloaded transcript carries the figure the live header
-    // showed rather than dropping to the absent state. Set only when present, which keeps the ONE
-    // meaning absence has on this field — no provider reported anything — rather than adding a second
-    // (this transcript was reloaded). The duration beside it is genuinely not durable and stays absent.
+    // Same treatment for the turn's stored rollup and for its stored duration: `appendTurn` writes both
+    // onto the turn's assistant row and the harness hands them back here, so a reloaded transcript
+    // carries the figures the live header showed rather than dropping to the absent state. Each is set
+    // only when present, which keeps the ONE meaning absence has on these fields — nothing recorded a
+    // value — rather than adding a second (this transcript was reloaded).
+    //
+    // The duration reads against `undefined`, and never against falsiness: a turn that settled inside
+    // one millisecond measured zero, and that zero is a figure the header must show. A row that predates
+    // the durable field carries none, and nothing here reconstructs one — the elapsed time of a past turn
+    // is unknowable now, and a fabricated meta value is what the header contract forbids outright.
     return {
         id: m.id,
         role,
         parts,
         ...(m.interrupted === true ? { interrupted: true } : {}),
         ...(m.usage ? { turnUsage: m.usage } : {}),
+        ...(m.durationMs !== undefined ? { durationMs: m.durationMs } : {}),
     };
 }
 

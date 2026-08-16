@@ -404,6 +404,62 @@ describe("runChatTurn carries the turn's usage rollup", () => {
     });
 });
 
+// How long the turn took is the second meta fact the header shows, and the store is the only place it
+// can survive a reload: the elapsed time of a past turn is unknowable once the process that timed it is
+// gone. These pin what the engine writes, and — as with the rollup — when it writes nothing.
+describe("runChatTurn persists what the turn took", () => {
+    test("a settled turn persists its measured duration, so a reloaded header reads as the live one did", async () => {
+        // The measurement is the whole of the claim: a key holding a value that no clock produced would
+        // satisfy a presence assertion and still show a figure that nothing earned. The seam waits, thus
+        // the stored number must cover at least that wait.
+        const SLEEP_MS = 12;
+        const runSlowly: ChatTurnSeams["run"] = async (_agent, initial) => {
+            await new Promise((resolve) => setTimeout(resolve, SLEEP_MS));
+            return { messages: [...initial, assistantMessage], finish: { reason: "stop", cappedOut: false, truncationRecoveries: 0 } };
+        };
+
+        const { history, appended } = recordingHistory();
+        await runWith({ prepare: prepareOk, run: runSlowly, history, signal: new AbortController().signal });
+
+        // A small margin under the wait, because a clock reads in whole milliseconds. The claim is a real
+        // span, and not an exact one.
+        expect(appended[0]?.turn.turnDurationMs).toBeGreaterThanOrEqual(SLEEP_MS - 2);
+    });
+
+    test("a turn that reported no quantity still persists its duration — the two figures are independent", async () => {
+        // The duration keeps a column of its own in the store. A turn whose provider reported nothing must
+        // still read back with the time that the reader watched it take.
+        const { history, appended } = recordingHistory();
+        await runWith({ prepare: prepareOk, run: runOk, history, signal: new AbortController().signal });
+
+        expect(appended[0]?.turn.turnUsage).toBeUndefined();
+        expect(typeof appended[0]?.turn.turnDurationMs).toBe("number");
+    });
+
+    test("an aborted turn that never resolved persists NO duration — no key, and no zeroed stand-in", async () => {
+        // The DEFENSIVE abort path: the run threw before the streaming wrapper resolved a finish, thus only
+        // the user message persists and no assistant row exists to carry a figure. The live surface drops
+        // that turn's empty assistant shell, so both surfaces show the same turn with no header at all.
+        const { history, appended } = recordingHistory();
+        const controller = new AbortController();
+        controller.abort();
+        await runWith({ prepare: prepareOk, run: runAborts, history, signal: controller.signal });
+
+        expect(appended[0]?.turn.modelMessages).toEqual([userMessage]);
+        expect(appended[0]?.turn && "turnDurationMs" in appended[0].turn).toBe(false);
+    });
+
+    test("an interrupted turn that DID resolve persists its duration, thus the marked header keeps its figure", async () => {
+        // A resolved abort carries a partial reply, thus it has an assistant row and a header. The live view
+        // stamps that header with a duration, and a reload that dropped it would show one turn two ways.
+        const { history, appended } = recordingHistory();
+        await runWith({ prepare: prepareOk, run: runResolvesAbortedWithPartial, history, signal: new AbortController().signal });
+
+        expect(appended[0]?.turn.displayMessages[1]?.metadata).toEqual({ interrupted: true });
+        expect(typeof appended[0]?.turn.turnDurationMs).toBe("number");
+    });
+});
+
 // What the engine hands `runAgent` is the whole of this loop's accounting: the harness reads the
 // recorder off the OPTIONS bag and falls back to its no-op when the field is absent, never consulting
 // the agent definition. So the bag is the artifact worth asserting on — a test that hands `runAgent` a

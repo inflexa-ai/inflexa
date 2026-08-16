@@ -62,7 +62,13 @@ export type MessageBlockProps = {
     index: number;
     /** Who authored the turn — selects the gutter marker and its color. */
     role: MessageRole;
-    /** Assistant-only turn duration in ms; shown beside the number. Omitted on user turns and before the turn finishes. */
+    /**
+     * Assistant-only turn duration in ms, shown beside the number. Two sources feed one prop — the live
+     * turn stamps it at settlement, and a transcript reload reads back what the turn append stored — thus
+     * a reopened conversation shows the time that the live header showed. Omitted on a user turn, before
+     * the turn finishes, and on a row that predates the durable field. A measured zero still renders,
+     * because a turn that settled inside one millisecond took a time that somebody measured.
+     */
     durationMs?: number;
     /**
      * Assistant-only: what the whole turn consumed, rendered beside the duration as an input figure and

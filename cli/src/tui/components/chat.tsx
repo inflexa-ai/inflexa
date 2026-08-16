@@ -14,6 +14,7 @@ import { chatStatus } from "../hooks/status.ts";
 import { bootState } from "../hooks/boot.ts";
 import { messages, messageSeqMarks, streamText, streamPartId, errorMsg, loadMessages, resetHotState, type MessageSeqMark } from "../hooks/conversation.ts";
 import { reportChildren, watchReportChildren } from "../hooks/report_children.ts";
+import type { MessageRole } from "../../types/session.ts";
 
 /**
  * The live conversation: the sticky message stream plus the error banner. State (the message store,
@@ -36,40 +37,58 @@ export type ChatProps = {
 const NO_ENTRIES: readonly Thread[] = Object.freeze([]);
 
 /**
- * The mounted position of one report session's entry: after the last mounted message whose mark
- * carries a `seq` that is not greater than the spawn point.
+ * The mounted position of one report session's entry: after the reply of the turn that crosses the
+ * spawn point.
+ *
+ * The spawn reads the parent BEFORE the turn that asked for the report appends its own rows. Thus the
+ * spawn point names a row under the request, and a placement at that point paints the entry above the
+ * words that asked. The rule takes the first mark above the spawn point, which is the first row of the
+ * crossing turn. Then it walks forward to the first assistant message, and the entry lands after that
+ * reply.
  *
  * Each edge lands on a position, and none of them is a fault:
  *
  * - NO mark sits above the spawn point, thus the true END. Two states reach it, and both belong at the
- *   tail. The harness can cut a parent tail behind a spawn point. The spawn also reads the parent
- *   before the turn that asked for it appends, thus a session that the newest turn spawned anchors
- *   BELOW the request that made it. To place it at the anchor would paint the entry above the words
- *   that asked for the report.
+ *   tail. The harness can cut a parent tail behind a spawn point. A live transcript also mints no mark
+ *   at all, thus a session that the newest turn spawned sits at the tail until the next load.
+ * - No assistant message sits at or past the crossing mark, thus the END again. The turn that asked has
+ *   not answered yet, and the tail is the one position that is not above the request.
  * - A spawn point below the mounted window takes the TOP, because the transcript mounts the newest
- *   turns alone and an old spawn point has no mounted message at or below it. The mark whose message
- *   left the window reads the same way, for the same reason.
+ *   turns alone and an old spawn point has no mounted message at or below it. The crossing mark whose
+ *   message left the window reads the same way, for the same reason.
  * - A row with no spawn point takes the END. The store pairs a parent with its spawn point, thus a
  *   listing that narrows on a parent gives no such row, but the column permits one.
  *
  * Exported for the coverage. The END arm above needs a live append after the load, which no render of a
  * seeded transcript can produce, thus the render alone cannot reach every arm.
  */
-export function slotFor(parentSeq: number | null, marks: readonly MessageSeqMark[], positionOf: (id: string) => number | undefined, mounted: number): number {
+export function slotFor(
+    parentSeq: number | null,
+    marks: readonly MessageSeqMark[],
+    positionOf: (id: string) => number | undefined,
+    roleAt: (at: number) => MessageRole | undefined,
+    mounted: number,
+): number {
     if (parentSeq === null) return mounted;
-    let anchored: MessageSeqMark | undefined;
-    let above = false;
+    let crossing: MessageSeqMark | undefined;
+    let below = false;
     for (const mark of marks) {
         if (mark.seq > parentSeq) {
-            above = true;
+            crossing = mark;
             break;
         }
-        anchored = mark;
+        below = true;
     }
-    if (!above) return mounted;
-    if (anchored === undefined) return 0;
-    const at = positionOf(anchored.afterMessageId);
-    return at === undefined ? 0 : Math.min(at + 1, mounted);
+    if (crossing === undefined) return mounted;
+    if (!below) return 0;
+    const at = positionOf(crossing.afterMessageId);
+    if (at === undefined) return 0;
+    // An `event` entry is a record that this app appended, and never a reply. Thus the walk passes it
+    // by, exactly as the turn numbering does.
+    for (let i = at; i < mounted; i++) {
+        if (roleAt(i) === "assistant") return i + 1;
+    }
+    return mounted;
 }
 
 export function Chat(props: ChatProps) {
@@ -92,7 +111,13 @@ export function Chat(props: ChatProps) {
         for (const [at, message] of messages.entries()) positions.set(message.id, at);
         const slots = new Map<number, Thread[]>();
         for (const child of reportChildren()) {
-            const at = slotFor(child.parentSeq, marks, (id) => positions.get(id), mounted);
+            const at = slotFor(
+                child.parentSeq,
+                marks,
+                (id) => positions.get(id),
+                (index) => messages[index]?.role,
+                mounted,
+            );
             const held = slots.get(at);
             if (held) held.push(child);
             else slots.set(at, [child]);
@@ -198,7 +223,7 @@ export function Chat(props: ChatProps) {
                     {(msg, index) => (
                         <>
                             {/* Each entry whose position is this message renders BEFORE it, thus the
-                            entry sits after the last message that its spawn point named. */}
+                            entry sits after the reply of the turn that its spawn point crosses. */}
                             <For each={entriesAt(index())}>{reportEntry}</For>
                             <MessageBlock
                                 index={turnNumbers()[index()] ?? 0}
@@ -214,8 +239,8 @@ export function Chat(props: ChatProps) {
                     )}
                 </For>
                 {/* The tail position, which the loop above cannot reach: a spawn point at or past the end
-                of the loaded transcript. A live turn appends below these entries, which is correct — the
-                session was spawned before that turn. */}
+                of the loaded transcript, and a crossing turn that has not answered yet. A live turn
+                appends below these entries, which is correct — the session was spawned before that turn. */}
                 <For each={entriesAt(messages.length)}>{reportEntry}</For>
 
                 {/* Live "thinking" indicator: sits under the last (assistant) turn for the whole busy

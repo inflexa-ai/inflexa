@@ -199,11 +199,16 @@ export function buildChatSession(agentId: string, analysisId: string, threadId: 
  * the same "unreported" / "nothing spent" conflation the absent-is-never-zero rule
  * exists to prevent. It is genuinely absent only where the run never resolved — the
  * throw arm has no finish to read — and on a run whose calls reported nothing.
+ *
+ * `durationMs` rides beside it, and it is measured on the arm where the run RESOLVED. A run
+ * that threw persists the user message alone, thus it carries no assistant row for the store
+ * to write the figure onto. Such a turn also shows no header live, because the surface drops
+ * the empty assistant shell of an abort. Thus the two surfaces agree by construction.
  */
 type RunPhase =
-    | { readonly kind: "ok"; readonly fallbackText: string; readonly turnUsage?: TurnUsage }
-    | { readonly kind: "aborted"; readonly turnUsage?: TurnUsage }
-    | { readonly kind: "failed"; readonly cause: unknown; readonly turnUsage?: TurnUsage };
+    | { readonly kind: "ok"; readonly fallbackText: string; readonly turnUsage?: TurnUsage; readonly durationMs?: number }
+    | { readonly kind: "aborted"; readonly turnUsage?: TurnUsage; readonly durationMs?: number }
+    | { readonly kind: "failed"; readonly cause: unknown; readonly turnUsage?: TurnUsage; readonly durationMs?: number };
 
 /**
  * Run one chat turn headlessly: `prepareChatTurn` (ownership check, title seed,
@@ -227,6 +232,10 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
     // before the next turn begins. Bracketing HERE covers both surfaces — the TUI hook and the REPL both
     // drive this one engine — which is why the instrumentation is on the shared seam, not the call sites.
     const leaveChatTurn = enterChatTurn();
+    // The clock of the whole turn, and not of the loop alone. The live header measures from the moment
+    // the surface opens the turn to the moment it settles, thus a bracket around the loop alone would
+    // store a figure that reads shorter than the one the user watched.
+    const turnStartedAt = Date.now();
     try {
         const prepared = await ResultAsync.fromPromise(seams.prepare({ pool }, { analysisId, threadId, userInput }), (e): unknown => e).match(
             (r) => r,
@@ -301,9 +310,13 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
                 // the harness omits the field entirely when no call reported anything, so an unreported
                 // turn carries no rollup rather than a zeroed one.
                 const turnUsage: TurnUsage | undefined = result.finish.turnUsage ? { ...result.finish.turnUsage } : undefined;
+                // The run settled, thus the span from the start of the turn to here is what the turn took.
+                // The append below is deliberately outside it: the figure must exist before the write that
+                // carries it, and a store round trip is not time that the reader spent waiting on an answer.
+                const durationMs = Date.now() - turnStartedAt;
                 return result.finish.reason === "aborted"
-                    ? { phase: { kind: "aborted", ...(turnUsage ? { turnUsage } : {}) }, toPersist }
-                    : { phase: { kind: "ok", fallbackText: finalText(result.messages), ...(turnUsage ? { turnUsage } : {}) }, toPersist };
+                    ? { phase: { kind: "aborted", durationMs, ...(turnUsage ? { turnUsage } : {}) }, toPersist }
+                    : { phase: { kind: "ok", fallbackText: finalText(result.messages), durationMs, ...(turnUsage ? { turnUsage } : {}) }, toPersist };
             },
             // `runAgent` threw rather than resolving. For an abort this is the DEFENSIVE path — one that
             // never reached the streaming wrapper (e.g. the signal fired before the first model call), so
@@ -333,6 +346,11 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // Passed on EVERY branch for the same reason it rides on all three phases: an aborted or failed
         // turn spent real tokens, and only a run that never resolved has nothing to record.
         //
+        // The measured duration rides along for the same reason, and it obeys the same rule: the live
+        // header shows how long the turn took, and a reload that dropped the figure would show a turn
+        // that nobody timed. It reads against `undefined` and never against falsiness, because a turn
+        // that settled inside one millisecond measured zero and a measured zero is a figure.
+        //
         // The display projection rides along for the same reason and on the same three branches: it is
         // what the transcript replays, so a turn whose projection is dropped reloads as though it had
         // shown nothing. `finish` is therefore called before the append, not inside the `ok` branch —
@@ -346,6 +364,7 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
                 modelMessages: run.toPersist,
                 displayMessages,
                 ...(run.phase.turnUsage ? { turnUsage: run.phase.turnUsage } : {}),
+                ...(run.phase.durationMs !== undefined ? { turnDurationMs: run.phase.durationMs } : {}),
             })
         ).match(
             (): DbError | undefined => undefined,

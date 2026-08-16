@@ -11,6 +11,7 @@ import { type CortexMsg, loadMessages, type LoadSeams, resetHotState } from "../
 import { __resetReportChildrenForTest, refreshReportChildren, type ReportChildrenSeams } from "../hooks/report_children.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import type { MessageRole } from "../../types/session.ts";
 
 // Where a report entry SITS is the whole rule, and a position exists only as painted rows. A props
 // assertion or a returned number proves that an arithmetic ran, not that the entry landed between the
@@ -51,11 +52,21 @@ const ws = {
     quit: async () => {},
 } as unknown as Workspace;
 
-// Three stored rows, one message each. The seq numbers start at 10 because the window mounts the newest
-// turns alone, thus a spawn point under 10 names a turn that the transcript does not hold.
-const ROWS = [{ seq: 10 }, { seq: 11 }, { seq: 12 }];
+// Six stored rows, one message each, paired as three turns: a request and then its reply. The pairing is
+// the point — the placement rule targets the REPLY of the turn that crosses the spawn point, thus a
+// fixture of bare assistant rows would never exercise it. The seq numbers start at 10 because the window
+// mounts the newest turns alone, thus a spawn point under 10 names a turn that the transcript does not
+// hold.
+const ROWS = [
+    { seq: 10, role: "user" },
+    { seq: 11, role: "assistant" },
+    { seq: 12, role: "user" },
+    { seq: 13, role: "assistant" },
+    { seq: 14, role: "user" },
+    { seq: 15, role: "assistant" },
+] as const;
 
-/** Page reads and a replay that model the store: one row in, one assistant message out. */
+/** Page reads and a replay that model the store: one row in, one message of that row's role out. */
 function transcriptSeams(): LoadSeams {
     return {
         runtime: () => fakeRuntime,
@@ -68,10 +79,10 @@ function transcriptSeams(): LoadSeams {
                 hasMore: false,
             }),
         toCortex: (rows) =>
-            (rows as unknown as { seq: number }[]).map((r) => ({
+            (rows as unknown as { seq: number; role: string }[]).map((r) => ({
                 id: `id-${r.seq}`,
-                role: "assistant",
-                parts: [{ type: "text", text: `answer ${r.seq}` }],
+                role: r.role,
+                parts: [{ type: "text", text: `${r.role} ${r.seq}` }],
             })) as unknown as CortexMsg[],
     };
 }
@@ -154,20 +165,40 @@ describe("the report entries of a mounted transcript", () => {
         opened.length = 0;
     });
 
-    // The turn headers carry the turn number and paint synchronously, thus they are the stable anchors
-    // for an ordering assertion.
-    const TURN_1 = "#1";
-    const TURN_2 = "#2";
-    const TURN_3 = "#3";
+    // The message headers carry a running number and paint synchronously, thus they are the stable
+    // anchors for an ordering assertion. One turn is a request header and then a reply header, thus the
+    // second turn of the fixture runs from `#3` to `#4`.
+    const REQUEST_1 = "#1";
+    const REPLY_1 = "#2";
+    const REQUEST_2 = "#3";
+    const REPLY_2 = "#4";
+    const REQUEST_3 = "#5";
+    const REPLY_3 = "#6";
 
-    test("a spawn point that names a loaded turn puts the entry after that turn", async () => {
+    test("a reloaded transcript puts the entry after the reply of the turn that crosses the spawn point", async () => {
+        // The spawn anchors at row 11, which is the reply of the FIRST turn: the second turn had not
+        // appended its own rows when the spawn read the parent. To place the entry at that anchor paints
+        // it above the request that asked for the report.
         const frame = await frameWith([reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID, parentSeq: 11 })]);
 
-        expect(rowOf(frame, TURN_1)).toBeLessThan(rowOf(frame, TURN_2));
-        expect(rowOf(frame, TURN_2)).toBeLessThan(rowOf(frame, "Volcano report"));
-        expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, TURN_3));
+        expect(rowOf(frame, REQUEST_2)).toBeLessThan(rowOf(frame, "Volcano report"));
+        expect(rowOf(frame, REPLY_2)).toBeLessThan(rowOf(frame, "Volcano report"));
+        expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, REQUEST_3));
         // The entry names what it opens, because a title reads as a conversation title on its own.
         expect(frame).toContain("report session");
+    });
+
+    test("two children of one turn share the position, in the order that the listing gave them", async () => {
+        // One turn can ask for two reports, and both spawns then anchor at the same row. The two entries
+        // belong together under that turn's reply, and neither belongs at the tail.
+        const frame = await frameWith([
+            reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID, parentSeq: 11 }),
+            reportThread({ threadId: "child-2", title: "Pathway report", parentThreadId: SID, parentSeq: 11 }),
+        ]);
+
+        expect(rowOf(frame, REPLY_2)).toBeLessThan(rowOf(frame, "Volcano report"));
+        expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, "Pathway report"));
+        expect(rowOf(frame, "Pathway report")).toBeLessThan(rowOf(frame, REQUEST_3));
     });
 
     test("a click on the entry opens that report session in place", async () => {
@@ -184,7 +215,7 @@ describe("the report entries of a mounted transcript", () => {
         // The harness can cut a parent tail behind a spawn point, thus the entry must stay reachable.
         const frame = await frameWith([reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID, parentSeq: 99 })]);
 
-        expect(rowOf(frame, TURN_3)).toBeLessThan(rowOf(frame, "Volcano report"));
+        expect(rowOf(frame, REPLY_3)).toBeLessThan(rowOf(frame, "Volcano report"));
     });
 
     test("a spawn point below the mounted window puts the entry at the TOP", async () => {
@@ -192,7 +223,7 @@ describe("the report entries of a mounted transcript", () => {
         // or below it. To drop the entry would hide a session that the conversation really spawned.
         const frame = await frameWith([reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID, parentSeq: 3 })]);
 
-        expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, TURN_1));
+        expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, REQUEST_1));
     });
 
     test("a failed listing renders no entry, and the transcript stays whole", async () => {
@@ -201,8 +232,8 @@ describe("the report entries of a mounted transcript", () => {
         const frame = await frameWith("unreadable");
 
         expect(frame).not.toContain("report session");
-        expect(rowOf(frame, TURN_1)).toBeLessThan(rowOf(frame, TURN_2));
-        expect(rowOf(frame, TURN_2)).toBeLessThan(rowOf(frame, TURN_3));
+        expect(rowOf(frame, REQUEST_1)).toBeLessThan(rowOf(frame, REPLY_1));
+        expect(rowOf(frame, REPLY_1)).toBeLessThan(rowOf(frame, REQUEST_2));
     });
 
     test("an archived child leaves the surface, and each other child keeps its own position", async () => {
@@ -212,60 +243,73 @@ describe("the report entries of a mounted transcript", () => {
         const all = [
             reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID, parentSeq: 10 }),
             reportThread({ threadId: "child-2", title: "Pathway report", parentThreadId: SID, parentSeq: 11, deletedAt: new Date("2026-07-09T09:30:00.000Z") }),
-            reportThread({ threadId: "child-3", title: "Enrichment report", parentThreadId: SID, parentSeq: 12 }),
+            reportThread({ threadId: "child-3", title: "Enrichment report", parentThreadId: SID, parentSeq: 13 }),
         ];
         const frame = await frameWith(all.filter((t) => t.deletedAt === null));
 
         expect(frame).not.toContain("Pathway report");
-        expect(rowOf(frame, TURN_1)).toBeLessThan(rowOf(frame, "Volcano report"));
-        expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, TURN_2));
-        expect(rowOf(frame, TURN_3)).toBeLessThan(rowOf(frame, "Enrichment report"));
+        expect(rowOf(frame, REPLY_1)).toBeLessThan(rowOf(frame, "Volcano report"));
+        expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, REQUEST_2));
+        expect(rowOf(frame, REPLY_3)).toBeLessThan(rowOf(frame, "Enrichment report"));
     });
 });
 
 describe("slotFor — the arms a seeded render cannot reach", () => {
     // The marks describe the LOADED transcript. A live turn appends past them and mints none, thus a
-    // mounted count larger than the marks is the state these cases are about.
+    // mounted count larger than the marks is the state these cases are about. The four loaded rows pair
+    // as two turns, a request and then its reply.
     const MARKS = [
         { seq: 10, afterMessageId: "m10" },
         { seq: 11, afterMessageId: "m11" },
         { seq: 12, afterMessageId: "m12" },
+        { seq: 13, afterMessageId: "m13" },
     ];
     const LOADED = new Map([
         ["m10", 0],
         ["m11", 1],
         ["m12", 2],
+        ["m13", 3],
     ]);
+    const ROLES: MessageRole[] = ["user", "assistant", "user", "assistant"];
     const positionOf = (id: string): number | undefined => LOADED.get(id);
+    const roleAt = (at: number): MessageRole | undefined => ROLES[at];
+    // The two messages that a live turn appended past the loaded four.
+    const MOUNTED = 6;
 
     test("a session the newest turn spawned lands BELOW that turn, and not at its spawn point", () => {
         // The spawn reads the parent before the turn that asked for it appends, thus the spawn point sits
         // under the request. To place the entry there paints it above the words that asked for the report.
-        // The live turn added two messages past the loaded three.
-        expect(slotFor(12, MARKS, positionOf, 5)).toBe(5);
+        expect(slotFor(13, MARKS, positionOf, roleAt, MOUNTED)).toBe(MOUNTED);
     });
 
     test("a spawn point past the loaded transcript lands at the TRUE tail, not at the loaded end", () => {
-        expect(slotFor(99, MARKS, positionOf, 5)).toBe(5);
+        expect(slotFor(99, MARKS, positionOf, roleAt, MOUNTED)).toBe(MOUNTED);
     });
 
-    test("a spawn point with a loaded turn above it stays at that turn, whatever a live turn added", () => {
-        // A session spawned earlier keeps its place: the mark above it is what pins the entry, thus a
-        // later turn appends below the entry rather than moving it.
-        expect(slotFor(11, MARKS, positionOf, 5)).toBe(2);
+    test("a spawn point inside the transcript lands after the REPLY of the turn that crosses it", () => {
+        // The first mark above the spawn point is the request of the second turn, at position 2. The reply
+        // that answers it is at position 3, thus the entry takes position 4 and a later turn appends below
+        // it rather than moving it.
+        expect(slotFor(11, MARKS, positionOf, roleAt, MOUNTED)).toBe(4);
     });
 
-    test("a mark whose message left the window reads as a position below it", () => {
+    test("a crossing turn that has not answered yet puts the entry at the END", () => {
+        // Nothing after the request is a reply, thus there is no position that sits below the request and
+        // above a later turn. The tail is the one honest answer.
+        expect(slotFor(11, MARKS, positionOf, () => "user", MOUNTED)).toBe(MOUNTED);
+    });
+
+    test("a crossing mark whose message left the window reads as a position below it", () => {
         // The trailing cap drops a message off the front as a live turn appends. The id then resolves to
         // nothing, which is the same answer as a spawn point older than the window.
-        expect(slotFor(10, MARKS, () => undefined, 5)).toBe(0);
+        expect(slotFor(10, MARKS, () => undefined, roleAt, MOUNTED)).toBe(0);
     });
 
     test("a spawn point below every mark takes the TOP", () => {
-        expect(slotFor(3, MARKS, positionOf, 5)).toBe(0);
+        expect(slotFor(3, MARKS, positionOf, roleAt, MOUNTED)).toBe(0);
     });
 
     test("a row with no spawn point takes the tail, because it names no place", () => {
-        expect(slotFor(null, MARKS, positionOf, 5)).toBe(5);
+        expect(slotFor(null, MARKS, positionOf, roleAt, MOUNTED)).toBe(MOUNTED);
     });
 });
