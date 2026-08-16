@@ -178,12 +178,14 @@ describe("createReportSessionAgent", () => {
         // The citation rule and its anti-pattern are stable substrings, thus the
         // assertion does not couple to the full prose.
         expect(reportSessionPrompt).toContain("citation blocks");
-        expect(reportSessionPrompt).toContain("citation id of the pinned evidence");
+        expect(reportSessionPrompt).toContain("citation of the pinned evidence");
         expect(reportSessionPrompt).toContain("does not resolve");
         expect(reportSessionPrompt).toContain("Inline a citation that does not resolve");
-        // The listing tool is the route to a pinned id, thus the agent never learns one from a refusal.
+        // The listing tool is the route to a pinned citation, thus the agent never learns one from a
+        // refusal. The shape of the field rides the description of the tool, thus the prompt names none.
         expect(reportSessionPrompt).toContain("`citations` field");
-        expect(reportSessionPrompt).toContain("never take an id out of a refusal");
+        expect(reportSessionPrompt).toContain("never take a citation out");
+        expect(reportSessionPrompt).not.toContain("idKind");
     });
 
     test("the prompt carries the argument spine", () => {

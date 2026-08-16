@@ -22,9 +22,8 @@ import { citationRecordOf, type CitationRecords } from "../report-model/referenc
 import { renderChart } from "./views/chart-view.js";
 import { deriveChartOption } from "./chart.js";
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
-import { citationKeyOf } from "./views/references-view.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
-import { ReferenceLedger } from "./references.js";
+import { citationKeyOf, ReferenceLedger } from "./references.js";
 import type { RenderProblem, RenderValue, RenderValues } from "./types.js";
 import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable } from "./views/values.js";
 

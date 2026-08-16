@@ -1,5 +1,5 @@
 /**
- * The page assembly: the hero, the bands, the reference band, and the footer.
+ * The page assembly: the hero, the bands, the appendix bands, and the footer.
  *
  * The skeleton inlines the style rules in the head, and it puts the five scripts at the end of the body.
  * The order of the first three scripts is a contract. The theme registration runs before the chart
@@ -23,7 +23,7 @@ import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, SECTION_SPY, TABLE_ENHAN
 import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
 import type { CitationRecords } from "../../report-model/reference-resolver.js";
 import type { ReferenceLedger } from "../references.js";
-import { renderReferenceList } from "./references-view.js";
+import { renderBibliography, renderReferenceList } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
 
 /** The constant eyebrow of the hero. The render reads no clock, thus the hero carries no date. */
@@ -32,8 +32,11 @@ const HERO_EYEBROW = "INFLEXA · ANALYSIS REPORT";
 /** The constant note of the footer. */
 const FOOTER_NOTE = "Powered by Inflexa";
 
-/** The title of the auto-generated appendix. The literature stays in the citation blocks of the sections. */
+/** The title of the provenance appendix. It holds where each value of the report came from. */
 const PROVENANCE_TITLE = "Data provenance";
+
+/** The title of the bibliography. It holds each paper that a citation of the report names. */
+const LITERATURE_TITLE = "Literature";
 
 /**
  * The theme object as script-safe JSON. `scriptJson` replaces every `<` with `\u003c`, thus a later edit
@@ -69,18 +72,31 @@ export function renderBand(index: number, inner: string): string {
     );
 }
 
+/** The heading of one appendix band. The two appendices read alike, thus one heading form serves both. */
+function appendixHeading(title: string): string {
+    return String(<h2 class="report-heading report-heading-3 report-ref-title">{title}</h2>);
+}
+
 /**
- * Wrap the appendix lists in the final band. An empty ledger gives an empty string, thus the page shows no
- * empty reference band. The index continues the band alternation of the sections. The records carry the
- * bibliography of each cited key, and a ledger with no citation reads none of them.
+ * Wrap each appendix in a band of its own: the provenance of the values, then the literature. The two
+ * answer different questions, thus each one wears its own title and a reader never reads a paper under
+ * the provenance heading.
+ *
+ * An empty ladder renders no band, thus a report with citations alone shows the literature title alone.
+ * The index continues the band alternation of the sections, and a band that renders takes the next one.
+ * The records carry the bibliography of each cited key, and a ledger with no citation reads none of them.
  */
 export function renderReferenceSection(ledger: ReferenceLedger, index: number, records?: CitationRecords): string {
-    const list = renderReferenceList(ledger, records);
-    if (list === "") {
-        return "";
+    const bands: string[] = [];
+    const provenance = renderReferenceList(ledger);
+    if (provenance !== "") {
+        bands.push(renderBand(index, appendixHeading(PROVENANCE_TITLE) + provenance));
     }
-    const heading = String(<h2 class="report-heading report-heading-3 report-ref-title">{PROVENANCE_TITLE}</h2>);
-    return renderBand(index, heading + list);
+    const literature = renderBibliography(ledger, records);
+    if (literature !== "") {
+        bands.push(renderBand(index + bands.length, appendixHeading(LITERATURE_TITLE) + literature));
+    }
+    return bands.join("");
 }
 
 /**

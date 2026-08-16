@@ -679,6 +679,11 @@ a.report-citation-source:hover {
 .report-cite-source {
   color: var(--color-text-secondary);
 }
+/* The description of the paper reads under its citation, thus it takes a line of its own. */
+.report-cite-description {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+}
 
 /* ── Section textures ─────────────────────────────────── */
 /* A texture is felt, not seen: a low opacity and a faded edge. */

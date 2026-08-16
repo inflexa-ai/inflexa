@@ -4,18 +4,16 @@
  * The runtime escapes each child and each attribute value, thus a hostile path, a hostile id, or a
  * hostile operation reaches the page as text. Each list keeps the first-appearance order of its ladder,
  * thus the ordinal of each item matches its marker.
+ *
+ * The two lists render apart, because each one answers a different question and each one wears its own
+ * heading. A page with one empty ladder renders that list not at all.
  */
 
 import type { PropsWithChildren } from "hono/jsx";
 
 import { citationRecordOf, type CitationRecords } from "../../report-model/reference-resolver.js";
 import type { ArtifactValueReference, CitationReference } from "../../contracts/report-reference.js";
-import type { ProvenanceReference, ReferenceLedger, ReferenceMark } from "../references.js";
-
-/** The citation key of one citation reference, in the prefixed `idKind:id` form. */
-export function citationKeyOf(reference: CitationReference): string {
-    return `${reference.idKind}:${reference.id}`;
-}
+import { citationKeyOf, type ProvenanceReference, type ReferenceLedger, type ReferenceMark } from "../references.js";
 
 /**
  * One provenance marker as a superscript that links to the list entry. The number comes from the ledger as
@@ -117,12 +115,17 @@ function ReferenceEntry({ reference }: { reference: ProvenanceReference }) {
 }
 
 /**
- * The inner markup of one bibliography entry: the short citation of the pinned record, and the key. A key
- * that the record map does not hold shows the key alone, because absence is a normal condition.
+ * The inner markup of one bibliography entry: the short citation of the pinned record, the key, and the
+ * description of the record on a line of its own. A key that the record map does not hold shows the key
+ * alone, because absence is a normal condition.
+ *
+ * The description sits in the appendix and never on the card. The card sits in the body of the report,
+ * where a paragraph about the paper competes with the prose around it.
  */
 function CitationEntry({ reference, records }: { reference: CitationReference; records: CitationRecords | undefined }) {
     const key = citationKeyOf(reference);
     const record = citationRecordOf(records, key);
+    const description = record?.description;
     return (
         <>
             {record !== undefined ? (
@@ -131,44 +134,50 @@ function CitationEntry({ reference, records }: { reference: CitationReference; r
                 </>
             ) : null}
             <Detail>{key}</Detail>
+            {description !== undefined ? <div class="report-cite-description">{description}</div> : null}
         </>
     );
 }
 
 /**
- * The two appendix lists for the end of the page: the provenance of the values, and the literature. Each
- * list is an appendix: a reader consults one entry from a marker, thus the design keeps both quieter than
- * the body. A ladder with no entry renders no list, and an empty ledger gives an empty string.
- *
- * The bibliography holds one entry for each cited key, in the order of the citation ladder. Thus the
- * bracket marker of a card names the position of its entry.
+ * The provenance list of the appendix: one entry for each artifact reference and each derivation, in the
+ * order of the provenance ladder. The list is an appendix: a reader consults one entry from a marker, thus
+ * the design keeps it quieter than the body. A ledger with no provenance entry gives an empty string, thus
+ * the page shows no empty list.
  */
-export function renderReferenceList(ledger: ReferenceLedger, records?: CitationRecords): string {
-    const provenance = ledger.provenanceEntries();
-    const citations = ledger.citationEntries();
-    if (provenance.length === 0 && citations.length === 0) {
+export function renderReferenceList(ledger: ReferenceLedger): string {
+    const entries = ledger.provenanceEntries();
+    if (entries.length === 0) {
         return "";
     }
     return String(
-        <>
-            {provenance.length > 0 ? (
-                <ol class="report-references">
-                    {provenance.map((reference, index) => (
-                        <li id={`ref-${index + 1}`} class="report-ref-item">
-                            <ReferenceEntry reference={reference} />
-                        </li>
-                    ))}
-                </ol>
-            ) : null}
-            {citations.length > 0 ? (
-                <ol class="report-citations">
-                    {citations.map((reference, index) => (
-                        <li id={`cite-${index + 1}`} class="report-ref-item">
-                            <span class="report-cite-index">{`[${index + 1}]`}</span> <CitationEntry reference={reference} records={records} />
-                        </li>
-                    ))}
-                </ol>
-            ) : null}
-        </>,
+        <ol class="report-references">
+            {entries.map((reference, index) => (
+                <li id={`ref-${index + 1}`} class="report-ref-item">
+                    <ReferenceEntry reference={reference} />
+                </li>
+            ))}
+        </ol>,
+    );
+}
+
+/**
+ * The bibliography of the appendix: one entry for each cited key, in the order of the citation ladder.
+ * Thus the bracket marker of a card names the position of its entry. A ledger with no citation gives an
+ * empty string.
+ */
+export function renderBibliography(ledger: ReferenceLedger, records?: CitationRecords): string {
+    const entries = ledger.citationEntries();
+    if (entries.length === 0) {
+        return "";
+    }
+    return String(
+        <ol class="report-citations">
+            {entries.map((reference, index) => (
+                <li id={`cite-${index + 1}`} class="report-ref-item">
+                    <span class="report-cite-index">{`[${index + 1}]`}</span> <CitationEntry reference={reference} records={records} />
+                </li>
+            ))}
+        </ol>,
     );
 }

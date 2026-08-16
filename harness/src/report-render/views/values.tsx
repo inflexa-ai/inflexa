@@ -26,9 +26,9 @@ import { raw } from "hono/html";
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
 import type { CitationRecord } from "../../report-model/reference-resolver.js";
-import { citationKeyOf, LadderMarker } from "./references-view.js";
+import { LadderMarker } from "./references-view.js";
 import { formatNumberCell, holdsAPValue, selectNumberKind, smallestPositiveValue } from "../number-format.js";
-import type { ReferenceLedger } from "../references.js";
+import { citationKeyOf, type ReferenceLedger } from "../references.js";
 import type { RenderValue } from "../types.js";
 
 /**
