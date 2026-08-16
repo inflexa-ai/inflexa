@@ -170,6 +170,45 @@ describe("buildOutline", () => {
         expect(buildOutline(draft).find((entry) => entry.id === "t1")?.label).toBe("Two limits bound the reading.");
     });
 
+    it("skips a first item that holds no text, thus the label names something", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Limits",
+                    blocks: [
+                        {
+                            kind: "text",
+                            id: "t1",
+                            content: { prose: "", list: { ordered: false, items: [" ", "The cohort is small."] } },
+                        },
+                    ],
+                },
+            ],
+        };
+
+        // The grammar admits an item of one space, thus the first item can name nothing.
+        expect(buildOutline(draft).find((entry) => entry.id === "t1")?.label).toBe("The cohort is small.");
+    });
+
+    it("labels a list of blank items with an empty label, the same as an absent field", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Limits",
+                    blocks: [{ kind: "text", id: "t1", content: { prose: "", list: { ordered: false, items: [" ", "\t"] } } }],
+                },
+            ],
+        };
+
+        expect(buildOutline(draft).find((entry) => entry.id === "t1")?.label).toBe("");
+    });
+
     it("clips a long first item of a list-only text block", () => {
         const draft: DraftDocument = {
             title: "Report",

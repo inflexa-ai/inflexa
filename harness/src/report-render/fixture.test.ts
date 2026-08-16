@@ -63,6 +63,14 @@ describe("the design fixture", () => {
         expect(covered).toEqual(declared);
     });
 
+    it("holds a text block that carries a list", () => {
+        const withAList = everyBlock(FIXTURE_DOCUMENT.sections).filter((block) => block.kind === "text" && block.content.list !== undefined);
+        // The list is a content form of the text block, and it renders markup of its own. The page shows
+        // only what the fixture holds, thus a fixture with no list keeps the list markup out of the design
+        // review and out of the HTML validation alike.
+        expect(withAList.length).toBeGreaterThan(0);
+    });
+
     it("holds a metric run that the grid groups and a lone metric that it does not", () => {
         const runs = metricRuns(FIXTURE_DOCUMENT.sections);
         // The renderer groups a run of two or more into one grid, and it leaves a lone metric as one card.
