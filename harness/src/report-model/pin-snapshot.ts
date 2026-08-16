@@ -12,6 +12,9 @@
  * that the synthesis engaged, and two fields of a run synthesis carry it: the key references and the
  * references of each finding. The records live in the run tree on disk. Thus the pin reads that tree
  * through the workspace-root seam of the caller.
+ *
+ * A reference that carries a short citation also pins a bibliography record beside its key. The key list
+ * keeps the membership role, thus the record map is optional and it changes no resolution.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -23,7 +26,7 @@ import { queryAnalysisArtifacts, type AnalysisArtifactRef } from "../state/artif
 import type { Querier } from "../state/db.js";
 import { queryRunsByAnalysis } from "../state/runs.js";
 import { isSafeId, runDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
-import type { ArtifactSnapshot, ReportSnapshot } from "./reference-resolver.js";
+import type { ArtifactSnapshot, CitationRecord, ReportSnapshot } from "./reference-resolver.js";
 
 /**
  * The reason that the pin gave no snapshot. The ledger read and the run listing are the two operations
@@ -94,13 +97,44 @@ async function readSynthesisText(absolute: string): Promise<string | undefined> 
     ).unwrapOr(undefined);
 }
 
+/** One citation of a synthesis record: the key, and the bibliography record when the entry carries one. */
+interface CitationEntry {
+    readonly key: string;
+    readonly record?: CitationRecord;
+}
+
+/** The trimmed text of a field, or `undefined` when the field is not a non-empty string. */
+function trimmedText(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+    const text = value.trim();
+    return text.length > 0 ? text : undefined;
+}
+
 /**
- * Take one `pmid:` key from each entry of one reference list, and add it to `keys`.
+ * The bibliography record of one reference entry, or `undefined` when the entry carries no citation text.
+ *
+ * A key reference carries `citation` and `description`. A reference of a finding carries `citation` and a
+ * narrower `relevance`, thus it gives the short citation alone. A record without a citation would state
+ * nothing, thus such an entry gives a bare key.
+ */
+function recordOf(reference: { citation?: unknown; description?: unknown }): CitationRecord | undefined {
+    const citation = trimmedText(reference.citation);
+    if (citation === undefined) {
+        return undefined;
+    }
+    const description = trimmedText(reference.description);
+    return description === undefined ? { citation } : { citation, description };
+}
+
+/**
+ * Take one `pmid:` citation from each entry of one reference list, and add it to `entries`.
  *
  * The walk is lenient: a value that is not a list, an entry that is not an object, and a PMID that is
- * not a non-empty string each give no key.
+ * not a non-empty string each give no citation.
  */
-function pushPmidKeys(list: unknown, keys: string[]): void {
+function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
     if (!Array.isArray(list)) {
         return;
     }
@@ -114,21 +148,25 @@ function pushPmidKeys(list: unknown, keys: string[]): void {
         }
         const id = pmid.trim();
         if (id.length > 0) {
-            keys.push(`pmid:${id}`);
+            const record = recordOf(reference as { citation?: unknown; description?: unknown });
+            entries.push(record === undefined ? { key: `pmid:${id}` } : { key: `pmid:${id}`, record });
         }
     }
 }
 
 /**
- * The citation keys of one synthesis text.
+ * The citations of one synthesis text, in the order that the record carries them.
  *
  * The extraction is lenient: it parses the JSON, and it takes each PMID of `keyReferences` and of the
  * references of each finding. The key references are the papers that the synthesis names as primary, and
  * the references of the findings are the superset. Thus a citation over either one resolves. A
  * whole-schema parse would empty the citation list of the whole analysis for one record that a different
- * schema version wrote. Malformed JSON gives no key.
+ * schema version wrote. Malformed JSON gives no citation.
+ *
+ * The key references come first, because the caller keeps the first record of a key and the curated
+ * description sits there.
  */
-function citationKeysOf(text: string): string[] {
+function citationsOf(text: string): CitationEntry[] {
     let parsed: unknown;
     try {
         parsed = JSON.parse(text);
@@ -138,18 +176,24 @@ function citationKeysOf(text: string): string[] {
     if (typeof parsed !== "object" || parsed === null) {
         return [];
     }
-    const keys: string[] = [];
-    pushPmidKeys((parsed as { keyReferences?: unknown }).keyReferences, keys);
+    const entries: CitationEntry[] = [];
+    pushPmidCitations((parsed as { keyReferences?: unknown }).keyReferences, entries);
     const findings = (parsed as { findings?: unknown }).findings;
     if (Array.isArray(findings)) {
         for (const finding of findings) {
             if (typeof finding !== "object" || finding === null) {
                 continue;
             }
-            pushPmidKeys((finding as { references?: unknown }).references, keys);
+            pushPmidCitations((finding as { references?: unknown }).references, entries);
         }
     }
-    return keys;
+    return entries;
+}
+
+/** The citation evidence of one analysis: the sorted key list, and the record of each key that carries one. */
+interface CollectedCitations {
+    readonly keys: string[];
+    readonly records: Map<string, CitationRecord>;
 }
 
 /**
@@ -159,21 +203,29 @@ function citationKeysOf(text: string): string[] {
  * key references and the references of each finding. The keys dedupe, and they sort in code-unit order.
  * Thus one disk state gives one list, and a second pin over that state gives the same list.
  *
+ * The first record of a key wins. The key references of a record walk before its findings, thus the
+ * curated description survives a duplicate that names the same paper with a narrower text.
+ *
  * A run listing that fails fails the collection, because a store fault is not absence. Each other fault
  * is a normal condition: an unresolvable workspace root, an absent record, an unreadable record, and a
  * malformed record each give no key and no error.
  */
-async function collectCitationKeys(pool: Querier, resolveWorkspaceRoot: ResolveWorkspaceRoot, analysisId: string): Promise<Result<string[], PinSnapshotError>> {
+async function collectCitations(
+    pool: Querier,
+    resolveWorkspaceRoot: ResolveWorkspaceRoot,
+    analysisId: string,
+): Promise<Result<CollectedCitations, PinSnapshotError>> {
     let root: string;
     try {
         root = resolveWorkspaceRoot(analysisId);
     } catch {
         // The seam signals an unresolvable resource by a throw. The artifact map still states the
         // membership of the session, thus the fault costs the citation list alone.
-        return ok([]);
+        return ok({ keys: [], records: new Map() });
     }
 
     const keys = new Set<string>();
+    const records = new Map<string, CitationRecord>();
     for (let offset = 0; ; offset += RUN_PAGE_SIZE) {
         const page = await queryRunsByAnalysis(pool, analysisId, { limit: RUN_PAGE_SIZE, offset });
         if (page.isErr()) {
@@ -189,12 +241,15 @@ async function collectCitationKeys(pool: Querier, resolveWorkspaceRoot: ResolveW
             if (text === undefined) {
                 continue;
             }
-            for (const key of citationKeysOf(text)) {
-                keys.add(key);
+            for (const entry of citationsOf(text)) {
+                keys.add(entry.key);
+                if (entry.record !== undefined && !records.has(entry.key)) {
+                    records.set(entry.key, entry.record);
+                }
             }
         }
         if (page.value.length < RUN_PAGE_SIZE) {
-            return ok([...keys].sort());
+            return ok({ keys: [...keys].sort(), records });
         }
     }
 }
@@ -233,6 +288,10 @@ export async function pinReportSnapshot(
     if (options.resolveWorkspaceRoot === undefined) {
         return ok({ artifacts, citations: [] });
     }
-    const citations = await collectCitationKeys(pool, options.resolveWorkspaceRoot, analysisId);
-    return citations.map((keys) => ({ artifacts, citations: keys }));
+    const citations = await collectCitations(pool, options.resolveWorkspaceRoot, analysisId);
+    // A collection that recorded nothing stores no map. Thus the snapshot of an analysis whose synthesis
+    // carries no citation text reads the same as a pin that predates the map.
+    return citations.map(({ keys, records }) =>
+        records.size === 0 ? { artifacts, citations: keys } : { artifacts, citations: keys, citationRecords: Object.fromEntries(records) },
+    );
 }

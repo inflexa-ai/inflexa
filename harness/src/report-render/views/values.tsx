@@ -1,5 +1,8 @@
 /**
- * The value markup: the metric card, the data table, the figure, and the inline citation.
+ * The value markup: the metric card, the data table, the figure, and the citation card.
+ *
+ * The citation card is the bibliography entry of its source. It carries the one link of the page body,
+ * which is a navigation to PubMed, thus the page loads nothing from a remote host.
  *
  * The caller resolves each value, and it narrows the value to the shape that the block needs. The runtime
  * escapes every interpolated string, thus a hostile label, a hostile cell, a hostile caption, or a
@@ -22,7 +25,8 @@ import { raw } from "hono/html";
 
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
-import { Marker } from "./references-view.js";
+import type { CitationRecord } from "../../report-model/reference-resolver.js";
+import { citationKeyOf, LadderMarker } from "./references-view.js";
 import { formatNumberCell, holdsAPValue, selectNumberKind, smallestPositiveValue } from "../number-format.js";
 import type { ReferenceLedger } from "../references.js";
 import type { RenderValue } from "../types.js";
@@ -290,20 +294,46 @@ export function renderFigure(block: FigureBlock, value: FigureValue): string {
 }
 
 /**
- * Render a citation block as a card in the reference form. The binding joins the ledger like a claim
- * binding, thus one shared source keeps one number. The optional note renders after the marker.
+ * The PubMed address of one identifier. The address is deterministic, and an anchor loads nothing, thus a
+ * page with such a link still stands alone.
  */
-export function renderCitation(block: CitationBlock, ledger: ReferenceLedger): string {
-    const n = ledger.mark(block.binding);
+const PUBMED_BASE = "https://pubmed.ncbi.nlm.nih.gov/";
+
+/**
+ * Render a citation block as a bibliography card. The binding joins the citation ladder like a claim
+ * binding, thus one shared source keeps one bracket number. The card shows the marker, the short citation
+ * of the pinned record, the optional note, and the citation key.
+ *
+ * The short citation of a `pmid:` record carries the PubMed link of its identifier. A key of another
+ * identifier space shows the citation as text. A key with no pinned record shows the key and the note
+ * alone, because absence is a normal condition and no text stands in for the paper.
+ */
+export function renderCitation(block: CitationBlock, ledger: ReferenceLedger, record?: CitationRecord): string {
+    const mark = ledger.mark(block.binding);
+    const binding = block.binding;
+    const key = citationKeyOf(binding);
     return String(
         <div class="report-citation corner-accents">
-            <Marker n={n} />
+            <LadderMarker mark={mark} />
+            {record !== undefined ? (
+                <>
+                    {" "}
+                    {binding.idKind === "pmid" ? (
+                        <a class="report-citation-source" href={`${PUBMED_BASE}${encodeURIComponent(binding.id)}/`}>
+                            {record.citation}
+                        </a>
+                    ) : (
+                        <span class="report-citation-source">{record.citation}</span>
+                    )}
+                </>
+            ) : null}
             {block.note !== undefined ? (
                 <>
                     {" "}
                     <span class="report-citation-note">{block.note}</span>
                 </>
-            ) : null}
+            ) : null}{" "}
+            <span class="report-citation-key">{key}</span>
         </div>,
     );
 }

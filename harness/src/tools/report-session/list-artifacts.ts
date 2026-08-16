@@ -2,8 +2,9 @@
  * The pinned-artifact listing tool of a report session.
  *
  * The tool reads the frozen snapshot of the thread, and it gives the pinned set: the path, the content
- * hash, the file type, and the header columns of a tabular artifact, plus the pinned citation ids. Thus
- * one call orients the agent, and a reference binds to a path or to a citation id of that set.
+ * hash, the file type, and the header columns of a tabular artifact, plus the pinned citations with the
+ * short citation of each. Thus one call orients the agent, and a reference binds to a path or to a
+ * citation key of that set.
  *
  * The order is the code-unit order of the path. Two calls over one snapshot give one listing, thus the
  * agent reads a stable set. A snapshot can pin many thousands of staged inputs, thus the listing stops at
@@ -26,7 +27,7 @@ import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { tryFs } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
-import { fileTypeHoldsNoCell } from "../../report-model/reference-resolver.js";
+import { citationRecordOf, fileTypeHoldsNoCell } from "../../report-model/reference-resolver.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
@@ -49,18 +50,30 @@ export interface PinnedArtifact {
 }
 
 /**
+ * One pinned citation of the listing: the key, and the short citation of its pinned record.
+ *
+ * `citation` names which paper the key is, thus the agent binds a citation block with no guess. A key that
+ * the pin recorded no citation for carries none, because absence is a normal condition. The description of
+ * the record stays out, because the listing is an orientation surface.
+ */
+export interface PinnedCitation {
+    key: string;
+    citation?: string;
+}
+
+/**
  * The typed outcome of the listing tool. Each arm is ok-channel data, thus the tool never throws for one
  * of them.
  *
  * `total` counts the whole pinned set, and `truncated` says that the set holds more entries than
  * `artifacts` names. Thus the agent reads a partial listing as a partial listing.
  *
- * `citations` gives the pinned citation ids in the code-unit order that the pin stored. A citation
- * reference binds to one of them, thus the agent reads an id here and never out of a refusal.
+ * `citations` gives the pinned citations in the code-unit order of the keys that the pin stored. A citation
+ * reference binds to one of those keys, thus the agent reads a key here and never out of a refusal.
  */
 export type ListPinnedArtifactsResult =
     | { outcome: "refused"; refusal: SessionRefusal }
-    | { outcome: "listed"; artifacts: PinnedArtifact[]; total: number; truncated: boolean; citations: string[] };
+    | { outcome: "listed"; artifacts: PinnedArtifact[]; total: number; truncated: boolean; citations: PinnedCitation[] };
 
 /**
  * The construction deps of the listing tool.
@@ -196,8 +209,9 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
             "file whose bytes do not read each give no columns. " +
             `The listing gives a maximum of ${LISTING_CAP} entries: "total" gives the size of the pinned set, and "truncated" says that the ` +
             "set holds more artifacts than this listing names. " +
-            '"citations" gives the pinned citation ids of this session, each in the "idKind:id" form. A citation block binds to one of ' +
-            "them, thus take an id from this list and never from a refusal. " +
+            '"citations" gives the pinned literature of this session. Each entry carries "key", the citation id in the "idKind:id" form, and ' +
+            '"citation", the short citation of the paper. A key that the pin recorded no citation for carries no "citation". A citation block ' +
+            "binds to a key of this list, thus take a key from here and never from a refusal. " +
             "The pin freezes at the start of the session, thus a reference binds to an artifact of this pinned set. " +
             "Read it to orient before you bind a block, and to choose the column that a locator names. " +
             "A reference names the path alone: the session stamps the hash from this evidence.",
@@ -251,9 +265,13 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
                 }
                 artifacts.push(artifact);
             }
-            // The pin stores the citation keys sorted, thus the listing passes them through. A snapshot
-            // that pinned no citation gives an empty list, and an empty list is a complete answer.
-            const citations = state.snapshot.citations ?? [];
+            // The pin stores the citation keys sorted, thus the listing keeps that order. A snapshot that
+            // pinned no citation gives an empty list, and an empty list is a complete answer. A key with no
+            // pinned record lists bare, thus a stored pin that holds no record map still orients the agent.
+            const citations: PinnedCitation[] = (state.snapshot.citations ?? []).map((key) => {
+                const record = citationRecordOf(state.snapshot.citationRecords, key);
+                return record === undefined ? { key } : { key, citation: record.citation };
+            });
             return ok({ outcome: "listed", artifacts, total: paths.length, truncated: paths.length > listed.length, citations });
         },
     });

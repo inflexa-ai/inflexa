@@ -359,9 +359,29 @@ describe("the pinned citations", () => {
 
         expect(result.outcome).toBe("listed");
         if (result.outcome === "listed") {
-            // The agent binds a citation block to one of these ids, thus the listing is the route to an
-            // id and a refusal never has to teach one.
-            expect(result.citations).toEqual(["pmid:12345", "pmid:42", "pmid:999"]);
+            // The agent binds a citation block to one of these keys, thus the listing is the route to a
+            // key and a refusal never has to teach one.
+            expect(result.citations).toEqual([{ key: "pmid:12345" }, { key: "pmid:42" }, { key: "pmid:999" }]);
+        }
+    });
+
+    it("names the paper beside the key that the pin recorded", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } },
+            citations: ["pmid:26997480", "pmid:999"],
+            citationRecords: { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } },
+        });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            // The description stays out, because the listing is an orientation surface. A key with no
+            // record lists bare.
+            expect(result.citations).toEqual([{ key: "pmid:26997480", citation: "Hugo et al. 2016" }, { key: "pmid:999" }]);
         }
     });
 

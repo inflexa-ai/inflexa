@@ -138,6 +138,8 @@ The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_
 
 The listing tool MUST give the pinned artifacts in a deterministic order: the path, the hash, and the file type. It MUST also give the pinned citation ids. The listing is bounded, and a truncated listing MUST carry the total count and a truncation marker. For a `.csv` or a `.tsv` artifact it also gives the columns, from a bounded read of the header. A header that the bounded read cannot parse whole gives no columns. An unreadable header gives no columns and no error, because absence is a normal condition.
 
+The listing MUST give each pinned citation as its key with the short citation beside it, when the pinned record carries one. Thus the agent reads which id is which paper, and it composes a citation block with no guess. A key with no record lists bare, because absence is a normal condition.
+
 #### Scenario: The roster holds no run starter
 - **WHEN** the assembled agent lists its tools
 - **THEN** no tool id of the run-starter set or the mutate set is present
@@ -157,6 +159,10 @@ The listing tool MUST give the pinned artifacts in a deterministic order: the pa
 #### Scenario: A large pinned set truncates with a marker
 - **WHEN** the snapshot pins more artifacts than the listing bound
 - **THEN** the result carries the bounded listing, the total count, and the truncation marker
+
+#### Scenario: The listing names the paper beside the key
+- **WHEN** the agent calls the listing tool in a session whose pin records `Hugo et al. 2016` under `pmid:26997480`
+- **THEN** the listed citation carries the key and the short citation
 
 #### Scenario: A derivation starts no run
 - **WHEN** the agent derives a table in a session

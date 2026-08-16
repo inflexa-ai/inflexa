@@ -23,10 +23,24 @@ describe("renderClaim", () => {
         const ledger = new ReferenceLedger();
         const htmlA = renderClaim(claimA, ledger);
         const htmlB = renderClaim(claimB, ledger);
-        expect(htmlA).toContain(`href="#ref-1"`);
-        expect(htmlB).toContain(`href="#ref-1"`);
+        // A citation binding marks in the bracket ladder, thus the two claims point at the bibliography.
+        expect(htmlA).toContain(`href="#cite-1"`);
+        expect(htmlB).toContain(`href="#cite-1"`);
         // The shared reference holds one entry, thus the ledger counts it one time.
-        expect(ledger.entries().length).toBe(1);
+        expect(ledger.citationEntries().length).toBe(1);
+    });
+
+    it("gives an artifact binding a superscript and a citation binding a bracket", () => {
+        const artifact: Reference = { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
+        const paper: Reference = { kind: "citation", idKind: "pmid", id: "12345", raw: "Doe 2020" };
+        const claim: ClaimBlock = { kind: "claim", id: "c4", content: { prose: "A claim." }, bindings: [artifact, paper] };
+
+        const html = renderClaim(claim, new ReferenceLedger());
+
+        // The two ladders each start at one, thus the form of the marker states which list it points at.
+        expect(html).toContain(`href="#ref-1"`);
+        expect(html).toContain(`href="#cite-1"`);
+        expect(html).toContain("[1]");
     });
 
     it("keeps a script tag in the prose as text", () => {

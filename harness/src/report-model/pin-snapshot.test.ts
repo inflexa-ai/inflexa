@@ -10,6 +10,7 @@ import { upsertArtifact, upsertArtifacts, type RegisterArtifactInput } from "../
 import { insertRun } from "../state/runs.js";
 import { createFixtureResolver } from "./fixture-resolver.js";
 import { pinReportSnapshot } from "./pin-snapshot.js";
+import type { CitationRecords } from "./reference-resolver.js";
 
 const ANALYSIS = "analysis-pin";
 
@@ -152,6 +153,11 @@ describe("the citation evidence of the pin", () => {
         return snapshot.citations;
     }
 
+    async function pinCitationRecords(): Promise<CitationRecords | undefined> {
+        const snapshot = (await pinReportSnapshot(pool, ANALYSIS, { resolveWorkspaceRoot: resolveRoot }))._unsafeUnwrap();
+        return snapshot.citationRecords;
+    }
+
     it("gives one `pmid:` key for each key reference of a run synthesis", async () => {
         await seedRun("run-1");
         await writeSynthesis(
@@ -276,6 +282,66 @@ describe("the citation evidence of the pin", () => {
         // The pin writes the key, and the resolver reads it. One test over the two sides locks the shape
         // of the key, thus a change on one side alone fails here and not at a session of a user.
         expect(resolved._unsafeUnwrap()).toEqual({ type: "citation", id: "pmid:31234" });
+    });
+
+    it("stores the citation and the description of a key reference beside its key", async () => {
+        await seedRun("run-record");
+        await writeSynthesis(
+            "run-record",
+            JSON.stringify({
+                keyReferences: [
+                    { pmid: "26997480", citation: " Hugo et al. 2016 ", description: "The resistance paper." },
+                    { pmid: "999", citation: "Roe 2021" },
+                ],
+            }),
+        );
+
+        // The trim of the citation proves that the record carries the text alone. A reference with no
+        // description stores the citation on its own.
+        expect(await pinCitationRecords()).toEqual({
+            "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." },
+            "pmid:999": { citation: "Roe 2021" },
+        });
+    });
+
+    it("keeps the record of the key reference when a finding names the same paper", async () => {
+        await seedRun("run-duplicate");
+        // The finding reference carries the narrower relevance text, and the key reference carries the
+        // curated description. The key references walk first, thus the curated record survives.
+        await writeSynthesis(
+            "run-duplicate",
+            JSON.stringify({
+                findings: [{ references: [{ pmid: "12345", citation: "Smith 2020 (finding)", relevance: "It supports the finding." }] }],
+                keyReferences: [{ pmid: "12345", citation: "Smith 2020", description: "The primary paper." }],
+            }),
+        );
+
+        expect(await pinCitationRecords()).toEqual({ "pmid:12345": { citation: "Smith 2020", description: "The primary paper." } });
+    });
+
+    it("stores the citation of a finding reference that no key reference names", async () => {
+        await seedRun("run-finding-record");
+        await writeSynthesis(
+            "run-finding-record",
+            JSON.stringify({
+                findings: [{ references: [{ pmid: "31234", citation: "Doe 2019", relevance: "It contextualizes the finding." }] }],
+                keyReferences: [],
+            }),
+        );
+
+        // The relevance text is not the description of the paper, thus the record carries the citation
+        // alone.
+        expect(await pinCitationRecords()).toEqual({ "pmid:31234": { citation: "Doe 2019" } });
+    });
+
+    it("stores no map when no reference carries a citation text", async () => {
+        await seedRun("run-bare-keys");
+        await writeSynthesis("run-bare-keys", JSON.stringify({ keyReferences: [{ pmid: "12345" }, { pmid: "999", citation: "   " }] }));
+
+        // The keys still pin, thus a citation block over either one resolves. A stored pin with no map
+        // reads the same as a pin that predates the map.
+        expect(await pinCitations()).toEqual(["pmid:12345", "pmid:999"]);
+        expect(await pinCitationRecords()).toBeUndefined();
     });
 
     it("fails the pin when the run listing fails", async () => {

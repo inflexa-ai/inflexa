@@ -8,7 +8,8 @@
  *
  * One shared `ReferenceLedger` threads through the whole walk. Thus a claim marker and a citation marker
  * count by first appearance across the page, and a reference that two blocks share keeps one number and one
- * list entry.
+ * list entry. The ledger holds one ladder for the artifact footnotes and one ladder for the literature,
+ * thus the two marker sequences count apart.
  *
  * The output is a pure function of the two inputs. The renderer reads no clock, no random value, and no
  * locale. Thus the same document and the same values give the same bytes.
@@ -17,34 +18,39 @@
 import { err, ok, type Result } from "neverthrow";
 
 import type { Block, ReportDocument } from "../contracts/report-blocks.js";
+import { citationRecordOf, type CitationRecords } from "../report-model/reference-resolver.js";
 import { renderChart } from "./views/chart-view.js";
 import { deriveChartOption } from "./chart.js";
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
+import { citationKeyOf } from "./views/references-view.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
 import { ReferenceLedger } from "./references.js";
 import type { RenderProblem, RenderValue, RenderValues } from "./types.js";
 import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable } from "./views/values.js";
 
 /**
- * Render a report document and its value map to one HTML string.
+ * Render a report document, its value map, and the pinned citation records to one HTML string.
  *
  * The walk collects every value problem. When any problem exists, the render returns the problems and no
  * HTML. When no problem exists, the render assembles the page and returns the string.
+ *
+ * The records are the bibliography of the pin, and they are optional. A caller that passes none renders
+ * each citation from its key alone, thus a stored pin that holds no record map renders as it did before.
  */
-export function renderReportPage(document: ReportDocument, values: RenderValues): Result<string, RenderProblem[]> {
+export function renderReportPage(document: ReportDocument, values: RenderValues, records?: CitationRecords): Result<string, RenderProblem[]> {
     const problems: RenderProblem[] = [];
     const ledger = new ReferenceLedger();
 
     const content: string[] = [];
     for (const [index, section] of document.sections.entries()) {
-        content.push(renderBand(index, renderBlock(section, values, ledger, 0, problems)));
+        content.push(renderBand(index, renderBlock(section, values, ledger, records, 0, problems)));
     }
     if (problems.length > 0) {
         return err(problems);
     }
 
     const nav = renderNav(document.sections);
-    const references = renderReferenceSection(ledger, document.sections.length);
+    const references = renderReferenceSection(ledger, document.sections.length, records);
     return ok(assemblePage(document.title, nav, content.join(""), references));
 }
 
@@ -53,14 +59,21 @@ export function renderReportPage(document: ReportDocument, values: RenderValues)
  * or of the wrong shape adds one problem and renders nothing. The empty result drops out, because the whole
  * render fails when any problem exists.
  */
-function renderBlock(block: Block, values: RenderValues, ledger: ReferenceLedger, depth: number, problems: RenderProblem[]): string {
+function renderBlock(
+    block: Block,
+    values: RenderValues,
+    ledger: ReferenceLedger,
+    records: CitationRecords | undefined,
+    depth: number,
+    problems: RenderProblem[],
+): string {
     switch (block.kind) {
         case "text":
             return renderText(block);
         case "claim":
             return renderClaim(block, ledger);
         case "citation":
-            return renderCitation(block, ledger);
+            return renderCitation(block, ledger, citationRecordOf(records, citationKeyOf(block.binding)));
         case "metric": {
             const entry = values[block.id];
             if (entry === undefined) {
@@ -115,7 +128,7 @@ function renderBlock(block: Block, values: RenderValues, ledger: ReferenceLedger
             return renderChart(block, option.value);
         }
         case "section":
-            return renderSection(block, depth, renderChildren(block.blocks, values, ledger, depth + 1, problems));
+            return renderSection(block, depth, renderChildren(block.blocks, values, ledger, records, depth + 1, problems));
     }
 }
 
@@ -125,14 +138,21 @@ function renderBlock(block: Block, values: RenderValues, ledger: ReferenceLedger
  * A run of two or more metric blocks reads as one row of statistics, thus the grid holds the whole run. A
  * lone metric stays one card, and no grid wraps it. A block of a different kind ends the run.
  */
-function renderChildren(blocks: Block[], values: RenderValues, ledger: ReferenceLedger, depth: number, problems: RenderProblem[]): string {
+function renderChildren(
+    blocks: Block[],
+    values: RenderValues,
+    ledger: ReferenceLedger,
+    records: CitationRecords | undefined,
+    depth: number,
+    problems: RenderProblem[],
+): string {
     const parts: string[] = [];
     let index = 0;
     while (index < blocks.length) {
         const run = metricRunLength(blocks, index);
         const rendered: string[] = [];
         for (let offset = 0; offset < Math.max(run, 1); offset += 1) {
-            rendered.push(renderBlock(blocks[index + offset], values, ledger, depth, problems));
+            rendered.push(renderBlock(blocks[index + offset], values, ledger, records, depth, problems));
         }
         parts.push(run > 1 ? renderMetricGrid(rendered.join("")) : rendered.join(""));
         index += Math.max(run, 1);
