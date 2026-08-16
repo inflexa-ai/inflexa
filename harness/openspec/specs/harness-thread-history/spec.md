@@ -7,13 +7,15 @@ Defines the harness `messages` table — the single source of truth for conversa
 
 ### Requirement: A turn is appended atomically with monotonic sequence
 
-`appendTurn(threadId, messages)` SHALL write all messages of a turn in one transaction, assigning each a `seq` that is monotonically increasing per thread. Each row SHALL store its model content as an AI SDK model-message envelope and a `tokens` count computed at write time. The same transaction SHALL touch the live thread's metadata row so thread listings ordered by `updated_at` reflect conversation activity; the touch SHALL only move `updated_at` forward (never to an earlier value than the row already holds) and SHALL NOT touch a soft-deleted row; and the touch SHALL never cost the turn — when no metadata row exists for the thread, or the row is soft-deleted, the touch updates zero rows, and when the touch itself fails it SHALL be rolled back on its own without failing the append or the turn's message writes.
+`appendTurn(threadId, messages)` MUST write all messages of a turn in one transaction. Each message takes a `seq` that increases monotonically for each thread. Each row MUST store its model content as an AI SDK model-message envelope, and a `tokens` count computed at write time. The same transaction MUST touch the metadata row of the live thread, thus a listing ordered by `updated_at` reflects conversation activity. The touch only moves `updated_at` forward, and it does not touch a soft-deleted row. The touch never costs the turn: when no metadata row exists, or the row is soft-deleted, the touch updates zero rows. When the touch itself fails, it rolls back on its own, and the append and the message writes stand.
 
-`appendTurn` SHALL additionally accept the turn's reported usage rollup and store it, in the same transaction, on the LAST assistant row the turn writes — the row a reader associates with the reply, and where the figure is already rendered live. A turn that writes no assistant row SHALL store no rollup, there being no message on which it would mean anything.
+`appendTurn` MUST also accept the turn's reported usage rollup and store it, in the same transaction, on the LAST assistant row of the turn. That row is the one a reader associates with the reply, and the figure already renders there live. A turn that writes no assistant row stores no rollup, because no message exists that it would mean anything on.
 
-The rollup SHALL be optional at every layer. A caller that supplies none, and a caller that supplies one reporting no quantity at all, SHALL both leave the row without one — a rollup that reports nothing is stored as absent rather than as a rollup of absences, so "no figure" has exactly one representation in storage. The write SHALL decide this with the same predicate the loop uses to decide whether a call reported anything, so the two cannot drift about what reporting nothing means. Rows written before the rollup existed SHALL read back without one, and SHALL NOT be backfilled: the figures were never recorded, so an absent rollup is the honest value.
+`appendTurn` MUST also accept the duration of the turn, in milliseconds, and store it beside the rollup on that same row. The duration obeys the rules of the rollup: optional at every layer, absent when the caller supplies none, and never backfilled. The read MUST return it beside the rollup. Thus a reloaded transcript shows the duration that the live header showed.
 
-Because the rollup is stored on the message row itself, anything that removes the row removes it — a retracted tail turn takes its rollup with it, and a cost attached to a turn no longer in the transcript cannot survive to be misattributed.
+The rollup MUST be optional at every layer. A caller that supplies none, and a caller that supplies one that reports no quantity, both leave the row without one. A rollup that reports nothing is stored as absent, not as a rollup of absences. Thus "no figure" has exactly one representation in storage. The write decides this with the same predicate that the loop uses to decide whether a call reported anything. Thus the two cannot drift about what reporting nothing means. Rows written before the rollup existed read back without one, and no backfill runs. The figures were never recorded, thus an absent rollup is the honest value.
+
+The rollup and the duration are stored on the message row itself. Thus anything that removes the row removes them. A retracted tail turn takes its rollup and its duration with it. A cost attached to a turn no longer in the transcript cannot survive to be misattributed.
 
 #### Scenario: A turn round-trips
 
@@ -57,6 +59,12 @@ Because the rollup is stored on the message row itself, anything that removes th
 - **WHEN** the thread is read back
 - **THEN** the rollup is on the turn's assistant row and on no other row of that turn
 
+#### Scenario: The turn's duration rides the same row
+
+- **GIVEN** a turn appended with a duration
+- **WHEN** the thread is read back
+- **THEN** the duration is on the turn's assistant row, beside its rollup where one exists
+
 #### Scenario: A turn that reported nothing stores no rollup
 
 - **GIVEN** a turn appended without a rollup
@@ -69,11 +77,17 @@ Because the rollup is stored on the message row itself, anything that removes th
 - **WHEN** the thread is read back
 - **THEN** its assistant row carries no rollup, indistinguishable from a turn appended without one
 
+#### Scenario: An old row reads back without a duration
+
+- **GIVEN** a row written before the duration existed
+- **WHEN** the thread is read back
+- **THEN** the row carries no duration, and no backfill runs
+
 #### Scenario: A retracted turn takes its rollup with it
 
-- **GIVEN** a tail turn whose assistant row carries a rollup
+- **GIVEN** a tail turn whose assistant row carries a rollup and a duration
 - **WHEN** the turn is retracted
-- **THEN** neither the row nor its rollup remains
+- **THEN** neither the row, nor its rollup, nor its duration remains
 
 #### Scenario: A turn with no reply stores no rollup
 

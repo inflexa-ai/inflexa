@@ -121,20 +121,20 @@ The id scan MUST read the payload and not the whole draft. Thus a duplicate that
 - **WHEN** the agent adds a metric whose value reference names a path that the snapshot does not hold
 - **THEN** the operation refuses with the reason `unresolved-reference`, and the refusal carries each unresolved reference
 
-### Requirement: The hash stamps from the pinned snapshot
-The land path of an add and of a change MUST accept an artifact reference that carries the path alone. The land stamps the absent hash from the snapshot entry at that path, before the grammar parse. A path-only reference whose path is not in the snapshot MUST refuse as an unresolved reference, and the refusal names the path. The stamp fills an absent hash only. An explicit hash that differs from the snapshot MUST keep the `hash-mismatch` refusal, because that arm serves a draft that predates a re-pin.
+### Requirement: The snapshot owns every reference hash
+The authoring input of an artifact reference MUST carry the path and no hash field. The land path of an add and of a change stamps the hash from the snapshot entry at that path, before the grammar parse. A hash that a payload carries anyway MUST drop before the stamp, thus an echoed stored binding cannot mismatch. A path that is not in the snapshot MUST refuse as an unresolved reference, and the refusal names the path. The stored reference keeps its stamped hash, thus the grounding contract does not change, and the resolution still compares the pin against the fresh read.
 
 #### Scenario: A path-only reference lands with the snapshot hash
 - **WHEN** the agent adds a table block whose binding carries a path in the snapshot and no hash
 - **THEN** the block lands, and the persisted reference carries the hash of the snapshot entry
 
-#### Scenario: An unknown path refuses and names the path
-- **WHEN** the agent adds a block whose binding carries a path that the snapshot does not hold, and no hash
-- **THEN** the operation refuses as an unresolved reference, and the detail names the path
+#### Scenario: An echoed hash is dropped and stamped again
+- **WHEN** the agent changes a block with a payload that carries a stale or mistyped hash
+- **THEN** the operation lands, and the persisted reference carries the hash of the snapshot entry
 
-#### Scenario: A stale explicit hash still refuses as a mismatch
-- **WHEN** the agent adds a block whose binding carries a hash that differs from the snapshot entry
-- **THEN** the operation refuses with the `hash-mismatch` reason
+#### Scenario: An unknown path refuses and names the path
+- **WHEN** the agent adds a block whose binding carries a path that the snapshot does not hold
+- **THEN** the operation refuses as an unresolved reference, and the detail names the path
 
 #### Scenario: A derivation input stamps too
 - **WHEN** the agent adds a metric whose derivation inputs carry paths in the snapshot and no hashes
@@ -156,6 +156,8 @@ A destination that names two places at one time MUST refuse with `conflicting-de
 ### Requirement: Read-back without the full tree
 The read surface MUST give an outline of the draft, and one block by its id. An outline entry carries the id, the kind, the nesting, and a short label. It carries no binding and no full prose.
 
+A read of a block MUST elide the stamped hash of each binding. The snapshot owns the hash, thus an echo-back must not carry one, and the agent never sees a value it could mistype.
+
 A landed operation MUST return the child order of each container that it changed, and it MUST NOT return the whole outline. The whole outline costs the size of the draft on each landing. Thus a report of n blocks spends n-squared outline entries of agent context to author it. The agent chose the id of its own block, and no other branch moved. Thus the container that the operation touched is the one thing that a landing can tell it.
 
 A move across two containers reports both, and an operation that changes no child order reports none. The read of the whole outline stays one call away.
@@ -171,6 +173,10 @@ A read of a section MUST give the title of the section and the id of each child,
 #### Scenario: One block reads in full
 - **WHEN** the agent reads an atom by its id
 - **THEN** the result carries the full block, with its bindings
+
+#### Scenario: A block reads hash-free
+- **WHEN** the agent reads an atom whose bindings carry stamped hashes
+- **THEN** the result carries each binding with its path and locator, and no hash field
 
 #### Scenario: A section reads shallow
 - **WHEN** the agent reads a section by its id
@@ -191,7 +197,7 @@ A read of a section MUST give the title of the section and the id of each child,
 ### Requirement: The finish operation
 The finish operation MUST validate the whole draft against the full document schema, the id rule, and the structural tier. It MUST report each gap as data. When the draft passes, it MUST give the valid `ReportDocument` value. The finish MUST NOT open a file, and it MUST NOT change the draft. The finish runs the structural tier only, and the value-tier gate of the report pipeline is a different capability.
 
-The finish MUST also carry each advisory warning, in both outcomes. A free numeral in prose is such a warning: it needs no file, thus the finish scans for it. A warning MUST NOT decide the outcome.
+The finish MUST also carry each advisory warning, in both outcomes. A free numeral in prose is such a warning: it needs no file, thus the finish scans for it. A prose numeral in an exponent form that the number helper would never print MUST warn too. Thus the prose notation and the page notation cannot drift silently. A warning MUST NOT decide the outcome.
 
 The finish MUST list each unused derivation as an advisory warning: a derivation record whose output path no binding of the document names. The warning names the output path, and it decides no outcome, exactly as a free-numeral warning does.
 
@@ -211,13 +217,15 @@ The finish MUST list each unused derivation as an advisory warning: a derivation
 - **WHEN** the agent finishes a draft whose prose carries a figure with no metric block behind it
 - **THEN** the finish carries a warning for that block, and the warning does not change the outcome
 
-#### Scenario: An unused derivation warns
+#### Scenario: A drifted exponent form warns
+- **WHEN** a prose sentence writes `4.3e-05` where the helper prints `4.3e-5`
+- **THEN** the finish carries a warning that names the block, and the outcome stays as the gaps decide
 
+#### Scenario: An unused derivation warns
 - **WHEN** the finish runs over a document that ignores one derivation record
 - **THEN** the finish carries a warning that names the unused output, and the outcome stays as the gaps decide
 
 #### Scenario: A used derivation warns nothing
-
 - **WHEN** every derivation output is named by a binding
 - **THEN** the finish carries no derivation warning
 

@@ -25,27 +25,35 @@ into the workspace, or at the version row, becomes an orphan.
 
 ## Requirements
 
-### Requirement: A version is one immutable row
-A recorded version MUST hold the block document, the snapshot, and the anchor on one row. The anchor is the analysis id, the thread id, the parent thread id, and the parent seq. The store MUST NOT update or replace a recorded version. A correction is a new version.
+### Requirement: The one version of a thread replaces whole
+A recorded version MUST hold the block document, the snapshot, and the anchor on one row. The anchor is the analysis id, the thread id, the parent thread id, and the parent seq. A record on a thread that holds a version MUST replace the document, the snapshot, and the anchor of that row, whole. The version id of the row stays, thus a consumer that names the version keeps its name. A partial update is not representable: the store takes the full triple, and it writes the full triple.
 
 #### Scenario: The triple round-trips
 - **WHEN** the caller records a version and reads it back by its id
 - **THEN** the document, the snapshot, and the anchor equal the recorded values
 
-#### Scenario: No update operation exists
+#### Scenario: A later record replaces the row
+- **WHEN** the caller records again on the same thread with an amended document
+- **THEN** the read gives the amended document, and the version id is unchanged
+
+#### Scenario: No partial update exists
 - **WHEN** a caller inspects the store surface
-- **THEN** the surface holds record and read operations only, and no operation changes a recorded row
+- **THEN** the surface holds record and read operations only, and a record takes the whole triple
 
 ### Requirement: One version for each thread
-The store MUST hold at most one version for each thread, and a named unique constraint on the thread id enforces it. A second record for the same thread MUST refuse with the typed reason `thread_already_holds_version`, and no new row lands. The refusal maps from the constraint violation, and the record reads nothing before the insert.
+The store MUST hold at most one version for each thread, and a named unique constraint on the thread id enforces it. A record for a thread that holds a version MUST replace that row, and no second row lands. The `thread_already_holds_version` refusal retires, because the replace is the intended outcome. The record MUST report whether it created or replaced, thus the caller names the outcome honestly.
 
-#### Scenario: A second record on one thread refuses
+#### Scenario: A second record on one thread replaces
 - **WHEN** the caller records a second version for a thread that holds one
-- **THEN** the record refuses with `thread_already_holds_version`, and the store holds one row for the thread
+- **THEN** the store holds one row for the thread, and the row carries the second document
 
 #### Scenario: Two threads each hold one version
 - **WHEN** each of two threads records its first version
 - **THEN** each thread holds one version
+
+#### Scenario: The record names the outcome
+- **WHEN** the caller records on a fresh thread, and then again on the same thread
+- **THEN** the first record reports a creation, and the second reports a replacement
 
 ### Requirement: A parent version link records reuse
 A version can name a parent version with its stable id. The link is optional, because a first version has no parent. The parent MUST belong to the same analysis, and the record refuses a parent outside it. An unknown parent id refuses through the foreign key. When a cascade or an out-of-band delete removes the parent row, the link of the child MUST become null, and the child row stays.
@@ -101,12 +109,13 @@ A delete of a report thread MUST NOT remove the versions that the thread recorde
 - **THEN** the read of the version by its id still gives the version
 
 ### Requirement: One report session records one version
-A caller of the record operation MUST record at most one version for each report thread. The record lands one time, when the mechanical gate passes and the user accepts the report. Before the acceptance, the session iterates the draft, and no version row exists. A correction after the acceptance is a new report session, and its version names the earlier version through the parent link. The store enforces the rule, and a second record for one thread refuses as typed data.
+The record MUST land any number of times inside one report session, and each landing replaces the one version of the thread. The last accepted state stands, thus the stored version equals the page that the user saw last. Before the first acceptance, the session iterates the draft, and no version row exists. A correction in a new session records a new version, and that version names the earlier version through the parent link. Thus a thread holds one version, and the version history of an analysis is the chain of its sessions.
 
-#### Scenario: The accepted report records one time
-- **WHEN** the report session records its accepted document
-- **THEN** the thread holds one version
+#### Scenario: The amend loop lands on one row
+- **WHEN** the session records, amends the draft, and records again
+- **THEN** the thread holds one version, and it carries the amended document
 
 #### Scenario: A correction starts a new session
-- **WHEN** the user asks for a correction after the acceptance
+- **WHEN** the user asks for a correction after the session ends
 - **THEN** a new report session records the new version, and that version names the earlier version as its parent
+
