@@ -24,5 +24,5 @@ Underscores become spaces in a series name, deterministically, at derivation tim
 
 ## Risks / Trade-offs
 
-- A volcano over a non-log2 effect column would carry a wrong x title. The guide lines at `±1` already make that claim, thus the title adds no new wrongness, and the agent axes override corrects both.
+- A volcano over a non-log2 effect column would carry a wrong x title. The guide lines at `±1` already make that claim, thus the title adds no new wrongness. A declared column label on the binding corrects the title, because a preset block carries no axes field.
 - Two category values that differ only in underscores collapse to one legend text. The series stay distinct, and the case is not real data practice.

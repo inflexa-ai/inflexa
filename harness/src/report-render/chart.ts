@@ -104,6 +104,15 @@ const X_AXIS_NAME_GAP = 34;
 const VERTICAL_LABEL_POSITION = "start";
 
 /**
+ * The label position of a vertical guide band.
+ *
+ * A band is a rectangle, and the chart runtime gives it the element positions and not the line positions of
+ * a guide line. The inside bottom edge of a vertical band sits at the x axis, thus it is the position that
+ * matches the start of a vertical line.
+ */
+const VERTICAL_BAND_LABEL_POSITION = "insideBottom";
+
+/**
  * The y axis of a histogram.
  *
  * The axis counts rows, thus a fractional tick names no count. `minInterval` holds each tick a whole count
@@ -660,10 +669,14 @@ interface Point {
     y0?: Cell;
 }
 
-/** One runtime series, and whether it can carry the mark members of the annotations. */
+/**
+ * One runtime series, whether it can carry the mark members of the annotations, and whether it draws in the
+ * muted color. A muted series states no finding, thus it makes a poor carrier of a guide.
+ */
 interface EmittedSeries {
     option: EchartOption;
     carriesMarks: boolean;
+    muted: boolean;
 }
 
 /**
@@ -709,15 +722,14 @@ function deriveComposition(
     const emitted: EmittedSeries[] = [];
     for (const entry of resolved) {
         for (const group of splitByChannel(rows, entry.group)) {
-            const muted = preset !== undefined && group.name === NULL_CATEGORY;
-            const built = buildSeries(blockId, entry, group, labeled.value, dense, emitted.length, labels, muted);
+            const built = buildSeries(blockId, entry, group, labeled.value, dense, emitted.length, labels, preset);
             if (built.isErr()) return err(built.error);
             emitted.push(...built.value);
         }
     }
 
     const marks = markMembers(annotations);
-    const target = emitted.findIndex((entry) => entry.carriesMarks);
+    const target = markCarrier(emitted);
     if (Object.keys(marks).length > 0 && target >= 0) {
         emitted[target] = { ...emitted[target], option: { ...emitted[target].option, ...marks } };
     }
@@ -823,9 +835,12 @@ function splitByChannel(rows: readonly ChartRow[], group: ResolvedChannel | unde
 /**
  * Build the runtime series of one declared series over one group of rows.
  *
- * `muted` states that this series carries the null category. It takes the muted chart color, thus it
- * recedes behind the categories that carry a finding. Every other series takes no color of its own, and the
- * theme palette assigns one by the series order.
+ * A series of the null category takes the muted chart color, thus it recedes behind the categories that
+ * carry a finding. Every other series takes no color of its own, and the theme palette assigns one by the
+ * series order.
+ *
+ * A band draws two stacked line series, and no preset emits a band. Thus the null-category color never
+ * reaches one, and neither half of a band reports as muted.
  */
 function buildSeries(
     blockId: string,
@@ -835,27 +850,41 @@ function buildSeries(
     dense: boolean,
     emittedCount: number,
     labels: ColumnLabels,
-    muted: boolean,
+    preset: PresetAxisTitles | undefined,
 ): Result<EmittedSeries[], RenderProblem> {
     const form = entry.declared.form;
     const points = collectPoints(entry, group.indices);
     if (SORTED_FORMS.has(form)) {
         points.sort((a, b) => compareCell(a.x, b.x));
     }
-    const name = seriesName(entry, group.name, labels);
+    const name = seriesName(entry, group.name, labels, preset?.y);
 
     if (entry.y0 !== undefined) {
         const band = bandSeries(blockId, entry, name, points, `band-${emittedCount}`);
         if (band.isErr()) return err(band.error);
         return ok([
-            { option: band.value[0], carriesMarks: false },
-            { option: band.value[1], carriesMarks: true },
+            { option: band.value[0], carriesMarks: false, muted: false },
+            { option: band.value[1], carriesMarks: true, muted: false },
         ]);
     }
 
-    const { data, itemObjects } = seriesData(entry, points, labeled);
+    const muted = preset !== undefined && group.name === NULL_CATEGORY;
     const color = muted ? { itemStyle: { color: MUTED_CHART_COLOR } } : {};
-    return ok([{ option: { type: runtimeType(form), name, ...color, ...formOptions(form, dense, itemObjects), data }, carriesMarks: true }]);
+    const { data, itemObjects } = seriesData(entry, points, labeled);
+    return ok([{ option: { type: runtimeType(form), name, ...color, ...formOptions(form, dense, itemObjects), data }, carriesMarks: true, muted }]);
+}
+
+/**
+ * The index of the series that carries the mark members, or `-1` when no series can carry them.
+ *
+ * The chart runtime takes the stroke of a guide from the item color of its carrier, wherever the mark states
+ * no color of its own. A muted carrier would thus paint each guide in the null-category color. The first
+ * carrier that draws in a palette color takes the marks. A chart whose every carrier is muted falls back to
+ * the first one, thus each guide still reaches the page.
+ */
+function markCarrier(emitted: readonly EmittedSeries[]): number {
+    const colored = emitted.findIndex((entry) => entry.carriesMarks && !entry.muted);
+    return colored >= 0 ? colored : emitted.findIndex((entry) => entry.carriesMarks);
 }
 
 /** The points of one group. A row whose channel gives no value drops, and no substitute value appears. */
@@ -880,18 +909,19 @@ function collectPoints(entry: ResolvedSeries, indices: readonly number[]): Point
  * The name of one runtime series.
  *
  * Each series carries a name, thus the `{a}` of the tooltip template always names something. A series with
- * no declared name and no group takes the name of its y channel. That name reads the declared label of the
- * column, the same as the y axis, thus one chart names one column one way.
+ * no declared name and no group takes the name of its y channel. That name resolves the same chain as the y
+ * axis, the declared label over the preset title over the raw name, thus one chart names one column one way
+ * and the tooltip of a group-less preset reads no machine text.
  *
  * The category value of a group prettifies, and the declared name of a series and the label of a column
  * both stay as the author wrote them. The tooltip reads this same name, thus the legend and the hover agree.
  */
-function seriesName(entry: ResolvedSeries, group: Cell | undefined, labels: ColumnLabels): string {
+function seriesName(entry: ResolvedSeries, group: Cell | undefined, labels: ColumnLabels, preset: string | undefined): string {
     const declared = entry.declared.name;
     if (declared !== undefined && group !== undefined) return `${declared} (${categoryName(group)})`;
     if (declared !== undefined) return declared;
     if (group !== undefined) return categoryName(group);
-    return axisTitle(labels, entry.y.name);
+    return axisTitle(labels, entry.y.name, preset);
 }
 
 /**
@@ -1036,9 +1066,9 @@ function topRows(rows: readonly ChartRow[], column: string, order: "asc" | "desc
  * A reference line and a reference band both carry a declared constant, thus each one rides as static
  * data of a mark member and nothing here reads a cell.
  *
- * A line on the x axis runs up the plot. Its end sits at the top, inside the band of the y-axis title, thus
- * its label takes the start position at the axis. A line on the y axis runs across, and its end sits at the
- * right edge, where the label already reads clear.
+ * A guide on the x axis runs up the plot. Its end sits at the top, inside the band of the y-axis title, thus
+ * its label takes the position at the axis. A guide on the y axis runs across, and its end sits at the right
+ * edge, where the label already reads clear.
  */
 function markMembers(annotations: readonly ChartAnnotation[]): EchartOption {
     const lines: EchartOption[] = [];
@@ -1050,7 +1080,11 @@ function markMembers(annotations: readonly ChartAnnotation[]): EchartOption {
             continue;
         }
         if (annotation.kind === "reference-band") {
-            areas.push([{ [axisKey(annotation.axis)]: annotation.from, ...markLabel(annotation.label) }, { [axisKey(annotation.axis)]: annotation.to }]);
+            const position = annotation.axis === "x" ? VERTICAL_BAND_LABEL_POSITION : undefined;
+            areas.push([
+                { [axisKey(annotation.axis)]: annotation.from, ...markLabel(annotation.label, position) },
+                { [axisKey(annotation.axis)]: annotation.to },
+            ]);
         }
     }
     return {
