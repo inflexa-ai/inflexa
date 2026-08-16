@@ -96,7 +96,12 @@ function labelOf(block: DraftBlock): string {
             return clip(block.note ?? "");
         case "text": {
             const prose = block.content.prose;
-            return clip(prose.trim().length > 0 ? prose : (block.content.list?.items[0] ?? ""));
+            if (prose.trim().length > 0) {
+                return clip(prose);
+            }
+            // An item passes the grammar with one space in it, thus the first item can name nothing. The
+            // walk takes the first item that holds text, and a list of blank items gives an empty label.
+            return clip(block.content.list?.items.find((item) => item.trim().length > 0) ?? "");
         }
         case "claim":
             return clip(block.content.prose);

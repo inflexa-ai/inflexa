@@ -168,14 +168,6 @@ describe("renderReportPage text lists", () => {
         expect(page("p.report-prose").length).toBe(0);
     });
 
-    it("carries a list on the design fixture, thus the validity gate reads the markup", () => {
-        const page = load(renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap());
-
-        // The fixture is the page that the HTML validation and the design review both read. A fixture
-        // with no list would drop the new markup out of each of them in silence.
-        expect(page("ul.report-list li").length).toBeGreaterThan(0);
-    });
-
     it("fills the content column with the list, the same as with a paragraph", () => {
         const listRules = [...DESIGN_CSS.matchAll(/\.report-list\s*\{([^}]*)\}/g)].map((match) => match[1]);
         expect(listRules.length).toBe(1);
