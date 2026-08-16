@@ -7,7 +7,7 @@
       "dependencies": {
         "@clack/core": "1.4.3",
         "@clack/prompts": "^1.7.0",
-        "@inflexa-ai/harness": "0.19.2",
+        "@inflexa-ai/harness": "0.21",
         "@inflexa-ai/prov-kernel": "^0.5.0",
         "@inflexa-ai/tsprov": "0.5.1",
         "@opentelemetry/api": "^1.9.1",
@@ -160,7 +160,7 @@
 
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, "sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ=="],
 
-    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.19.2", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.38", "@ai-sdk/openai": "^4.0.39", "@ai-sdk/openai-compatible": "^3.0.30", "@ai-sdk/provider": "^4.0.7", "@ai-sdk/provider-utils": "5.0.27", "@anthropic-ai/sdk": "^0.116.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@fontsource-variable/space-grotesk": "5.1.1", "@fontsource/ibm-plex-mono": "5.1.1", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ai": "^7.0.61", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "echarts": "5.5.1", "fast-xml-parser": "^5.10.0", "hono": "^4.12.30", "hyparquet": "^1.28.1", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "nunjucks": "^3.2.4", "openai": "^7.4.0", "p-queue": "^9.3.3", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-BKu3UKZ27KqZ9IpxnoiJYb4m20HxsGJ9boFhpyZLiDqBy8VAZcZ4FPW+NlxuEwq+gLT4b1/1BF9Tv58940FDUg=="],
+    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.21.0", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.38", "@ai-sdk/openai": "^4.0.39", "@ai-sdk/openai-compatible": "^3.0.30", "@ai-sdk/provider": "^4.0.7", "@ai-sdk/provider-utils": "5.0.27", "@anthropic-ai/sdk": "^0.116.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@fontsource-variable/space-grotesk": "5.1.1", "@fontsource/ibm-plex-mono": "5.1.1", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ag-grid-community": "36.1.0", "ai": "^7.0.61", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "echarts": "5.5.1", "fast-xml-parser": "^5.10.0", "hono": "^4.12.30", "hyparquet": "^1.28.1", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "nunjucks": "^3.2.4", "openai": "^7.4.0", "p-queue": "^9.3.3", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-3HbvMG9GVeKZSNCoyLge+fhkQkeL0UP45pN3NirZD6wnlNYQQKnfFWRo4DQmZ7Z/XVF8u5aBzJCb0+vqtCGE2A=="],
 
     "@inflexa-ai/prov-kernel": ["@inflexa-ai/prov-kernel@0.5.0", "", { "dependencies": { "neverthrow": "^8.2.0", "zod": "^4.4.3" }, "peerDependencies": { "@inflexa-ai/tsprov": "^0.5.1" } }, "sha512-kbNYe8WwYH8TQk/F4hjmdIJpZv7nuucbgk3zSZ/fpF8FApbqsUcJKHV6PdgUUecopEYjQ7n/g97opkhLpKCUGA=="],
 
@@ -339,6 +339,12 @@
     "acorn": ["acorn@8.17.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg=="],
 
     "acorn-jsx": ["acorn-jsx@5.3.2", "", { "peerDependencies": { "acorn": "^6.0.0 || ^7.0.0 || ^8.0.0" } }, "sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ=="],
+
+    "ag-charts-types": ["ag-charts-types@14.1.0", "", {}, "sha512-mmzkng88c0l+Z9PvCMowMilhVeNgDU/iMuMemcOQD4BG/qO4vbkxWvyQO0iqju8Dx7YOY81PNzC/RmElQNiVkA=="],
+
+    "ag-grid-community": ["ag-grid-community@36.1.0", "", { "dependencies": { "ag-charts-types": "14.1.0", "ag-stack": "36.1.0" } }, "sha512-WnvSQ4csRs8gv/b1B0lPHykQXvUJVgi2u5mpY0Aa6dv3pvhDVVqCT8dwUyOeCog4JNPptaXGrOrZ8qP2XoJzVA=="],
+
+    "ag-stack": ["ag-stack@36.1.0", "", {}, "sha512-Kmkf5iRZmyduNx2KtW450j6GbCdJ4ejacSpb1AWl0yrdquRmScLRc1SlLolx6lyCbTBSJGo4tRraKbBzre+GlQ=="],
 
     "agent-base": ["agent-base@7.1.4", "", {}, "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="],
 
