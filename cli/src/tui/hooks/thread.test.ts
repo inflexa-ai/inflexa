@@ -287,6 +287,180 @@ describe("refreshOpenThread — the snapshot ladder", () => {
         if (after.kind === "loaded") expect(after.thread.title).toBe("Renamed conversation");
     });
 
+    // The report child and the conversation it was spawned from. The refresh reads BOTH through the one
+    // `getThread` seam, so a fake that ignored the id could answer the parent read with the child row
+    // and still look correct — every case below drives an id-keyed table for that reason.
+    const PARENT = threadRow({ threadId: "thread-parent", title: "Cohort survival questions" });
+    const CHILD = reportThread({ analysisId: ANALYSIS.id, threadId: "thread-report", parentThreadId: PARENT.threadId });
+
+    /** A `getThread` seam over a fixed row set, keyed by thread id as the store keys it, recording each read. */
+    function rowsByThreadId(rows: Thread[], reads: string[]): ThreadSeams["getThread"] {
+        const table = new Map(rows.map((r) => [r.threadId, r]));
+        return (_pool, threadId) => {
+            reads.push(threadId);
+            return okAsync(table.get(threadId) ?? null);
+        };
+    }
+
+    test("a report child carries the conversation it was spawned from", async () => {
+        const reads: string[] = [];
+        const t = makeSeams({ getThread: rowsByThreadId([CHILD, PARENT], reads) });
+        await refreshOpenThread(CHILD.threadId, t.seams);
+
+        const snap = openThread();
+        expect(snap.kind).toBe("loaded");
+        if (snap.kind === "loaded") {
+            expect(snap.thread.threadId).toBe(CHILD.threadId);
+            expect(snap.parent).toEqual({ threadId: PARENT.threadId, title: PARENT.title });
+        }
+        // The second read is by the PARENT's id, so a lookup aimed at the wrong row cannot pass here.
+        expect(reads).toEqual([CHILD.threadId, PARENT.threadId]);
+    });
+
+    test("a conversation issues no second read at all", async () => {
+        const reads: string[] = [];
+        const t = makeSeams({ getThread: rowsByThreadId([PARENT], reads) });
+        await refreshOpenThread(PARENT.threadId, t.seams);
+
+        const snap = openThread();
+        expect(snap.kind).toBe("loaded");
+        if (snap.kind === "loaded") expect(snap.parent).toBeUndefined();
+        expect(reads).toEqual([PARENT.threadId]);
+    });
+
+    test("a report row whose parent link is gone reads no parent", async () => {
+        // The store writes the link and the spawn point together, so a row carrying neither names
+        // nothing to read — and the rail renders the kind alone rather than waiting on a query.
+        const reads: string[] = [];
+        const orphan = reportThread({ analysisId: ANALYSIS.id, threadId: "thread-orphan", parentThreadId: null, parentSeq: null });
+        const t = makeSeams({ getThread: rowsByThreadId([orphan], reads) });
+        await refreshOpenThread(orphan.threadId, t.seams);
+
+        const snap = openThread();
+        expect(snap.kind).toBe("loaded");
+        if (snap.kind === "loaded") expect(snap.parent).toBeUndefined();
+        expect(reads).toEqual([orphan.threadId]);
+    });
+
+    test("a failed parent read keeps the loaded row and leaves the parent empty", async () => {
+        // Which session is open stays true whether or not its parent resolved, so a blinking Postgres
+        // must cost the context line and nothing else.
+        const t = makeSeams({ getThread: (_pool, threadId) => (threadId === CHILD.threadId ? okAsync(CHILD) : errAsync(dbErr)) });
+        await refreshOpenThread(CHILD.threadId, t.seams);
+
+        const snap = openThread();
+        expect(snap.kind).toBe("loaded");
+        if (snap.kind === "loaded") {
+            expect(snap.thread.threadId).toBe(CHILD.threadId);
+            expect(snap.parent).toBeUndefined();
+        }
+    });
+
+    test("a parent that resolves to no row keeps the loaded row", async () => {
+        // A normal state, never a fault: the read hides an archived row, and another instance can move
+        // a thread the scope still names.
+        const reads: string[] = [];
+        const t = makeSeams({ getThread: rowsByThreadId([CHILD], reads) });
+        await refreshOpenThread(CHILD.threadId, t.seams);
+
+        const snap = openThread();
+        expect(snap.kind).toBe("loaded");
+        if (snap.kind === "loaded") expect(snap.parent).toBeUndefined();
+        expect(reads).toEqual([CHILD.threadId, PARENT.threadId]);
+    });
+
+    test("the loaded row lands BEFORE the parent read settles", async () => {
+        // The parent is a second round trip. Holding the row until it lands would blank the rail for
+        // that whole window; publishing first gives a titleless kind line and then fills it in.
+        let releaseParent!: () => void;
+        const gate = new Promise<void>((r) => {
+            releaseParent = r;
+        });
+        const t = makeSeams({
+            getThread: (_pool, threadId) => (threadId === CHILD.threadId ? okAsync(CHILD) : ResultAsync.fromSafePromise(gate.then(() => PARENT))),
+        });
+
+        const pending = refreshOpenThread(CHILD.threadId, t.seams);
+        await settle();
+        const during = openThread();
+        expect(during.kind).toBe("loaded");
+        if (during.kind === "loaded") expect(during.parent).toBeUndefined();
+
+        releaseParent();
+        await pending;
+        const after = openThread();
+        expect(after.kind).toBe("loaded");
+        if (after.kind === "loaded") expect(after.parent?.title).toBe(PARENT.title);
+    });
+
+    test("a re-read of the SAME thread keeps the parent across the round trip", async () => {
+        // The post-turn refresh and the rename poke both re-read a thread the snapshot already
+        // describes. Dropping the parent until the second read lands would blank the rail's context
+        // line on every turn — the blink the same-id rule keeps off the row itself.
+        const settled = makeSeams({ getThread: rowsByThreadId([CHILD, PARENT], []) });
+        await refreshOpenThread(CHILD.threadId, settled.seams);
+
+        let releaseParent!: () => void;
+        const gate = new Promise<void>((r) => {
+            releaseParent = r;
+        });
+        const again = makeSeams({
+            getThread: (_pool, threadId) => (threadId === CHILD.threadId ? okAsync(CHILD) : ResultAsync.fromSafePromise(gate.then(() => PARENT))),
+        });
+        const pending = refreshOpenThread(CHILD.threadId, again.seams);
+        await settle();
+
+        const during = openThread();
+        expect(during.kind).toBe("loaded");
+        if (during.kind === "loaded") expect(during.parent?.title).toBe(PARENT.title);
+
+        releaseParent();
+        await pending;
+    });
+
+    test("a row that left its parent drops the carried one rather than naming the conversation it left", async () => {
+        // The carry is keyed on the link the FRESH row states, so a re-read that finds the child under
+        // a different parent — or under none — never describes it by the one it no longer belongs to.
+        const settled = makeSeams({ getThread: rowsByThreadId([CHILD, PARENT], []) });
+        await refreshOpenThread(CHILD.threadId, settled.seams);
+
+        const orphaned = { ...CHILD, parentThreadId: null, parentSeq: null };
+        const after = makeSeams({ getThread: rowsByThreadId([orphaned], []) });
+        await refreshOpenThread(CHILD.threadId, after.seams);
+
+        const snap = openThread();
+        expect(snap.kind).toBe("loaded");
+        if (snap.kind === "loaded") expect(snap.parent).toBeUndefined();
+    });
+
+    test("a swap during the parent read discards that parent, exactly as it discards a row", async () => {
+        // Both writes ride one generation token, so the newest refresh STARTED still wins — otherwise a
+        // slow parent would land on the conversation the user swapped to and name it a report.
+        let releaseParent!: () => void;
+        const gate = new Promise<void>((r) => {
+            releaseParent = r;
+        });
+        const stale = makeSeams({
+            getThread: (_pool, threadId) => (threadId === CHILD.threadId ? okAsync(CHILD) : ResultAsync.fromSafePromise(gate.then(() => PARENT))),
+        });
+
+        const pending = refreshOpenThread(CHILD.threadId, stale.seams);
+        await settle(); // the child row has landed; the parent read is parked on its gate
+
+        const next = makeSeams({ getThread: () => okAsync(threadRow({ threadId: "thread-next", title: "Newer conversation" })) });
+        await refreshOpenThread("thread-next", next.seams);
+
+        releaseParent();
+        await pending;
+
+        const snap = openThread();
+        expect(snap.kind).toBe("loaded");
+        if (snap.kind === "loaded") {
+            expect(snap.thread.threadId).toBe("thread-next");
+            expect(snap.parent).toBeUndefined();
+        }
+    });
+
     test("a swap to an unbound scope is not later overwritten by the previous scope's slow read", async () => {
         // The unresolved path bumps the generation BEFORE its guards, so an in-flight older read that
         // resolves afterwards cannot repaint the rail with the thread the user just swapped away from.

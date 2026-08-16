@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
-import { useTerminalDimensions } from "@opentui/solid";
+import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import type { CortexRunRow } from "@inflexa-ai/harness";
 
 import { theme } from "../theme.ts";
@@ -18,13 +18,16 @@ import {
     relAge,
     runMark,
     idTail,
+    shortSessionId,
     RUN_STATUS_TERMINAL,
 } from "../hooks/sidebar_live.ts";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
 import { chatStatus } from "../hooks/status.ts";
 import type { ChatStatus } from "../hooks/status.ts";
+import { notify } from "../hooks/notice.ts";
 import { openThread } from "../hooks/thread.ts";
+import { writeClipboard } from "../../lib/clipboard.ts";
 import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
 import { getAnchor, getSessionUsageTotalsIncludingRuns, listAnalysisInputs } from "../../db/primary_query.ts";
 import type { LlmUsageTotals } from "../../db/primary_query.ts";
@@ -56,12 +59,6 @@ export type SidebarProps = {
      */
     onOpenUsage?: () => void;
 };
-
-// Short session handle, per the wireframe ("S·2f9a"). Undefined while no thread is bound, so the
-// Section renders its label alone rather than a handle over an id that does not exist yet.
-function shortId(id: string | null): string | undefined {
-    return id === null ? undefined : `S${GLYPHS.middot}${id.replace(/-/g, "").slice(0, 4)}`;
-}
 
 /**
  * The DATA PROFILE / RUNS line descriptor: an optional status-colored glyph (`null` for the muted
@@ -304,8 +301,13 @@ function EntityFigureSpan(props: { figure: EntityFigure | null }): JSX.Element {
  * not fit, it renders exactly the stacked layout: the label row, then the value as its own full-width
  * line below — never truncated or squeezed into a right-hand cell. The remaining children follow in
  * either case, so a section only ever moves its value, never duplicates it.
+ *
+ * `onValueActivate` makes the VALUE its own click target, wired on both layouts so the affordance does
+ * not depend on whether the value happened to fit its label row. It is separate from `onActivate`,
+ * which the whole section carries: the two answer different questions ("open what this section is
+ * about" against "act on this one value"), and a section can offer either alone.
  */
-function Section(props: { label: string; value?: string; children: JSX.Element; onActivate?: () => void }) {
+function Section(props: { label: string; value?: string; children: JSX.Element; onActivate?: () => void; onValueActivate?: () => void }) {
     // Read reactively so a later value change (session swap, analysis rename) re-decides the fit. The
     // one-cell gap is space.sm — the minimum separation so label and value never abut on a full row.
     const fitsOnLabelRow = (): boolean => {
@@ -336,7 +338,11 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
                             <Bold>{props.label}</Bold>
                         </text>
                         <Show when={props.value} keyed>
-                            {(value: string) => <text fg={theme().fg}>{value}</text>}
+                            {(value: string) => (
+                                <text fg={theme().fg} onMouseUp={() => props.onValueActivate?.()}>
+                                    {value}
+                                </text>
+                            )}
                         </Show>
                     </>
                 }
@@ -347,7 +353,9 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
                     </text>
                     {/* Spacer pushes the value to the rail's right edge — the StatusBar/ChatBar idiom. */}
                     <box flexGrow={1} />
-                    <text fg={theme().fg}>{props.value}</text>
+                    <text fg={theme().fg} onMouseUp={() => props.onValueActivate?.()}>
+                        {props.value}
+                    </text>
                 </box>
             </Show>
             {props.children}
@@ -391,11 +399,42 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
  */
 export function Sidebar(props: SidebarProps) {
     const ws = useWorkspace();
+    const renderer = useRenderer();
     // The wide-layout flip: at/above the breakpoint the ANALYSIS path line yields to the badge moving
     // onto the meta line. Reads the SAME `size.breakpointWide` token the status bar gates its path on,
     // so both surfaces flip together and the working-directory path shows on exactly one of them.
     const dims = useTerminalDimensions();
     const isWide = (): boolean => dims().width >= size.breakpointWide;
+    // The SESSION chip, or undefined while no thread is bound — the Section then renders its label
+    // alone rather than a handle over an id that does not exist yet.
+    const sessionHandle = (): string | undefined => {
+        const id = ws.sessionId;
+        return id === null ? undefined : shortSessionId(id);
+    };
+    // The chip is a handle, not the id: 36 characters do not fit the rail, and the id is what a user
+    // pastes into a command or a report. So the chip copies the WHOLE id, and the palette command
+    // covers the same act from the keyboard with the same words.
+    //
+    // A release that ends a text-selection drag belongs to that drag: the root's copy-on-select
+    // handler writes the selected text on the same release, and two writers on one gesture leave the
+    // clipboard holding whichever landed last. Standing down here is the guard the section
+    // activations already apply on this gesture — and it is why no containment is needed: the two
+    // handlers act on disjoint states.
+    function copySessionId(): void {
+        const id = ws.sessionId;
+        if (id === null || renderer.getSelection()?.getSelectedText()) return;
+        // Best-effort by contract, so it never rejects — notify optimistically, as the root copy does.
+        void writeClipboard(id);
+        notify({ kind: "info", text: "Copied to clipboard" });
+    }
+    // The conversation a report child was spawned from, once its row lands on the snapshot. Read off
+    // the snapshot rather than the keyed row below, so the title appearing on the refresh's second
+    // write repaints this line without remounting the section.
+    const reportParentTitle = (): string | null => {
+        const snap = openThread();
+        if (snap.kind !== "loaded" || snap.thread.threadType !== "report") return null;
+        return snap.parent?.title ?? null;
+    };
     // The bound thread's row, or null in every degraded kind — the SESSION section renders those as
     // muted placeholders rather than a title it does not have. The store (`hooks/thread.ts`) owns the
     // read; the rail only reads its snapshot, the same split as DATA PROFILE / RUNS.
@@ -572,7 +611,7 @@ export function Sidebar(props: SidebarProps) {
                 keys from the chat. Nothing sits below the pane, so the scrollbox 1-cell bleed
                 (see cli/CLAUDE.md Layout) has no chrome row to bleed into. */}
             <ScrollPane focusOnMount={false} flexGrow={1} minHeight={0} width="100%">
-                <Section label="SESSION" value={shortId(ws.sessionId)}>
+                <Section label="SESSION" value={sessionHandle()} onValueActivate={copySessionId}>
                     <Switch>
                         <Match when={openThread().kind === "unresolved"}>
                             <text fg={theme().fgMuted}>runtime not ready</text>
@@ -591,8 +630,28 @@ export function Sidebar(props: SidebarProps) {
                                     {/* The title is pg-owned and seeded from the first user message, so a
                                     row can legitimately predate one; say so rather than render a blank line. */}
                                     <text fg={theme().fg}>{t.title ?? "untitled"}</text>
+                                    {/* A report session renders exactly as the conversation that spawned it,
+                                    so the rail names the kind — in the accent role the footer and the header
+                                    mark the same scope with — and the conversation it reports on beside it.
+                                    A parent the refresh could not read leaves the kind standing alone: which
+                                    session this is stays true whether or not its parent resolved. */}
+                                    <Show when={t.threadType === "report"}>
+                                        <text>
+                                            <Fg role="accent">report</Fg>
+                                            {reportParentTitle() !== null ? (
+                                                <>
+                                                    <Sep />
+                                                    <Fg role="fgMuted">{reportParentTitle()}</Fg>
+                                                </>
+                                            ) : null}
+                                        </text>
+                                    </Show>
+                                    {/* The absolute created time, not a compact age: a session is a durable
+                                    record the user comes back to, and the rail matches the vocabulary the
+                                    completed-profile line already uses. It may soft-wrap on long locales —
+                                    accepted in the fixed-width rail, as it is there. */}
                                     <text fg={theme().fgMuted}>
-                                        {Date.relativeAge(t.createdAt.getTime())} {GLYPHS.middot} {props.messageCount()} msgs
+                                        {absTime(t.createdAt.toISOString())} {GLYPHS.middot} {props.messageCount()} msgs
                                     </text>
                                 </>
                             )}

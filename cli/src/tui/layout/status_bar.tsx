@@ -13,6 +13,14 @@ export type StatusBarProps = {
     title: string;
     /** Optional secondary left text, shown muted (e.g. the active analysis name). */
     subtitle?: string;
+    /**
+     * Optional scope segment, shown in the accent color between the identity pair and the state — the
+     * header's mark that the open session is not the analysis conversation the name above it suggests.
+     *
+     * The caller decides when a scope is worth naming and hands over the word; StatusBar stays dumb and
+     * keeps its no-domain-imports rule, exactly as it does for {@link StatusBarProps.path}.
+     */
+    scope?: string;
     /** Optional middle region — the chat's live state or config's unsaved indicator. Omitted when undefined. */
     state?: { text: string; tone: StatusTone };
     /**
@@ -31,7 +39,7 @@ function toneColor(tone: StatusTone): string {
 }
 
 /**
- * The shared app-shell status bar: left identity (+ optional subtitle), an OPTIONAL middle
+ * The shared app-shell status bar: left identity (+ optional subtitle and scope), an OPTIONAL middle
  * state region, and right-aligned affordance hints. Composed by both the chat (`app.tsx`) and
  * the config screen. Imports only `theme`, so every region recolors live on a theme switch.
  */
@@ -43,6 +51,12 @@ export function StatusBar(props: StatusBarProps) {
             </text>
             <Show when={props.subtitle} keyed>
                 {(subtitle: string) => <text fg={theme().fgMuted}> | {subtitle}</text>}
+            </Show>
+            {/* Directly after the identity pair it qualifies, and before the state: the state answers
+            "what is the turn doing", while this answers "what am I looking at" — which the reader needs
+            first, and which is the one segment here that is not about the moment. */}
+            <Show when={props.scope} keyed>
+                {(scope: string) => <text fg={theme().accent}> | {scope}</text>}
             </Show>
             <Show when={props.state} keyed>
                 {(state: { text: string; tone: StatusTone }) => <text fg={toneColor(state.tone)}> | {state.text}</text>}

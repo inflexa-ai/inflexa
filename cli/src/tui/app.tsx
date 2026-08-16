@@ -17,7 +17,7 @@ import { currentNotice, notify } from "./hooks/notice.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
 import { usePromptRecall } from "./hooks/prompt_recall.ts";
-import { watchOpenThread } from "./hooks/thread.ts";
+import { openThread, watchOpenThread, type ThreadSnapshot } from "./hooks/thread.ts";
 import {
     activeSubjectCount,
     focusedSubject,
@@ -289,6 +289,45 @@ export function interruptHintFor(opts: {
     if (opts.insertMode) return { label: interruptHintLabel(opts.abortKey, false), armed: false };
     // NORMAL: the double-press esc interrupt is live; the first press arms and the label flips to confirm.
     return { label: interruptHintLabel(opts.interruptKey, opts.armed), armed: opts.armed };
+}
+
+/**
+ * Which kind of session the chat has open — the one fact the shell's scope marks. A report session
+ * renders exactly as the conversation that spawned it, so without this mark the two are one screen.
+ */
+export type SessionScope = "report" | "analysis";
+
+/**
+ * Read the open session's scope off the thread snapshot, or `undefined` while the shell does not know
+ * it. The ONE derivation behind both surfaces the host marks from here — the footer word and the
+ * header segment — so the two can never name different scopes on one screen. The SESSION rail marks
+ * the same scope from the same snapshot rather than through this, because its line also names the
+ * parent conversation, which no word here carries.
+ *
+ * A loaded row states its own kind. An absent row reads as the analysis conversation: the spawn writes
+ * a report child's row before that child opens anywhere, so a bound id with no row is a conversation
+ * whose first turn has not landed — never a report.
+ *
+ * `unresolved` and `unavailable` yield nothing at all. Neither knows the kind: the first is a read in
+ * flight, the second a read that failed. A shell that guessed `analysis` there would mark the ordinary
+ * case on a report session for the whole of a slow read, which is the exact confusion these marks
+ * exist to end — and the guess would be invisible, because the mark it prints is the mark the common
+ * case wears.
+ */
+export function sessionScopeOf(snapshot: ThreadSnapshot): SessionScope | undefined {
+    switch (snapshot.kind) {
+        case "loaded":
+            return snapshot.thread.threadType === "report" ? "report" : "analysis";
+        case "absent":
+            return "analysis";
+        case "unresolved":
+        case "unavailable":
+            return undefined;
+        default: {
+            const _exhaustive: never = snapshot;
+            throw new Error(`unhandled thread snapshot: ${JSON.stringify(_exhaustive)}`);
+        }
+    }
 }
 
 /**
@@ -1008,6 +1047,20 @@ export function App(props: AppProps) {
               : { text: `${GLYPHS.circle} ready`, tone: "success" };
     };
 
+    // The open session's scope, read once here and rendered by two surfaces below (see
+    // {@link sessionScopeOf}). Both reads are of this one derivation, so the footer and the header
+    // cannot mark two different scopes on one screen.
+    const sessionScope = (): SessionScope | undefined => sessionScopeOf(openThread());
+
+    // The footer prints the scope in its own upper case, beside INSERT/NORMAL — the mode words set the
+    // case of that row, and a lowercase word there would read as a hint rather than a state. The report
+    // scope takes the accent treatment; the analysis scope is the ordinary case and stays muted, so the
+    // mark means something exactly when it appears.
+    const scopeWord = (): { word: string; accent: boolean } | undefined => {
+        const scope = sessionScope();
+        return scope === undefined ? undefined : { word: scope.toUpperCase(), accent: scope === "report" };
+    };
+
     // The interrupt affordance for the ChatBar footer, derived from the live bindings + the armed signal
     // so it can never drift from the real keys: in NORMAL the esc hint (muted resting form, distinct armed
     // form once the window is armed); in INSERT the one-press abort chord that interrupts while typing; and
@@ -1032,6 +1085,10 @@ export function App(props: AppProps) {
                 <StatusBar
                     title="inflexa"
                     subtitle={workspace.analysis?.name}
+                    // The header names the ANALYSIS, and a report session is not it — so the segment
+                    // rides only on a report row. The analysis scope needs no segment here: the subtitle
+                    // beside it already is that statement.
+                    scope={sessionScope() === "report" ? "report" : undefined}
                     state={statusState()}
                     // The working directory is a wide-terminal-only affordance: at/above the breakpoint the
                     // rail and a comfortable chat both fit, so the path earns its space; below it the sidebar
@@ -1115,6 +1172,7 @@ export function App(props: AppProps) {
                             // INSERT vs NORMAL variant — the SAME `onFocusChange` seam the ChatBar footer reads
                             // for its mode word.
                             onFocusChange={setComposerFocused}
+                            scope={scopeWord()}
                             interruptHint={interruptHint()}
                             canRecall={recall.canRecall()}
                         />

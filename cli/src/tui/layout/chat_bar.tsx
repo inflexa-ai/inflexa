@@ -29,6 +29,16 @@ export type ChatBarProps = {
      */
     autoFocus?: boolean;
     /**
+     * The scope of the open session, rendered beside the mode word, or absent when the host does not
+     * know it yet — the footer never claims a scope it cannot stand behind.
+     *
+     * The host derives both fields from the open thread and hands them down as data, so `ChatBar` keeps
+     * its no-domain-imports rule: `word` is the label to print, and `accent` selects the bold accent
+     * treatment. Two treatments and not two words, because the two scopes are not peers — one of them
+     * is the ordinary case and needs no mark, and the other is the one a user must not mistake for it.
+     */
+    scope?: { word: string; accent: boolean };
+    /**
      * The mode-scoped interrupt affordance rendered after the mode word while a turn is busy, or
      * absent when the honesty gates say nothing to promise (idle, dialog stacked, ask docked). The
      * host derives label + `armed` from the live bindings and hands it down as data — `ChatBar` keeps
@@ -62,10 +72,11 @@ export type ChatBarProps = {
 /**
  * The chat input bar: a `TextArea` with `chrome="full"` plus an external mode footer row.
  * NORMAL mode gets a distinct background (`bgActive`) and accent color so the user knows vim
- * scroll keys are live and typing won't insert. After the mode word the footer carries the
- * mode-scoped interrupt hint (a data prop — see {@link ChatBarProps.interruptHint}) and, on the
- * right, the newline-key hint; global keybind hints live only in the status bar. The host keeps
- * the textarea ref so it can read/clear the buffer and restore focus when a dialog closes.
+ * scroll keys are live and typing won't insert. After the mode word the footer carries the session
+ * scope word (see {@link ChatBarProps.scope}) and then the mode-scoped interrupt hint (a data prop —
+ * see {@link ChatBarProps.interruptHint}) and, on the right, the newline-key hint; global keybind
+ * hints live only in the status bar. The host keeps the textarea ref so it can read/clear the buffer
+ * and restore focus when a dialog closes.
  */
 export function ChatBar(props: ChatBarProps) {
     // Seed from autoFocus so a blurred mount renders NORMAL from the first frame — the renderable
@@ -114,6 +125,24 @@ export function ChatBar(props: ChatBarProps) {
                         </Bold>
                     )}
                 </text>
+                {/* The scope word sits between the mode word and the interrupt hint: the mode says what the
+                keys do, the scope says what the typing reaches, and the hint qualifies the mode word it
+                follows. The enclosing <text> resolves the separator's own color, so the middot keeps the
+                muted punctuation tier under either treatment and only the word itself takes the accent. */}
+                <Show when={props.scope} keyed>
+                    {(scope: { word: string; accent: boolean }) => (
+                        <text fg={theme().fgMuted}>
+                            {` ${GLYPHS.middot} `}
+                            {scope.accent ? (
+                                <Bold>
+                                    <Fg role="accent">{scope.word}</Fg>
+                                </Bold>
+                            ) : (
+                                scope.word
+                            )}
+                        </text>
+                    )}
+                </Show>
                 {/* The mode-scoped interrupt hint sits directly after the mode word it describes. Its own
                 <text> carries an explicit fg so the armed ("again to interrupt") state reads in warn while
                 the resting hint stays muted; a leading middot separates it from the mode word. warn (not

@@ -17,7 +17,18 @@ import { getAnchor } from "../../db/primary_query.ts";
 import { upsertLlmUsage, type LlmUsageEntry } from "../../db/primary_mutation.ts";
 import { setTheme } from "../theme.ts";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
-import { __resetSidebarLiveForTest, absTime, absTimeShort, idTail, refreshSidebarData, relAge, type RefreshSeams } from "../hooks/sidebar_live.ts";
+import {
+    __resetSidebarLiveForTest,
+    absTime,
+    absTimeShort,
+    idTail,
+    refreshSidebarData,
+    relAge,
+    shortSessionId,
+    type RefreshSeams,
+} from "../hooks/sidebar_live.ts";
+import { __setClipboardWriterForTest } from "../../lib/clipboard.ts";
+import { __resetNoticesForTest, currentNotice } from "../hooks/notice.ts";
 import { __resetOpenThreadForTest, refreshOpenThread, type ThreadSeams } from "../hooks/thread.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
 import { setChatStatus } from "../hooks/status.ts";
@@ -56,6 +67,9 @@ afterEach(() => {
     // The USAGE section refreshes on the chat status leaving `busy`; the store is a module singleton,
     // so a case that drove it must not leave the next one mid-turn.
     setChatStatus("idle");
+    // The chip's copy raises a toast into another module singleton, whose dismiss timer would otherwise
+    // outlive the case that armed it.
+    __resetNoticesForTest();
     setTheme(DEFAULT_THEME_ID);
 });
 
@@ -303,8 +317,12 @@ describe("Sidebar SESSION section", () => {
         };
     }
 
-    /** Thread seams whose row read resolves to `row` (or fails when `row` is the error sentinel). */
-    function threadSeams(read: () => ReturnType<ThreadSeams["getThread"]>): ThreadSeams {
+    /**
+     * Thread seams whose row read resolves through `read`. It takes the store's own `(pool, threadId)`
+     * shape, so a case about a report child can answer the child's read and its parent's differently —
+     * the refresh reads both through this one seam.
+     */
+    function threadSeams(read: ThreadSeams["getThread"]): ThreadSeams {
         return {
             runtime: () => fakeRuntime,
             listThreads: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
@@ -385,7 +403,7 @@ describe("Sidebar SESSION section", () => {
         expect(lineContaining(frame, "SESSION")).toContain("0198");
     });
 
-    test("a loaded row renders the pg title, its relative age, and the live message count", async () => {
+    test("a loaded row renders the pg title, its absolute created time, and the live message count", async () => {
         await refreshOpenThread(
             THREAD_ID,
             threadSeams(() => okAsync(threadRow())),
@@ -393,8 +411,11 @@ describe("Sidebar SESSION section", () => {
         const frame = await renderFrame(sessionNode(7), { width: 44, height: 24 });
 
         expect(sessionHas(frame, TITLE)).toBe(true);
+        // A session is a durable record the user comes back to, so the rail pins the absolute local
+        // time (the vocabulary the completed-profile line already reads in) rather than a compact age.
         // Asserted through the same formatter the row computes, never a hardcoded token.
-        expect(sessionHas(frame, Date.relativeAge(CREATED_AT.getTime()))).toBe(true);
+        expect(sessionHas(frame, absTime(CREATED_AT.toISOString()))).toBe(true);
+        expect(sessionHas(frame, Date.relativeAge(CREATED_AT.getTime()))).toBe(false);
         expect(sessionHas(frame, "7 msgs")).toBe(true);
         // The degraded ladder is fully replaced — no placeholder survives beside a real title.
         expect(sessionHas(frame, "new conversation")).toBe(false);
@@ -444,6 +465,120 @@ describe("Sidebar SESSION section", () => {
         );
         const frame = await renderFrame(sessionNode(1), { width: 44, height: 24 });
         expect(sessionHas(frame, "untitled")).toBe(true);
+    });
+
+    // The report context line and the copy affordance on the chip. A report session renders exactly as
+    // the conversation that spawned it, so these are what tell the two apart in the rail.
+    const PARENT_ID = "0198aaaa-7f00-7abc-8def-0123456789ab";
+    const PARENT_TITLE = "Cohort survival questions";
+
+    /** The open row as a report child of {@link PARENT_ID}, and the conversation it was spawned from. */
+    function reportRow(): Thread {
+        return threadRow({ threadType: "report", parentThreadId: PARENT_ID, parentSeq: 4 });
+    }
+    function parentRow(): Thread {
+        return threadRow({ threadId: PARENT_ID, title: PARENT_TITLE });
+    }
+
+    test("a report child names the kind and the conversation it reports on", async () => {
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams((_pool, id) => okAsync(id === PARENT_ID ? parentRow() : reportRow())),
+        );
+        const frame = await renderFrame(sessionNode(2), { width: 44, height: 24 });
+
+        expect(sessionHas(frame, "report")).toBe(true);
+        expect(sessionHas(frame, PARENT_TITLE)).toBe(true);
+        // The row's own title still leads the section — the context line is added, never substituted.
+        expect(sessionHas(frame, TITLE)).toBe(true);
+    });
+
+    test("the kind paints the accent role — the same mark the footer and the header carry", async () => {
+        // A character frame carries no colour, so `toContain("report")` passes on a kind word that fell
+        // through to opentui's opaque white — invisible on this theme's pure-white rail. The role is the
+        // signal here: the three surfaces mark one scope, and they have to mark it the same way.
+        setTheme("github-light");
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams((_pool, id) => okAsync(id === PARENT_ID ? parentRow() : reportRow())),
+        );
+        const setup = await testRender(sessionNode(2), { width: 44, height: 24 });
+        try {
+            await setup.renderOnce();
+            let kindFg: RGBA | undefined;
+            for (const line of setup.captureSpans().lines) {
+                for (const span of line.spans) {
+                    if (span.text.includes("report")) kindFg = span.fg;
+                }
+            }
+            expect(kindFg).toBeDefined();
+            expect(kindFg && rgbToHex(kindFg)).not.toBe("#ffffff");
+            expect(kindFg && parseColor(themes["github-light"].colors.accent).equals(kindFg)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("an unreadable parent keeps the kind, and nothing else changes", async () => {
+        // Which session is open stays true whether or not its parent resolved, so the degrade costs the
+        // title beside the kind and not the line, nor the row above it.
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams((_pool, id) => (id === PARENT_ID ? errAsync(dbErr) : okAsync(reportRow()))),
+        );
+        const frame = await renderFrame(sessionNode(2), { width: 44, height: 24 });
+
+        expect(sessionHas(frame, "report")).toBe(true);
+        expect(sessionHas(frame, PARENT_TITLE)).toBe(false);
+        expect(sessionHas(frame, TITLE)).toBe(true);
+        expect(sessionHas(frame, "unavailable")).toBe(false);
+    });
+
+    test("a conversation carries no context line at all", async () => {
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => okAsync(threadRow())),
+        );
+        const frame = await renderFrame(sessionNode(2), { width: 44, height: 24 });
+
+        expect(sessionHas(frame, TITLE)).toBe(true);
+        expect(sessionHas(frame, "report")).toBe(false);
+    });
+
+    test("a click on the SESSION chip copies the FULL thread id and confirms it", async () => {
+        // The chip prints four hex digits because 36 characters do not fit the rail; the id is what a
+        // user pastes into a command, so the click has to hand over the whole thing.
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => okAsync(threadRow())),
+        );
+        const copied: string[] = [];
+        const restore = __setClipboardWriterForTest(async (text) => {
+            copied.push(text);
+        });
+        const setup = await testRender(sessionNode(1), { width: 44, height: 24 });
+        try {
+            // The rail's first frame reserves a scrollbar column its second gives back, which moves the
+            // chip one cell. A coordinate read off the first frame therefore misses the chip by one and
+            // lands on the spacer beside it — settle the layout, then measure what the user would click.
+            await setup.renderOnce();
+            await new Promise((r) => setTimeout(r, 20));
+            await setup.renderOnce();
+
+            const handle = shortSessionId(THREAD_ID);
+            const lines = setup.captureCharFrame().split("\n");
+            const y = lines.findIndex((l) => l.includes(handle));
+            expect(y).toBeGreaterThanOrEqual(0);
+
+            await setup.mockMouse.click(lines[y]!.indexOf(handle), y);
+            await setup.renderOnce();
+
+            expect(copied).toEqual([THREAD_ID]);
+            expect(currentNotice()?.text).toBe("Copied to clipboard");
+        } finally {
+            restore();
+            setup.renderer.destroy();
+        }
     });
 
     // A character frame carries no color, so it cannot tell a correctly-painted title from one that fell

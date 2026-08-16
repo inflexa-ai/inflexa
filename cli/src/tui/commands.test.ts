@@ -7,6 +7,7 @@ import { reportSessionDir } from "@inflexa-ai/harness";
 import type { AnalysisPurgeOutcome, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
 import { GLYPHS } from "../lib/design_system.ts";
+import { __setClipboardWriterForTest } from "../lib/clipboard.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts";
 import { __resetNoticesForTest, currentNotice } from "./hooks/notice.ts";
 import {
@@ -177,6 +178,42 @@ describe("session command gating", () => {
         expect(enabledOf("session.purge", noAnalysis)).toBe(false);
         // The archived listing is per-analysis, so with none open there is no set to draw from.
         expect(enabledOf("session.restore", noAnalysis)).toBe(false);
+    });
+
+    // The copy is the one session command with no boot gate. Every sibling reads Postgres; this reads the
+    // id the scope already holds, so gating it on a runtime would refuse an act that needs none — and the
+    // id is most wanted exactly when something else is wrong with the harness.
+    test("copying the session id needs a bound thread and nothing else", () => {
+        for (const phase of [{ phase: "idle" }, { phase: "booting" }, { phase: "failed", message: "postgres unreachable" }] as const) {
+            __setBootStateForTest(phase);
+            expect(enabledOf("session.copy-id", BOUND)).toBe(true);
+        }
+        __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
+        expect(enabledOf("session.copy-id", scope(ANALYSIS, null))).toBe(false);
+        // The id belongs to the session, not to the analysis, so an unbound analysis is no obstacle.
+        expect(enabledOf("session.copy-id", scope(null, "thread-bound-1"))).toBe(true);
+    });
+
+    test("the copy hands over the FULL id and confirms it in the chip's own words", async () => {
+        const copied: string[] = [];
+        const restore = __setClipboardWriterForTest(async (text) => {
+            copied.push(text);
+        });
+        try {
+            const cmd = commands.find((c) => c.id === "session.copy-id")!;
+            expect(cmd.category).toBe("Session");
+            expect(cmd.title).toBe("Copy session id");
+
+            await cmd.run(scope(ANALYSIS, "01988cdd-7f00-7abc-8def-0123456789ab"));
+
+            // The whole id, never the four-digit handle the rail prints — the handle identifies a row on
+            // screen, and the id is what a user pastes into a command.
+            expect(copied).toEqual(["01988cdd-7f00-7abc-8def-0123456789ab"]);
+            expect(currentNotice()?.text).toBe("Copied to clipboard");
+        } finally {
+            restore();
+            __resetNoticesForTest();
+        }
     });
 
     // The two thread verbs sit next to each other under one category and their titles differ by a word,

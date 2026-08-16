@@ -17,6 +17,7 @@ import {
     type SessionSeams,
 } from "./commands.tsx";
 import { realThreadSeams } from "./hooks/thread.ts";
+import { shortSessionId } from "./hooks/sidebar_live.ts";
 import type { Workspace } from "./contexts/workspace.ts";
 import type { Notice } from "./theme.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
@@ -62,11 +63,13 @@ describe("report session flows", () => {
     ): {
         ws: Workspace;
         dialogs: () => number;
+        closes: () => number;
         opened: { threadId: string | null; analysisId: string }[];
         swapTo: (next: { analysis?: Analysis; sessionId?: string | null }) => void;
     } {
         const opened: { threadId: string | null; analysisId: string }[] = [];
         let dialogs = 0;
+        let closes = 0;
         const scope: { analysis: Analysis | null; sessionId: string | null } = { analysis, sessionId };
         const ws = {
             get analysis() {
@@ -80,7 +83,9 @@ describe("report session flows", () => {
             openDialog: () => {
                 dialogs += 1;
             },
-            closeDialog: () => {},
+            closeDialog: () => {
+                closes += 1;
+            },
             openSession: (threadId: string | null, _workingDir: string, next: Analysis) => {
                 opened.push({ threadId, analysisId: next.id });
             },
@@ -89,6 +94,7 @@ describe("report session flows", () => {
         return {
             ws,
             dialogs: () => dialogs,
+            closes: () => closes,
             opened,
             swapTo: (next) => {
                 if (next.analysis !== undefined) scope.analysis = next.analysis;
@@ -384,10 +390,10 @@ describe("report session flows", () => {
 
             expect(items).toHaveLength(2);
             expect(items.map((i) => i.value)).toEqual([first, second]);
-            expect(items[0]?.title).toBe("Volcano plot report");
+            expect(items[0]?.title).toContain("Volcano plot report");
             // A listed session is a referenced record, thus its last-activity stamp is an absolute local
             // time and not a compact age.
-            expect(items[0]?.description).toBe(first.updatedAt.toLocaleString());
+            expect(items[0]?.description).toContain(first.updatedAt.toLocaleString());
             expect(items.filter((i) => i.pinned)).toHaveLength(0);
         });
 
@@ -396,6 +402,33 @@ describe("report session flows", () => {
             // carry none. A blank row would list a session that a user cannot name.
             const items = reportSessionItems([reportThread({ title: null })]);
             expect(items[0]?.title).toBeTruthy();
+        });
+
+        test("each row carries the short handle, and its detail line the full id", () => {
+            // The handle is the SESSION rail's own, thus a reader matches a row against the rail. It is a
+            // landmark and not a discriminator — a uuid v7 head is shared by every session minted in the
+            // same weeks — so the FULL id on the detail line is what tells two rows of one title apart.
+            const first = reportThread({ threadId: "0198aaaa-7f00-7abc-8def-0123456789ab", title: "Volcano plot report" });
+            const second = reportThread({ threadId: "0198bbbb-7f00-7abc-8def-0123456789ab", title: "Volcano plot report" });
+
+            const items = reportSessionItems([first, second]);
+
+            expect(items[0]?.title).toContain(shortSessionId(first.threadId));
+            expect(items[1]?.title).toContain(shortSessionId(second.threadId));
+            expect(items[0]?.description).toContain(first.threadId);
+            expect(items[0]?.description).toContain(first.updatedAt.toLocaleString());
+            expect(items[1]?.description).toContain(second.threadId);
+            expect(items[0]?.description).not.toBe(items[1]?.description);
+        });
+
+        test("the row of the open session says so, and no other row does", () => {
+            const first = reportThread({ threadId: "thread-report-1", title: "Volcano plot report" });
+            const second = reportThread({ threadId: "thread-report-2", title: "Pathway report" });
+
+            const items = reportSessionItems([first, second], second.threadId);
+
+            expect(items[0]?.hint).toBeUndefined();
+            expect(items[1]?.hint).toBe("open");
         });
 
         test("the switch picker keeps its pinned creation row, which the report picker does not have", () => {
@@ -466,6 +499,104 @@ describe("report session flows", () => {
             expect(t.notices).toHaveLength(1);
             expect(t.notices[0]?.kind).toBe("info");
             expect(t.notices[0]?.text).toContain("No conversation is open");
+        });
+
+        test("a report session lists its siblings — the children of its parent", async () => {
+            // The picker inside a report session would otherwise list the children of a report child,
+            // which the flat tree guarantees is nothing at all: an empty picker stating there is no
+            // report session, inside one.
+            __setBootStateForTest(READY);
+            const sibling = reportThread({ threadId: "thread-report-2", parentThreadId: PARENT.threadId });
+            const listedParents: string[] = [];
+            const t = makeSeams({
+                getThread: rowsByThreadId([CHILD, PARENT]),
+                listReportChildren: (_pool, _analysisId, parentThreadId) => {
+                    listedParents.push(parentThreadId);
+                    return okAsync(threadPageOf([CHILD, sibling]));
+                },
+            });
+            const w = sessionScope(ANALYSIS, CHILD.threadId);
+
+            await openSwitchReportSession(w.ws, t.seams);
+
+            expect(listedParents).toEqual([PARENT.threadId]);
+            expect(w.dialogs()).toBe(1);
+            // The pick is what swaps, thus the command binds nothing itself.
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toEqual([]);
+        });
+
+        test("a conversation still lists its OWN children", async () => {
+            // The conversation side is unchanged by the sibling rule: the open thread is the parent.
+            __setBootStateForTest(READY);
+            const listedParents: string[] = [];
+            const t = makeSeams({
+                getThread: rowsByThreadId([PARENT]),
+                listReportChildren: (_pool, _analysisId, parentThreadId) => {
+                    listedParents.push(parentThreadId);
+                    return okAsync(threadPageOf([CHILD]));
+                },
+            });
+            const w = sessionScope(ANALYSIS, PARENT.threadId);
+
+            await openSwitchReportSession(w.ws, t.seams);
+
+            expect(listedParents).toEqual([PARENT.threadId]);
+            expect(w.dialogs()).toBe(1);
+            expect(t.notices).toEqual([]);
+        });
+
+        test("a report row with no parent link lists under itself, and the picker's empty state answers", async () => {
+            __setBootStateForTest(READY);
+            const orphan = reportThread({ threadId: "thread-orphan", parentThreadId: null, parentSeq: null });
+            const listedParents: string[] = [];
+            const t = makeSeams({
+                getThread: rowsByThreadId([orphan]),
+                listReportChildren: (_pool, _analysisId, parentThreadId) => {
+                    listedParents.push(parentThreadId);
+                    return okAsync(threadPageOf([]));
+                },
+            });
+            const w = sessionScope(ANALYSIS, orphan.threadId);
+
+            await openSwitchReportSession(w.ws, t.seams);
+
+            expect(listedParents).toEqual([orphan.threadId]);
+            expect(w.dialogs()).toBe(1);
+        });
+
+        test("an unreadable open thread refuses, rather than listing under a row it could not read", async () => {
+            // Which family to list comes from that row. Falling back to the open thread would open the
+            // empty picker this rule exists to remove, under a claim the flow cannot back up.
+            __setBootStateForTest(READY);
+            let listings = 0;
+            const t = makeSeams({
+                getThread: () => errAsync(dbErr),
+                listReportChildren: () => {
+                    listings += 1;
+                    return okAsync(threadPageOf([CHILD]));
+                },
+            });
+            const w = sessionScope(ANALYSIS, CHILD.threadId);
+
+            await openSwitchReportSession(w.ws, t.seams);
+
+            expect(listings).toBe(0);
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("error");
+            expect(t.notices[0]?.text).toContain("read this session");
+        });
+
+        test("a pick of the OPEN session closes the dialog and swaps nothing", () => {
+            // A re-open would reset the chat's hot state and reload the transcript the user is already
+            // reading, for a session they never left.
+            const w = sessionScope(ANALYSIS, CHILD.threadId);
+
+            selectReportSession(w.ws, CHILD, ANALYSIS);
+
+            expect(w.closes()).toBe(1);
+            expect(w.opened).toEqual([]);
         });
 
         test("a pick closes the dialog and swaps the chat onto that report session", () => {

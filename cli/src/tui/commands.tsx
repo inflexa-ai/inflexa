@@ -27,7 +27,7 @@ import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/
 import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
 import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
-import { absTime, absTimeShort, idTail, shortRunName } from "./hooks/sidebar_live.ts";
+import { absTime, absTimeShort, idTail, shortRunName, shortSessionId } from "./hooks/sidebar_live.ts";
 import { restoreActivityPanel } from "./hooks/activity_panel.ts";
 import { chatStatus } from "./hooks/status.ts";
 import { chordLabel, keybindLabel, type Chord } from "./keymap.ts";
@@ -1018,11 +1018,28 @@ function scopeStillOpen(ctx: Workspace, analysis: Analysis, threadId: string | n
  * {@link switchSessionItems} carries: the thread's title, and its last-activity stamp as an absolute
  * local time (the durable-record rule — a listed conversation is a referenced record).
  *
+ * Each row also carries its session id, in the two forms that answer two different questions. The
+ * short handle joins the TITLE, which is what the SESSION rail chip prints, thus a reader matches a row
+ * against the rail without reading anything else. It is also the one part of a row that ranks, thus a
+ * user who has the handle can type it. The FULL id joins the detail line, which renders for the cursor
+ * row alone: it is what tells two rows of one title apart, and what a user pastes elsewhere, while 36
+ * characters on every row would crowd the titles they sit beside.
+ *
+ * `openThreadId` names the row the chat already has open, so a picker opened from inside a report
+ * session says which of the siblings the reader is looking at. `hint` and not the title, because it is
+ * a fact about the app rather than about the session — the same field, and the same word tier, that
+ * the theme and model pickers mark their current row with.
+ *
  * There is no pinned creation row, and that difference from the switch picker is deliberate: the agent
  * spawns a report session, thus this picker has no create action it could honestly offer.
  */
-export function reportSessionItems(threads: Thread[]): SelectItem<Thread>[] {
-    return threads.map((t) => ({ value: t, title: threadLabel(t), description: t.updatedAt.toLocaleString() }));
+export function reportSessionItems(threads: Thread[], openThreadId: string | null = null): SelectItem<Thread>[] {
+    return threads.map((t) => ({
+        value: t,
+        title: `${threadLabel(t)} ${GLYPHS.middot} ${shortSessionId(t.threadId)}`,
+        hint: t.threadId === openThreadId ? "open" : undefined,
+        description: `${t.threadId} ${GLYPHS.middot} ${t.updatedAt.toLocaleString()}`,
+    }));
 }
 
 /**
@@ -1032,13 +1049,16 @@ export function reportSessionItems(threads: Thread[]): SelectItem<Thread>[] {
  * The pick swaps the chat in place under the analysis captured before the read. A report child belongs to
  * the conversation that spawned it, and that conversation belongs to this analysis, thus the swap moves
  * the thread alone.
+ *
+ * `openThreadId` is the thread bound when the listing was read, which the rows mark as open. It is that
+ * snapshot and not a live read, thus the picker names the session its own population was built for.
  */
-function openReportPicker(ctx: Workspace, analysis: Analysis, threads: Thread[]): void {
+function openReportPicker(ctx: Workspace, analysis: Analysis, threads: Thread[], openThreadId: string | null): void {
     ctx.openDialog(() => (
         <SelectDialog
             title="Switch report session"
             placeholder={`Search report sessions${GLYPHS.ellipsis}`}
-            items={reportSessionItems(threads)}
+            items={reportSessionItems(threads, openThreadId)}
             // The forward chord opens this picker only above one child, thus the palette command is the
             // one surface that reaches an empty set. The text names what puts a row here.
             emptyText="No report session in this conversation — ask the agent to start one"
@@ -1053,11 +1073,20 @@ function openReportPicker(ctx: Workspace, analysis: Analysis, threads: Thread[])
  * analysis captured when the picker opened. The swap moves the thread alone, because a report child
  * belongs to the conversation that spawned it and that conversation belongs to this analysis.
  *
+ * The row of the OPEN session is a landmark and not a destination: a picker listing the siblings of a
+ * report child holds the open one among them, thus its pick closes the dialog and stops there. The
+ * swap is what a re-open would cost — it resets the chat's hot state and reloads the transcript the
+ * user is already reading, for a session they never left.
+ *
+ * The comparison reads the LIVE scope rather than the id the picker opened over, thus a session that
+ * changed while the dialog stood open is compared against what is bound now.
+ *
  * Exported for the reason {@link selectSwitchSession} is: the handler carries the whole behavior of a
  * pick, and nothing can reach it through a mounted dialog.
  */
 export function selectReportSession(ctx: Workspace, thread: Thread, analysis: Analysis): void {
     ctx.closeDialog();
+    if (ctx.sessionId === thread.threadId) return;
     ctx.openSession(thread.threadId, ctx.workingDir, analysis);
 }
 
@@ -1166,18 +1195,30 @@ export async function openReportSession(ctx: Workspace, seams: SessionSeams = re
         ctx.openSession(first.threadId, ctx.workingDir, analysis);
         return;
     }
-    openReportPicker(ctx, analysis, children.threads);
+    // The open thread is the conversation these rows hang off, thus no row can name it and the marker
+    // never appears on this path. It is passed all the same, because the picker takes the open session
+    // of the flow that built it rather than deciding for itself which flow it serves.
+    openReportPicker(ctx, analysis, children.threads, threadId);
 }
 
 /**
- * Open the report picker over the open conversation's report children, from the palette.
+ * Open the report picker over the report sessions of the open family, from the palette.
  *
  * It ALWAYS opens the picker, and {@link openReportSession} does not. The chord is a movement, thus one
  * child is the answer it acts on. This command is a browse, thus the list IS the answer — at one row, and
  * at none, where the picker's own empty state names what puts a row there.
  *
- * The read runs before the dialog opens, as {@link openSwitchSession}'s does: the thread store is an async
- * Postgres read that a dialog body cannot pull from itself. A failed read degrades to a notice.
+ * WHICH family it lists comes from the open row. A conversation lists its own children. A report child
+ * lists the children of its parent, which is that child and its siblings, thus the picker inside a
+ * report session is never empty and the family reads the same from either side. The tree is flat, so
+ * one hop up reaches the whole of it.
+ *
+ * The open row is read first, and an unreadable one refuses rather than falling back to the children of
+ * the bound thread: a report child has no children of its own, thus that fallback would open an empty
+ * picker stating there is no report session — inside one.
+ *
+ * The reads run before the dialog opens, as {@link openSwitchSession}'s do: the thread store is an async
+ * Postgres read that a dialog body cannot pull from itself. A failed listing degrades to a notice.
  */
 export async function openSwitchReportSession(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
     const runtime = seams.runtime();
@@ -1196,13 +1237,23 @@ export async function openSwitchReportSession(ctx: Workspace, seams: SessionSeam
         seams.notify({ kind: "info", text: "No conversation is open — a report session belongs to one." });
         return;
     }
-    const children = await readReportChildren(runtime.pool, analysis.id, threadId, seams);
+    const pool = runtime.pool;
+    const read = await readOpenThread(pool, threadId, seams);
+    if (read.kind === "unreadable") {
+        seams.notify({ kind: "error", text: OPEN_SESSION_UNREADABLE });
+        return;
+    }
+    // A thread with no row yet is a conversation whose first turn has not landed, and a report row whose
+    // parent link is gone names no family above it. Both list under the open thread, which is what a
+    // conversation does — the second then lists nothing, and the picker's empty state says so.
+    const parentId = read.kind === "row" && read.thread.threadType === "report" ? read.thread.parentThreadId : null;
+    const children = await readReportChildren(pool, analysis.id, parentId ?? threadId, seams);
     if (children.kind === "unreadable") {
         seams.notify({ kind: "warn", text: REPORT_LIST_FAILED });
         return;
     }
     if (!scopeStillOpen(ctx, analysis, threadId, seams)) return;
-    openReportPicker(ctx, analysis, children.threads);
+    openReportPicker(ctx, analysis, children.threads, threadId);
 }
 
 function AnalysesListDialog(): JSX.Element {
@@ -2935,6 +2986,24 @@ export const commands: Command[] = [
         category: "Session",
         enabled: (ctx) => ctx.sessionId !== null && bootState().phase === "ready",
         run: (ctx) => openRenameSession(ctx),
+    },
+    {
+        id: "session.copy-id",
+        title: "Copy session id",
+        description: "Copy the open session's full id to the clipboard",
+        category: "Session",
+        // The one session command with no boot gate, and it needs none: the id is minted into the
+        // workspace scope, so a bound thread is the whole precondition and Postgres is not consulted.
+        // The SESSION chip is the same act by mouse; this is its keyboard door.
+        enabled: (ctx) => ctx.sessionId !== null,
+        run: (ctx) => {
+            const threadId = ctx.sessionId;
+            if (threadId === null) return;
+            // Best-effort by contract, so it never rejects — notify optimistically, as every other
+            // copy in the app does, and in the words the chip uses so one act reads as one act.
+            void writeClipboard(threadId);
+            notify({ kind: "info", text: "Copied to clipboard" });
+        },
     },
     {
         id: "session.delete",

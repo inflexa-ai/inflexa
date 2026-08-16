@@ -5,6 +5,9 @@ import { parseColor, type RGBA } from "@opentui/core";
 import { DEFAULT_THEME_ID, themes } from "../../lib/design_system.ts";
 import { setTheme } from "../theme.ts";
 import { RECALL_LABEL } from "../keymap.ts";
+import { sessionScopeOf } from "../app.tsx";
+import type { ThreadSnapshot } from "../hooks/thread.ts";
+import { conversationThread, reportThread } from "../../test_support/threads.ts";
 import { ChatBar } from "./chat_bar.tsx";
 
 // The footer interrupt hint carries its OWN color: muted for the resting esc / one-press abort forms, warn
@@ -81,6 +84,89 @@ describe("ChatBar footer interrupt hint", () => {
             expect(setup.captureCharFrame()).toContain("INSERT");
         } finally {
             setup.renderer.destroy();
+        }
+    });
+});
+
+// The footer's scope word is the shell's answer to "which session does my typing reach", and its two
+// treatments are the whole signal: a character frame holding `REPORT` says nothing about whether the
+// word was marked, so each case reads the resolved span fg. `github-light` again, for the same reason.
+//
+// The props come from the REAL derivation (`sessionScopeOf`) under the one-line mapping `App` applies,
+// so these cases pin the snapshot→word→colour path end to end rather than a hand-copied replica.
+describe("ChatBar footer scope word", () => {
+    afterEach(() => setTheme(DEFAULT_THEME_ID));
+
+    /** The footer prop exactly as `App` derives it from the open-thread snapshot. */
+    function scopeFor(snapshot: ThreadSnapshot): { word: string; accent: boolean } | undefined {
+        const scope = sessionScopeOf(snapshot);
+        return scope === undefined ? undefined : { word: scope.toUpperCase(), accent: scope === "report" };
+    }
+
+    /** A ChatBar mounted blurred (NORMAL) under the scope the snapshot resolves to. */
+    function renderScope(snapshot: ThreadSnapshot): Promise<Awaited<ReturnType<typeof testRender>>> {
+        setTheme(LIGHT);
+        return testRender(() => <ChatBar autoFocus={false} onTextareaRef={() => {}} onSubmit={() => {}} scope={scopeFor(snapshot)} />, {
+            width: 80,
+            height: 6,
+        });
+    }
+
+    test("a loaded report row reads REPORT in the accent role", async () => {
+        const setup = await renderScope({ kind: "loaded", thread: reportThread() });
+        try {
+            await setup.renderOnce();
+            const word = spanFg(setup, "REPORT");
+            expect(word).toBeDefined();
+            expect(word && parseColor(themes[LIGHT].colors.accent).equals(word)).toBe(true);
+            expect(setup.captureCharFrame()).not.toContain("ANALYSIS");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a loaded conversation reads ANALYSIS, muted rather than marked", async () => {
+        const setup = await renderScope({ kind: "loaded", thread: conversationThread() });
+        try {
+            await setup.renderOnce();
+            const word = spanFg(setup, "ANALYSIS");
+            expect(word).toBeDefined();
+            // The muted meta tier, NOT the accent the report scope takes — the ordinary case carries no mark.
+            expect(word && parseColor(themes[LIGHT].colors.fgMuted).equals(word)).toBe(true);
+            expect(word && parseColor(themes[LIGHT].colors.accent).equals(word)).toBe(false);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a bound identity with no row reads ANALYSIS too", async () => {
+        // The spawn writes a report child's row before that child opens anywhere, so a thread with no
+        // row is a conversation whose first turn has not landed.
+        const setup = await renderScope({ kind: "absent" });
+        try {
+            await setup.renderOnce();
+            const word = spanFg(setup, "ANALYSIS");
+            expect(word).toBeDefined();
+            expect(word && parseColor(themes[LIGHT].colors.fgMuted).equals(word)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a snapshot that knows no kind shows the mode word alone", async () => {
+        // A read in flight and a read that failed both know nothing. Printing ANALYSIS there would mark
+        // the ordinary case on a report session, invisibly, for as long as the state lasts.
+        for (const snapshot of [{ kind: "unresolved" } as const, { kind: "unavailable" } as const]) {
+            const setup = await renderScope(snapshot);
+            try {
+                await setup.renderOnce();
+                const frame = setup.captureCharFrame();
+                expect(frame).toContain("NORMAL");
+                expect(frame).not.toContain("REPORT");
+                expect(frame).not.toContain("ANALYSIS");
+            } finally {
+                setup.renderer.destroy();
+            }
         }
     });
 });

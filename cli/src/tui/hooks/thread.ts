@@ -21,14 +21,25 @@ import { chatStatus, type ChatStatus } from "./status.ts";
 // reacts to them).
 
 /**
+ * The conversation a report child was spawned from, as the loaded snapshot carries it.
+ *
+ * The id rides beside the title so a consumer names the row it is describing rather than a bare
+ * string, and so a surface that acts on the parent needs no second read. The title is nullable for
+ * the reason the child's own is: pg seeds a title from the first user message, so a parent can
+ * legitimately predate one.
+ */
+export type ThreadParent = { readonly threadId: string; readonly title: string | null };
+
+/**
  * The SESSION rail's render input for the open thread:
  * - `unresolved` — no thread is bound yet (pre-`ready`, or the ready-edge resolution is in flight);
  * - `unavailable` — the row read failed (a `DbError`; never a crash);
  * - `absent` — a thread id is bound but has no row: a freshly minted identity whose row the first
  *   turn creates (`prepareChatTurn`), or a thread deleted out from under us;
- * - `loaded` — the live row, carrying the pg-owned title and timestamps.
+ * - `loaded` — the live row, carrying the pg-owned title and timestamps, plus the parent conversation
+ *   when the row is a report child whose parent read landed (see {@link refreshOpenThread}).
  */
-export type ThreadSnapshot = { kind: "unresolved" } | { kind: "unavailable" } | { kind: "absent" } | { kind: "loaded"; thread: Thread };
+export type ThreadSnapshot = { kind: "unresolved" } | { kind: "unavailable" } | { kind: "absent" } | { kind: "loaded"; thread: Thread; parent?: ThreadParent };
 
 const [threadState, setThreadState] = createSignal<ThreadSnapshot>({ kind: "unresolved" });
 
@@ -59,7 +70,11 @@ export type ThreadSeams = {
      * user types. Real: `createThreadStore(pool).listThreads` with `type`.
      */
     readonly listThreads: (pool: Pool, analysisId: string) => ResultAsync<ThreadPage, DbError>;
-    /** One thread's row, or `null` when absent/soft-deleted. Real: `createThreadStore(pool).getThread`. */
+    /**
+     * One thread's row, or `null` when absent/soft-deleted. The refresh reads the bound thread through
+     * it, and then the parent of a report child through the same seam. Real:
+     * `createThreadStore(pool).getThread`.
+     */
     readonly getThread: (pool: Pool, threadId: string) => ResultAsync<Thread | null, DbError>;
     /** Raise a transient toast. Real: {@link notify}. Injected so the degrade path is observable. */
     readonly notify: (notice: Notice) => void;
@@ -120,6 +135,17 @@ let metadataGeneration = 0;
  * a read for the same thread leaves the snapshot standing, so a rename poke or a post-turn re-read
  * never blinks a correct row away.
  *
+ * A loaded REPORT child costs one further row read: its parent conversation, so a surface naming the
+ * open session can name what it reports on. The loaded row is published BEFORE that read, and the
+ * parent lands on a second write, so a slow parent read gives a titleless report line rather than
+ * holding the whole rail across a second round trip. A re-read for the same thread carries the parent
+ * it already resolved into that first write, for the reason it leaves the row standing: only the
+ * FIRST read of a thread has nothing to show across the round trip. Both writes sit under the same
+ * generation token, so a swap mid-read discards the parent exactly as it discards the row. A failed or
+ * absent parent read writes nothing further and leaves the field empty: a parent can be archived, or
+ * another instance can move it, and absence there is a normal condition rather than a fault of this
+ * read.
+ *
  * Called by {@link watchOpenThread} on every bind/boot/turn edge, and directly by the rename command,
  * whose write changes the row without changing the bound id (so no reactive edge would fire).
  */
@@ -139,9 +165,40 @@ export async function refreshOpenThread(threadId: string | null, seams: ThreadSe
     }
     const res = await seams.getThread(runtime.pool, threadId);
     if (mine !== metadataGeneration) return;
-    res.match(
-        (thread) => setThreadState(thread === null ? { kind: "absent" } : { kind: "loaded", thread }),
-        () => setThreadState({ kind: "unavailable" }),
+    // What the snapshot already knows about this thread's parent. A re-read for the SAME thread — the
+    // rename poke, the post-turn refresh — resolves that same parent again, so publishing the row
+    // without it would blank the rail's context line for the whole second round trip, on every turn.
+    // That is the blink the same-id rule above exists to prevent, applied to the other half of the
+    // snapshot. It carries only while the fresh row still names the same parent, so a link that moved
+    // is never described by the conversation it left.
+    const held = threadState();
+    const knownParent = held.kind === "loaded" && held.thread.threadId === threadId ? held.parent : undefined;
+    const loaded = res.match(
+        (thread) => {
+            if (thread === null) {
+                setThreadState({ kind: "absent" });
+                return null;
+            }
+            const carried = thread.threadType === "report" && knownParent?.threadId === thread.parentThreadId ? knownParent : undefined;
+            setThreadState({ kind: "loaded", thread, parent: carried });
+            return thread;
+        },
+        (): Thread | null => {
+            setThreadState({ kind: "unavailable" });
+            return null;
+        },
+    );
+    // The store pairs a parent link with a spawn point and writes both only on a spawned thread, so a
+    // conversation — and a report row whose link is gone — issues no second query at all.
+    const parentId = loaded?.threadType === "report" ? loaded.parentThreadId : null;
+    if (loaded === null || parentId === null) return;
+    const parent = await seams.getThread(runtime.pool, parentId);
+    if (mine !== metadataGeneration) return;
+    parent.match(
+        (row) => {
+            if (row !== null) setThreadState({ kind: "loaded", thread: loaded, parent: { threadId: row.threadId, title: row.title } });
+        },
+        () => {},
     );
 }
 

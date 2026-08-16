@@ -425,6 +425,22 @@ export function idTail(id: string): string {
 }
 
 /**
+ * The short handle of a session id — `S` plus the first four hex digits of the thread id.
+ *
+ * It is a LANDMARK, not a discriminator, and the head is why: a thread id is a uuid v7, whose leading
+ * digits are the high bits of the mint time, so sessions started within weeks of each other carry the
+ * same four. What the handle buys is that one session reads the same on the SESSION chip and on a
+ * picker row, so a reader matches the two at a glance. Telling two rows apart is the full id's job,
+ * which is why the picker's detail line carries it.
+ *
+ * Homed beside the other rail formatters rather than in the rail itself, because both surfaces print
+ * it. Two surfaces spelling one handle two ways is a difference a reader tries to interpret.
+ */
+export function shortSessionId(threadId: string): string {
+    return `S${GLYPHS.middot}${threadId.replace(/-/g, "").slice(0, 4)}`;
+}
+
+/**
  * Map a harness step-execution status onto the design-system run-step state. Pure and
  * exhaustive over {@link StepExecutionRow.status} — a `never`-typed default breaks the build if the
  * harness enum grows, so a new status is classified honestly rather than silently mis-bucketed.

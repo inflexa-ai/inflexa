@@ -1102,6 +1102,29 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         transcript rather than gaining a state here. */}
                     <ReportSessionBlock title={mockReportSession.title} activityLabel={mockReportSession.activityLabel} onOpen={noop} />
                 </State>
+                <State n="26" label="footer scope word — which session the typing reaches">
+                    {/* A report session renders exactly as the conversation that spawned it, so the footer
+                        names the scope beside the mode word. The two treatments are not peers: ANALYSIS is
+                        the ordinary case and stays in the muted meta tier, while REPORT takes the bold
+                        accent, so the mark means something exactly when it appears. Both words arrive as
+                        data — the real mount derives them from the open thread's row.
+
+                        There is deliberately no exhibit for "no scope": while the row read is in flight the
+                        footer shows the mode word alone, which is what State 22's exhibits already render.
+                        A word the shell does not know is a word it must not print. */}
+                    <text fg={theme().fgMuted}>report session — the accent scope word, beside the mode word:</text>
+                    <ChatBar autoFocus={false} onTextareaRef={noop} onSubmit={noop} scope={{ word: "REPORT", accent: true }} />
+                    <text fg={theme().fgMuted}>analysis conversation — the ordinary scope, muted, carrying no mark of its own:</text>
+                    <ChatBar autoFocus onTextareaRef={noop} onSubmit={noop} scope={{ word: "ANALYSIS", accent: false }} />
+                    <text fg={theme().fgMuted}>with a busy turn — the interrupt hint follows the mode and scope words it qualifies:</text>
+                    <ChatBar
+                        autoFocus={false}
+                        onTextareaRef={noop}
+                        onSubmit={noop}
+                        scope={{ word: "REPORT", accent: true }}
+                        interruptHint={{ label: interruptHintLabel(interruptKey, false), armed: false }}
+                    />
+                </State>
             </ScrollPane>
         </DialogPanel>
     );
