@@ -173,6 +173,8 @@ The preview tool MUST run the finish on the draft first. A gap list MUST return 
 
 The hosted view of a session page is a later capability with its own URL space, and the result carries no access grant. An unresolved reference, a resolver absence, and a failed write MUST each return a typed outcome that names the cause. The tool MUST NOT throw for any of these outcomes.
 
+The preview MUST stage each data-script payload and each table sidecar beside the page, in the pipeline that stages the figures. The stage MUST be authoritative over the assets directory: after the page lands, every file that the new page does not reference goes, and the manifest statics stay. Thus a removed block leaves no orphan, and the directory is exactly the page's closure.
+
 #### Scenario: An unfinished draft returns the gaps
 - **WHEN** the agent calls the preview on a draft with an empty section
 - **THEN** the result carries the gap list, and no page lands
@@ -188,6 +190,16 @@ The hosted view of a session page is a later capability with its own URL space, 
 #### Scenario: The stamp follows the page
 - **WHEN** the preview writes the page
 - **THEN** the session state holds the hash of the rendered document
+
+#### Scenario: The data asset lands beside the page
+
+- **WHEN** the preview renders a document with a bound table
+- **THEN** the data-script asset and the raw sidecar sit under `assets/`, and the page references both
+
+#### Scenario: The stage removes what nothing references
+
+- **WHEN** a block goes and the next preview runs
+- **THEN** the stale data asset and the stale sidecar are gone, and the manifest statics stay
 
 ### Requirement: The value bridge
 A pure module beside the renderer MUST map resolved values onto `RenderValues`: a scalar to a metric value, rows to a table, and a file echo to a figure source through a caller-supplied policy. The policy of the preview tool MUST stage the bound image into `assets/` beside the page, and the `src` is that relative path. The bridge MUST NOT read a file and MUST NOT resolve a reference itself.

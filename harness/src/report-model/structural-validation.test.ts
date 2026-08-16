@@ -239,6 +239,26 @@ describe("validateReferenceStructure", () => {
             const failure = columnFailure(["invented"], tableReference(ROWS_PATH, WRONG_HASH));
             expect(failure?.reason).toBe("hash-mismatch");
         });
+
+        it("passes a row bound over a column of the bound table", () => {
+            const bounded = { ...tableReference(ROWS_PATH, ROWS_HASH), rowBound: { column: "padj", count: 20, order: "asc" as const } };
+            expect(failureFor(bounded, rowSnapshot)).toBeUndefined();
+        });
+
+        it("refuses a row bound over a column that the table does not hold", () => {
+            const bounded = { ...tableReference(ROWS_PATH, ROWS_HASH), rowBound: { column: "invented", count: 20 } };
+
+            // The bound decides which rows the table holds, thus an unknown bound column refuses before the
+            // block lands, exactly as an unknown grammar column does.
+            const failure = failureFor(bounded, rowSnapshot);
+            expect(failure?.reason).toBe("locator-out-of-range");
+            expect(failure?.detail).toContain("invented");
+        });
+
+        it("passes a row bound against a snapshot that pins identity and holds no row", () => {
+            const bounded = { ...tableReference(OUTPUT_PATH, OUTPUT_HASH), rowBound: { column: "invented", count: 20 } };
+            expect(failureFor(bounded, rowSnapshot)).toBeUndefined();
+        });
     });
 
     describe("the read of a file", () => {

@@ -19,8 +19,10 @@
 
 import { raw } from "hono/html";
 
-import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, SECTION_SPY, TABLE_ENHANCER } from "../page.js";
+import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, SECTION_SPY, TABLE_DATA_DECODER, TABLE_ENHANCER } from "../page.js";
+import { stagedSource } from "../assets.js";
 import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
+import type { DataAsset } from "../table-data.js";
 import type { CitationRecords } from "../../report-model/reference-resolver.js";
 import type { ReferenceLedger } from "../references.js";
 import { renderBibliography, renderReferenceList } from "./references-view.js";
@@ -100,11 +102,15 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
 }
 
 /**
- * Assemble the page from the title, the navigation, the main content, and the reference frame. The title
- * passes through the runtime as text, and the runtime escapes it. The reference frame is optional, thus
- * an empty frame adds no markup.
+ * Assemble the page from the title, the navigation, the main content, the reference frame, and the data
+ * assets. The title passes through the runtime as text, and the runtime escapes it. The reference frame is
+ * optional, thus an empty frame adds no markup.
+ *
+ * Each data asset rides a classic `script` tag at the end of the body, and the decoder runs after the last
+ * of them. Thus every payload is registered before any reader looks, and a page with no table carries
+ * neither a tag nor the decoder.
  */
-export function assemblePage(title: string, nav: string, content: string, references: string): string {
+export function assemblePage(title: string, nav: string, content: string, references: string, dataAssets: readonly DataAsset[] = []): string {
     return (
         "<!doctype html>" +
         String(
@@ -138,6 +144,10 @@ export function assemblePage(title: string, nav: string, content: string, refere
                             </div>
                         </div>
                     </footer>
+                    {dataAssets.map((asset) => (
+                        <script src={stagedSource(asset.name)}></script>
+                    ))}
+                    {dataAssets.length > 0 ? <script>{raw(TABLE_DATA_DECODER)}</script> : null}
                     <script>{raw(THEME_REGISTRATION)}</script>
                     <script>{raw(FADE_IN_OBSERVER)}</script>
                     <script>{raw(CHART_BOOTSTRAP)}</script>

@@ -24,25 +24,31 @@ import { deriveChartOption } from "./chart.js";
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
 import { citationKeyOf, ReferenceLedger } from "./references.js";
-import type { RenderProblem, RenderValue, RenderValues } from "./types.js";
-import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable } from "./views/values.js";
+import { encodeTablePayload, tableDataAsset, type DataAsset } from "./table-data.js";
+import type { RenderedPage, RenderProblem, RenderValue, RenderValues } from "./types.js";
+import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable, tableColumns } from "./views/values.js";
 
 /**
- * Render a report document, its value map, and the pinned citation records to one HTML string.
+ * Render a report document, its value map, and the pinned citation records to one page and its data assets.
  *
  * The walk collects every value problem. When any problem exists, the render returns the problems and no
- * HTML. When no problem exists, the render assembles the page and returns the string.
+ * page. When no problem exists, the render assembles the page and returns it beside the assets that the
+ * page references.
  *
  * The records are the bibliography of the pin, and they are optional. A caller that passes none renders
  * each citation from its key alone, thus a stored pin that holds no record map renders as it did before.
+ *
+ * The renderer writes no file. The data assets ride the result, and the caller stages them beside the page.
+ * Thus the render stays pure, and two renders of one document give byte-identical assets.
  */
-export function renderReportPage(document: ReportDocument, values: RenderValues, records?: CitationRecords): Result<string, RenderProblem[]> {
+export function renderReportPage(document: ReportDocument, values: RenderValues, records?: CitationRecords): Result<RenderedPage, RenderProblem[]> {
     const problems: RenderProblem[] = [];
     const ledger = new ReferenceLedger();
+    const dataAssets: DataAsset[] = [];
 
     const content: string[] = [];
     for (const [index, section] of document.sections.entries()) {
-        content.push(renderBand(index, renderBlock(section, values, ledger, records, 0, problems)));
+        content.push(renderBand(index, renderBlock(section, values, ledger, records, dataAssets, 0, problems)));
     }
     if (problems.length > 0) {
         return err(problems);
@@ -50,7 +56,7 @@ export function renderReportPage(document: ReportDocument, values: RenderValues,
 
     const nav = renderNav(document.sections);
     const references = renderReferenceSection(ledger, document.sections.length, records);
-    return ok(assemblePage(document.title, nav, content.join(""), references));
+    return ok({ html: assemblePage(document.title, nav, content.join(""), references, dataAssets), dataAssets });
 }
 
 /**
@@ -63,6 +69,7 @@ function renderBlock(
     values: RenderValues,
     ledger: ReferenceLedger,
     records: CitationRecords | undefined,
+    dataAssets: DataAsset[],
     depth: number,
     problems: RenderProblem[],
 ): string {
@@ -95,6 +102,10 @@ function renderBlock(
                 problems.push(wrongShape(block.id, entry.type, "table"));
                 return "";
             }
+            // The rows of the block ride a data asset, and the card holds the header alone. The payload
+            // reads the column order of the header, thus a cell of an encoded row names its column by
+            // position.
+            dataAssets.push(tableDataAsset(block.id, encodeTablePayload(tableColumns(entry), entry.rows)));
             return renderTable(block, entry);
         }
         case "figure": {
@@ -127,7 +138,7 @@ function renderBlock(
             return renderChart(block, option.value);
         }
         case "section":
-            return renderSection(block, depth, renderChildren(block.blocks, values, ledger, records, depth + 1, problems));
+            return renderSection(block, depth, renderChildren(block.blocks, values, ledger, records, dataAssets, depth + 1, problems));
     }
 }
 
@@ -142,6 +153,7 @@ function renderChildren(
     values: RenderValues,
     ledger: ReferenceLedger,
     records: CitationRecords | undefined,
+    dataAssets: DataAsset[],
     depth: number,
     problems: RenderProblem[],
 ): string {
@@ -151,7 +163,7 @@ function renderChildren(
         const run = metricRunLength(blocks, index);
         const rendered: string[] = [];
         for (let offset = 0; offset < Math.max(run, 1); offset += 1) {
-            rendered.push(renderBlock(blocks[index + offset], values, ledger, records, depth, problems));
+            rendered.push(renderBlock(blocks[index + offset], values, ledger, records, dataAssets, depth, problems));
         }
         parts.push(run > 1 ? renderMetricGrid(rendered.join("")) : rendered.join(""));
         index += Math.max(run, 1);

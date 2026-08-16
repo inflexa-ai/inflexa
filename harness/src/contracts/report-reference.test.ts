@@ -173,6 +173,41 @@ describe("parseReference — error outcomes", () => {
     });
 });
 
+describe("the row bound of a table binding", () => {
+    /** One whole-table binding with the given row bound. */
+    function bounded(rowBound: unknown): Reference {
+        return { kind: "artifact-table", path: "runs/run-1/step-a/output/de.csv", hash: HASH, rowBound } as unknown as Reference;
+    }
+
+    it("round-trips a bound of the top rows by a column", () => {
+        expectRoundTrip(bounded({ column: "padj", count: 20, order: "asc" }));
+    });
+
+    it("round-trips a bound that names no order, thus the stored document keeps the short form", () => {
+        expectRoundTrip(bounded({ column: "score", count: 20 }));
+    });
+
+    it("rejects a bound of zero rows", () => {
+        expectParseError(encodeUnchecked(bounded({ column: "padj", count: 0 })), "schema-mismatch");
+    });
+
+    it("rejects a bound of a fractional count", () => {
+        expectParseError(encodeUnchecked(bounded({ column: "padj", count: 2.5 })), "schema-mismatch");
+    });
+
+    it("rejects a bound that names no column", () => {
+        expectParseError(encodeUnchecked(bounded({ column: "", count: 20 })), "schema-mismatch");
+    });
+
+    it("rejects an order outside the two directions", () => {
+        expectParseError(encodeUnchecked(bounded({ column: "padj", count: 20, order: "random" })), "schema-mismatch");
+    });
+
+    it("rejects a field that the bound grammar does not declare", () => {
+        expectParseError(encodeUnchecked(bounded({ column: "padj", count: 20, offset: 5 })), "schema-mismatch");
+    });
+});
+
 describe("parseReference — schema rejection", () => {
     it("rejects an artifact reference without a hash", () => {
         expectParseError(encodeUnchecked({ kind: "artifact-value", run: "r", path: "p", locator: { column: "c", row: 0 } }), "schema-mismatch");

@@ -13,9 +13,9 @@
  * declares for its column, and the column name answers for a column that declares none. A metric takes its
  * label, because a value locator declares no column-wide meaning.
  *
- * A table card also carries the markup of the page enhancer: the raw value of each cell, the sortable
- * header, the filter input, and the row cap with its toggle. The markup alone is a complete plain table,
- * thus the enhancer adds behavior over it and it never supplies a value.
+ * A table card carries the header of its table, an empty body, and the download of the raw pinned bytes.
+ * The rows ride a data asset beside the page, thus the markup carries no copy of them. `renderTableRows`
+ * holds the presentation of a cell, and it stays beside the card that owns that presentation.
  *
  * Each data card carries the `corner-accents` class. Thus the card keeps square corners with the L-shaped
  * accents, which is the geometric identity of the report.
@@ -26,6 +26,7 @@ import { raw } from "hono/html";
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
 import type { CitationRecord } from "../../report-model/reference-resolver.js";
+import { stagedSource, tableSidecarName } from "../assets.js";
 import { LadderMarker } from "./references-view.js";
 import { formatNumberCell, holdsAPValue, selectNumberKind, smallestPositiveValue } from "../number-format.js";
 import { citationKeyOf, type ReferenceLedger } from "../references.js";
@@ -56,6 +57,9 @@ const WHITESPACE = /\s/;
  * keeps. Both read this one prefix, thus the two labels cannot drift apart.
  */
 export const SHOW_ALL_PREFIX = "Show all ";
+
+/** The label of the download link of a table card. It names what the reader gets, which is the whole table. */
+const DOWNLOAD_LABEL = "Download the full table";
 
 /** The scalar value that a metric renders from. */
 type ScalarValue = Extract<RenderValue, { type: "scalar" }>;
@@ -103,8 +107,11 @@ export function renderMetricGrid(cardsHtml: string): string {
 /**
  * The column order of a table. The value columns win when they are present. The keys of the first row
  * give the order otherwise, in first-appearance order.
+ *
+ * The header of the card and the payload of the data asset both read this order. Thus the position of a
+ * cell in an encoded row names the column of its header.
  */
-function tableColumns(value: TableValue): string[] {
+export function tableColumns(value: TableValue): string[] {
     if (value.columns !== undefined) {
         return value.columns;
     }
@@ -214,33 +221,56 @@ function Cell({
 }
 
 /**
- * Render a table block. The header holds one cell for each column, and the body holds one row for each
- * resolved row. A zero-row table renders the header alone. The title and the caption render only when the
- * block carries one.
+ * Render the body rows of a table as markup: one row for each resolved row, each cell under the format of
+ * its column.
+ *
+ * The card renders no body row today, because the rows of a table ride a data asset and the page reads
+ * them from there. This function is the one home of the cell presentation: the declared meaning, the
+ * number format, the p-value bound of a column, and the trim of a delimited name. It stays beside the card
+ * that it belongs to, thus the presentation of a cell has one definition.
+ *
+ * A row past the cap carries the hidden class, and the enhancer hides it under its live marker alone.
+ */
+export function renderTableRows(block: TableBlock, value: TableValue): string {
+    const columns = tableColumns(value);
+    const binding = block.binding;
+    const bounds = pValueBounds(columns, value, binding.columnMeanings);
+    return String(
+        <>
+            {value.rows.map((row, index) => (
+                <tr class={index < TABLE_ROW_CAP ? "report-row" : "report-row report-row-hidden"}>
+                    {columns.map((column) => (
+                        <Cell column={column} cell={row[column]} meaning={declaredForColumn(binding.columnMeanings, column)} bound={bounds.get(column)} />
+                    ))}
+                </tr>
+            ))}
+        </>,
+    );
+}
+
+/**
+ * Render a table block as the header of its table, the download of its raw bytes, and an empty body.
+ *
+ * The rows ride a data asset beside the page. A page that stamped 14,201 rows into its markup weighed
+ * megabytes, and each row was a copy of the column names. Thus the markup holds the header alone, and the
+ * page reads the rows from the payload that registers under the block id.
  *
  * Each header cell stays a plain `th`. It carries the sort class and the index of its column, thus the
  * enhancer reads the column of a click and a browser with no script keeps a plain header. The header also
  * takes the tab order, thus a reader sorts the table from the keyboard. The header shows the declared label
  * of the column, and the raw name rides the `title` attribute.
  *
- * The body holds every resolved row. A row past the cap carries the hidden class, and the card then carries
- * the toggle that names the total count. A table at the cap or under it carries no hidden row and no toggle.
- * The hidden class hides a row under the live marker of the enhancer alone, thus a browser with no script
- * shows every row. The label of the toggle names the total, and the enhancer composes the same label again
- * from the count that the filter keeps.
+ * The download names the staged copy of the pinned artifact. The link is relative and the browser saves
+ * the file, thus the page fetches nothing when it opens and the reader still gets the whole table.
  */
 export function renderTable(block: TableBlock, value: TableValue): string {
     const columns = tableColumns(value);
-    const total = value.rows.length;
     const binding = block.binding;
-    const bounds = pValueBounds(columns, value, binding.columnMeanings);
+    const download = tableSidecarName(binding.hash, binding.path);
     return String(
         <div class="report-table">
             {block.title !== undefined ? <div class="report-table-title">{block.title}</div> : null}
             <div class="corner-accents">
-                <div class="report-table-controls">
-                    <input class="report-table-filter" type="text" placeholder="Filter rows" aria-label="Filter rows" />
-                </div>
                 <div class="data-table-scroll">
                     <table class="data-table">
                         <thead>
@@ -255,23 +285,14 @@ export function renderTable(block: TableBlock, value: TableValue): string {
                                 })}
                             </tr>
                         </thead>
-                        <tbody>
-                            {value.rows.map((row, index) => (
-                                <tr class={index < TABLE_ROW_CAP ? "report-row" : "report-row report-row-hidden"}>
-                                    {columns.map((column) => (
-                                        <Cell
-                                            column={column}
-                                            cell={row[column]}
-                                            meaning={declaredForColumn(binding.columnMeanings, column)}
-                                            bound={bounds.get(column)}
-                                        />
-                                    ))}
-                                </tr>
-                            ))}
-                        </tbody>
+                        <tbody></tbody>
                     </table>
                 </div>
-                {total > TABLE_ROW_CAP ? <button type="button" class="report-table-toggle">{`${SHOW_ALL_PREFIX}${total}`}</button> : null}
+                <div class="report-table-footer">
+                    <a class="report-table-download" href={stagedSource(download)} download={download}>
+                        {DOWNLOAD_LABEL}
+                    </a>
+                </div>
             </div>
             {block.caption !== undefined ? <p class="report-caption">{block.caption}</p> : null}
         </div>,

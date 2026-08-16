@@ -91,8 +91,20 @@ export function validateReferenceStructure(reference: Reference, snapshot: Repor
     switch (reference.kind) {
         case "artifact-table": {
             const pin = validatePin(reference, snapshot);
-            if (pin.isErr() || columns === undefined || columns.length === 0) {
+            if (pin.isErr()) {
                 return pin;
+            }
+            // The bound is content: it decides which rows the table holds. Thus a bound column that the
+            // artifact does not hold refuses here, exactly as a grammar column of a chart does.
+            const bound = reference.rowBound;
+            if (bound !== undefined) {
+                const absent = columnsHeldByNoRow(snapshotEntry(snapshot, reference.path)?.rows ?? [], [bound.column]);
+                if (absent.length > 0) {
+                    return fail(reference, "locator-out-of-range", `the row bound names column ${bound.column}, which the bound table does not hold`);
+                }
+            }
+            if (columns === undefined || columns.length === 0) {
+                return ok();
             }
             return validateColumns(reference, snapshot, columns);
         }

@@ -51,7 +51,7 @@ const htmlValidate = new HtmlValidate({
 
 describe("the rendered page validates as HTML and CSS", () => {
     it("passes the offline HTML validation with the recommended preset", async () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
         const report = await htmlValidate.validateString(html);
         // A finding names the rule and the element, thus a failure reads as its own cause.
         const findings = report.results.flatMap((result) =>
@@ -107,7 +107,7 @@ describe("a raw script sink stays hardened", () => {
     };
 
     it("keeps the hostile cell escaped in the inline JSON and the page whole", () => {
-        const html = renderReportPage(hostileDocument, hostileValues)._unsafeUnwrap();
+        const html = renderReportPage(hostileDocument, hostileValues)._unsafeUnwrap().html;
 
         // The `<` of the hostile cell reaches the inline JSON as the `\u003c` sequence.
         expect(html).toContain("\\u003c/script>\\u003cscript>alert(1)\\u003c/script>");

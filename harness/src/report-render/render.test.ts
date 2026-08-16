@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { load } from "cheerio";
 
-import type { Block, CitationBlock, MetricBlock, ReportDocument, TextBlock } from "../contracts/report-blocks.js";
-import { ASSETS_DIR, PAGE_ASSETS } from "./assets.js";
+import type { Block, CitationBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
+import { ASSETS_DIR, PAGE_ASSETS, tableSidecarName } from "./assets.js";
 import { DESIGN_CSS } from "./design.js";
 import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
-import { CHART_BOOTSTRAP, SECTION_SPY, TABLE_ENHANCER } from "./page.js";
+import { CHART_BOOTSTRAP, SECTION_SPY, TABLE_DATA_DECODER, TABLE_ENHANCER } from "./page.js";
+import { TABLE_DATA_GLOBAL } from "./table-data.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
 import { SHOW_ALL_PREFIX, TABLE_ROW_CAP } from "./views/values.js";
@@ -115,17 +116,33 @@ function styleReferences(css: string): string[] {
     return references;
 }
 
+/** Each table binding of a block tree, in document order. The sidecar of a card names its pinned artifact. */
+function tableBindingsOf(blocks: readonly Block[]): TableBlock["binding"][] {
+    const bindings: TableBlock["binding"][] = [];
+    for (const block of blocks) {
+        if (block.kind === "table") {
+            bindings.push(block.binding);
+        }
+        if (block.kind === "section") {
+            bindings.push(...tableBindingsOf(block.blocks));
+        }
+    }
+    return bindings;
+}
+
 describe("renderReportPage assembly", () => {
     it("gives byte-identical output for the same document and values", () => {
         const first = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
         const second = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
         expect(first.isOk()).toBe(true);
         expect(second.isOk()).toBe(true);
-        expect(first._unsafeUnwrap()).toBe(second._unsafeUnwrap());
+        expect(first._unsafeUnwrap().html).toBe(second._unsafeUnwrap().html);
+        // The payload of a table is a pure function of its rows, thus the assets match byte for byte.
+        expect(first._unsafeUnwrap().dataAssets).toEqual(second._unsafeUnwrap().dataAssets);
     });
 
     it("renders from in-memory inputs with no directory and no file", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
         expect(typeof html).toBe("string");
         expect(html.startsWith("<!doctype html>")).toBe(true);
         expect(html).toContain("The cohort holds 48 primary lung adenocarcinoma biopsies.");
@@ -137,7 +154,7 @@ describe("renderReportPage text lists", () => {
     /** One page whose section holds the given text block. */
     function pageOfText(block: TextBlock): ReturnType<typeof load> {
         const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [block] }] };
-        return load(renderReportPage(document, {})._unsafeUnwrap());
+        return load(renderReportPage(document, {})._unsafeUnwrap().html);
     }
 
     it("holds the lead paragraph and the ordered list of six items", () => {
@@ -177,6 +194,133 @@ describe("renderReportPage text lists", () => {
     });
 });
 
+describe("the table data assets", () => {
+    const TABLE_PATH = "runs/run-1/step-a/output/de.csv";
+    const TABLE_HASH = `sha256:${"a".repeat(64)}`;
+
+    /** One page of one table block over the given rows. */
+    function tableDocument(): ReportDocument {
+        return {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [{ kind: "table", id: "tbl", binding: { kind: "artifact-table", path: TABLE_PATH, hash: TABLE_HASH } }],
+                },
+            ],
+        };
+    }
+
+    /** A table value of `count` rows, with a gene name, a p-value, and one of two directions. */
+    function valuesOf(count: number): RenderValues {
+        const rows = [];
+        for (let index = 0; index < count; index += 1) {
+            rows.push({ gene: `G${index}`, padj: index / count, direction: index % 2 === 0 ? "up" : "down" });
+        }
+        return { tbl: { type: "table", columns: ["gene", "padj", "direction"], rows } };
+    }
+
+    it("holds the header and no data row, and the payload holds every row", () => {
+        const rendered = renderReportPage(tableDocument(), valuesOf(14201))._unsafeUnwrap();
+        const page = load(rendered.html);
+
+        expect(page("th.data-table-sort").length).toBe(3);
+        expect(page("tbody tr").length).toBe(0);
+        expect(rendered.dataAssets.length).toBe(1);
+
+        const payload = JSON.parse(rendered.dataAssets[0].bytes.slice(rendered.dataAssets[0].bytes.indexOf("]=") + 2, -2)) as {
+            columns: string[];
+            rows: unknown[][];
+        };
+        expect(payload.columns).toEqual(["gene", "padj", "direction"]);
+        expect(payload.rows.length).toBe(14201);
+    });
+
+    it("compresses a repeated category into the dictionary of its column", () => {
+        const rendered = renderReportPage(tableDocument(), valuesOf(100))._unsafeUnwrap();
+
+        // The direction column holds two values across one hundred rows, thus the payload names each one
+        // time and each row holds its index.
+        expect(rendered.dataAssets[0].bytes).toContain(`"dict":{"direction":["up","down"]}`);
+        expect(rendered.dataAssets[0].bytes.split(`"up"`).length - 1).toBe(1);
+    });
+
+    it("gives byte-identical assets and one asset name over two renders", () => {
+        const first = renderReportPage(tableDocument(), valuesOf(500))._unsafeUnwrap();
+        const second = renderReportPage(tableDocument(), valuesOf(500))._unsafeUnwrap();
+
+        expect(second.dataAssets).toEqual(first.dataAssets);
+        expect(second.html).toBe(first.html);
+    });
+
+    it("references each asset from a classic script tag, and decodes after the last of them", () => {
+        const rendered = renderReportPage(tableDocument(), valuesOf(3))._unsafeUnwrap();
+        const source = `${ASSETS_DIR}/${rendered.dataAssets[0].name}`;
+
+        // A `fetch` is refused on a `file://` page. A classic script loads on any page, thus the data
+        // reaches the reader through a script tag and never through a request.
+        expect(rendered.html).toContain(`<script src="${source}"></script>`);
+        expect(rendered.html.indexOf(source)).toBeLessThan(rendered.html.indexOf(TABLE_DATA_DECODER));
+        expect(rendered.html.indexOf(TABLE_DATA_DECODER)).toBeLessThan(rendered.html.indexOf(TABLE_ENHANCER));
+    });
+
+    it("decodes the payload into plain rows, one time, in the page script", () => {
+        const rendered = renderReportPage(tableDocument(), valuesOf(4))._unsafeUnwrap();
+        const window: Record<string, unknown> = {};
+
+        // The asset is browser source text. It arrives as a classic script, thus the global is the whole
+        // interface between the payload and the decoder.
+        new Function("window", rendered.dataAssets[0].bytes)(window);
+        new Function("window", TABLE_DATA_DECODER)(window);
+
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] }>;
+        expect(registry["tbl"].rows.length).toBe(4);
+        expect(registry["tbl"].rows[0]).toEqual({ gene: "G0", padj: 0, direction: "up" });
+        expect(registry["tbl"].rows[1]).toEqual({ gene: "G1", padj: 0.25, direction: "down" });
+
+        // A second run finds the decoded rows and leaves them, thus a late script pays the decode one time.
+        new Function("window", TABLE_DATA_DECODER)(window);
+        expect(registry["tbl"].rows[0]).toEqual({ gene: "G0", padj: 0, direction: "up" });
+    });
+
+    it("omits a column that a ragged row does not hold, thus no key reads as an empty value", () => {
+        const document = tableDocument();
+        const values: RenderValues = { tbl: { type: "table", columns: ["gene", "padj"], rows: [{ gene: "TP53", padj: 0.01 }, { gene: "MYC" }] } };
+        const rendered = renderReportPage(document, values)._unsafeUnwrap();
+        const window: Record<string, unknown> = {};
+
+        new Function("window", rendered.dataAssets[0].bytes)(window);
+        new Function("window", TABLE_DATA_DECODER)(window);
+
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] }>;
+        expect(registry["tbl"].rows[1]).toEqual({ gene: "MYC" });
+    });
+
+    it("links the staged raw bytes of the artifact as the download of the card", () => {
+        const rendered = renderReportPage(tableDocument(), valuesOf(3))._unsafeUnwrap();
+        const link = load(rendered.html)("a.report-table-download");
+
+        expect(link.attr("href")).toBe(`${ASSETS_DIR}/${tableSidecarName(TABLE_HASH, TABLE_PATH)}`);
+        expect(link.attr("download")).toBe(tableSidecarName(TABLE_HASH, TABLE_PATH));
+    });
+
+    it("stages no data asset for a document with no table, and renders that page as before", () => {
+        const document: ReportDocument = {
+            title: "T",
+            sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "text", id: "t1", content: { prose: "No table here." } }] }],
+        };
+        const rendered = renderReportPage(document, {})._unsafeUnwrap();
+
+        expect(rendered.dataAssets).toEqual([]);
+        // A page with no payload registers no map and carries no decoder, thus it stays what it was.
+        expect(rendered.html).not.toContain(TABLE_DATA_GLOBAL);
+        expect(rendered.html).not.toContain(".data.js");
+        expect(rendered.html).toBe(renderReportPage(document, {})._unsafeUnwrap().html);
+    });
+});
+
 describe("the page stands alone", () => {
     /** A page whose citation card carries a pinned record, thus the body holds a PubMed navigation. */
     function pageWithACitation(): string {
@@ -191,7 +335,7 @@ describe("the page stands alone", () => {
                 },
             ],
         };
-        return renderReportPage(document, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap();
+        return renderReportPage(document, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap().html;
     }
 
     /**
@@ -205,7 +349,7 @@ describe("the page stands alone", () => {
     }
 
     it("names a remote host at a navigation anchor and at no other element", () => {
-        for (const html of [renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap(), pageWithACitation()]) {
+        for (const html of [renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html, pageWithACitation()]) {
             const references = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)];
             expect(references.length).toBeGreaterThan(0);
 
@@ -223,19 +367,20 @@ describe("the page stands alone", () => {
     });
 
     it("names the brand host one time, thus no second surface fetches it", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
         expect(html.split(BRAND_LINK).length - 1).toBe(1);
     });
 
-    it("names one manifest entry for each staged asset reference", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
-        const staged = new Set(PAGE_ASSETS.map((asset) => asset.file));
+    it("names a staged file for each asset reference of the page", () => {
+        const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const sidecars = tableBindingsOf(FIXTURE_DOCUMENT.sections).map((binding) => tableSidecarName(binding.hash, binding.path));
+        const staged = new Set([...PAGE_ASSETS.map((asset) => asset.file), ...rendered.dataAssets.map((asset) => asset.name), ...sidecars]);
         const prefix = `${ASSETS_DIR}/`;
-        const stagedReferences = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)].filter((value) => value.startsWith(prefix));
+        const stagedReferences = [...attributeReferences(rendered.html), ...styleReferences(DESIGN_CSS)].filter((value) => value.startsWith(prefix));
         expect(stagedReferences.length).toBeGreaterThan(0);
 
-        // A reference that names no manifest entry is a file that the caller never stages, thus the page
-        // would open with a failed request.
+        // A reference that no staged file answers is a request that fails when the page opens. The three
+        // kinds together are what the preview writes beside the page.
         const unstaged = stagedReferences.filter((value) => !staged.has(value.slice(prefix.length)));
         expect(unstaged).toEqual([]);
     });
@@ -322,18 +467,18 @@ describe("renderReportPage metric grouping", () => {
     }
 
     it("groups a run of three metrics into one grid of three cards", () => {
-        const html = renderReportPage(pageOf([metric("m1"), metric("m2"), metric("m3")]), scalars("m1", "m2", "m3"))._unsafeUnwrap();
+        const html = renderReportPage(pageOf([metric("m1"), metric("m2"), metric("m3")]), scalars("m1", "m2", "m3"))._unsafeUnwrap().html;
         expect(counts(html)).toEqual({ grids: 1, cards: 3, grouped: 3 });
     });
 
     it("leaves a lone metric between two texts as a bare card", () => {
-        const html = renderReportPage(pageOf([text("t1"), metric("m1"), text("t2")]), scalars("m1"))._unsafeUnwrap();
+        const html = renderReportPage(pageOf([text("t1"), metric("m1"), text("t2")]), scalars("m1"))._unsafeUnwrap().html;
         // One metric reads as one statistic, not as a row of statistics. Thus no grid wraps it.
         expect(counts(html)).toEqual({ grids: 0, cards: 1, grouped: 0 });
     });
 
     it("groups a run of two that ends the section", () => {
-        const html = renderReportPage(pageOf([text("t1"), metric("m1"), metric("m2")]), scalars("m1", "m2"))._unsafeUnwrap();
+        const html = renderReportPage(pageOf([text("t1"), metric("m1"), metric("m2")]), scalars("m1", "m2"))._unsafeUnwrap().html;
         expect(counts(html)).toEqual({ grids: 1, cards: 2, grouped: 2 });
     });
 
@@ -344,7 +489,7 @@ describe("renderReportPage metric grouping", () => {
             title: "Inner",
             blocks: [metric("m1"), metric("m2"), text("t1")],
         };
-        const html = renderReportPage(pageOf([text("t0"), nested]), scalars("m1", "m2"))._unsafeUnwrap();
+        const html = renderReportPage(pageOf([text("t0"), nested]), scalars("m1", "m2"))._unsafeUnwrap().html;
         expect(counts(html)).toEqual({ grids: 1, cards: 2, grouped: 2 });
     });
 
@@ -426,7 +571,7 @@ describe("renderReportPage value validation", () => {
         };
         const result = renderReportPage(document, {});
         expect(result.isOk()).toBe(true);
-        const html = result._unsafeUnwrap();
+        const html = result._unsafeUnwrap().html;
         expect(html).toContain("A claim.");
         expect(html).toContain(`href="#cite-1"`);
     });
@@ -443,7 +588,7 @@ describe("renderReportPage navigation and references", () => {
                 { kind: "section", id: "sec-3", title: "Three", blocks: [child] },
             ],
         };
-        const html = renderReportPage(document, {})._unsafeUnwrap();
+        const html = renderReportPage(document, {})._unsafeUnwrap().html;
         expect(html).toContain(`href="#sec-1"`);
         expect(html).toContain(`href="#sec-2"`);
         expect(html).toContain(`href="#sec-3"`);
@@ -465,7 +610,7 @@ describe("renderReportPage navigation and references", () => {
                 },
             ],
         };
-        const html = renderReportPage(document, {})._unsafeUnwrap();
+        const html = renderReportPage(document, {})._unsafeUnwrap().html;
         // The bibliography holds one entry.
         expect(html.split(`<li id="cite-`).length - 1).toBe(1);
         // The claim marker and the citation marker point at the same entry.
@@ -496,7 +641,7 @@ describe("renderReportPage navigation and references", () => {
                 },
             ],
         };
-        const html = renderReportPage(document, {})._unsafeUnwrap();
+        const html = renderReportPage(document, {})._unsafeUnwrap().html;
 
         // The key names the paper, and the raw text is the words of the author. Thus one paper takes one
         // number, and the two markers point at the one entry.
@@ -539,7 +684,7 @@ describe("the citation bibliography", () => {
             twoOfEach,
             {},
             { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } },
-        )._unsafeUnwrap();
+        )._unsafeUnwrap().html;
         const card = load(html)("div.report-citation").last();
 
         expect(card.find("span.report-cite-marker").text()).toBe("[2]");
@@ -558,14 +703,14 @@ describe("the citation bibliography", () => {
     });
 
     it("adds no description line to a record that carries none", () => {
-        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap();
+        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap().html;
 
         expect(load(html)("li#cite-2").text()).toContain("Hugo et al. 2016");
         expect(load(html)("li#cite-2 div.report-cite-description").length).toBe(0);
     });
 
     it("shows the key and the note alone for a key that the record map does not hold", () => {
-        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap();
+        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap().html;
         const card = load(html)("div.report-citation").first();
 
         expect(card.find("a.report-citation-source").length).toBe(0);
@@ -577,7 +722,7 @@ describe("the citation bibliography", () => {
     });
 
     it("counts the artifact markers and the citation markers in two ladders", () => {
-        const page = load(renderReportPage(twoOfEach, {})._unsafeUnwrap());
+        const page = load(renderReportPage(twoOfEach, {})._unsafeUnwrap().html);
 
         expect(
             page("sup.report-marker a")
@@ -595,7 +740,7 @@ describe("the citation bibliography", () => {
     });
 
     it("names PubMed as a navigation and never as a loaded resource", () => {
-        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap();
+        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap().html;
         const link = "https://pubmed.ncbi.nlm.nih.gov/26997480/";
 
         // A navigation costs no request when the page opens, thus the page still stands alone.
@@ -603,8 +748,8 @@ describe("the citation bibliography", () => {
     });
 
     it("renders a stored pin that holds no record map as it did before", () => {
-        const withNoRecords = renderReportPage(twoOfEach, {})._unsafeUnwrap();
-        const withEmptyRecords = renderReportPage(twoOfEach, {}, {})._unsafeUnwrap();
+        const withNoRecords = renderReportPage(twoOfEach, {})._unsafeUnwrap().html;
+        const withEmptyRecords = renderReportPage(twoOfEach, {}, {})._unsafeUnwrap().html;
 
         expect(withNoRecords).toBe(withEmptyRecords);
         expect(withNoRecords).not.toContain("pubmed.ncbi.nlm.nih.gov");
@@ -613,7 +758,7 @@ describe("the citation bibliography", () => {
 });
 
 describe("the page identity", () => {
-    const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+    const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
 
     it("closes the page with the Inflexa footer note", () => {
         expect(html).toContain("Powered by Inflexa");
@@ -664,7 +809,7 @@ describe("the one content column", () => {
     };
 
     it("holds the prose, the table, and the chart inside the one column", () => {
-        const page = load(renderReportPage(columnDocument, columnValues)._unsafeUnwrap());
+        const page = load(renderReportPage(columnDocument, columnValues)._unsafeUnwrap().html);
         expect(page(".report-content .report-prose").length).toBe(1);
         expect(page(".report-content .report-table").length).toBe(1);
         expect(page(".report-content .report-chart").length).toBe(1);
@@ -700,7 +845,7 @@ describe("the appendix bands", () => {
     };
 
     it("titles the provenance list Data provenance", () => {
-        const html = renderReportPage(artifactDocument, {})._unsafeUnwrap();
+        const html = renderReportPage(artifactDocument, {})._unsafeUnwrap().html;
         expect(html).toContain("Data provenance");
         // A reader expects literature under "References". This list is provenance, thus no heading of the
         // page carries that word.
@@ -711,7 +856,7 @@ describe("the appendix bands", () => {
     });
 
     it("titles the bibliography Literature, and titles no provenance band over it", () => {
-        const html = renderReportPage(citationDocument, {})._unsafeUnwrap();
+        const html = renderReportPage(citationDocument, {})._unsafeUnwrap().html;
         const titles = load(html)("h2.report-ref-title")
             .toArray()
             .map((node) => load(html)(node).text());
@@ -735,7 +880,7 @@ describe("the appendix bands", () => {
                 },
             ],
         };
-        const html = renderReportPage(both, {})._unsafeUnwrap();
+        const html = renderReportPage(both, {})._unsafeUnwrap().html;
         const titles = load(html)("h2.report-ref-title")
             .toArray()
             .map((node) => load(html)(node).text());
@@ -910,7 +1055,7 @@ describe("the section scrollspy", () => {
     });
 
     it("rides the page beside the other scripts, with its rule in the design source", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
         expect(html).toContain(SECTION_SPY);
         expect(DESIGN_CSS).toContain(`.${ACTIVE_CLASS}`);
     });
@@ -943,7 +1088,7 @@ describe("the table enhancer", () => {
     }
 
     it("rides the page after the scrollspy", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
         expect(html).toContain(TABLE_ENHANCER);
         expect(html.indexOf(TABLE_ENHANCER)).toBeGreaterThan(html.indexOf(SECTION_SPY));
     });
@@ -1026,20 +1171,14 @@ describe("the table enhancer", () => {
         expect(PRINT_BLOCK).toMatch(/\.report-table-live \.report-table-controls,\s*\.report-table-live \.report-table-toggle\s*\{[^}]*display:\s*none/);
     });
 
-    it("puts the sort headers, the filter, the hidden rows, and the toggle on a page over the cap", () => {
+    it("puts the sort headers on a page and no data row under them", () => {
         const over = tablePage(TABLE_ROW_CAP + 3);
-        const page = load(renderReportPage(over.document, over.values)._unsafeUnwrap());
+        const page = load(renderReportPage(over.document, over.values)._unsafeUnwrap().html);
         expect(page("th.data-table-sort").length).toBe(2);
-        expect(page(".report-table-filter").length).toBe(1);
-        expect(page("tbody tr").length).toBe(TABLE_ROW_CAP + 3);
-        expect(page("tbody tr.report-row-hidden").length).toBe(3);
-        expect(page(".report-table-toggle").text()).toBe(`Show all ${TABLE_ROW_CAP + 3}`);
-    });
-
-    it("leaves a page at the cap with no hidden row and no toggle", () => {
-        const atCap = tablePage(TABLE_ROW_CAP);
-        const page = load(renderReportPage(atCap.document, atCap.values)._unsafeUnwrap());
-        expect(page("tbody tr.report-row-hidden").length).toBe(0);
+        // The enhancer of this page finds an empty body and takes no card, thus the page carries neither
+        // the control that it drives nor a row that it hides.
+        expect(page("tbody tr").length).toBe(0);
+        expect(page(".report-table-filter").length).toBe(0);
         expect(page(".report-table-toggle").length).toBe(0);
     });
 });
@@ -1167,6 +1306,15 @@ describe("the table enhancer behavior", () => {
         };
     }
 
+    it("takes no card whose body holds no row, and it throws nothing", () => {
+        // The card of a table renders its rows from the data asset, thus the body of the markup is empty.
+        // The enhancer of this page finds nothing to drive, and it must leave the card as it is.
+        const table = mount([]);
+
+        expect(table.card.classes.has("report-table-live")).toBe(false);
+        expect(table.headers.length).toBe(0);
+    });
+
     it("sorts a numeric column that holds a sentinel by magnitude", () => {
         const table = mount([["10"], ["NA"], ["9"]]);
         table.headers[0].fire("click");
@@ -1258,7 +1406,7 @@ describe("the table enhancer behavior", () => {
 
 describe("renderReportPage readiness signal", () => {
     it("carries the theme-ready dispatch and the sentinel in the page markup", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
         // The bootstrap signals readiness when it completes, thus a capture keys on a real event and returns
         // when the page is ready instead of at a timeout.
         expect(html).toContain("window.__inflexaThemeReady = true");
@@ -1324,7 +1472,7 @@ describe("renderReportPage number format", () => {
 
     it("shows a long metric value in the short form and the full digits on the title", () => {
         const document = pageOf([{ kind: "metric", id: "m1", label: "Effect size", value: scalarRef }]);
-        const html = renderReportPage(document, { m1: { type: "scalar", value: -5.7618623255 } })._unsafeUnwrap();
+        const html = renderReportPage(document, { m1: { type: "scalar", value: -5.7618623255 } })._unsafeUnwrap().html;
         const value = load(html)(".stat-card-value");
         expect(value.text()).toBe("-5.76");
         expect(value.attr("title")).toBe("-5.7618623255");
@@ -1332,13 +1480,13 @@ describe("renderReportPage number format", () => {
 
     it("gives a metric whose form hides no digit no title attribute", () => {
         const document = pageOf([{ kind: "metric", id: "m1", label: "Genes tested", value: scalarRef }]);
-        const html = renderReportPage(document, { m1: { type: "scalar", value: 18432 } })._unsafeUnwrap();
+        const html = renderReportPage(document, { m1: { type: "scalar", value: 18432 } })._unsafeUnwrap().html;
         const value = load(html)(".stat-card-value");
         expect(value.text()).toBe("18,432");
         expect(value.attr("title")).toBeUndefined();
     });
 
-    it("formats each numeric table cell by its column and passes a text cell through", () => {
+    it("carries each raw table cell into the payload and formats none of them", () => {
         const document = pageOf([{ kind: "table", id: "tbl", binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" } }]);
         const values: RenderValues = {
             tbl: {
@@ -1347,11 +1495,12 @@ describe("renderReportPage number format", () => {
                 rows: [{ gene: "TP53", log2FoldChange: -3.089028528355109, padj: 0.0000427777663038, direction: "up" }],
             },
         };
-        const cells = load(renderReportPage(document, values)._unsafeUnwrap())(".data-table tbody td");
-        expect(cells.map((_, cell) => load(cell).text()).get()).toEqual(["TP53", "-3.09", "4.3e-5", "up"]);
-        expect(cells.eq(1).attr("title")).toBe("-3.089028528355109");
-        expect(cells.eq(2).attr("title")).toBe("0.0000427777663038");
-        expect(cells.eq(3).attr("title")).toBeUndefined();
+        const rendered = renderReportPage(document, values)._unsafeUnwrap();
+
+        // The number format is presentation, and the payload is data. A rounded value in the asset would
+        // put a shown form where a magnitude belongs.
+        expect(rendered.dataAssets[0].bytes).toContain(`["TP53",-3.089028528355109,0.0000427777663038,"up"]`);
+        expect(load(rendered.html)(".data-table tbody td").length).toBe(0);
     });
 });
 
@@ -1377,7 +1526,7 @@ describe("renderReportPage escaping", () => {
             title: "Report <script>alert(1)</script>",
             sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "text", id: "t", content: { prose: "x" } }] }],
         };
-        const html = renderReportPage(document, {})._unsafeUnwrap();
+        const html = renderReportPage(document, {})._unsafeUnwrap().html;
         expect(html).toContain("<title>Report &lt;script&gt;alert(1)&lt;/script&gt;</title>");
         // The heading content holds the escaped form between its open and close tags.
         expect(html).toContain(">Report &lt;script&gt;alert(1)&lt;/script&gt;<");

@@ -6,6 +6,10 @@
  * resolves each reference through the injected resolver, bridges the resolved values into the render model,
  * and renders the page.
  *
+ * The renderer writes no file. It gives the page and the data asset of each table, and this tool stages
+ * them beside the figures. The stage is authoritative over the assets directory: what this preview wrote
+ * stays, and each other file goes.
+ *
  * The page and its staged assets land in `report-sessions/{threadId}/` under the workspace root. That
  * namespace belongs to this path alone, thus the tool never writes under the old `previews/` or `reports/`
  * trees. The result carries the absolute page path, thus a local host shows the page with no seam.
@@ -26,7 +30,7 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { extname, join } from "node:path";
 import { z } from "zod";
@@ -42,8 +46,9 @@ import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js"
 import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
 import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
-import { ASSETS_DIR, PAGE_ASSETS } from "../../report-render/assets.js";
+import { ASSETS_DIR, PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
 import { renderReportPage } from "../../report-render/render.js";
+import type { DataAsset } from "../../report-render/table-data.js";
 import type { RenderProblem } from "../../report-render/types.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
@@ -169,6 +174,44 @@ function collectResolutions(blocks: readonly Block[], resolvedByBlock: ReadonlyM
 }
 
 /**
+ * One staged copy of the raw bytes of a table: the staged name, the analysis-relative path of the pinned
+ * artifact, and the block whose card links it.
+ */
+interface TableSidecar {
+    readonly blockId: string;
+    readonly name: string;
+    readonly path: string;
+}
+
+/**
+ * The sidecar of each table block of the document, in document order.
+ *
+ * A table card offers the whole table as a download, and the download is the pinned file itself and never a
+ * re-serialization of it. The card spells the staged name through `tableSidecarName`, thus the stage reads
+ * that same function and the link and the file cannot disagree.
+ *
+ * A chart binds a table too, and it holds no card. Thus the walk reads the table blocks alone.
+ */
+function collectTableSidecars(blocks: readonly Block[]): TableSidecar[] {
+    const sidecars: TableSidecar[] = [];
+    const visit = (block: Block): void => {
+        if (block.kind === "section") {
+            for (const child of block.blocks) {
+                visit(child);
+            }
+            return;
+        }
+        if (block.kind === "table") {
+            sidecars.push({ blockId: block.id, name: tableSidecarName(block.binding.hash, block.binding.path), path: block.binding.path });
+        }
+    };
+    for (const block of blocks) {
+        visit(block);
+    }
+    return sidecars;
+}
+
+/**
  * Resolve each reference of the document, and split the resolutions from the unresolved references.
  *
  * The shared `resolveDocumentReferences` walks the tree, resolves each reference under the concurrency
@@ -206,8 +249,11 @@ type PreviewWriteFailure = { kind: "fs"; error: FsError } | { kind: "figure-out-
  * outside the root refuses and names the block, and no copy runs.
  *
  * The page references the chart runtime and the fonts under the same `assets/` directory, thus one copy
- * loop stages the figures and the manifest entries together. The manifest is never empty, thus the assets
- * directory exists beside every page.
+ * loop stages the figures, the table sidecars, and the manifest entries together. The manifest is never
+ * empty, thus the assets directory exists beside every page.
+ *
+ * The data assets are the one part that the renderer produces rather than the disk. They write after the
+ * copies and before the page. The sweep then runs, and the directory holds the closure of this page alone.
  */
 async function renderToWorkspace(args: {
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
@@ -215,7 +261,10 @@ async function renderToWorkspace(args: {
     analysisId: string;
     threadId: string;
     resolutions: readonly BlockResolution[];
+    sidecars: readonly TableSidecar[];
+    dataAssets: readonly DataAsset[];
     page: string;
+    logger: Logger;
 }): Promise<Result<string, PreviewWriteFailure>> {
     let root: string;
     try {
@@ -248,6 +297,19 @@ async function renderToWorkspace(args: {
         sources.set(name, resolved.absolute);
     }
 
+    // Each table sidecar: the pinned bytes themselves, under the name that the download link of the card
+    // spells. The path of a snapshot entry is untrusted, thus the containment test runs here too.
+    for (const sidecar of args.sidecars) {
+        if (sources.has(sidecar.name)) {
+            continue;
+        }
+        const resolved = resolveWorkspacePath({ workspaceRoot: root, analysisId: args.analysisId, path: sidecar.path });
+        if (resolved.kind !== "ok") {
+            return err({ kind: "figure-out-of-scope", blockId: sidecar.blockId, path: sidecar.path });
+        }
+        sources.set(sidecar.name, resolved.absolute);
+    }
+
     // Each manifest entry, mapped from its staged name to the file that the asset lookup gives. A specifier
     // that does not resolve is a fault of the installation, thus it rides the `fs` kind.
     for (const asset of PAGE_ASSETS) {
@@ -272,11 +334,51 @@ async function renderToWorkspace(args: {
             return err({ kind: "fs", error: copied.error });
         }
     }
+    // Each data asset is source text that the renderer derived, thus it writes and never copies.
+    for (const asset of args.dataAssets) {
+        const assetPath = join(assetsDir, asset.name);
+        const wroteAsset = await tryFsWrite("preview.writeFile", () => writeFile(assetPath, asset.bytes, "utf8"), { path: assetPath });
+        if (wroteAsset.isErr()) {
+            return err({ kind: "fs", error: wroteAsset.error });
+        }
+    }
     const wrote = await tryFsWrite("preview.writeFile", () => writeFile(pagePath, args.page, "utf8"), { path: pagePath });
     if (wrote.isErr()) {
         return err({ kind: "fs", error: wrote.error });
     }
+
+    const staged = new Set<string>([...sources.keys(), ...args.dataAssets.map((asset) => asset.name)]);
+    await sweepAssets(assetsDir, staged, args.logger);
     return ok(pagePath);
+}
+
+/**
+ * Remove each file of the assets directory that this preview did not stage.
+ *
+ * The stage is authoritative: the directory holds the closure of the page and nothing else. A block that
+ * goes leaves a stale data asset, a stale sidecar, and a stale figure behind, and each one costs disk and
+ * misleads a reader who opens the directory. The staged set is what this run wrote, thus the sweep needs no
+ * read of the page.
+ *
+ * A sweep fault costs the cleanup alone. The page and its assets are on disk and complete, thus a failed
+ * listing and a failed removal each log and the preview still reports the page.
+ */
+async function sweepAssets(assetsDir: string, staged: ReadonlySet<string>, logger: Logger): Promise<void> {
+    const listed = await tryFsWrite("preview.readdir", () => readdir(assetsDir), { path: assetsDir });
+    if (listed.isErr()) {
+        logger.warn("the assets directory did not list", { path: assetsDir, detail: describeFsError(listed.error) });
+        return;
+    }
+    for (const entry of listed.value) {
+        if (staged.has(entry)) {
+            continue;
+        }
+        const stale = join(assetsDir, entry);
+        const removed = await tryFsWrite("preview.rm", () => rm(stale, { force: true, recursive: true }), { path: stale });
+        if (removed.isErr()) {
+            logger.warn("a stale asset did not go", { path: stale, detail: describeFsError(removed.error) });
+        }
+    }
 }
 
 /**
@@ -356,7 +458,10 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 analysisId,
                 threadId,
                 resolutions,
-                page: rendered.value,
+                sidecars: collectTableSidecars(document.sections),
+                dataAssets: rendered.value.dataAssets,
+                page: rendered.value.html,
+                logger,
             });
             if (written.isErr()) {
                 const failure = written.error;
