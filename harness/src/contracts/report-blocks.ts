@@ -33,6 +33,16 @@ const ChartTypeSchema = z.enum(["bar", "line", "scatter", "histogram", "box", "h
 const ChartTransformSchema = z.enum(["log10", "neg_log10", "abs", "rank"]);
 
 /**
+ * The arrangement of a bar. The channels keep their data meaning under both values, thus one encoding
+ * serves both and the author flips this one field.
+ */
+const ChartOrientationSchema = z.enum(["vertical", "horizontal"]);
+
+/** The teaching text of the orientation. The quick path and the bar series form both carry it. */
+const ORIENTATION_DESCRIPTION =
+    "The arrangement of the bars. `vertical` is the default, and it draws the categories along the bottom. `horizontal` draws them up the left side, and it is the form to reach for when a category name is long, for example a gene-set name: a long name reads on the y axis, and it is unreadable slanted under a vertical bar. The channels do not move with the orientation. `x` names the category column and `y` names the value column in both.";
+
+/**
  * One visual channel: a column name, or a column with a per-row transform.
  *
  * The object form carries a column and a transform, and it carries no value. Thus a channel can never
@@ -70,17 +80,23 @@ const ChartSeriesEncodingSchema = z.strictObject({
  * One series of a composition: a plot form, its own channels, and an optional legend name.
  *
  * A `step` series is a line with the step flag. An `area` series can name a `y0` lower bound, thus a band
- * between two columns of one row is expressible. The refine holds `y0` to the one form that draws a band.
+ * between two columns of one row is expressible. The refine holds `y0` to the one form that draws a band,
+ * and the second refine holds the orientation to the one form that carries an arrangement.
  */
 export const ChartSeriesSchema = z
     .strictObject({
         form: z.enum(["line", "scatter", "bar", "area", "step"]).describe("The plot form of the series."),
         encoding: ChartSeriesEncodingSchema.describe("The columns that feed the series."),
         name: z.string().optional().describe("The legend name of the series."),
+        orientation: ChartOrientationSchema.optional().describe(ORIENTATION_DESCRIPTION),
     })
     .refine((series) => series.form === "area" || series.encoding.y0 === undefined, {
         message: "`y0` is legal on an `area` series only.",
         path: ["encoding", "y0"],
+    })
+    .refine((series) => series.form === "bar" || series.orientation === undefined, {
+        message: "`orientation` is legal on a `bar` series only.",
+        path: ["orientation"],
     });
 
 /** A guide line at one constant on one axis. */
@@ -187,16 +203,21 @@ export const ChartBlockSchema = z
             "The quick path. Give `encoding` with it, and omit `composition`. A preset (`volcano`, `manhattan`, `ma`, `km`) reads the same channels, and it applies its own transform and its own guide lines.",
         ),
         encoding: ChartEncodingSchema.optional().describe("The channels of the quick path."),
+        orientation: ChartOrientationSchema.optional().describe(
+            `${ORIENTATION_DESCRIPTION} The field belongs to the \`bar\` chart type, and every other type refuses it.`,
+        ),
         composition: ChartCompositionSchema.optional().describe("The full grammar. Omit `chartType` and `encoding` with it."),
         caption: z.string().optional(),
     })
     .refine(
         (block) => {
             const quickPath = block.chartType !== undefined && block.encoding !== undefined;
-            const partialQuickPath = block.chartType !== undefined || block.encoding !== undefined;
+            // The orientation is a quick-path field. A composition states the arrangement on its own bar
+            // series, thus a block-level orientation beside one names an arrangement that nothing reads.
+            const partialQuickPath = block.chartType !== undefined || block.encoding !== undefined || block.orientation !== undefined;
             return block.composition !== undefined ? !partialQuickPath : quickPath;
         },
-        { message: "A chart carries either `chartType` with `encoding`, or `composition`." },
+        { message: "A chart carries either `chartType` with `encoding`, or `composition`. The `orientation` belongs to the quick path." },
     );
 
 /** A static image artifact. An image has no per-cell address, thus it is pinned whole-file. */

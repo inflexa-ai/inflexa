@@ -62,11 +62,24 @@ type BaseChartType = Exclude<ChartType, PresetChartType>;
 /** The display labels that the bound table declares, keyed by the raw column name. */
 type ColumnLabels = ArtifactTableReference["columnLabels"];
 
+/** The arrangement of a bar. An absent value is the vertical arrangement. */
+type ChartOrientation = ChartSeries["orientation"];
+
 /**
  * The category value that carries no finding. A preset draws the significance split itself, thus the
  * convention writes the insignificant group with this one literal.
  */
 const NULL_CATEGORY = "ns";
+
+/**
+ * True when one declared series draws its bars across the plot.
+ *
+ * The category channel then renders on the y axis and the value channel renders on the x axis. Every other
+ * form and every other orientation gives false, thus one test answers for the whole composition path.
+ */
+function isHorizontalBar(series: ChartSeries): boolean {
+    return series.form === "bar" && series.orientation === "horizontal";
+}
 
 /**
  * A quick-path block whose channels are resolved to plain column names.
@@ -79,6 +92,7 @@ interface ResolvedChartBlock {
     chartType: BaseChartType;
     encoding: Partial<Record<Channel, string>>;
     labels: ColumnLabels;
+    orientation: ChartOrientation;
 }
 
 /**
@@ -191,13 +205,18 @@ function deriveRaw(block: ChartBlock, rows: readonly ChartRow[], columns?: reado
         // value that reaches the renderer without a parse.
         return err(problem(block.id, "The chart carries neither a chart type with an encoding, nor a composition."));
     }
+    const orientation = block.orientation;
+    if (orientation !== undefined && chartType !== "bar") {
+        // A silent ignore would teach the author a field that does nothing, thus the fault is stated.
+        return err(problem(block.id, `The ${chartType} chart takes no orientation. An orientation is a rule of the bar alone.`));
+    }
     if (isPresetChartType(chartType)) {
         return derivePreset(block.id, chartType, encoding, rows, columns, labels);
     }
     if (encoding.label !== undefined) {
-        return deriveLabeled(block.id, chartType, encoding, rows, columns, labels);
+        return deriveLabeled(block.id, chartType, encoding, rows, columns, labels, orientation);
     }
-    const quick = resolveQuickPath(block.id, chartType, encoding, rows, columns, labels);
+    const quick = resolveQuickPath(block.id, chartType, encoding, rows, columns, labels, orientation);
     if (quick.isErr()) return err(quick.error);
     return deriveBase(quick.value.block, quick.value.rows, columns);
 }
@@ -255,6 +274,7 @@ function deriveLabeled(
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
     labels: ColumnLabels,
+    orientation: ChartOrientation,
 ): Result<EchartOption, RenderProblem> {
     const form = LABELED_FORMS[chartType];
     if (form === undefined) {
@@ -274,6 +294,9 @@ function deriveLabeled(
                     ...(encoding.group !== undefined ? { group: encoding.group } : {}),
                     ...(encoding.label !== undefined ? { label: encoding.label } : {}),
                 },
+                // The caller refused an orientation on every type but the bar, thus the form here is a bar
+                // wherever one arrives. The arrangement crosses onto the series, and no name channel loses it.
+                ...(orientation !== undefined ? { orientation } : {}),
             },
         ],
     };
@@ -296,6 +319,7 @@ function resolveQuickPath(
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
     labels: ColumnLabels,
+    orientation: ChartOrientation,
 ): Result<{ block: ResolvedChartBlock; rows: readonly ChartRow[] }, RenderProblem> {
     const resolved: Partial<Record<Channel, string>> = {};
     const derived: Array<{ column: string; name: string; transform: ChartTransform }> = [];
@@ -321,7 +345,7 @@ function resolveQuickPath(
         derived.push({ column, name, transform });
     }
 
-    const block: ResolvedChartBlock = { id: blockId, chartType, encoding: resolved, labels };
+    const block: ResolvedChartBlock = { id: blockId, chartType, encoding: resolved, labels, orientation };
     return ok({ block, rows: derived.length === 0 ? rows : deriveTransformedRows(rows, derived) });
 }
 
@@ -353,7 +377,18 @@ function deriveTransformedRows(rows: readonly ChartRow[], derived: ReadonlyArray
 
 // ── The per-type derivations ────────────────────────────────────────────────
 
-/** A category x axis, a value y axis, and one bar series per group with the `[x, y]` pairs. */
+/**
+ * A category axis, a value axis, and one bar series per group with the pairs of the two channels.
+ *
+ * The vertical arrangement counts the categories along x and measures up y. The horizontal arrangement
+ * swaps the two axes, and the pair of each point swaps with them: the chart runtime reads the first member
+ * of a pair on x, thus the value leads there. The channels themselves do not move, and `x` names the
+ * category column under both arrangements.
+ *
+ * The category axis of the horizontal arrangement keeps every label. `normalizeEchartSpec` pins the label
+ * interval of each axis, and it turns an x label alone, thus a long name on y reads level and none of them
+ * drops.
+ */
 function deriveBar(block: ResolvedChartBlock, rows: readonly ChartRow[], columns: readonly string[] | undefined): Result<EchartOption, RenderProblem> {
     const xResult = requireColumn(block, rows, columns, "x");
     if (xResult.isErr()) return err(xResult.error);
@@ -362,14 +397,22 @@ function deriveBar(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     const x = xResult.value;
     const y = yResult.value;
 
+    const horizontal = block.orientation === "horizontal";
     const categories = firstAppearance(rows.map((row) => row[x]));
     const series = groupedSeries(rows, block.encoding.group, (groupRows, name) => ({
         type: "bar",
         ...(name !== undefined ? { name: categoryName(name) } : {}),
         barGap: 0,
-        data: groupRows.map((row) => [row[x], row[y]]),
+        data: groupRows.map((row) => (horizontal ? [row[y], row[x]] : [row[x], row[y]])),
     }));
 
+    if (horizontal) {
+        return ok({
+            xAxis: { type: "value", ...xAxisName(axisTitle(block.labels, y)) },
+            yAxis: { type: "category", data: categories, name: axisTitle(block.labels, x) },
+            series,
+        });
+    }
     return ok({
         xAxis: { type: "category", data: categories, ...xAxisName(axisTitle(block.labels, x)) },
         yAxis: { type: "value", name: axisTitle(block.labels, y) },
@@ -701,6 +744,12 @@ function deriveComposition(
     labels: ColumnLabels,
     preset?: PresetAxisTitles,
 ): Result<EchartOption, RenderProblem> {
+    if (composition.series.length > 1 && composition.series.some(isHorizontalBar)) {
+        // A horizontal bar reads its categories up the y axis, and every other form reads a value there.
+        // The two share no honest axis pair on one grid, thus the mix refuses instead of plotting a lie.
+        return err(problem(blockId, "A horizontal bar plots its categories on the y axis, thus it shares no axis pair with another series."));
+    }
+
     const resolved: ResolvedSeries[] = [];
     for (const declared of composition.series) {
         const series = resolveSeries(blockId, declared, rows, columns);
@@ -736,10 +785,11 @@ function deriveComposition(
 
     const first = resolved[0];
     const named = resolved.some((entry) => entry.label !== undefined) || labeled.value.size > 0;
+    const axes = compositionAxes(rows, first, composition.axes, labels, preset);
     return ok({
         tooltip: named ? { ...NAMED_TOOLTIP } : { ...PLAIN_TOOLTIP },
-        xAxis: compositionXAxis(rows, first, composition.axes?.x, labels, preset?.x),
-        yAxis: compositionAxis(rows, first.y, "y", composition.axes?.y, labels, preset?.y),
+        xAxis: axes.xAxis,
+        yAxis: axes.yAxis,
         series: emitted.map((entry) => entry.option),
     });
 }
@@ -870,7 +920,7 @@ function buildSeries(
 
     const muted = preset !== undefined && group.name === NULL_CATEGORY;
     const color = muted ? { itemStyle: { color: MUTED_CHART_COLOR } } : {};
-    const { data, itemObjects } = seriesData(entry, points, labeled);
+    const { data, itemObjects } = seriesData(entry, points, labeled, isHorizontalBar(entry.declared));
     return ok([{ option: { type: runtimeType(form), name, ...color, ...formOptions(form, dense, itemObjects), data }, carriesMarks: true, muted }]);
 }
 
@@ -929,21 +979,31 @@ function seriesName(entry: ResolvedSeries, group: Cell | undefined, labels: Colu
  *
  * A bare pair is the smallest item that states one point. A point that carries a name, or that the rank
  * rule marks, takes the object form, because only an object item holds a name and a label.
+ *
+ * The chart runtime reads the first member of a pair on the x axis. Thus a horizontal bar leads with its
+ * value, and the category follows. The name of a point still reads the category channel, because the name
+ * of a bar is what it counts and not how much it counts.
  */
-function seriesData(entry: ResolvedSeries, points: readonly Point[], labeled: ReadonlySet<number>): { data: unknown[]; itemObjects: boolean } {
+function seriesData(
+    entry: ResolvedSeries,
+    points: readonly Point[],
+    labeled: ReadonlySet<number>,
+    horizontal: boolean,
+): { data: unknown[]; itemObjects: boolean } {
     const data: unknown[] = [];
     let itemObjects = false;
     for (const point of points) {
+        const pair = horizontal ? [point.y, point.x] : [point.x, point.y];
         const label = entry.label?.[point.index];
         const named = label !== undefined && label !== null;
         const marked = labeled.has(point.index);
         if (!named && !marked) {
-            data.push([point.x, point.y]);
+            data.push(pair);
             continue;
         }
         itemObjects = true;
         data.push({
-            value: [point.x, point.y],
+            value: pair,
             // A marked point of a series with no label channel takes the x cell as its name. Thus the
             // `{b}` of the label template and of the tooltip names a cell of the row, and never nothing.
             name: named ? String(label) : String(point.x),
@@ -1113,7 +1173,36 @@ function axisKey(axis: "x" | "y"): "xAxis" | "yAxis" {
 }
 
 /**
- * The x axis of a composition.
+ * The two axes of a composition.
+ *
+ * A vertical bar counts its categories on x, and every other form reads the inferred axis there. A
+ * horizontal bar swaps the two: the category channel renders on y, and the value channel renders on x.
+ *
+ * A declared axis names the axis that it renders on, exactly as an annotation does. Thus `axes.x` titles
+ * the value axis of a horizontal bar. A declared column label and a preset title both follow their own
+ * column, thus each one lands on whichever axis draws that column.
+ */
+function compositionAxes(
+    rows: readonly ChartRow[],
+    first: ResolvedSeries,
+    axes: ChartComposition["axes"],
+    labels: ColumnLabels,
+    preset: PresetAxisTitles | undefined,
+): { xAxis: EchartOption; yAxis: EchartOption } {
+    if (isHorizontalBar(first.declared)) {
+        return {
+            xAxis: compositionAxis(rows, first.y, "x", axes?.x, labels, preset?.y),
+            yAxis: barCategoryAxis(rows, first.x, "y", axes?.y, labels, preset?.x),
+        };
+    }
+    return {
+        xAxis: compositionXAxis(rows, first, axes?.x, labels, preset?.x),
+        yAxis: compositionAxis(rows, first.y, "y", axes?.y, labels, preset?.y),
+    };
+}
+
+/**
+ * The x axis of a composition whose bars stand up, or of any other form.
  *
  * A bar takes a category axis, and every other form takes the inferred axis. A declared scale is the one
  * exception, because the author asked for a numeric axis and a category axis has no scale.
@@ -1128,10 +1217,31 @@ function compositionXAxis(
     if (first.declared.form !== "bar" || declared?.scale !== undefined) {
         return compositionAxis(rows, first.x, "x", declared, labels, preset);
     }
-    // A bar counts its categories. The base bar rule lists the x values in first-appearance order, thus a
-    // bar of either path draws the same axis.
-    const categories = firstAppearance(first.x.values.filter((value): value is Cell => value !== null));
-    return { type: "category", data: categories, ...xAxisName(declared?.title ?? axisTitle(labels, first.x.name, preset)) };
+    return barCategoryAxis(rows, first.x, "x", declared, labels, preset);
+}
+
+/**
+ * The category axis of a composition bar, on whichever axis it renders.
+ *
+ * A bar counts its categories. The base bar rule lists the values of the category channel in
+ * first-appearance order, thus a bar of either path draws the same axis. A declared scale asks for a
+ * numeric axis, and a category axis has no scale, thus such an axis falls to the inferred one.
+ */
+function barCategoryAxis(
+    rows: readonly ChartRow[],
+    channel: ResolvedChannel,
+    axis: "x" | "y",
+    declared: ChartAxes["x"],
+    labels: ColumnLabels,
+    preset: string | undefined,
+): EchartOption {
+    if (declared?.scale !== undefined) {
+        return compositionAxis(rows, channel, axis, declared, labels, preset);
+    }
+    const categories = firstAppearance(channel.values.filter((value): value is Cell => value !== null));
+    const title = declared?.title ?? axisTitle(labels, channel.name, preset);
+    const nameFields = axis === "x" ? xAxisName(title) : { name: title };
+    return { type: "category", data: categories, ...nameFields };
 }
 
 /**
