@@ -85,10 +85,10 @@ describe("collectPageAssetEntries", () => {
     });
 
     test("the default resolution reads a real file for every manifest specifier", () => {
-        // The one case that drives `resolveThroughHarness`, which is the two-hop resolution that the whole
-        // pack exists for. Each package that holds the bytes is a dependency of the harness and never of
-        // the cli, thus hop one must name the installed entry of the harness before hop two runs. A
-        // manifest entry that no resolution answers, or that names no file, fails here.
+        // The one case that drives the default resolution, which is the lookup that the whole pack exists
+        // for. Each package that holds the bytes is a dependency of the harness and never of the cli, thus
+        // the lookup must read the installation of the harness. A manifest entry that no resolution
+        // answers, or that names no file, fails here.
         const entries = collectPageAssetEntries()._unsafeUnwrap();
 
         expect(entries.map((entry) => entry.path)).toEqual(PAGE_ASSETS.map((asset) => `assets/${asset.file}`));

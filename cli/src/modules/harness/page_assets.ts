@@ -4,14 +4,14 @@
 // of them is absent. Thus a test cannot import the collection from the build script, and the two callers
 // share this module instead.
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
 import { type Result, err, ok } from "neverthrow";
 
-// The manifest comes from the module that holds it, and not from the front door of the harness. The front
-// door evaluates the whole runtime graph of the harness, which costs about 800 ms. This module is pure
-// constants with no import of its own. A build script drives a bundler, thus it must not pull a runtime
-// graph into that process for six string pairs.
+// The manifest and its lookup come from the modules that hold them, and not from the front door of the
+// harness. The front door evaluates the whole runtime graph of the harness, which costs about 800 ms.
+// These two modules are constants and one resolution over the node builtins. A build script drives a
+// bundler, thus it must not pull a runtime graph into that process for a table of string pairs.
+import { resolvePageAssetFromInstallation } from "@inflexa-ai/harness/report-render/asset-lookup.js";
 import { PAGE_ASSETS, type PageAsset } from "@inflexa-ai/harness/report-render/assets.js";
 
 import type { PackEntry } from "./content-pack.ts";
@@ -20,8 +20,8 @@ import type { PackEntry } from "./content-pack.ts";
  * How the collection finds the source file of one asset.
  *
  * The parameter is the module specifier of the asset, and the return value is the path of its file. The
- * function throws when no resolution answers the specifier, because that is the contract of
- * `import.meta.resolve`.
+ * function throws when no resolution answers the specifier, because a module resolution reports that
+ * failure as a throw.
  */
 export type ResolveAssetSource = (specifier: string) => string;
 
@@ -36,11 +36,17 @@ export type PageAssetError =
  *
  * The report page loads its chart runtime and its fonts from a sibling assets directory. One archive
  * carries the three sources, thus one hash covers them together. The packages that hold the bytes are
- * dependencies of the harness, and never of the cli. Thus the default resolution reads the installation of
- * the harness, and a caller can give a different resolution and a different manifest.
+ * dependencies of the harness, and never of the cli. Thus the default resolution is the lookup of the
+ * harness, which reads the installation that holds it, and a caller can give a different resolution and a
+ * different manifest.
+ *
+ * The lookup stays in the harness, because the harness owns the manifest. A package that publishes an
+ * `exports` map refuses a subpath that the map does not name, and the browser bundle of a package is such
+ * a subpath. A second lookup in the embedder answers the same manifest under a different set of rules,
+ * thus a manifest entry can resolve on one side and fail on the other.
  */
 export function collectPageAssetEntries(
-    resolveSource: ResolveAssetSource = resolveThroughHarness,
+    resolveSource: ResolveAssetSource = resolvePageAssetFromInstallation,
     manifest: readonly PageAsset[] = PAGE_ASSETS,
 ): Result<PackEntry[], PageAssetError> {
     // An empty manifest writes no assets directory. The boot guard reads that directory, thus every boot
@@ -65,18 +71,4 @@ export function collectPageAssetEntries(
         }
     }
     return ok(entries);
-}
-
-/**
- * Resolve one asset specifier through the installation of the harness.
- *
- * Hop one names the installed entry of the harness. Hop two resolves the specifier against that entry.
- * Thus the bytes come from the installation of the harness, and never from the one of the cli.
- * `createRequire` cannot take hop one. The exports map of the harness declares an `import` condition
- * alone, thus a CommonJS resolution of the bare name fails. `import.meta.resolve` gives a `file://` URL,
- * thus `fileURLToPath` converts it into a path.
- */
-function resolveThroughHarness(specifier: string): string {
-    const harnessEntry = import.meta.resolve("@inflexa-ai/harness");
-    return fileURLToPath(import.meta.resolve(specifier, harnessEntry));
 }
