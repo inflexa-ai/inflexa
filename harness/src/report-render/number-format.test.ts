@@ -109,6 +109,15 @@ describe("formatNumberCell below-resolution", () => {
         expect(formatNumberCell(0, "below-resolution", 0.00099)).toEqual({ text: "<1e-3", full: "0" });
     });
 
+    it("gives the plain decimal from the scientific floor up, thus one column reads in one notation", () => {
+        // A coarse estimator prints `0.02` and `0.04` beside the bound, and an exponent would read apart.
+        expect(formatNumberCell(0, "below-resolution", 0.02)).toEqual({ text: "<0.02", full: "0" });
+        expect(formatNumberCell(0, "below-resolution", 0.011)).toEqual({ text: "<0.02", full: "0" });
+        expect(formatNumberCell(0, "below-resolution", 1)).toEqual({ text: "<1", full: "0" });
+        // The carry lands on the floor itself, thus the plain form takes it.
+        expect(formatNumberCell(0, "below-resolution", 0.0099)).toEqual({ text: "<0.01", full: "0" });
+    });
+
     it("gives the near-zero form when no positive neighbor bounds the zero", () => {
         expect(formatNumberCell(0, "below-resolution")).toEqual({ text: "≈0", full: "0" });
         expect(formatNumberCell("0", "below-resolution", 0)).toEqual({ text: "≈0", full: "0" });
