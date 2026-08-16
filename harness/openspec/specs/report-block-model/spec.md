@@ -69,6 +69,8 @@ kind. A `text` block and a `claim` block MUST be leaves that hold inline text on
 The root MUST hold at least one section, and a `section` MUST hold at least one
 block.
 
+The text block MUST admit an optional typed list beside its prose: an ordered flag, and an items array of non-empty inline lines, with at least one item. The list is content, not markup, and no markdown joins. A text block with a list and an empty prose is valid content.
+
 #### Scenario: A chart inside a metric is rejected
 
 - **WHEN** a `metric` block holds a `chart` block as a child
@@ -88,6 +90,16 @@ block.
 
 - **WHEN** a `section` holds no block
 - **THEN** validation rejects the section
+
+#### Scenario: A text block carries a list
+
+- **WHEN** a text block carries six ordered limitation items beside a lead sentence
+- **THEN** the block validates, and the list rides the stored document
+
+#### Scenario: An empty list refuses
+
+- **WHEN** a text block carries a list with zero items
+- **THEN** the parse fails
 
 ### Requirement: The chart grammar
 A chart block MUST carry either the quick path or the composition, and never both. The quick path is one chart type with one encoding. The composition holds one or more series, optional annotations, and optional axes. A series has a form (`line`, `scatter`, `bar`, `area`, `step`) and its own column encoding. An `area` series can name a `y0` lower-bound column. A channel is a column name, or a column with a per-row transform (`log10`, `neg_log10`, `abs`, `rank`). The encoding can name a `label` column for the identity of a point.

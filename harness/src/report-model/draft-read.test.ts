@@ -124,6 +124,71 @@ describe("buildOutline", () => {
         expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(label)).toBe(false);
     });
 
+    it("labels a list-only text block with its first item", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Limits",
+                    blocks: [
+                        {
+                            kind: "text",
+                            id: "t1",
+                            content: { prose: "", list: { ordered: true, items: ["The cohort is small.", "The batch confounds."] } },
+                        },
+                    ],
+                },
+            ],
+        };
+
+        // The lead sentences are optional, thus an outline of such a block would name nothing without
+        // the fallback.
+        expect(buildOutline(draft).find((entry) => entry.id === "t1")?.label).toBe("The cohort is small.");
+    });
+
+    it("keeps the lead sentence as the label when a text block carries both", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Limits",
+                    blocks: [
+                        {
+                            kind: "text",
+                            id: "t1",
+                            content: { prose: "Two limits bound the reading.", list: { ordered: true, items: ["The cohort is small."] } },
+                        },
+                    ],
+                },
+            ],
+        };
+
+        expect(buildOutline(draft).find((entry) => entry.id === "t1")?.label).toBe("Two limits bound the reading.");
+    });
+
+    it("clips a long first item of a list-only text block", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Limits",
+                    blocks: [{ kind: "text", id: "t1", content: { prose: "   ", list: { ordered: false, items: ["x".repeat(120)] } } }],
+                },
+            ],
+        };
+
+        // A prose of whitespace alone names nothing either, thus the item stands in and it clips as prose.
+        const label = buildOutline(draft).find((entry) => entry.id === "t1")?.label ?? "";
+        expect([...label].length).toBe(80);
+        expect(label.endsWith("…")).toBe(true);
+    });
+
     it("keeps a label that is exactly the clip length whole, with no marker", () => {
         const draft: DraftDocument = {
             title: "Report",

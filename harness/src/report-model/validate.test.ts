@@ -888,6 +888,35 @@ describe("validateReport — free-numeral warnings", () => {
         expect(valid.warnings).toEqual([]);
     });
 
+    it("warns on a numeral inside a list item, the same as on one in prose", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "text",
+                id: "text-list-numeral",
+                content: { prose: "Two limits bound the reading.", list: { ordered: true, items: ["The cohort holds 48 biopsies.", "The batch confounds."] } },
+            }),
+            snapshot,
+            resolver,
+        );
+        const valid = expectValid(result);
+        // An item states a point, thus a free figure inside it warns and the report stays valid.
+        expect(valid.warnings).toEqual([{ blockId: "text-list-numeral", kind: "free-numeral", detail: "48" }]);
+    });
+
+    it("gives no warning for a clean list", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "text",
+                id: "text-list-clean",
+                content: { prose: "", list: { ordered: false, items: ["The cohort is small.", "TP53 rose."] } },
+            }),
+            snapshot,
+            resolver,
+        );
+        const valid = expectValid(result);
+        expect(valid.warnings).toEqual([]);
+    });
+
     it("still warns on a free figure that sits beside a symbol", async () => {
         const result = await validateReport(
             reportWith({ kind: "text", id: "text-mixed", content: { prose: "TP53 rose 42% across 3 cohorts." } }),

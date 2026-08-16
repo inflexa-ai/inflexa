@@ -13,6 +13,56 @@ describe("renderText", () => {
         expect(html).toContain("First paragraph.");
         expect(html).toContain("Second paragraph.");
     });
+
+    it("renders the ordered list of six items after the lead paragraph", () => {
+        const items = [
+            "The cohort is small.",
+            "The batch confounds.",
+            "No cohort validates.",
+            "The profile is bulk.",
+            "The follow-up is short.",
+            "One database.",
+        ];
+        const block: TextBlock = { kind: "text", id: "t2", content: { prose: "Six limits bound the reading.", list: { ordered: true, items } } };
+
+        const html = renderText(block);
+
+        // The lead sentence introduces the enumeration, thus the list comes after the paragraph.
+        expect(html.indexOf("<p ")).toBeLessThan(html.indexOf("<ol "));
+        expect(html).toContain("Six limits bound the reading.");
+        expect(html.split("<li ").length - 1).toBe(6);
+        for (const item of items) {
+            expect(html).toContain(item);
+        }
+        expect(html).not.toContain("<ul ");
+    });
+
+    it("renders an unordered list alone when the prose is empty", () => {
+        const block: TextBlock = { kind: "text", id: "t3", content: { prose: "", list: { ordered: false, items: ["One.", "Two.", "Three."] } } };
+
+        const html = renderText(block);
+
+        expect(html).toContain("<ul ");
+        expect(html.split("<li ").length - 1).toBe(3);
+        // An empty prose gives no paragraph, thus the page carries no empty line over the list.
+        expect(html).not.toContain("<p ");
+    });
+
+    it("renders a block with no list exactly as it renders one that never had the field", () => {
+        const block: TextBlock = { kind: "text", id: "t4", content: { prose: "First paragraph.\n\nSecond paragraph." } };
+
+        expect(renderText(block)).toBe(`<p class="report-prose">First paragraph.</p><p class="report-prose">Second paragraph.</p>`);
+    });
+
+    it("keeps a script tag in an item as text", () => {
+        const block: TextBlock = { kind: "text", id: "t5", content: { prose: "", list: { ordered: true, items: ["<script>alert(1)</script> is a risk."] } } };
+
+        const html = renderText(block);
+
+        // An item takes the escape of a paragraph, thus no item reaches the page as markup.
+        expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+        expect(html).not.toContain("<script>");
+    });
 });
 
 describe("renderClaim", () => {

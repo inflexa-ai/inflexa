@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { ChartBlockSchema, channelColumn, channelTransform, type ChartComposition } from "./report-blocks.js";
+import { ChartBlockSchema, ClaimBlockSchema, TextBlockSchema, channelColumn, channelTransform, type ChartComposition } from "./report-blocks.js";
 
 const HASH = `sha256:${"a".repeat(64)}`;
 
@@ -228,5 +228,73 @@ describe("the exclusivity of the two paths", () => {
 
     it("refuses a block that carries neither path", () => {
         expect(parses({})).toBe(false);
+    });
+});
+
+describe("the text list", () => {
+    /** A text block that carries the given content. The extra fields ride unchecked, thus a hole is testable. */
+    function text(content: Record<string, unknown>): Record<string, unknown> {
+        return { kind: "text", id: "text-1", content };
+    }
+
+    /** The six limitation items of the case that the list serves. */
+    const LIMITATIONS = [
+        "The cohort holds 48 biopsies, thus a subgroup is small.",
+        "The batch and the tissue site are confounded.",
+        "No independent cohort validates the signature.",
+        "The bulk profile hides the cell of origin.",
+        "The survival follow-up is short.",
+        "The pathway result rests on one database.",
+    ];
+
+    it("takes a lead sentence with six ordered items", () => {
+        const parsed = TextBlockSchema.safeParse(text({ prose: "Six limits bound the reading.", list: { ordered: true, items: LIMITATIONS } }));
+
+        expect(parsed.success).toBe(true);
+        if (parsed.success) {
+            // The list rides the parsed block, thus the stored document keeps each item.
+            expect(parsed.data.content.list?.items).toEqual(LIMITATIONS);
+            expect(parsed.data.content.list?.ordered).toBe(true);
+        }
+    });
+
+    it("takes a list with an empty prose, because the lead sentences are optional", () => {
+        expect(TextBlockSchema.safeParse(text({ prose: "", list: { ordered: false, items: ["One point."] } })).success).toBe(true);
+    });
+
+    it("takes a block with no list, thus a stored block keeps parsing", () => {
+        const parsed = TextBlockSchema.safeParse(text({ prose: "Body text." }));
+
+        expect(parsed.success).toBe(true);
+        if (parsed.success) {
+            expect(parsed.data.content.list).toBeUndefined();
+        }
+    });
+
+    it("refuses a list that holds no item", () => {
+        expect(TextBlockSchema.safeParse(text({ prose: "Lead.", list: { ordered: true, items: [] } })).success).toBe(false);
+    });
+
+    it("refuses an item that holds no text", () => {
+        expect(TextBlockSchema.safeParse(text({ prose: "Lead.", list: { ordered: true, items: ["One point.", ""] } })).success).toBe(false);
+    });
+
+    it("refuses a list that names no form", () => {
+        expect(TextBlockSchema.safeParse(text({ prose: "Lead.", list: { items: ["One point."] } })).success).toBe(false);
+    });
+
+    it("refuses a field that the list grammar does not declare", () => {
+        expect(TextBlockSchema.safeParse(text({ prose: "Lead.", list: { ordered: true, items: ["One point."], nested: [] } })).success).toBe(false);
+    });
+
+    it("refuses a list on a claim block, because the enumeration is a text block", () => {
+        const claim = {
+            kind: "claim",
+            id: "claim-1",
+            content: { prose: "A claim.", list: { ordered: true, items: ["One point."] } },
+            bindings: [{ kind: "artifact-table", path: "runs/run-1/step-a/output/de.csv", hash: HASH }],
+        };
+
+        expect(ClaimBlockSchema.safeParse(claim).success).toBe(false);
     });
 });

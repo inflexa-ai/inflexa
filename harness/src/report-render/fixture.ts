@@ -2,9 +2,10 @@
  * The design fixture: one report document that covers every block kind, with its value map.
  *
  * A person edits `design.ts` and the views, then examines this page. Thus the fixture holds each of the
- * eight kinds, a run of metric siblings, a lone metric between two text blocks, a titled table, a titled
- * chart, a figure, a citation, and a section tree of three depths. Three top-level sections show the band
- * alternation, and the reference band holds an artifact reference beside a citation that two claims share.
+ * eight kinds, a run of metric siblings, a lone metric between two text blocks, a text block with a list,
+ * a titled table, a titled chart, a figure, a citation, and a section tree of three depths. Three
+ * top-level sections show the band alternation, and the reference band holds an artifact reference beside
+ * a citation that two claims share.
  *
  * Each value is a literal, and the figure source is an inline data URI. Thus the page is a pure function of
  * this module, and the fixture reads no file.
@@ -160,9 +161,15 @@ export const FIXTURE_DOCUMENT: ReportDocument = {
                     kind: "text",
                     id: "cohort-quality",
                     content: {
-                        prose:
-                            "Every library passed the quality gate. The duplicate rate stayed under 18 percent, and the ribosomal " +
-                            "fraction stayed under 4 percent. No biopsy dropped out of the comparison.",
+                        prose: "Every library passed the quality gate on three measures.",
+                        list: {
+                            ordered: false,
+                            items: [
+                                "The duplicate rate stayed under 18 percent.",
+                                "The ribosomal fraction stayed under 4 percent.",
+                                "No biopsy dropped out of the comparison.",
+                            ],
+                        },
                     },
                 },
             ],

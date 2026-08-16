@@ -333,6 +333,18 @@ img {
   line-height: 1.7;
   color: var(--color-text);
 }
+/* A list reads as prose that carries markers, thus it takes the type scale of the paragraph. The margin
+   is explicit on each side, because the base rule zeroes an ordered list and a browser still spaces an
+   unordered one. The left padding holds the markers, thus each item aligns inside the content column. */
+.report-list {
+  margin: 0 0 16px;
+  padding-left: 24px;
+  line-height: 1.7;
+  color: var(--color-text);
+}
+.report-list-item {
+  margin-bottom: 6px;
+}
 .report-marker {
   font-family: var(--font-mono);
   font-size: 10px;

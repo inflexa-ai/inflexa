@@ -1,7 +1,7 @@
 /**
  * The one walk over a block tree.
  *
- * A block kind decides where a reference sits, which prose carries a free numeral, and whether the block
+ * A block kind decides where a reference sits, which text carries a free numeral, and whether the block
  * holds children. Three consumers need that same knowledge: the mechanical validator, the draft finish,
  * and the draft operations. A switch for each consumer is a switch that a ninth block kind can miss in
  * silence, because each arm returns and none of them fails to build. Thus the walk lives here one time.
@@ -144,6 +144,11 @@ export function walkBlocks(blocks: readonly AnyBlock[]): BlockWalk {
                 return;
             case "text":
                 warnings.push(...numeralWarnings(block.id, block.content.prose));
+                // An item of a list states a point, the same as a sentence of the prose. Thus a free
+                // figure inside an item carries the same honesty concern, and the walk reads both.
+                for (const item of block.content.list?.items ?? []) {
+                    warnings.push(...numeralWarnings(block.id, item));
+                }
                 return;
             case "claim":
                 warnings.push(...numeralWarnings(block.id, block.content.prose));
