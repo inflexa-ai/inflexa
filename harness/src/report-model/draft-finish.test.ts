@@ -217,6 +217,32 @@ describe("the finish warnings", () => {
         expect(finishDraft(draft, derivedSnapshot(used), [{ outputPath: used }]).warnings).toEqual([]);
     });
 
+    it("counts a derivation that a chart binds", () => {
+        const used = "report-sessions/t1/derived/used.csv";
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [
+                        {
+                            kind: "chart",
+                            id: "ch1",
+                            binding: { kind: "artifact-table", path: used, hash: DERIVED_HASH },
+                            chartType: "bar",
+                            encoding: { x: "gene", y: "padj" },
+                        },
+                    ],
+                },
+            ],
+        };
+
+        // A chart plots the whole table, thus its binding names the derived path and the derivation is used.
+        expect(finishDraft(draft, derivedSnapshot(used), [{ outputPath: used }]).warnings).toEqual([]);
+    });
+
     it("counts a derivation that a claim binds through a value reference", () => {
         const used = "report-sessions/t1/derived/used.csv";
         const draft: DraftDocument = {

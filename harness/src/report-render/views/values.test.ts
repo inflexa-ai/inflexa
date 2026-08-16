@@ -27,43 +27,52 @@ describe("renderMetric", () => {
     }
 
     it("shows the label and the scalar value", () => {
-        const html = renderMetric(metric("Adjusted p-value"), { type: "scalar", value: 0.0123 });
+        const html = renderMetric(metric("Adjusted p-value"), new ReferenceLedger(), { type: "scalar", value: 0.0123 });
         expect(html).toContain("Adjusted p-value");
         // A p-value from one hundredth up reads better as a plain decimal than as an exponent.
         expect(html).toContain(">0.0123<");
     });
 
     it("puts the full digits in the title attribute of the value", () => {
-        const html = renderMetric(metric("Effect size"), { type: "scalar", value: -5.7618623255 });
+        const html = renderMetric(metric("Effect size"), new ReferenceLedger(), { type: "scalar", value: -5.7618623255 });
         expect(html).toContain(`<div class="stat-card-value" title="-5.7618623255">-5.76</div>`);
     });
 
     it("shows a p-value label in the scientific form with the full digits on the title", () => {
-        const html = renderMetric(metric("padj"), { type: "scalar", value: 0.0000427777663038 });
+        const html = renderMetric(metric("padj"), new ReferenceLedger(), { type: "scalar", value: 0.0000427777663038 });
         expect(html).toContain(`title="0.0000427777663038"`);
         expect(html).toContain(">4.3e-5<");
     });
 
     it("groups a count and carries no title, because the grouping hides no digit", () => {
-        const html = renderMetric(metric("Genes tested"), { type: "scalar", value: 18432 });
+        const html = renderMetric(metric("Genes tested"), new ReferenceLedger(), { type: "scalar", value: 18432 });
         expect(html).toContain(`<div class="stat-card-value">18,432</div>`);
         expect(html).not.toContain("title=");
     });
 
     it("passes a non-numeric value through with no title", () => {
-        const html = renderMetric(metric("Sequencing depth"), { type: "scalar", value: "42.6M" });
+        const html = renderMetric(metric("Sequencing depth"), new ReferenceLedger(), { type: "scalar", value: "42.6M" });
         expect(html).toContain(`<div class="stat-card-value">42.6M</div>`);
         expect(html).not.toContain("title=");
     });
 
     it("shows the near-zero form for a zero p-value, because a metric has no column to bound it", () => {
-        const html = renderMetric(metric("padj"), { type: "scalar", value: 0 });
+        const html = renderMetric(metric("padj"), new ReferenceLedger(), { type: "scalar", value: 0 });
         expect(html).toContain(`<div class="stat-card-value" title="0">≈0</div>`);
     });
 
     it("keeps a zero that names no p-value", () => {
-        const html = renderMetric(metric("Genes tested"), { type: "scalar", value: 0 });
+        const html = renderMetric(metric("Genes tested"), new ReferenceLedger(), { type: "scalar", value: 0 });
         expect(html).toContain(`<div class="stat-card-value">0</div>`);
+    });
+
+    it("marks the value binding in the provenance ladder, and shows the marker on the label", () => {
+        const ledger = new ReferenceLedger();
+        const html = renderMetric(metric("Genes tested"), ledger, { type: "scalar", value: 18432 });
+
+        // The marker sits on the label line, thus the value line stays the one figure of the card.
+        expect(html).toContain(`<div class="stat-card-label">Genes tested<sup class="report-marker"><a href="#ref-1">1</a></sup></div>`);
+        expect(ledger.provenanceEntries()).toEqual([scalarBinding]);
     });
 });
 
@@ -266,14 +275,14 @@ describe("renderTable", () => {
 describe("renderFigure", () => {
     it("puts the source in the src attribute and the caption below", () => {
         const block: FigureBlock = { kind: "figure", id: "f1", binding: figureBinding, caption: "Volcano plot" };
-        const html = renderFigure(block, { type: "figure", src: "data:image/png;base64,AAAA" });
+        const html = renderFigure(block, new ReferenceLedger(), { type: "figure", src: "data:image/png;base64,AAAA" });
         expect(html).toContain(`src="data:image/png;base64,AAAA"`);
         expect(html).toContain("Volcano plot");
     });
 
     it("keeps a quote in the caption as text and inside the alt attribute", () => {
         const block: FigureBlock = { kind: "figure", id: "f2", binding: figureBinding, caption: 'a "quoted" caption' };
-        const html = renderFigure(block, { type: "figure", src: "plot.png" });
+        const html = renderFigure(block, new ReferenceLedger(), { type: "figure", src: "plot.png" });
         // The runtime escapes each child, thus the figcaption content holds the escaped quote.
         expect(html).toContain("a &quot;quoted&quot; caption");
         // The alt attribute escapes the quote, thus the quote cannot break the attribute.
@@ -282,10 +291,22 @@ describe("renderFigure", () => {
 
     it("keeps a quote in the source inside the src attribute", () => {
         const block: FigureBlock = { kind: "figure", id: "f3", binding: figureBinding, caption: "c" };
-        const html = renderFigure(block, { type: "figure", src: 'x" onerror="alert(1)' });
+        const html = renderFigure(block, new ReferenceLedger(), { type: "figure", src: 'x" onerror="alert(1)' });
         expect(html).toContain(`src="x&quot; onerror=&quot;alert(1)"`);
         // The broken-out form with raw quotes is absent.
         expect(html).not.toContain(`onerror="alert(1)"`);
+    });
+
+    it("marks the file binding in the provenance ladder, and shows the marker with no caption", () => {
+        const ledger = new ReferenceLedger();
+        const block: FigureBlock = { kind: "figure", id: "f4", binding: figureBinding };
+        const html = renderFigure(block, ledger, { type: "figure", src: "plot.png" });
+
+        // A figure with no caption still ledgers, thus the appendix names the image that the page shows.
+        expect(html).toContain(`<figcaption class="report-caption"><sup class="report-marker"><a href="#ref-1">1</a></sup></figcaption>`);
+        // The alt text stays the picture, thus the marker never reaches a screen reader as caption text.
+        expect(html).toContain(`alt=""`);
+        expect(ledger.provenanceEntries()).toEqual([figureBinding]);
     });
 });
 
