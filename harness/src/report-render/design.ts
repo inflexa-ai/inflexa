@@ -60,6 +60,28 @@ const FONT_FACES = `@font-face {
   font-display: swap;
 }`;
 
+/**
+ * The token values that the page and the grid share.
+ *
+ * The grid takes its theme through a parameter object, and that API takes values. A CSS custom property
+ * would arrive at the grid as text that it cannot read. Thus the shared tokens are constants here, the
+ * `:root` block below interpolates them, and `GRID_THEME_PARAMS` reads the same names. One source then
+ * styles the page and the grid.
+ */
+const TOKEN = {
+    primary500: "#576dea",
+    heading: "#0f172a",
+    textStrong: "#334155",
+    textSecondary: "#64748b",
+    textMuted: "#94a3b8",
+    card: "#ffffff",
+    bgAlt: "#f8fafc",
+    borderSubtle: "#f1f5f9",
+    border: "#e2e8f0",
+    fontSans: `"Space Grotesk Variable", system-ui, sans-serif`,
+    fontMono: `"IBM Plex Mono", ui-monospace, monospace`,
+} as const;
+
 /** The style rules of the page. The renderer inlines them in one `<style>` block. */
 export const DESIGN_CSS = `${FONT_FACES}
 
@@ -71,23 +93,23 @@ export const DESIGN_CSS = `${FONT_FACES}
   --color-primary-200: #bcc2f9;
   --color-primary-300: #9ba5f5;
   --color-primary-400: #7987f0;
-  --color-primary-500: #576dea;
+  --color-primary-500: ${TOKEN.primary500};
   --color-primary-600: #4458d4;
   --color-primary-700: #3545b0;
 
   /* Text */
-  --color-heading:        #0f172a;
-  --color-text-strong:    #334155;
+  --color-heading:        ${TOKEN.heading};
+  --color-text-strong:    ${TOKEN.textStrong};
   --color-text:           #475569;
-  --color-text-secondary: #64748b;
-  --color-text-muted:     #94a3b8;
+  --color-text-secondary: ${TOKEN.textSecondary};
+  --color-text-muted:     ${TOKEN.textMuted};
 
   /* Surface */
   --color-bg:             #ffffff;
-  --color-bg-alt:         #f8fafc;
-  --color-card:           #ffffff;
-  --color-border-subtle:  #f1f5f9;
-  --color-border:         #e2e8f0;
+  --color-bg-alt:         ${TOKEN.bgAlt};
+  --color-card:           ${TOKEN.card};
+  --color-border-subtle:  ${TOKEN.borderSubtle};
+  --color-border:         ${TOKEN.border};
   --color-border-hover:   #cbd5e1;
   --color-surface-dark:   #0f172a;
 
@@ -112,8 +134,8 @@ export const DESIGN_CSS = `${FONT_FACES}
   --color-stat-amber:   #f59e0b;
 
   /* Typography and layout */
-  --font-sans: "Space Grotesk Variable", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-sans: ${TOKEN.fontSans};
+  --font-mono: ${TOKEN.fontMono};
   --layout-max: 1600px;
   --content-max: 1100px;
   --nav-width: 15rem;
@@ -450,132 +472,11 @@ img {
   text-transform: uppercase;
   color: var(--color-primary-500);
 }
-/* The control strip of a table card. It holds the filter input of the page enhancer.
-
-   The strip shows under the live marker alone. The page script writes that marker on each card that it
-   enhances, thus a browser with no script sees no input that it cannot drive. */
-.report-table-controls {
-  display: none;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-card);
-}
-.report-table-live .report-table-controls {
-  display: block;
-}
-.report-table-filter {
+/* The mount of one grid. The page script sizes it from the row count, thus the box fits a short table and
+   a long table scrolls inside its own viewport. A mount whose payload the page does not hold takes no size,
+   thus the card shows its title and its download alone. */
+.report-grid {
   width: 100%;
-  max-width: 320px;
-  padding: 7px 10px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--color-text-strong);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-}
-.report-table-filter:focus {
-  outline: none;
-  border-color: var(--color-primary-500);
-}
-.report-table-filter::placeholder {
-  color: var(--color-text-muted);
-}
-.data-table-scroll {
-  overflow-x: auto;
-}
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-.data-table th {
-  padding: 12px 16px;
-  text-align: left;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-secondary);
-  background-color: var(--color-bg-alt);
-  border-bottom: 1px solid var(--color-border);
-}
-.data-table td {
-  padding: 10px 16px;
-  color: var(--color-text-strong);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-/* A sortable header. The page script adds one of the two mark classes to the header that orders the table,
-   and it holds that class on one header at a time.
-
-   The affordance shows under the live marker alone. A zero-row table never takes the marker, thus its
-   headers stay plain and no pointer promises a sort that does nothing. */
-.report-table-live .data-table-sort {
-  cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
-}
-.report-table-live .data-table-sort:hover {
-  color: var(--color-heading);
-}
-.data-table-sort-asc::after,
-.data-table-sort-desc::after {
-  padding-left: 4px;
-  color: var(--color-primary-500);
-}
-.data-table-sort-asc::after {
-  content: "\\2191";
-}
-.data-table-sort-desc::after {
-  content: "\\2193";
-}
-.report-row {
-  transition: background-color 0.15s ease;
-}
-.report-row:hover {
-  background-color: var(--color-bg-alt);
-}
-.report-row:last-child td {
-  border-bottom: 0;
-}
-/* The cap hides each row past it, and the toggle and the filter both write this class. The row stays in the
-   document, thus the page keeps every resolved value and no data moves.
-
-   The rule takes effect under the live marker alone. The page script writes that marker on each card that it
-   enhances. Thus a browser with no script shows the complete plain table, and no row hides behind a toggle
-   that cannot open. */
-.report-table-live .report-row-hidden {
-  display: none;
-}
-/* The toggle of the row cap. It sits under the table, and it names the total row count. It shows under the
-   live marker alone, thus a browser with no script sees no button that it cannot drive. */
-.report-table-toggle {
-  display: none;
-  width: 100%;
-  padding: 10px 16px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  text-align: center;
-  color: var(--color-primary-500);
-  background: var(--color-bg-alt);
-  border: 0;
-  border-top: 1px solid var(--color-border);
-  cursor: pointer;
-}
-.report-table-live .report-table-toggle {
-  display: block;
-}
-/* The filter can keep the cap or less. No row then waits behind the toggle, thus the script hides it. The
-   rule comes after the rule that shows the toggle, thus it wins on the same specificity. */
-.report-table-live .report-table-toggle-off {
-  display: none;
-}
-.report-table-toggle:hover {
-  color: var(--color-primary-700);
-  background: var(--color-border-subtle);
 }
 /* The footer of a table card. It holds the download of the raw bytes, thus it reads as a foot rule under
    the table and never as a second control bar. */
@@ -882,15 +783,6 @@ a.report-citation-source:hover {
   .texture-noise::after {
     display: none;
   }
-  /* Paper carries no filter and no toggle. Thus the controls drop out, and each hidden row prints. Each
-     selector matches its live rule above, thus print wins on the same specificity and by its position. */
-  .report-table-live .report-table-controls,
-  .report-table-live .report-table-toggle {
-    display: none;
-  }
-  .report-table-live .report-row-hidden {
-    display: table-row;
-  }
   .report-footer {
     background: var(--color-bg);
   }
@@ -899,6 +791,71 @@ a.report-citation-source:hover {
     color: var(--color-text-strong);
   }
 }`;
+
+/**
+ * The row height and the header height of a grid, in pixels.
+ *
+ * The theme takes both, and the page script measures the mount with the same two numbers. Thus the box of
+ * the mount and the rows inside it agree, and no row half shows at the bottom edge.
+ */
+export const GRID_ROW_HEIGHT_PX = 36;
+export const GRID_HEADER_HEIGHT_PX = 40;
+
+/**
+ * The bottom border of the header row, in pixels.
+ *
+ * The grid draws that border under the header, thus the box of the mount holds the header, this border, and
+ * the rows. Without it the last row sits one pixel past the box, and the grid paints a scrollbar over a
+ * table that fits.
+ */
+export const GRID_HEADER_BORDER_PX = 1;
+
+/**
+ * The count of rows that a grid shows before it scrolls, and the smallest width of a column.
+ *
+ * A card of a fixed height would leave a short table half empty. The page script takes the smaller of this
+ * count and the row count, thus a table of three rows takes the height of three rows.
+ */
+export const GRID_VISIBLE_ROWS = 12;
+export const GRID_MIN_COLUMN_WIDTH_PX = 120;
+
+/** The delay before a cell tooltip shows, in milliseconds. */
+export const GRID_TOOLTIP_DELAY_MS = 200;
+
+/**
+ * The theme parameters of a grid. The page script passes them to `themeQuartz.withParams`.
+ *
+ * The values read the shared tokens above. Thus the palette, the two font families, and the header
+ * treatment of the grid are the palette, the families, and the treatment of the page.
+ *
+ * `browserColorScheme` pins the light scheme. The page carries one palette, thus a browser in the dark
+ * scheme must not invert the grid under it.
+ */
+export const GRID_THEME_PARAMS = {
+    accentColor: TOKEN.primary500,
+    backgroundColor: TOKEN.card,
+    foregroundColor: TOKEN.textStrong,
+    borderColor: TOKEN.border,
+    browserColorScheme: "light",
+    fontFamily: TOKEN.fontSans,
+    fontSize: 14,
+    headerBackgroundColor: TOKEN.bgAlt,
+    headerFontFamily: TOKEN.fontMono,
+    headerFontSize: 11,
+    headerFontWeight: 600,
+    headerTextColor: TOKEN.textSecondary,
+    headerHeight: GRID_HEADER_HEIGHT_PX,
+    iconColor: TOKEN.textMuted,
+    oddRowBackgroundColor: TOKEN.card,
+    rowHeight: GRID_ROW_HEIGHT_PX,
+    rowHoverColor: TOKEN.bgAlt,
+    subtleTextColor: TOKEN.textMuted,
+    // The corner-accent card around the mount carries the border and the square corners of the identity.
+    // A second border on the wrapper would double the rule at each edge of the card.
+    wrapperBorder: false,
+    wrapperBorderRadius: 0,
+    borderRadius: 0,
+};
 
 /**
  * The registered name of the ECharts theme. The registration script writes this name, and the bootstrap

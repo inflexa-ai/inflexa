@@ -13,9 +13,9 @@
  * declares for its column, and the column name answers for a column that declares none. A metric takes its
  * label, because a value locator declares no column-wide meaning.
  *
- * A table card carries the header of its table, an empty body, and the download of the raw pinned bytes.
- * The rows ride a data asset beside the page, thus the markup carries no copy of them. `renderTableRows`
- * holds the presentation of a cell, and it stays beside the card that owns that presentation.
+ * A table card carries the grid mount and the download of the raw pinned bytes. The rows and the display of
+ * each column ride a data asset beside the page, and the page script builds the grid over them. Thus the
+ * markup carries no row, and `tableDisplay` gives the page what the server resolved for each column.
  *
  * Each data card carries the `corner-accents` class. Thus the card keeps square corners with the L-shaped
  * accents, which is the geometric identity of the report.
@@ -24,39 +24,21 @@
 import { raw } from "hono/html";
 
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
-import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
+import { declaredForColumn } from "../../contracts/report-reference.js";
 import type { CitationRecord } from "../../report-model/reference-resolver.js";
 import { stagedSource, tableSidecarName } from "../assets.js";
 import { LadderMarker } from "./references-view.js";
-import { formatNumberCell, holdsAPValue, selectNumberKind, smallestPositiveValue } from "../number-format.js";
+import { formatNumberCell, selectColumnKind, selectNumberKind, smallestPositiveValue } from "../number-format.js";
 import { citationKeyOf, type ReferenceLedger } from "../references.js";
+import type { ColumnDisplay } from "../table-data.js";
 import type { RenderValue } from "../types.js";
 
 /**
- * The count of table rows that the page shows before the toggle.
+ * The attribute that marks the grid mount of a table card, and that names the block of its data.
  *
- * The cap is a renderer constant, thus a block carries no field for it and the column subset stays the one
- * content-level choice. The page enhancer reads the same constant, thus the markup and the script bound the
- * table at one number.
+ * The page script reads the same attribute, thus the card and the boot cannot disagree over a rename.
  */
-export const TABLE_ROW_CAP = 20;
-
-/** The delimiter of an encoded set name, for example `HALLMARK_HYPOXIA%MSigDB%M5891`. */
-const NAME_DELIMITER = "%";
-
-/** The count of segments that an encoded set name holds: the name, the collection, and the accession. */
-const NAME_SEGMENTS = 3;
-
-/** One whitespace character. A segment of an encoded name holds none. */
-const WHITESPACE = /\s/;
-
-/**
- * The collapsed label of the row-cap toggle.
- *
- * The view composes the label at render, and the enhancer composes it again from the count that the filter
- * keeps. Both read this one prefix, thus the two labels cannot drift apart.
- */
-export const SHOW_ALL_PREFIX = "Show all ";
+export const GRID_MOUNT_ATTRIBUTE = "data-report-grid";
 
 /** The label of the download link of a table card. It names what the reader gets, which is the whole table. */
 const DOWNLOAD_LABEL = "Download the full table";
@@ -120,174 +102,61 @@ export function tableColumns(value: TableValue): string[] {
 }
 
 /**
- * The first segment of a delimited name, or `undefined` when the text carries no delimited name.
- *
- * An enrichment tool joins the name of a set, its collection, and its accession with a percent sign. The
- * name alone identifies the row, thus the rest is noise inside a narrow column.
- *
- * Such a name holds three or more segments, each segment holds a character, and no segment holds a
- * whitespace character. Every other text keeps its whole form. Thus `95%` stays whole, and a sentence such
- * as `up 20% vs control` stays whole.
- */
-function firstNameSegment(text: string): string | undefined {
-    const segments = text.split(NAME_DELIMITER);
-    if (segments.length < NAME_SEGMENTS) {
-        return undefined;
-    }
-    const encoded = segments.every((segment) => segment.length > 0 && !WHITESPACE.test(segment));
-    return encoded ? segments[0] : undefined;
-}
-
-/**
- * The heading of one column: the text on the page, and the raw name for the `title` attribute.
+ * The header label of one column.
  *
  * A declared label names what the column measures. A column with no label prettifies, thus an underscore
- * reads as a space. The raw name rides the hover only when the shown text differs from it, because a title
- * that repeats the text tells a reader nothing.
+ * reads as a space. The page compares the label against the raw name, and it puts the raw name on the
+ * header hover where the two differ.
  */
-function columnHeading(column: string, labels: TableBlock["binding"]["columnLabels"]): { text: string; title?: string } {
-    const label = declaredForColumn(labels, column);
-    const text = label ?? column.replaceAll("_", " ");
-    return text === column ? { text } : { text, title: column };
+function columnLabel(column: string, labels: TableBlock["binding"]["columnLabels"]): string {
+    return declaredForColumn(labels, column) ?? column.replaceAll("_", " ");
 }
 
 /**
- * The smallest positive value of each p-value column, keyed by the column name.
+ * The display of each column of a table, in the column order of the header.
  *
- * A stored zero in such a column renders as a bound under its smallest positive neighbor. The view reads
- * each p-value column one time here, thus the cell format stays column-blind and a wide table reads no
- * column twice. A column with no positive value takes no entry, and its zero then renders as the near-zero
- * form.
+ * The renderer resolves the label, the number kind, and the bound of a stored zero one time for each
+ * column, and the data asset ships them. Thus the page formats a cell with no read of a declaration and no
+ * second pass over a column.
+ *
+ * A probability column carries the smallest positive value of its own rows as the bound. The read runs one
+ * time for each such column, thus a wide table reads no column twice. A column with no positive value takes
+ * no bound, and its zero then reads as the near-zero form.
  */
-function pValueBounds(columns: readonly string[], value: TableValue, meanings: TableBlock["binding"]["columnMeanings"]): Map<string, number> {
-    const bounds = new Map<string, number>();
-    for (const column of columns) {
-        if (!holdsAPValue(column, declaredForColumn(meanings, column))) {
-            continue;
+export function tableDisplay(block: TableBlock, value: TableValue, columns: readonly string[]): ColumnDisplay[] {
+    const binding = block.binding;
+    return columns.map((column) => {
+        const kind = selectColumnKind(column, declaredForColumn(binding.columnMeanings, column));
+        const label = columnLabel(column, binding.columnLabels);
+        if (kind !== "scientific") {
+            return { label, kind };
         }
         const bound = smallestPositiveValue(value.rows.map((row) => row[column]));
-        if (bound !== undefined) {
-            bounds.set(column, bound);
-        }
-    }
-    return bounds;
+        return bound === undefined ? { label, kind } : { label, kind, bound };
+    });
 }
 
 /**
- * One body cell of a table.
- *
- * The declared meaning selects the number kind, and the column name selects it for a column that declares
- * none. Thus a p-value column reads in the scientific form. The full digits ride the `title` attribute when
- * the shown form hides one. An absent cell renders as an empty cell, thus a ragged row keeps its shape.
- *
- * `bound` is the smallest positive value of the column. A stored zero of a p-value column reads as a bound
- * under it, thus the page never prints a p-value of zero.
- *
- * Each cell carries its raw value in the `data-value` attribute. The page enhancer sorts on that value, thus
- * the shown text stays presentation and a rounded number still sorts by its full magnitude.
- *
- * A delimited name shows its first segment, and the whole name rides the `title` attribute. Such a name
- * holds no finite number, thus the number format passed it through and this trim reads the text that the
- * format gave.
- */
-function Cell({
-    column,
-    cell,
-    meaning,
-    bound,
-}: {
-    column: string;
-    cell: string | number | undefined;
-    meaning: ColumnMeaning | undefined;
-    bound: number | undefined;
-}) {
-    if (cell === undefined) {
-        return <td data-value=""></td>;
-    }
-    const shown = formatNumberCell(cell, selectNumberKind(column, cell, meaning), bound);
-    const segment = firstNameSegment(shown.text);
-    if (segment !== undefined) {
-        return (
-            <td data-value={String(cell)} title={shown.text}>
-                {segment}
-            </td>
-        );
-    }
-    return (
-        <td data-value={String(cell)} title={shown.full}>
-            {shown.text}
-        </td>
-    );
-}
-
-/**
- * Render the body rows of a table as markup: one row for each resolved row, each cell under the format of
- * its column.
- *
- * The card renders no body row today, because the rows of a table ride a data asset and the page reads
- * them from there. This function is the one home of the cell presentation: the declared meaning, the
- * number format, the p-value bound of a column, and the trim of a delimited name. It stays beside the card
- * that it belongs to, thus the presentation of a cell has one definition.
- *
- * A row past the cap carries the hidden class, and the enhancer hides it under its live marker alone.
- */
-export function renderTableRows(block: TableBlock, value: TableValue): string {
-    const columns = tableColumns(value);
-    const binding = block.binding;
-    const bounds = pValueBounds(columns, value, binding.columnMeanings);
-    return String(
-        <>
-            {value.rows.map((row, index) => (
-                <tr class={index < TABLE_ROW_CAP ? "report-row" : "report-row report-row-hidden"}>
-                    {columns.map((column) => (
-                        <Cell column={column} cell={row[column]} meaning={declaredForColumn(binding.columnMeanings, column)} bound={bounds.get(column)} />
-                    ))}
-                </tr>
-            ))}
-        </>,
-    );
-}
-
-/**
- * Render a table block as the header of its table, the download of its raw bytes, and an empty body.
+ * Render a table block as the grid mount and the download of its raw bytes.
  *
  * The rows ride a data asset beside the page. A page that stamped 14,201 rows into its markup weighed
- * megabytes, and each row was a copy of the column names. Thus the markup holds the header alone, and the
- * page reads the rows from the payload that registers under the block id.
+ * megabytes, and each row was a copy of the column names. Thus the markup holds one empty mount, and the
+ * page script builds the grid over the payload that registers under the block id.
  *
- * Each header cell stays a plain `th`. It carries the sort class and the index of its column, thus the
- * enhancer reads the column of a click and a browser with no script keeps a plain header. The header also
- * takes the tab order, thus a reader sorts the table from the keyboard. The header shows the declared label
- * of the column, and the raw name rides the `title` attribute.
+ * The mount names its block in the mount attribute. A mount whose block the registry does not hold stays
+ * empty, thus the card keeps its title and its download and the page throws nothing.
  *
  * The download names the staged copy of the pinned artifact. The link is relative and the browser saves
  * the file, thus the page fetches nothing when it opens and the reader still gets the whole table.
  */
-export function renderTable(block: TableBlock, value: TableValue): string {
-    const columns = tableColumns(value);
+export function renderTable(block: TableBlock): string {
     const binding = block.binding;
     const download = tableSidecarName(binding.hash, binding.path);
     return String(
         <div class="report-table">
             {block.title !== undefined ? <div class="report-table-title">{block.title}</div> : null}
             <div class="corner-accents">
-                <div class="data-table-scroll">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                {columns.map((column, index) => {
-                                    const heading = columnHeading(column, binding.columnLabels);
-                                    return (
-                                        <th class="data-table-sort" data-sort-index={String(index)} tabindex={0} title={heading.title}>
-                                            {heading.text}
-                                        </th>
-                                    );
-                                })}
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
+                <div class="report-grid" {...{ [GRID_MOUNT_ATTRIBUTE]: block.id }}></div>
                 <div class="report-table-footer">
                     <a class="report-table-download" href={stagedSource(download)} download={download}>
                         {DOWNLOAD_LABEL}

@@ -10,11 +10,15 @@
  * cell that holds it becomes its index. A category column of one thousand rows and four values then costs
  * four strings and one thousand small integers.
  *
+ * The payload also carries the display of each column: the header label, the number kind, and the bound of
+ * a stored zero. The server resolves the three, and the page formats each cell under them.
+ *
  * The module is pure, and it reads no file. The renderer derives a payload, and the caller writes it.
  */
 
 import { createHash } from "node:crypto";
 
+import type { NumberKind } from "./number-format.js";
 import { scriptJson } from "./script-json.js";
 
 /**
@@ -28,16 +32,33 @@ export const TABLE_DATA_GLOBAL = "__REPORT_TABLES";
 export type EncodedCell = string | number | null;
 
 /**
+ * How one column shows on the page: the header label, the number kind of the column, and the bound of a
+ * stored zero where the column holds one.
+ *
+ * The server resolves each of the three, and the page reads them. Thus the declaration, the token guess,
+ * and the read of a whole column stay on the server, and the page formats alone.
+ */
+export interface ColumnDisplay {
+    label: string;
+    kind: NumberKind;
+    bound?: number;
+}
+
+/**
  * One encoded table.
  *
  * `columns` is the column order, and each row of `rows` holds one cell for each column in that order.
  * `dict` holds the repeated values of a column, keyed by the column name. A cell of such a column is a
  * number when it names an entry of that list, and the value itself at every other time.
+ *
+ * `display` holds one entry for each column, in the same order. A list and not a map, thus a column named
+ * `__proto__` needs no guard on the page and the entry of a column sits at the index of its name.
  */
 export interface TablePayload {
     columns: string[];
     rows: EncodedCell[][];
     dict: Record<string, string[]>;
+    display: ColumnDisplay[];
 }
 
 /** One data asset that the caller writes beside the page: the staged file name, and the source text of it. */
@@ -86,8 +107,14 @@ function columnDictionary(rows: ReadonlyArray<Record<string, string | number>>, 
  *
  * A cell that a row does not hold rides as `null`. A table tolerates a ragged row, thus the payload states
  * the absence in place and never shifts the rest of the row.
+ *
+ * `display` arrives in the column order, thus the entry of a column sits at the index of its name.
  */
-export function encodeTablePayload(columns: readonly string[], rows: ReadonlyArray<Record<string, string | number>>): TablePayload {
+export function encodeTablePayload(
+    columns: readonly string[],
+    rows: ReadonlyArray<Record<string, string | number>>,
+    display: readonly ColumnDisplay[],
+): TablePayload {
     const dict: Record<string, string[]> = {};
     const indexes = new Map<string, Map<string, number>>();
     for (const column of columns) {
@@ -110,7 +137,7 @@ export function encodeTablePayload(columns: readonly string[], rows: ReadonlyArr
             return index === undefined ? cell : index;
         }),
     );
-    return { columns: [...columns], rows: encodedRows, dict };
+    return { columns: [...columns], rows: encodedRows, dict, display: [...display] };
 }
 
 /**

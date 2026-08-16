@@ -12,16 +12,13 @@
  */
 
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ASSETS_DIR, PAGE_ASSETS } from "../src/report-render/assets.js";
 import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "../src/report-render/fixture.js";
 import { renderReportPage } from "../src/report-render/render.js";
-
-/** The resolver of a package source. Each manifest entry names a module specifier of the installation. */
-const moduleResolver = createRequire(import.meta.url);
+import { resolvePageAssetFromInstallation } from "../src/tools/report-session/preview-report.js";
 
 const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
 if (rendered.isErr()) {
@@ -31,8 +28,10 @@ if (rendered.isErr()) {
 const pageDir = join(tmpdir(), "inflexa-report-fixture");
 const assetsDir = join(pageDir, ASSETS_DIR);
 await mkdir(assetsDir, { recursive: true });
+// The fixture stages what the preview stages. Thus one lookup answers for both, and a manifest entry that
+// the preview resolves cannot be an entry that the fixture page misses.
 for (const asset of PAGE_ASSETS) {
-    await copyFile(moduleResolver.resolve(asset.specifier), join(assetsDir, asset.file));
+    await copyFile(resolvePageAssetFromInstallation(asset.specifier), join(assetsDir, asset.file));
 }
 // The rows of a table ride a data asset. Without the write the page opens with a failed script request,
 // and the person sees a table card with no data behind it.

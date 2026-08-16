@@ -18,6 +18,10 @@
  *
  * The column meaning that a binding declares replaces the name of the column in the kind decision. The
  * magnitude of the cell decides after it, the same for a declared column and for an undeclared one.
+ *
+ * A table resolves one kind for each whole column with `selectColumnKind`, and the data asset ships that
+ * kind. `formatTableCell` then reads the cell under it. The page script holds a twin of that one function,
+ * and a shared test vector pins the two together.
  */
 
 import type { ColumnMeaning } from "../contracts/report-reference.js";
@@ -86,6 +90,15 @@ const GROUP_COMMAS = /,/g;
  * because the column gives nothing better.
  */
 const NEAR_ZERO_FORM = "≈0";
+
+/** The delimiter of an encoded set name, for example `HALLMARK_HYPOXIA%MSigDB%M5891`. */
+const NAME_DELIMITER = "%";
+
+/** The count of segments that an encoded set name holds: the name, the collection, and the accession. */
+const NAME_SEGMENTS = 3;
+
+/** One whitespace character. A segment of an encoded name holds none. */
+const WHITESPACE = /\s/;
 
 /**
  * Format one cell in one kind.
@@ -163,6 +176,92 @@ export function selectNumberKind(column: string, cell: string | number, meaning?
 }
 
 /**
+ * The number kind of one whole column.
+ *
+ * A column carries one kind, and the cell decides the arms under it. `identifier` names a column of names.
+ * `scientific` names a column of probabilities, where a small value reads as an exponent and a stored zero
+ * reads as a bound. `compact-scientific` names every other column, where a whole number groups and a float
+ * rounds.
+ *
+ * The renderer ships this kind with the table data, and the page formats each cell under it. Thus the
+ * declaration and the token guess stay here, on the server, where a test reads them.
+ */
+export function selectColumnKind(column: string, meaning?: ColumnMeaning): NumberKind {
+    if (holdsAName(column, meaning)) {
+        return "identifier";
+    }
+    return holdsAPValue(column, meaning) ? "scientific" : "compact-scientific";
+}
+
+/**
+ * The shown text of one table cell, under the kind of its column.
+ *
+ * The page script holds a twin of this function, because the rows reach the reader through the data asset
+ * and the page formats them there. A shared test vector runs both over the same entries, thus the two
+ * cannot give different text in silence.
+ *
+ * `bound` is the smallest positive value of the column. A stored zero of a probability column reads as a
+ * bound under it, thus the page never prints a probability of zero.
+ *
+ * A delimited name shows its first segment. Such a name holds no finite number, thus the number format
+ * passes it through and this trim reads the text that the format gave.
+ */
+export function formatTableCell(cell: string | number, kind: NumberKind, bound?: number): string {
+    const shown = formatNumberCell(cell, cellKind(cell, kind), bound).text;
+    return firstNameSegment(shown) ?? shown;
+}
+
+/**
+ * The kind of one cell under the kind of its column.
+ *
+ * A column of names gives one kind to each of its cells. A column of magnitudes reads the cell: a zero of a
+ * probability column takes the bound, a small probability takes the exponent, a safe integer takes the
+ * grouped form, and every other value takes the rounded form. A cell that holds no finite number takes the
+ * rounded form too, because the format passes such a cell through unchanged.
+ */
+function cellKind(cell: string | number, column: NumberKind): NumberKind {
+    if (column === "identifier") {
+        return "identifier";
+    }
+    const value = finiteValue(cell);
+    if (value === null) {
+        return "compact-scientific";
+    }
+    if (column === "scientific") {
+        // A stored zero in a probability column claims no zero probability. It states that the estimator
+        // bottomed out, thus the page shows a bound and a bare `0` would read as a result.
+        if (value === 0) {
+            return "below-resolution";
+        }
+        // From one hundredth up, the plain decimal is as short as the exponent and it is easier to read.
+        if (value > 0 && value < SCIENTIFIC_FLOOR) {
+            return "scientific";
+        }
+    }
+    // An integer above the safe range is no longer exact, thus it reads as a general float and not as a count.
+    return Number.isSafeInteger(value) ? "compact" : "compact-scientific";
+}
+
+/**
+ * The first segment of a delimited name, or `undefined` when the text carries no delimited name.
+ *
+ * An enrichment tool joins the name of a set, its collection, and its accession with a percent sign. The
+ * name alone identifies the row, thus the rest is noise inside a narrow column.
+ *
+ * Such a name holds three or more segments, each segment holds a character, and no segment holds a
+ * whitespace character. Every other text keeps its whole form. Thus `95%` stays whole, and a sentence such
+ * as `up 20% vs control` stays whole.
+ */
+function firstNameSegment(text: string): string | undefined {
+    const segments = text.split(NAME_DELIMITER);
+    if (segments.length < NAME_SEGMENTS) {
+        return undefined;
+    }
+    const encoded = segments.every((segment) => segment.length > 0 && !WHITESPACE.test(segment));
+    return encoded ? segments[0] : undefined;
+}
+
+/**
  * True when the column holds a name and not a magnitude.
  *
  * A declared `identifier` and a declared `category` both hold one. The identifier kind is the one kind that
@@ -183,7 +282,8 @@ function holdsAName(column: string, meaning: ColumnMeaning | undefined): boolean
  * below this test. An effect is a float, and it reads there in the compact-scientific kind. A count is a
  * whole number, and it reads there in the compact kind.
  *
- * The caller of a table reads this to find the columns whose zeros need a bound.
+ * The kind of a whole column reads this, thus a probability column takes the scientific kind and the zeros
+ * of that column take a bound.
  */
 export function holdsAPValue(column: string, meaning?: ColumnMeaning): boolean {
     return meaning !== undefined ? meaning === "p-value" : isPValueColumn(column);

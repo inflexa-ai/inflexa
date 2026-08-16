@@ -1,21 +1,35 @@
 /**
- * The page constants: the head references, the readiness names, and the four page-side scripts.
+ * The page constants: the head references, the readiness names, and the page-side scripts.
  *
  * A script here is browser source text, not module code. Thus it reads no module binding, and each value
- * that it needs is interpolated at build time. The style rules and the ECharts theme live in `design.ts`.
+ * that it needs is interpolated at build time. The style rules, the ECharts theme, and the grid theme
+ * parameters live in `design.ts`.
  */
 
-import { assetSource, ECHARTS_ASSET } from "./assets.js";
-import { ECHARTS_THEME_NAME } from "./design.js";
+import { AG_GRID_ASSET, assetSource, ECHARTS_ASSET } from "./assets.js";
+import {
+    ECHARTS_THEME_NAME,
+    GRID_HEADER_BORDER_PX,
+    GRID_HEADER_HEIGHT_PX,
+    GRID_MIN_COLUMN_WIDTH_PX,
+    GRID_ROW_HEIGHT_PX,
+    GRID_THEME_PARAMS,
+    GRID_TOOLTIP_DELAY_MS,
+    GRID_VISIBLE_ROWS,
+} from "./design.js";
+import { scriptJson } from "./script-json.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
-import { SHOW_ALL_PREFIX, TABLE_ROW_CAP } from "./views/values.js";
+import { GRID_MOUNT_ATTRIBUTE } from "./views/values.js";
 
 /**
- * The head references of the staged assets. The page loads the chart runtime from the sibling assets
- * directory, thus the head names no remote host. The manifest gives the staged name, thus the tag and the
- * stage step of the caller cannot disagree.
+ * The head references of the staged assets. The page loads the chart runtime and the grid runtime from the
+ * sibling assets directory, thus the head names no remote host. The manifest gives each staged name, thus
+ * the tag and the stage step of the caller cannot disagree.
+ *
+ * Each of the two is a classic script. A `file://` page refuses a module request, thus a classic script is
+ * the one form that loads beside the page.
  */
-export const ASSET_HEAD = `<script src="${assetSource(ECHARTS_ASSET)}"></script>`;
+export const ASSET_HEAD = `<script src="${assetSource(ECHARTS_ASSET)}"></script><script src="${assetSource(AG_GRID_ASSET)}"></script>`;
 
 /**
  * The name of the readiness event, and the name of the window sentinel that guards a late listener. The
@@ -63,42 +77,6 @@ const REVEAL_SETTLE_TIMEOUT_MS = 2_000;
  */
 const NAV_ACTIVE_CLASS = "report-nav-link-active";
 const SPY_BOTTOM_MARGIN_PERCENT = 70;
-
-/**
- * The class that hides one table row, and the two classes that mark the sorted header.
- *
- * The table view emits the hidden class on each row past the cap, and the enhancer below writes the same
- * class as the filter and the toggle change what shows. The design sheet holds the matching rule of each of
- * the three names.
- */
-const ROW_HIDDEN_CLASS = "report-row-hidden";
-const SORT_ASCENDING_CLASS = "data-table-sort-asc";
-const SORT_DESCENDING_CLASS = "data-table-sort-desc";
-
-/**
- * The marker class of a card that the enhancer took.
- *
- * The rule that hides a row takes effect under this marker alone. The script writes the marker when it binds
- * a card, thus a browser with no script shows the complete plain table and no row hides behind a toggle that
- * cannot open.
- */
-const TABLE_LIVE_CLASS = "report-table-live";
-
-/**
- * The class that hides the toggle of the row cap.
- *
- * A filter that keeps the cap or less leaves no row behind the toggle. The script writes this class at that
- * time, thus the reader sees a control only while the control does something.
- */
-const TOGGLE_HIDDEN_CLASS = "report-table-toggle-off";
-
-/**
- * The label of the toggle while every row that the filter keeps shows.
- *
- * The view composes the collapsed label, because the view holds the total row count. Thus the enhancer keeps
- * the label that it finds and it restores that text, and the two sites cannot disagree over the count.
- */
-const SHOW_FEWER_LABEL = "Show fewer";
 
 /**
  * The page-side script that wires each chart. It finds every chart container, reads the option JSON from
@@ -356,216 +334,6 @@ export const SECTION_SPY = `(function () {
 })();`;
 
 /**
- * The page-side script that gives each table its sort, its filter, and its row cap.
- *
- * The enhancer is presentation over a complete DOM. Every resolved row is already in the markup, thus the
- * script moves a row and hides a row, and it never adds one and never removes one.
- *
- * The script marks each card that it takes. The rule that hides a row reads that marker, thus a browser with
- * no script keeps the plain table with every row, and the cap costs the reader nothing there.
- *
- * A click on a header cycles the column: ascending, then descending, then the document order. The Enter key
- * and the Space key give the same cycle, thus a reader sorts from the keyboard. The script records the
- * initial index of each row at start, thus the document order is always recoverable.
- *
- * The sort reads the `data-value` attribute of a cell, thus a rounded number still orders by its full
- * magnitude. A column sorts numerically when one non-empty value of it parses as a number, thus a sentinel
- * such as `NA` cannot drop the column to text order and rank `10` before `9`. A value that holds no rank,
- * which is an empty cell and a cell that the numeric column cannot parse, stays at the end under both
- * directions. Two equal cells keep the document order, thus one sort gives one order and not the order of
- * the engine.
- *
- * The filter reads the `data-value` attributes of a row, and never the shown text. Thus a reader finds the
- * accession that the trim hides, and a match cannot form across two cells. The comparison lowercases both
- * texts with `toLowerCase`. That method reads no locale, and it is exact over the ASCII range of a gene name
- * and an accession.
- *
- * The cap composes with both. After each change the first rows that the filter keeps show, up to the cap,
- * and the rest hide. The toggle opens the table, and each row that the filter keeps then shows. The label of
- * the toggle flips between the collapsed label and the label above, and the collapsed label counts the rows
- * that the filter keeps. A filter that keeps the cap or less hides the toggle, because nothing then waits
- * behind it.
- *
- * The script registers no reveal work. It touches neither the reveal gate nor the readiness sentinel, thus a
- * capture of the page still signals at the same point.
- */
-export const TABLE_ENHANCER = `(function () {
-  var CAP = ${TABLE_ROW_CAP};
-  var HIDDEN = ${JSON.stringify(ROW_HIDDEN_CLASS)};
-  var ASCENDING = ${JSON.stringify(SORT_ASCENDING_CLASS)};
-  var DESCENDING = ${JSON.stringify(SORT_DESCENDING_CLASS)};
-  var LIVE = ${JSON.stringify(TABLE_LIVE_CLASS)};
-  var TOGGLE_OFF = ${JSON.stringify(TOGGLE_HIDDEN_CLASS)};
-  var FEWER = ${JSON.stringify(SHOW_FEWER_LABEL)};
-  var ALL = ${JSON.stringify(SHOW_ALL_PREFIX)};
-  function rawValue(row, index) {
-    var cell = row.cells[index];
-    return cell ? cell.getAttribute("data-value") || "" : "";
-  }
-  function rowValues(row) {
-    var joined = "";
-    for (var c = 0; c < row.cells.length; c++) {
-      joined += (row.cells[c].getAttribute("data-value") || "") + "\\n";
-    }
-    return joined.toLowerCase();
-  }
-  function numericColumn(rows, index) {
-    for (var i = 0; i < rows.length; i++) {
-      var value = rawValue(rows[i], index);
-      if (value !== "" && !isNaN(Number(value))) {
-        return true;
-      }
-    }
-    return false;
-  }
-  function rankless(value, numeric) {
-    return value === "" || (numeric && isNaN(Number(value)));
-  }
-  function enhance(card) {
-    var table = card.querySelector("table.data-table");
-    var body = table ? table.querySelector("tbody") : null;
-    if (!body || body.rows.length === 0) {
-      return;
-    }
-    var rows = [];
-    var order = [];
-    var values = [];
-    for (var r = 0; r < body.rows.length; r++) {
-      rows.push(body.rows[r]);
-      order.push(r);
-      values.push(rowValues(body.rows[r]));
-    }
-    var headers = table.querySelectorAll("th[data-sort-index]");
-    var filter = card.querySelector(".report-table-filter");
-    var toggle = card.querySelector(".report-table-toggle");
-    var query = "";
-    var open = false;
-    var sorted = null;
-    var descending = false;
-    function paint() {
-      var kept = 0;
-      for (var i = 0; i < order.length; i++) {
-        var index = order[i];
-        var row = rows[index];
-        if (query !== "" && values[index].indexOf(query) < 0) {
-          row.classList.add(HIDDEN);
-          continue;
-        }
-        kept += 1;
-        if (open || kept <= CAP) {
-          row.classList.remove(HIDDEN);
-        } else {
-          row.classList.add(HIDDEN);
-        }
-      }
-      if (toggle) {
-        toggle.textContent = open ? FEWER : ALL + kept;
-        if (kept > CAP) {
-          toggle.classList.remove(TOGGLE_OFF);
-        } else {
-          toggle.classList.add(TOGGLE_OFF);
-        }
-      }
-      for (var h = 0; h < headers.length; h++) {
-        headers[h].classList.remove(ASCENDING);
-        headers[h].classList.remove(DESCENDING);
-        headers[h].setAttribute("aria-sort", "none");
-      }
-      if (sorted) {
-        sorted.classList.add(descending ? DESCENDING : ASCENDING);
-        sorted.setAttribute("aria-sort", descending ? "descending" : "ascending");
-      }
-    }
-    function place() {
-      for (var p = 0; p < order.length; p++) {
-        body.appendChild(rows[order[p]]);
-      }
-    }
-    function sort(index) {
-      var numeric = numericColumn(rows, index);
-      var direction = descending ? -1 : 1;
-      order.sort(function (left, right) {
-        var a = rawValue(rows[left], index);
-        var b = rawValue(rows[right], index);
-        var aOut = rankless(a, numeric);
-        var bOut = rankless(b, numeric);
-        if (aOut || bOut) {
-          return aOut === bOut ? left - right : aOut ? 1 : -1;
-        }
-        var rank = numeric ? Number(a) - Number(b) : a < b ? -1 : a > b ? 1 : 0;
-        return rank === 0 ? left - right : rank * direction;
-      });
-      place();
-    }
-    function reset() {
-      order.sort(function (left, right) {
-        return left - right;
-      });
-      place();
-    }
-    function cycle(header, index) {
-      if (sorted !== header) {
-        sorted = header;
-        descending = false;
-        sort(index);
-      } else if (!descending) {
-        descending = true;
-        sort(index);
-      } else {
-        sorted = null;
-        descending = false;
-        reset();
-      }
-      paint();
-    }
-    function bind(header, index) {
-      header.addEventListener("click", function () {
-        cycle(header, index);
-      });
-      header.addEventListener("keydown", function (event) {
-        if (event.key !== "Enter" && event.key !== " ") {
-          return;
-        }
-        // The Space key scrolls the page by default. The header takes the key instead, thus the keyboard
-        // gives the same cycle as the pointer.
-        event.preventDefault();
-        cycle(header, index);
-      });
-    }
-    for (var k = 0; k < headers.length; k++) {
-      bind(headers[k], parseInt(headers[k].getAttribute("data-sort-index") || "0", 10) || 0);
-    }
-    if (filter) {
-      filter.addEventListener("input", function () {
-        query = (filter.value || "").toLowerCase();
-        paint();
-      });
-    }
-    if (toggle) {
-      toggle.addEventListener("click", function () {
-        open = !open;
-        paint();
-      });
-    }
-    card.classList.add(LIVE);
-  }
-  function start() {
-    if (!document.querySelectorAll || typeof document.documentElement.classList === "undefined") {
-      return;
-    }
-    var cards = document.querySelectorAll(".report-table");
-    for (var c = 0; c < cards.length; c++) {
-      enhance(cards[c]);
-    }
-  }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", start);
-  } else {
-    start();
-  }
-})();`;
-
-/**
  * The decoder of the table data assets.
  *
  * Each data asset registers its payload under the global map, keyed by the block id. The payload is
@@ -615,5 +383,236 @@ export const TABLE_DATA_DECODER = `(function () {
     }
     payload.encoded = encoded;
     payload.rows = decoded;
+  }
+})();`;
+
+/**
+ * The client twin of `formatTableCell`, as browser source text.
+ *
+ * The rows of a table reach the reader through the data asset, thus the page formats each cell. The server
+ * ships the kind of each column, and this fragment reads the cell under that kind: the identifier text, the
+ * bound of a stored zero, the exponent of a small probability, the grouped whole number, the rounded float,
+ * and the trim of a delimited name.
+ *
+ * The fragment writes its own constants, because a page script reads no module binding. A shared test vector
+ * runs the server helper and this twin over the same entries, thus the two cannot give different text in
+ * silence. `formatCell` is the one entry point, and the grid boot below inlines the whole fragment.
+ */
+export const TABLE_CELL_FORMATTER = `function formatCell(cell, kind, bound) {
+  var text = cellText(cell, kind, bound);
+  var segments = text.split("%");
+  if (segments.length < 3) {
+    return text;
+  }
+  for (var s = 0; s < segments.length; s++) {
+    if (segments[s].length === 0 || /\\s/.test(segments[s])) {
+      return text;
+    }
+  }
+  return segments[0];
+}
+function cellText(cell, kind, bound) {
+  if (kind === "identifier") {
+    return String(cell).trim();
+  }
+  var value = finiteValue(cell);
+  if (value === null) {
+    return String(cell);
+  }
+  if (kind === "scientific") {
+    if (value === 0) {
+      return bound !== undefined && bound !== null && bound > 0 ? "<" + boundForm(bound) : "≈" + "0";
+    }
+    if (value > 0 && value < 1e-2) {
+      return scientificForm(value);
+    }
+  }
+  if (Number.isSafeInteger(value)) {
+    return compactForm(value);
+  }
+  var magnitude = Math.abs(value);
+  if (value !== 0 && magnitude < 1e-3) {
+    return scientificForm(value);
+  }
+  var rounded = Math.round(magnitude);
+  if (rounded >= 1e3 && rounded < 1e15) {
+    return compactForm(value);
+  }
+  return tidy(value.toPrecision(3));
+}
+function finiteValue(cell) {
+  if (typeof cell === "number") {
+    return isFinite(cell) ? cell : null;
+  }
+  var trimmed = String(cell).trim();
+  if (trimmed === "") {
+    return null;
+  }
+  var parsed = Number(trimmed);
+  return isFinite(parsed) ? parsed : null;
+}
+function boundForm(bound) {
+  var parts = bound.toExponential().split("e");
+  var digits = parts[0].replace(".", "");
+  var raised = Number(digits.charAt(0)) + (digits.length > 1 ? 1 : 0);
+  var carries = raised === 10;
+  var digit = carries ? 1 : raised;
+  var power = Number(parts[1]) + (carries ? 1 : 0);
+  if (power < -2) {
+    return digit + "e" + power;
+  }
+  return power >= 0 ? String(digit) + zeros(power) : "0." + zeros(-power - 1) + digit;
+}
+function zeros(count) {
+  var text = "";
+  for (var z = 0; z < count; z++) {
+    text += "0";
+  }
+  return text;
+}
+function scientificForm(value) {
+  return tidy(value.toExponential(1));
+}
+function compactForm(value) {
+  return (value < 0 ? "-" : "") + groupDigits(Math.abs(value).toFixed(0));
+}
+function groupDigits(digits) {
+  if (!/^[0-9]+$/.test(digits)) {
+    return digits;
+  }
+  var grouped = "";
+  for (var d = 0; d < digits.length; d++) {
+    if (d > 0 && (digits.length - d) % 3 === 0) {
+      grouped += ",";
+    }
+    grouped += digits.charAt(d);
+  }
+  return grouped;
+}
+function tidy(text) {
+  var marker = text.indexOf("e");
+  if (marker < 0) {
+    return trimZeros(text);
+  }
+  return trimZeros(text.slice(0, marker)) + "e" + text.slice(marker + 1).replace("+", "");
+}
+function trimZeros(text) {
+  if (text.indexOf(".") < 0) {
+    return text;
+  }
+  var end = text.length;
+  while (end > 0 && text.charAt(end - 1) === "0") {
+    end -= 1;
+  }
+  if (text.charAt(end - 1) === ".") {
+    end -= 1;
+  }
+  return text.slice(0, end);
+}`;
+
+/**
+ * The page-side script that builds one grid for each table block.
+ *
+ * The script walks the grid mounts. Each mount names its block, and the registry holds the decoded rows and
+ * the column display of that block. Thus the boot reads what the server resolved, and it resolves nothing
+ * again. A mount whose block the registry does not hold keeps its empty card, and the walk continues.
+ *
+ * The column definition takes the label, the filter, and the two readings of a cell. The formatter gives the
+ * shown text under the kind of the column, and the tooltip gives the raw cell where the shown text differs
+ * from it. A value getter reads the own key of the row, because the field of a column reads a point as a
+ * path and a column name can hold one.
+ *
+ * The row model is the client-side model. It renders the visible slice alone, thus a table of many thousands
+ * of rows costs the DOM a screen of rows. The mount takes the height of its rows, up to the visible count,
+ * thus a short table leaves no empty box under it.
+ *
+ * The print hooks switch the grid to its print layout. That layout lays every row out at once and it holds
+ * no scroll viewport, thus each bounded row reaches the paper. The row bound of the binding is what keeps
+ * that page count sane.
+ *
+ * One grid builds inside a guard. A malformed payload is exactly the fault that a look must diagnose, thus
+ * it must never stop a sibling grid and it must never throw out of the page.
+ */
+export const GRID_BOOTSTRAP = `(function () {
+  ${TABLE_CELL_FORMATTER}
+  var registry = window.${TABLE_DATA_GLOBAL};
+  var mounts = document.querySelectorAll("[${GRID_MOUNT_ATTRIBUTE}]");
+  if (!registry || typeof agGrid === "undefined" || mounts.length === 0) {
+    return;
+  }
+  if (agGrid.ModuleRegistry && agGrid.AllCommunityModule) {
+    agGrid.ModuleRegistry.registerModules([agGrid.AllCommunityModule]);
+  }
+  var theme = agGrid.themeQuartz.withParams(${scriptJson(GRID_THEME_PARAMS)});
+  function columnOf(name, display) {
+    var kind = display.kind;
+    var bound = display.bound;
+    var label = display.label || name;
+    var column = {
+      colId: name,
+      headerName: label,
+      valueGetter: function (params) {
+        return params.data ? params.data[name] : undefined;
+      },
+      valueFormatter: function (params) {
+        return params.value === undefined || params.value === null ? "" : formatCell(params.value, kind, bound);
+      },
+      tooltipValueGetter: function (params) {
+        if (params.value === undefined || params.value === null) {
+          return "";
+        }
+        var raw = String(params.value);
+        return raw === formatCell(params.value, kind, bound) ? "" : raw;
+      },
+      filter: kind === "identifier" ? "agTextColumnFilter" : "agNumberColumnFilter"
+    };
+    if (label !== name) {
+      column.headerTooltip = name;
+    }
+    return column;
+  }
+  function bindPrint(api, mount, height) {
+    window.addEventListener("beforeprint", function () {
+      mount.style.height = "auto";
+      api.setGridOption("domLayout", "print");
+    });
+    window.addEventListener("afterprint", function () {
+      api.setGridOption("domLayout", "normal");
+      mount.style.height = height;
+    });
+  }
+  for (var i = 0; i < mounts.length; i++) {
+    var mount = mounts[i];
+    var id = mount.getAttribute("${GRID_MOUNT_ATTRIBUTE}") || "";
+    var payload = Object.prototype.hasOwnProperty.call(registry, id) ? registry[id] : null;
+    if (!payload || !payload.columns || !payload.display) {
+      continue;
+    }
+    try {
+      var columns = [];
+      for (var c = 0; c < payload.columns.length; c++) {
+        columns.push(columnOf(payload.columns[c], payload.display[c] || {}));
+      }
+      var rows = payload.rows || [];
+      var shown = rows.length < ${GRID_VISIBLE_ROWS} ? rows.length : ${GRID_VISIBLE_ROWS};
+      var height = ${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX} + shown * ${GRID_ROW_HEIGHT_PX} + "px";
+      mount.style.height = height;
+      bindPrint(
+        agGrid.createGrid(mount, {
+          theme: theme,
+          columnDefs: columns,
+          rowData: rows,
+          defaultColDef: { sortable: true, resizable: true, flex: 1, minWidth: ${GRID_MIN_COLUMN_WIDTH_PX} },
+          suppressCellFocus: true,
+          // The tooltip carries the raw value of a shown cell. A reader hovers to read that value, thus the
+          // delay is short and the value arrives while the pointer is still on the cell.
+          tooltipShowDelay: ${GRID_TOOLTIP_DELAY_MS}
+        }),
+        mount,
+        height
+      );
+    } catch (cause) {
+      console.error("grid boot failed for " + id + ": " + (cause && cause.message ? cause.message : cause));
+    }
   }
 })();`;

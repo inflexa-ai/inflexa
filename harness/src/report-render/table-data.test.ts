@@ -6,7 +6,15 @@
 
 import { describe, expect, it } from "bun:test";
 
-import { encodeTablePayload, tableDataAsset, TABLE_DATA_GLOBAL, type TablePayload } from "./table-data.js";
+import { encodeTablePayload, tableDataAsset, TABLE_DATA_GLOBAL, type ColumnDisplay, type TablePayload } from "./table-data.js";
+
+/**
+ * The display of a plain column list. The encode never reads a display entry, thus a test that states
+ * something else about the payload takes this one and says nothing about the format.
+ */
+function displayOf(columns: readonly string[]): ColumnDisplay[] {
+    return columns.map((label) => ({ label, kind: "compact-scientific" }));
+}
 
 describe("encodeTablePayload", () => {
     it("writes each row as an array in column order", () => {
@@ -16,6 +24,7 @@ describe("encodeTablePayload", () => {
                 { gene: "TP53", padj: 0.01 },
                 { gene: "MYC", padj: 0.02 },
             ],
+            displayOf(["gene", "padj"]),
         );
 
         // No row repeats the column names, thus a table of many rows costs one column list.
@@ -35,7 +44,7 @@ describe("encodeTablePayload", () => {
             { gene: "KRAS", direction: "down" },
         ];
 
-        const payload = encodeTablePayload(["gene", "direction"], rows);
+        const payload = encodeTablePayload(["gene", "direction"], rows, displayOf(["gene", "direction"]));
 
         // The category column holds two values across four rows, thus it costs two strings and four indexes.
         expect(payload.dict).toEqual({ direction: ["up", "down"] });
@@ -48,21 +57,21 @@ describe("encodeTablePayload", () => {
     });
 
     it("leaves a column of distinct strings raw, because a dictionary would save nothing", () => {
-        const payload = encodeTablePayload(["gene"], [{ gene: "TP53" }, { gene: "MYC" }]);
+        const payload = encodeTablePayload(["gene"], [{ gene: "TP53" }, { gene: "MYC" }], displayOf(["gene"]));
 
         expect(payload.dict).toEqual({});
         expect(payload.rows).toEqual([["TP53"], ["MYC"]]);
     });
 
     it("leaves a column that holds a number raw, thus no cell of it reads as an index", () => {
-        const payload = encodeTablePayload(["mixed"], [{ mixed: "same" }, { mixed: "same" }, { mixed: 1 }]);
+        const payload = encodeTablePayload(["mixed"], [{ mixed: "same" }, { mixed: "same" }, { mixed: 1 }], displayOf(["mixed"]));
 
         expect(payload.dict).toEqual({});
         expect(payload.rows).toEqual([["same"], ["same"], [1]]);
     });
 
     it("keeps a string that occurs one time in its row, because an entry would save nothing", () => {
-        const payload = encodeTablePayload(["direction"], [{ direction: "up" }, { direction: "up" }, { direction: "sideways" }]);
+        const payload = encodeTablePayload(["direction"], [{ direction: "up" }, { direction: "up" }, { direction: "sideways" }], displayOf(["direction"]));
 
         // The dictionary holds the repeated value alone, and the lone value stays where it is.
         expect(payload.dict).toEqual({ direction: ["up"] });
@@ -70,12 +79,24 @@ describe("encodeTablePayload", () => {
     });
 
     it("writes an absent cell as null, thus a ragged row keeps its shape", () => {
-        const payload = encodeTablePayload(["gene", "padj"], [{ gene: "TP53", padj: 0.01 }, { gene: "MYC" }]);
+        const payload = encodeTablePayload(["gene", "padj"], [{ gene: "TP53", padj: 0.01 }, { gene: "MYC" }], displayOf(["gene", "padj"]));
 
         expect(payload.rows).toEqual([
             ["TP53", 0.01],
             ["MYC", null],
         ]);
+    });
+
+    it("carries one display entry for each column, at the index of that column", () => {
+        const display: ColumnDisplay[] = [
+            { label: "Gene", kind: "identifier" },
+            { label: "Adjusted p-value", kind: "scientific", bound: 0.00036 },
+        ];
+        const payload = encodeTablePayload(["gene", "padj"], [{ gene: "TP53", padj: 0 }], display);
+
+        // The page reads the entry of a column at the index of its name, thus a list needs no key guard.
+        expect(payload.display).toEqual(display);
+        expect(payload.display.length).toBe(payload.columns.length);
     });
 
     it("gives one payload for one table, thus two encodes match", () => {
@@ -84,12 +105,14 @@ describe("encodeTablePayload", () => {
             { gene: "MYC", direction: "up" },
         ];
 
-        expect(encodeTablePayload(["gene", "direction"], rows)).toEqual(encodeTablePayload(["gene", "direction"], rows));
+        expect(encodeTablePayload(["gene", "direction"], rows, displayOf(["gene", "direction"]))).toEqual(
+            encodeTablePayload(["gene", "direction"], rows, displayOf(["gene", "direction"])),
+        );
     });
 });
 
 describe("tableDataAsset", () => {
-    const payload = encodeTablePayload(["gene"], [{ gene: "TP53" }]);
+    const payload = encodeTablePayload(["gene"], [{ gene: "TP53" }], displayOf(["gene"]));
 
     /** Run one asset as the page runs it, and give back the registry that it wrote. */
     function registryOf(bytes: string): Record<string, TablePayload> {
@@ -109,7 +132,7 @@ describe("tableDataAsset", () => {
     it("parses the payload instead of writing an object literal, thus a prototype key stays a column", () => {
         const columns = ["__proto__", "constructor"];
         const rows = JSON.parse('[{"__proto__":"a","constructor":"b"}]') as Record<string, string | number>[];
-        const asset = tableDataAsset("tbl-1", encodeTablePayload(columns, rows));
+        const asset = tableDataAsset("tbl-1", encodeTablePayload(columns, rows, displayOf(columns)));
 
         // An object literal with a `__proto__` key sets the prototype of the object. The parse defines an
         // own property for every key, thus the payload reaches the page with the columns that it declares.
@@ -127,14 +150,14 @@ describe("tableDataAsset", () => {
     });
 
     it("gives a different name to a different payload and to a different block", () => {
-        const other = encodeTablePayload(["gene"], [{ gene: "MYC" }]);
+        const other = encodeTablePayload(["gene"], [{ gene: "MYC" }], displayOf(["gene"]));
 
         expect(tableDataAsset("tbl-1", other).name).not.toBe(tableDataAsset("tbl-1", payload).name);
         expect(tableDataAsset("tbl-2", payload).name).not.toBe(tableDataAsset("tbl-1", payload).name);
     });
 
     it("keeps a hostile block id and a hostile cell as data", () => {
-        const hostile = encodeTablePayload(["gene"], [{ gene: "</script><script>alert(1)</script>" }]);
+        const hostile = encodeTablePayload(["gene"], [{ gene: "</script><script>alert(1)</script>" }], displayOf(["gene"]));
         const asset = tableDataAsset("</script>", hostile);
 
         // The payload rides JSON, and the escape of the sink covers the one sequence that closes an element.

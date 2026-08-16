@@ -56,6 +56,17 @@ export const ECHARTS_ASSET: PageAsset = {
     specifier: "echarts/dist/echarts.min.js",
 };
 
+/**
+ * The grid runtime. The page-side bootstrap reads the `agGrid` global that this file declares.
+ *
+ * The entry names the browser bundle of the package. The package `exports` map publishes the module
+ * entries alone, thus this specifier resolves as a path under the installed package directory.
+ */
+export const AG_GRID_ASSET: PageAsset = {
+    file: "ag-grid-community.min.js",
+    specifier: "ag-grid-community/dist/ag-grid-community.min.js",
+};
+
 /** The sans font. The file is the latin subset of the variable font, thus one file carries each weight. */
 export const SANS_FONT_ASSET: PageAsset = {
     file: "space-grotesk-latin-wght-normal.woff2",
@@ -95,6 +106,7 @@ export const MONO_FONT_700_ASSET: PageAsset = {
 /** Each asset that the caller stages beside the page. */
 export const PAGE_ASSETS: readonly PageAsset[] = [
     ECHARTS_ASSET,
+    AG_GRID_ASSET,
     SANS_FONT_ASSET,
     MONO_FONT_400_ASSET,
     MONO_FONT_500_ASSET,
