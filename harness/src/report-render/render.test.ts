@@ -222,6 +222,22 @@ describe("the table data assets", () => {
         return { tbl: { type: "table", columns: ["gene", "padj", "direction"], rows } };
     }
 
+    /**
+     * Run one data asset as the page runs it, and give back the registered payload.
+     *
+     * The asset is browser source text, thus a read of the source string would test the serialization and
+     * not the value that a reader takes. `decode` runs the page decoder over the payload as well.
+     */
+    function registeredPayload(asset: { bytes: string }, decode = false): { columns: string[]; rows: unknown[]; dict: Record<string, string[]> } {
+        const window: Record<string, unknown> = {};
+        new Function("window", asset.bytes)(window);
+        if (decode) {
+            new Function("window", TABLE_DATA_DECODER)(window);
+        }
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { columns: string[]; rows: unknown[]; dict: Record<string, string[]> }>;
+        return registry["tbl"];
+    }
+
     it("holds the header and no data row, and the payload holds every row", () => {
         const rendered = renderReportPage(tableDocument(), valuesOf(14201))._unsafeUnwrap();
         const page = load(rendered.html);
@@ -230,21 +246,20 @@ describe("the table data assets", () => {
         expect(page("tbody tr").length).toBe(0);
         expect(rendered.dataAssets.length).toBe(1);
 
-        const payload = JSON.parse(rendered.dataAssets[0].bytes.slice(rendered.dataAssets[0].bytes.indexOf("]=") + 2, -2)) as {
-            columns: string[];
-            rows: unknown[][];
-        };
+        const payload = registeredPayload(rendered.dataAssets[0]);
         expect(payload.columns).toEqual(["gene", "padj", "direction"]);
         expect(payload.rows.length).toBe(14201);
     });
 
     it("compresses a repeated category into the dictionary of its column", () => {
         const rendered = renderReportPage(tableDocument(), valuesOf(100))._unsafeUnwrap();
+        const payload = registeredPayload(rendered.dataAssets[0]);
 
         // The direction column holds two values across one hundred rows, thus the payload names each one
         // time and each row holds its index.
-        expect(rendered.dataAssets[0].bytes).toContain(`"dict":{"direction":["up","down"]}`);
-        expect(rendered.dataAssets[0].bytes.split(`"up"`).length - 1).toBe(1);
+        expect(payload.dict).toEqual({ direction: ["up", "down"] });
+        expect(payload.rows[0]).toEqual(["G0", 0, 0]);
+        expect(payload.rows[1]).toEqual(["G1", 0.01, 1]);
     });
 
     it("gives byte-identical assets and one asset name over two renders", () => {
@@ -283,6 +298,31 @@ describe("the table data assets", () => {
         // A second run finds the decoded rows and leaves them, thus a late script pays the decode one time.
         new Function("window", TABLE_DATA_DECODER)(window);
         expect(registry["tbl"].rows[0]).toEqual({ gene: "G0", padj: 0, direction: "up" });
+    });
+
+    it("decodes a column that names a prototype member as an ordinary column", () => {
+        const document = tableDocument();
+        // An object literal sends a `__proto__` key to the prototype. The rows arrive from a parse in the
+        // real path, thus the test builds them the same way and the column stays an own key.
+        const rows = JSON.parse('[{"constructor":"up","__proto__":"left","gene":"TP53"},{"constructor":"up","__proto__":"right","gene":"MYC"}]') as Record<
+            string,
+            string | number
+        >[];
+        const values: RenderValues = { tbl: { type: "table", columns: ["constructor", "__proto__", "gene"], rows } };
+        const rendered = renderReportPage(document, values)._unsafeUnwrap();
+        const window: Record<string, unknown> = {};
+
+        new Function("window", rendered.dataAssets[0].bytes)(window);
+        new Function("window", TABLE_DATA_DECODER)(window);
+
+        // A column name is authored text. An object literal would send `__proto__` to the prototype, and a
+        // plain record would read `constructor` off the prototype instead of the dictionary of the column.
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] }>;
+        const first = registry["tbl"].rows[0];
+        expect(Object.hasOwn(first, "__proto__")).toBe(true);
+        expect(first["__proto__"]).toBe("left");
+        expect(first["constructor"]).toBe("up");
+        expect(registry["tbl"].rows[1]["constructor"]).toBe("up");
     });
 
     it("omits a column that a ragged row does not hold, thus no key reads as an empty value", () => {
@@ -1496,10 +1536,13 @@ describe("renderReportPage number format", () => {
             },
         };
         const rendered = renderReportPage(document, values)._unsafeUnwrap();
+        const window: Record<string, unknown> = {};
+        new Function("window", rendered.dataAssets[0].bytes)(window);
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: unknown[] }>;
 
         // The number format is presentation, and the payload is data. A rounded value in the asset would
         // put a shown form where a magnitude belongs.
-        expect(rendered.dataAssets[0].bytes).toContain(`["TP53",-3.089028528355109,0.0000427777663038,"up"]`);
+        expect(registry["tbl"].rows[0]).toEqual(["TP53", -3.089028528355109, 0.0000427777663038, "up"]);
         expect(load(rendered.html)(".data-table tbody td").length).toBe(0);
     });
 });

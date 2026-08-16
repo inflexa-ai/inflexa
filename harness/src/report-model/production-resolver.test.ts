@@ -424,6 +424,52 @@ describe("production resolver, the row bound", () => {
         expect("a".localeCompare("A", "en")).toBeLessThan(0);
     });
 
+    test("a sentinel of a numeric column ranks last under a descending bound", async () => {
+        const hash = await writeArtifact("sentinel.csv", "gene,score\nA,0.1\nB,NA\nC,0.9\nD,NA\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("sentinel.csv", hash), rowBound: { column: "score", count: 2 } };
+
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "sentinel.csv", hash }]));
+
+        // The column is numeric, thus `NA` is the absence of a measurement. A bound of the top two rows
+        // gives the two measurements, and never the two sentinels.
+        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["C", "A"]);
+    });
+
+    test("a sentinel stays last under an ascending bound too", async () => {
+        const hash = await writeArtifact("sentinel-asc.csv", "gene,score\nA,NA\nB,0.9\nC,0.1\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("sentinel-asc.csv", hash), rowBound: { column: "score", count: 3, order: "asc" } };
+
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "sentinel-asc.csv", hash }]));
+
+        // The direction orders the measurements. It never lifts a row that holds no rank.
+        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["C", "B", "A"]);
+    });
+
+    test("a column where nothing parses ranks by its text", async () => {
+        const hash = await writeArtifact("labels.csv", "gene,label\nA,beta\nB,alpha\nC,gamma\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("labels.csv", hash), rowBound: { column: "label", count: 2, order: "asc" } };
+
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "labels.csv", hash }]));
+
+        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["B", "A"]);
+    });
+
+    test("a bound over an inherited member of a plain object refuses, and it throws nothing", async () => {
+        const hash = await writeArtifact("proto.csv", "gene,score\nA,1\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("proto.csv", hash), rowBound: { column: "constructor", count: 5 } };
+
+        // A row parses into a plain object. A membership test with `in` would find the inherited function,
+        // and the rank of it would throw inside the tool that promises no throw.
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "proto.csv", hash }]));
+
+        expect(result._unsafeUnwrapErr().reason).toBe("locator-out-of-range");
+        expect(result._unsafeUnwrapErr().detail).toContain("constructor");
+    });
+
     test("a bound over a column that the table does not hold refuses", async () => {
         const hash = await writeArtifact("nobound.csv", "gene,score\nA,1\n");
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });

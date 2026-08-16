@@ -111,41 +111,34 @@ export function columnsHeldByNoRow(rows: Array<Record<string, string | number>>,
     if (rows.length === 0) {
         return [];
     }
-    return columns.filter((column) => !rows.some((row) => column in row));
+    // An agent authors a column name, thus the name is untrusted text. A row can be a plain object from a
+    // `JSON.parse` of a stored snapshot, and `in` finds an inherited member such as `constructor`. The name
+    // would then read as a column, and the read of the cell would give a function. The own-key test admits
+    // a real column alone.
+    return columns.filter((column) => !rows.some((row) => Object.hasOwn(row, column)));
+}
+
+/** The cell of one row under an own key, or `undefined` when the row holds no such column. */
+function cellOf(row: Record<string, string | number>, column: string): string | number | undefined {
+    return Object.hasOwn(row, column) ? row[column] : undefined;
+}
+
+/** One row of a bound, with the cell of the bound column and the number that the cell reads as. */
+interface RankedRow {
+    readonly row: Record<string, string | number>;
+    readonly index: number;
+    readonly cell: string | number | undefined;
+    readonly value: number | undefined;
 }
 
 /**
- * The rank of one cell against another, under the numeric-aware compare.
+ * The code-unit rank of the string form of two cells.
  *
- * A text-backed artifact holds every cell as a string, thus a numeric column arrives as `"0.01"`. Two
- * cells that both read as a finite number compare as numbers. Thus a p-value column ranks by magnitude,
- * and a code-unit order would put `"10"` between `"1"` and `"2"`.
- *
- * Any other pair compares by the code-unit order of the string form. The comparison never calls
- * `localeCompare`, because the ICU of a host decides that order and the bounded rows reach the bytes of
- * the data asset. Thus one table gives one payload and one asset name on every host.
- *
- * A cell that the row does not hold ranks last in either direction. Such a row carries no value for the
- * bound to rank, thus it never displaces a row that does.
+ * The comparison never calls `localeCompare`, because the ICU of a host decides that order and the bounded
+ * rows reach the bytes of the data asset. Thus one table gives one payload and one asset name on every
+ * host.
  */
-function rankCells(left: string | number | undefined, right: string | number | undefined, descending: boolean): number {
-    if (left === undefined || right === undefined) {
-        return left === right ? 0 : left === undefined ? 1 : -1;
-    }
-    const rank = rankValues(left, right);
-    if (rank === 0) {
-        return 0;
-    }
-    return descending ? -rank : rank;
-}
-
-/** The rank of two present cells: numeric when both read as a finite number, and code-unit order otherwise. */
-function rankValues(left: string | number, right: string | number): number {
-    const leftNumber = asFiniteNumber(left);
-    const rightNumber = asFiniteNumber(right);
-    if (leftNumber !== undefined && rightNumber !== undefined) {
-        return leftNumber - rightNumber;
-    }
+function rankText(left: string | number, right: string | number): number {
     const leftText = String(left);
     const rightText = String(right);
     if (leftText < rightText) return -1;
@@ -154,7 +147,38 @@ function rankValues(left: string | number, right: string | number): number {
 }
 
 /**
+ * A row that holds no rank in the column, which the bound keeps last in either direction.
+ *
+ * A row that the column does not reach carries no value to rank. In a numeric column a cell that reads as
+ * no number carries none either: a sentinel such as `NA` is the absence of a measurement, and a rank for it
+ * against a real value would be invented. Thus a descending bound of the top 20 rows gives 20 measurements,
+ * and never 20 sentinels.
+ */
+function holdsNoRank(entry: RankedRow, numeric: boolean): boolean {
+    return entry.cell === undefined || (numeric && entry.value === undefined);
+}
+
+/** One row that holds a rank in the bound column. Its cell is present, and a numeric column parsed it. */
+type RankableRow = RankedRow & { readonly cell: string | number };
+
+/**
+ * The rank of two rows that both hold one. A numeric column compares the parsed numbers, and a column
+ * where nothing parses compares the code-unit order of the text.
+ */
+function rankRankable(left: RankableRow, right: RankableRow, numeric: boolean): number {
+    if (numeric && left.value !== undefined && right.value !== undefined) {
+        return left.value - right.value;
+    }
+    return rankText(left.cell, right.cell);
+}
+
+/**
  * Apply a row bound to a table: rank the rows by the bound column, and keep the first `count` of them.
+ *
+ * The kind of the column decides one time, over the whole column, and never for one pair. A column is
+ * numeric when one cell of it reads as a finite number. A text-backed artifact holds every cell as a
+ * string, thus the parse is what tells a measurement from a label, and a code-unit order would put `"10"`
+ * between `"1"` and `"2"`. A column where nothing parses ranks by the code-unit order of its text.
  *
  * The sort is stable by construction. The walk carries the source index of each row and it breaks a tie on
  * that index, thus two rows of equal rank keep the order of the file and two runs over one table give one
@@ -166,12 +190,22 @@ function rankValues(left: string | number, right: string | number): number {
  */
 export function applyRowBound(rows: Array<Record<string, string | number>>, bound: RowBound): Array<Record<string, string | number>> {
     const descending = (bound.order ?? "desc") === "desc";
-    const ranked = rows.map((row, index) => ({ row, index }));
-    ranked.sort((left, right) => {
-        const rank = rankCells(left.row[bound.column], right.row[bound.column], descending);
-        return rank === 0 ? left.index - right.index : rank;
+    const ranked: RankedRow[] = rows.map((row, index) => {
+        const cell = cellOf(row, bound.column);
+        return { row, index, cell, value: cell === undefined ? undefined : asFiniteNumber(cell) };
     });
-    return ranked.slice(0, bound.count).map((entry) => entry.row);
+    const numeric = ranked.some((entry) => entry.value !== undefined);
+
+    // A row with no rank stays behind every ranked row, and the direction never lifts it. The two lists
+    // keep their source order, thus the tail is as stable as the head.
+    const rankable = ranked.filter((entry): entry is RankableRow => !holdsNoRank(entry, numeric));
+    const unrankable = ranked.filter((entry) => holdsNoRank(entry, numeric));
+
+    const sorted = [...rankable].sort((left, right) => {
+        const rank = rankRankable(left, right, numeric);
+        return rank === 0 ? left.index - right.index : descending ? -rank : rank;
+    });
+    return [...sorted, ...unrankable].slice(0, bound.count).map((entry) => entry.row);
 }
 
 /**

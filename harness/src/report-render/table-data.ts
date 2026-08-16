@@ -117,12 +117,18 @@ export function encodeTablePayload(columns: readonly string[], rows: ReadonlyArr
  * The source text of one payload asset.
  *
  * The text assigns into the global map under the block id. The map takes the null-prototype form, thus a
- * block id such as `constructor` stays an ordinary entry. The block id and each cell ride as JSON, thus
- * hostile text is data and never source.
+ * block id such as `constructor` stays an ordinary entry. The block id rides as JSON, thus hostile text is
+ * data and never source.
+ *
+ * The payload itself rides through `JSON.parse` and never as an object literal. An object literal with a
+ * `__proto__` key sets the prototype of the object instead of an own entry, thus a column of that name
+ * would arrive as a mangled object with no such column. `JSON.parse` defines an own property for every
+ * key, thus each column name reaches the page as a column name.
  */
 function payloadSource(blockId: string, payload: TablePayload): string {
     const registry = `window.${TABLE_DATA_GLOBAL}`;
-    return `${registry}=${registry}||Object.create(null);${registry}[${scriptJson(blockId)}]=${scriptJson(payload)};\n`;
+    const json = scriptJson(JSON.stringify(payload));
+    return `${registry}=${registry}||Object.create(null);${registry}[${scriptJson(blockId)}]=JSON.parse(${json});\n`;
 }
 
 /**

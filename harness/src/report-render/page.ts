@@ -598,14 +598,18 @@ export const TABLE_DATA_DECODER = `(function () {
     var decoded = [];
     for (var r = 0; r < encoded.length; r++) {
       var row = encoded[r];
-      var record = {};
+      // A column name is authored text. A plain object would read an inherited member such as
+      // "constructor" as a dictionary, and it would send a "__proto__" column to the prototype. The
+      // null-prototype record and the own-key test keep every column name an ordinary entry.
+      var record = Object.create(null);
       for (var c = 0; c < columns.length; c++) {
         var cell = row[c];
         if (cell === null || cell === undefined) {
           continue;
         }
-        var values = dict[columns[c]];
-        record[columns[c]] = values && typeof cell === "number" ? values[cell] : cell;
+        var name = columns[c];
+        var values = Object.prototype.hasOwnProperty.call(dict, name) ? dict[name] : null;
+        record[name] = values && typeof cell === "number" ? values[cell] : cell;
       }
       decoded.push(record);
     }
