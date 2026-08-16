@@ -41,8 +41,13 @@ describe("createEphemeralEyes", () => {
         // The endpoint is the published host port, and the browser is reachable from this host alone.
         expect(lease.browserUrl).toBe("http://127.0.0.1:45678");
         expect(t.calls).toHaveLength(1);
-        expect(t.argsOf("run")).toContain("-d");
-        expect(t.argsOf("run")).toContain(EYES_IMAGE);
+        const args = t.argsOf("run");
+        expect(args).toContain("-d");
+        expect(args).toContain(EYES_IMAGE);
+        // Chrome composes a full-page capture bitmap in /dev/shm, and the runtime default is too small for a
+        // tall report page. Without this argument the look fails with a protocol error.
+        expect(args).toContain("--shm-size");
+        expect(args[args.indexOf("--shm-size") + 1]).toBe("1g");
     });
 
     test("the mount repeats the workspace root on both sides", async () => {

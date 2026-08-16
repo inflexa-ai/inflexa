@@ -445,6 +445,8 @@ The mount MUST repeat the workspace root of the scope on both sides. The browser
 
 The container MUST publish its devtools port on the loopback interface alone. The browser reads the workspace of the user, and a port on every interface would serve that tree to the network.
 
+The container MUST carry a shared-memory allowance that holds a full-page capture bitmap. The runtime default of 64 MiB refuses the capture of a tall page. The look then fails with a protocol error, although the page itself is sound.
+
 The container MUST carry its own deadline, and that deadline MUST NOT depend on this process. A process can die between the acquire and the release, thus no release of a caller is the guarantee.
 
 The realization MUST bound how many browsers run at one time. The page gate of the harness bounds one endpoint, and each look here names a new endpoint.
@@ -479,3 +481,8 @@ The realization MUST run on the container runtime that the boot pinned already. 
 
 - **WHEN** the container starts and the endpoint never answers
 - **THEN** the acquire removes the container, it gives its slot back, and it throws
+
+#### Scenario: The shared-memory allowance rides the run args
+
+- **WHEN** the seam starts the container of one look
+- **THEN** the run args carry the shared-memory size, and the size holds a full-page capture of a tall report page
