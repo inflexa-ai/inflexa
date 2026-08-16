@@ -282,11 +282,27 @@ function holdsAName(column: string, meaning: ColumnMeaning | undefined): boolean
  * below this test. An effect is a float, and it reads there in the compact-scientific kind. A count is a
  * whole number, and it reads there in the compact kind.
  *
- * The kind of a whole column reads this, thus a probability column takes the scientific kind and the zeros
- * of that column take a bound.
+ * The kind of a cell and the kind of a whole column both read this, thus a probability column takes the
+ * scientific kind and the zeros of that column take a bound.
  */
-export function holdsAPValue(column: string, meaning?: ColumnMeaning): boolean {
+function holdsAPValue(column: string, meaning?: ColumnMeaning): boolean {
     return meaning !== undefined ? meaning === "p-value" : isPValueColumn(column);
+}
+
+/**
+ * True when one cell of a column parses as a finite number.
+ *
+ * The filter of a column reads this. One value that parses keeps the column numeric, thus a sentinel such
+ * as `NA` beside the numbers cannot drop the column to the text filter. A column where no cell parses holds
+ * names, and a name filters as text.
+ */
+export function holdsANumber(cells: readonly (string | number | undefined)[]): boolean {
+    for (const cell of cells) {
+        if (cell !== undefined && finiteValue(cell) !== null) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**

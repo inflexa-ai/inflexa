@@ -1,14 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import {
-    formatNumberCell,
-    formatTableCell,
-    holdsAPValue,
-    selectColumnKind,
-    selectNumberKind,
-    smallestPositiveValue,
-    type NumberKind,
-} from "./number-format.js";
+import { formatNumberCell, formatTableCell, selectColumnKind, selectNumberKind, smallestPositiveValue, type NumberKind } from "./number-format.js";
 import { TABLE_CELL_FORMATTER } from "./page.js";
 
 describe("formatNumberCell scientific", () => {
@@ -329,16 +321,6 @@ describe("selectNumberKind of a zero", () => {
         expect(selectNumberKind("significance", 0, "effect")).toBe("compact");
         // A zero count and a zero effect are real values, thus each one keeps its own text.
         expect(formatNumberCell(0, selectNumberKind("genes", 0))).toEqual({ text: "0" });
-    });
-});
-
-describe("holdsAPValue", () => {
-    it("answers for a token-matched name and for a declaration alike", () => {
-        expect(holdsAPValue("fdr")).toBe(true);
-        expect(holdsAPValue("significance")).toBe(false);
-        expect(holdsAPValue("significance", "p-value")).toBe(true);
-        // A declaration replaces the name, thus a p-value name under a different meaning answers false.
-        expect(holdsAPValue("padj", "count")).toBe(false);
     });
 });
 

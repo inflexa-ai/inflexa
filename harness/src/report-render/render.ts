@@ -107,7 +107,7 @@ function renderBlock(
             // display entry of that column sits at the same index.
             const columns = tableColumns(entry);
             dataAssets.push(tableDataAsset(block.id, encodeTablePayload(columns, entry.rows, tableDisplay(block, entry, columns))));
-            return renderTable(block);
+            return renderTable(block, entry.rows.length);
         }
         case "figure": {
             const entry = values[block.id];

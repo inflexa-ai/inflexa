@@ -8,6 +8,7 @@ import {
     GRID_HEADER_BORDER_PX,
     GRID_HEADER_HEIGHT_PX,
     GRID_MIN_COLUMN_WIDTH_PX,
+    GRID_PRINT_ROW_CAP,
     GRID_ROW_HEIGHT_PX,
     GRID_THEME_PARAMS,
     GRID_VISIBLE_ROWS,
@@ -18,7 +19,7 @@ import { formatTableCell } from "./number-format.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
-import { GRID_MOUNT_ATTRIBUTE } from "./views/values.js";
+import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS } from "./views/values.js";
 
 /**
  * The site of the navigation brand. It is the one reference of the page that names a remote host.
@@ -1155,6 +1156,35 @@ describe("the table grid", () => {
         expect(PAGE_ASSETS).toContain(AG_GRID_ASSET);
     });
 
+    it("skips the grid runtime and the boot on a page with no table", () => {
+        const document: ReportDocument = {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [
+                        {
+                            kind: "chart",
+                            id: "cht",
+                            binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" },
+                            chartType: "bar",
+                            encoding: { x: "label", y: "count" },
+                        },
+                    ],
+                },
+            ],
+        };
+        const html = renderReportPage(document, { cht: { type: "table", rows: [{ label: "a", count: 5 }] } })._unsafeUnwrap().html;
+
+        // The bundle weighs about two megabytes, and this page builds no grid. Thus it names neither the
+        // runtime nor the boot, and the chart runtime stays.
+        expect(html).not.toContain(AG_GRID_ASSET.file);
+        expect(html).not.toContain(GRID_BOOTSTRAP);
+        expect(html).toContain(`${ASSETS_DIR}/echarts.min.js`);
+    });
+
     it("boots after the decode and before the readiness signal", () => {
         const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
 
@@ -1183,6 +1213,7 @@ describe("the grid boot", () => {
         headerTooltip?: string;
         filter: string;
         valueGetter: (params: { data?: Record<string, string | number> }) => string | number | undefined;
+        filterValueGetter?: (params: { data?: Record<string, string | number> }) => number | null;
         valueFormatter: (params: { value: unknown }) => string;
         tooltipValueGetter: (params: { value: unknown }) => string;
     }
@@ -1194,12 +1225,29 @@ describe("the grid boot", () => {
         rowData: Record<string, string | number>[];
         defaultColDef: Record<string, unknown>;
         rowModelType?: string;
+        onFirstDataRendered?: () => void;
+        onModelUpdated?: (params: { api: { getDisplayedRowCount: () => number } }) => void;
     }
 
-    /** One mount, in the shape that the boot reads: the block attribute and the inline style. */
+    /** One element of the card that the boot writes into: the print note, and the row count of the status. */
+    interface FakeText {
+        textContent: string;
+    }
+
+    /**
+     * One mount, in the shape that the boot reads: the block attribute, the inline style, the note beside it,
+     * and the descendants that it measures for a scroll bar.
+     */
     interface FakeMount {
         style: { height: string };
         getAttribute: (name: string) => string | null;
+        querySelector: (selector: string) => FakeStrip | null;
+        parentNode: { querySelector: (selector: string) => FakeText | null };
+    }
+
+    /** The strip that the grid lays its horizontal bar in, in the shape that the fit reads. */
+    interface FakeStrip {
+        offsetHeight: number;
     }
 
     /** One payload, in the shape that the decoder leaves under the block id. */
@@ -1213,17 +1261,29 @@ describe("the grid boot", () => {
      * The script is browser source text. Each global arrives as a parameter, thus these fakes are the whole
      * environment that it drives and no real browser and no real grid are necessary.
      */
-    function boot(payloads: Record<string, unknown>, mountIds?: string[], breakOn?: string) {
+    function boot(payloads: Record<string, unknown>, mountIds?: string[], breakOn?: string, strip?: FakeStrip) {
         const created: { id: string; options: FakeOptions }[] = [];
+        const grids: { narrowTo: (count: number) => void }[] = [];
         const registered: unknown[][] = [];
         const applied: { option: string; value: unknown }[] = [];
         const listeners: Record<string, (() => void)[]> = {};
         const errors: string[] = [];
         const themeParams: unknown[] = [];
-        const mounts: FakeMount[] = (mountIds ?? Object.keys(payloads)).map((id) => ({
-            style: { height: "" },
-            getAttribute: (name: string) => (name === GRID_MOUNT_ATTRIBUTE ? id : null),
-        }));
+        const notes: FakeText[] = [];
+        const counts: FakeText[] = [];
+        const mounts: FakeMount[] = (mountIds ?? Object.keys(payloads)).map((id) => {
+            const note: FakeText = { textContent: "" };
+            const count: FakeText = { textContent: "" };
+            notes.push(note);
+            counts.push(count);
+            const inCard: Record<string, FakeText> = { [`.${GRID_NOTE_CLASS}`]: note, [`.${GRID_COUNT_CLASS}`]: count };
+            return {
+                style: { height: "" },
+                getAttribute: (name: string) => (name === GRID_MOUNT_ATTRIBUTE ? id : null),
+                querySelector: (selector: string) => (selector === ".ag-body-horizontal-scroll" ? (strip ?? null) : null),
+                parentNode: { querySelector: (selector: string) => inCard[selector] ?? null },
+            };
+        });
         const agGrid = {
             ModuleRegistry: {
                 registerModules: (modules: unknown[]) => {
@@ -1243,11 +1303,25 @@ describe("the grid boot", () => {
                     throw new Error("the grid refused the payload");
                 }
                 created.push({ id, options });
-                return {
+                // The grid renders its rows after it builds, and it gives the model event with them. The fit
+                // of the mount and the status of the card hang on the two calls, thus the fake makes both as
+                // the grid does.
+                let displayed = options.rowData.length;
+                const api = { getDisplayedRowCount: () => displayed };
+                options.onFirstDataRendered?.();
+                options.onModelUpdated?.({ api });
+                const handle = {
                     setGridOption: (option: string, value: unknown) => {
                         applied.push({ option, value });
                     },
+                    // The fake stands in for a filter: it narrows the model, then it gives the event again.
+                    narrowTo: (count: number) => {
+                        displayed = count;
+                        options.onModelUpdated?.({ api });
+                    },
                 };
+                grids.push(handle);
+                return handle;
             },
         };
         const registry = Object.create(null) as Record<string, unknown>;
@@ -1269,10 +1343,13 @@ describe("the grid boot", () => {
         new Function("window", "document", "agGrid", "console", GRID_BOOTSTRAP)(window, document, agGrid, console);
         return {
             created,
+            grids,
             registered,
             applied,
             errors,
             mounts,
+            notes,
+            counts,
             themeParams,
             fire: (name: string) => {
                 for (const handler of listeners[name] ?? []) {
@@ -1291,8 +1368,8 @@ describe("the grid boot", () => {
         return payloadOf(
             ["gene", "padj"],
             [
-                { label: "gene", kind: "compact-scientific" },
-                { label: "Adjusted p-value", kind: "scientific", bound: 0.0001 },
+                { label: "gene", kind: "compact-scientific", filter: "text" },
+                { label: "Adjusted p-value", kind: "scientific", filter: "number", bound: 0.0001 },
             ],
             rows,
         );
@@ -1316,7 +1393,7 @@ describe("the grid boot", () => {
     });
 
     it("names each column from the display and reads the own key of the row", () => {
-        const payload = payloadOf(["p.value"], [{ label: "p value", kind: "scientific" }], [{ "p.value": 0.5 }]);
+        const payload = payloadOf(["p.value"], [{ label: "p value", kind: "scientific", filter: "number" }], [{ "p.value": 0.5 }]);
         const column = boot({ one: payload }).created[0].options.columnDefs[0];
 
         expect(column.colId).toBe("p.value");
@@ -1358,26 +1435,39 @@ describe("the grid boot", () => {
 
     it("trims a delimited name in the cell and keeps the whole name on the tooltip", () => {
         const name = "HALLMARK_HYPOXIA%MSigDB%M5891";
-        const payload = payloadOf(["set"], [{ label: "set", kind: "compact-scientific" }], [{ set: name }]);
+        const payload = payloadOf(["set"], [{ label: "set", kind: "compact-scientific", filter: "text" }], [{ set: name }]);
         const column = boot({ one: payload }).created[0].options.columnDefs[0];
 
         expect(column.valueFormatter({ value: name })).toBe("HALLMARK_HYPOXIA");
         expect(column.tooltipValueGetter({ value: name })).toBe(name);
     });
 
-    it("gives a number filter to a magnitude column and a text filter to a column of names", () => {
+    it("takes the filter of each column from the display", () => {
+        const columns = boot({ one: genePayload() }).created[0].options.columnDefs;
+
+        // A gene column holds names. A reader filters it by name, thus the number filter would leave the
+        // column unfilterable.
+        expect(columns[0].filter).toBe("agTextColumnFilter");
+        expect(columns[1].filter).toBe("agNumberColumnFilter");
+    });
+
+    it("parses the cell for a number filter, thus a column of numeric text compares as a number", () => {
         const payload = payloadOf(
-            ["pmid", "reads"],
+            ["pmid", "gene"],
             [
-                { label: "pmid", kind: "identifier" },
-                { label: "reads", kind: "compact-scientific" },
+                { label: "pmid", kind: "identifier", filter: "number" },
+                { label: "gene", kind: "compact-scientific", filter: "text" },
             ],
-            [{ pmid: "31978945", reads: 12 }],
+            [{ pmid: "31978945", gene: "TP53" }],
         );
         const columns = boot({ one: payload }).created[0].options.columnDefs;
 
-        expect(columns[0].filter).toBe("agTextColumnFilter");
-        expect(columns[1].filter).toBe("agNumberColumnFilter");
+        expect(columns[0].filterValueGetter?.({ data: { pmid: "31978945" } })).toBe(31978945);
+        // A cell that parses to no number matches no comparison of the filter.
+        expect(columns[0].filterValueGetter?.({ data: { pmid: "NA" } })).toBeNull();
+        expect(columns[0].filterValueGetter?.({})).toBeNull();
+        // A text column filters on the value itself, thus it carries no parse.
+        expect(columns[1].filterValueGetter).toBeUndefined();
     });
 
     it("sorts from the header and fits each column to the width of the grid", () => {
@@ -1405,19 +1495,69 @@ describe("the grid boot", () => {
         expect(long.mounts[0].style.height).toBe(`${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX + GRID_VISIBLE_ROWS * GRID_ROW_HEIGHT_PX}px`);
     });
 
+    it("adds the horizontal scroll bar of a wide table to the mount, thus the bar covers no row", () => {
+        const rowSpace = GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX + 3 * GRID_ROW_HEIGHT_PX;
+
+        // A wide table scrolls sideways, and the grid takes the height of that bar out of the row space.
+        const wide = boot({ one: genePayload(3) }, undefined, undefined, { offsetHeight: 15 });
+        expect(wide.mounts[0].style.height).toBe(`${rowSpace + 15}px`);
+
+        // An overlay bar lies over the rows and leaves the strip at zero, thus the mount keeps its height.
+        const overlay = boot({ one: genePayload(3) }, undefined, undefined, { offsetHeight: 0 });
+        expect(overlay.mounts[0].style.height).toBe(`${rowSpace}px`);
+
+        // A table that fits carries no strip at all.
+        expect(boot({ one: genePayload(3) }).mounts[0].style.height).toBe(`${rowSpace}px`);
+    });
+
     it("takes the print layout of the grid on a print and gives it back after one", () => {
         const run = boot({ one: genePayload(3) });
         const height = run.mounts[0].style.height;
 
         run.fire("beforeprint");
-        // The print layout lays every row out at once and it holds no scroll viewport, thus each bounded
-        // row reaches the paper.
+        // The print layout lays every row out at once and it holds no scroll viewport, thus each row of the
+        // print form reaches the paper. A table under the print bound prints whole and carries no note.
         expect(run.applied).toEqual([{ option: "domLayout", value: "print" }]);
         expect(run.mounts[0].style.height).toBe("auto");
+        expect(run.notes[0].textContent).toBe("");
 
         run.fire("afterprint");
         expect(run.applied[1]).toEqual({ option: "domLayout", value: "normal" });
         expect(run.mounts[0].style.height).toBe(height);
+    });
+
+    it("bounds the print form of a long table and states the truncation on the card", () => {
+        const total = GRID_PRINT_ROW_CAP + 201;
+        const run = boot({ one: genePayload(total) });
+
+        run.fire("beforeprint");
+        const printed = run.applied[0] as { option: string; value: Record<string, string | number>[] };
+        // The print layout builds every row that it holds. An unbounded table would take hundreds of pages,
+        // thus the print stops at the bound and the note names what the paper leaves out.
+        expect(printed.option).toBe("rowData");
+        expect(printed.value.length).toBe(GRID_PRINT_ROW_CAP);
+        expect(run.applied[1]).toEqual({ option: "domLayout", value: "print" });
+        expect(run.notes[0].textContent).toBe("The print shows the first 1,000 of 1,201 rows. The full table rides the download.");
+
+        run.fire("afterprint");
+        expect(run.applied[2]).toEqual({ option: "domLayout", value: "normal" });
+        expect((run.applied[3] as { option: string; value: unknown[] }).value.length).toBe(total);
+        // The screen shows no note, thus the line lives for the print alone.
+        expect(run.notes[0].textContent).toBe("");
+    });
+
+    it("states the row count of the table on the card, and the shown count under a filter", () => {
+        const run = boot({ one: genePayload(1201) });
+
+        // The model event arrives with the rows, thus the card states the whole count before any filter.
+        expect(run.counts[0].textContent).toBe("1,201 rows");
+
+        run.grids[0].narrowTo(132);
+        // A filter narrows the model. The status then reads what the grid shows against what it holds.
+        expect(run.counts[0].textContent).toBe("132 of 1,201 rows");
+
+        run.grids[0].narrowTo(1201);
+        expect(run.counts[0].textContent).toBe("1,201 rows");
     });
 
     it("skips a mount whose block the registry does not hold, and it throws nothing", () => {
@@ -1457,12 +1597,14 @@ describe("the retired table enhancer", () => {
     });
 
     it("holds no rule and no markup of the plain table", () => {
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+        const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const page = load(rendered.html);
 
-        for (const retired of ["data-table", "data-sort-index", "<tbody", "<thead"]) {
-            expect(html).not.toContain(retired);
-        }
-        for (const rule of [".report-table-live", ".report-table-filter", ".report-table-toggle", ".report-row", ".data-table"]) {
+        // The grid renders each cell, thus the page carries one mount for each table and no table markup.
+        expect(page(`[${GRID_MOUNT_ATTRIBUTE}]`).length).toBeGreaterThan(0);
+        expect(page("td").length).toBe(0);
+        expect(page("table").length).toBe(0);
+        for (const rule of [".report-table-live", ".report-table-filter", ".report-table-toggle", ".report-row", ".data-table-sort"]) {
             expect(DESIGN_CSS).not.toContain(rule);
         }
     });

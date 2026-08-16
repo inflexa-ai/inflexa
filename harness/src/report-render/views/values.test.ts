@@ -3,7 +3,17 @@ import { describe, expect, it } from "bun:test";
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
 import type { ScalarReference } from "../../contracts/report-reference.js";
 import { tableSidecarName } from "../assets.js";
-import { GRID_MOUNT_ATTRIBUTE, renderCitation, renderFigure, renderMetric, renderTable, tableDisplay } from "./values.js";
+import {
+    GRID_COUNT_CLASS,
+    GRID_MOUNT_ATTRIBUTE,
+    GRID_NOTE_CLASS,
+    GRID_ROWS_WORD,
+    renderCitation,
+    renderFigure,
+    renderMetric,
+    renderTable,
+    tableDisplay,
+} from "./values.js";
 import { ReferenceLedger } from "../references.js";
 
 const scalarBinding: ScalarReference = { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
@@ -88,6 +98,28 @@ describe("tableDisplay", () => {
         expect(display[0].label).toBe("gene symbol");
     });
 
+    it("takes the filter of a column from its cells and not from its kind", () => {
+        const display = displayOf(block, ["gene", "padj"], [{ gene: "TP53", padj: 0.01 }]);
+
+        // A gene column holds names, thus a reader filters it by name. A p-value column holds magnitudes.
+        expect(display[0].filter).toBe("text");
+        expect(display[1].filter).toBe("number");
+    });
+
+    it("keeps the number filter of a column that holds a sentinel beside its numbers", () => {
+        const rows = [{ reads: "NA" }, { reads: 14201 }];
+        expect(displayOf(block, ["reads"], rows)[0].filter).toBe("number");
+        // A column where no cell parses holds names, thus it filters as text.
+        expect(displayOf(block, ["direction"], [{ direction: "up" }, { direction: "down" }])[0].filter).toBe("text");
+    });
+
+    it("gives the number filter to an identifier column that holds numeric text", () => {
+        // The kind keeps the source text of the identifier, and the filter reads what the cells hold.
+        const display = displayOf(block, ["pmid"], [{ pmid: "31978945" }]);
+        expect(display[0].kind).toBe("identifier");
+        expect(display[0].filter).toBe("number");
+    });
+
     it("reads a p-value column as the scientific kind and every other column as the rounded kind", () => {
         const display = displayOf(block, ["gene", "padj", "reads"], [{ gene: "TP53", padj: 0.01, reads: 14201 }]);
 
@@ -144,7 +176,7 @@ describe("renderTable", () => {
     const block: TableBlock = { kind: "table", id: "tb1", binding: tableBinding };
 
     it("renders one empty grid mount that names its block, and no row", () => {
-        const html = renderTable(block);
+        const html = renderTable(block, 3);
 
         expect(html).toContain(`<div class="report-grid" ${GRID_MOUNT_ATTRIBUTE}="tb1"></div>`);
         // The rows and the header ride the data asset, thus the markup carries no copy of either.
@@ -154,25 +186,64 @@ describe("renderTable", () => {
     });
 
     it("renders the title of the card and the caption under it", () => {
-        const html = renderTable({ ...block, title: "Top genes", caption: "The hypoxic group." });
+        const html = renderTable({ ...block, title: "Top genes", caption: "The hypoxic group." }, 3);
 
         expect(html).toContain(`<div class="report-table-title">Top genes</div>`);
         expect(html).toContain(`<p class="report-caption">The hypoxic group.</p>`);
     });
 
-    it("links the staged raw bytes of the pinned artifact as the download", () => {
-        const html = renderTable(block);
+    it("states the row count of the table in the status line, grouped", () => {
+        const html = renderTable(block, 14201);
+
+        // The count reads as the number format of the page reads a count, thus the card and a cell agree.
+        expect(html).toContain(`<span class="${GRID_COUNT_CLASS}">14,201 ${GRID_ROWS_WORD}</span>`);
+    });
+
+    it("names the row bound of the binding beside the count, and nothing where the binding carries none", () => {
+        const bounded: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, rowBound: { column: "padj", count: 20, order: "asc" } } };
+        // An ascending bound keeps the smallest values, thus the status names that end of the ranked order.
+        expect(renderTable(bounded, 20)).toContain(`<span class="report-table-bound">lowest 20 by padj</span>`);
+
+        const top: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, rowBound: { column: "nes", count: 20 } } };
+        expect(renderTable(top, 20)).toContain(`<span class="report-table-bound">top 20 by nes</span>`);
+
+        // The declared label of the column names the bound, the same as it names the header.
+        const labeled: TableBlock = {
+            kind: "table",
+            id: "tb1",
+            binding: { ...tableBinding, rowBound: { column: "padj", count: 6 }, columnLabels: { padj: "Adjusted p-value" } },
+        };
+        expect(renderTable(labeled, 6)).toContain("top 6 by Adjusted p-value");
+
+        // A large bound groups its digits, the same as the count beside it.
+        const wide: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, rowBound: { column: "nes", count: 5000 } } };
+        expect(renderTable(wide, 5000)).toContain("top 5,000 by nes");
+        expect(renderTable(block, 6)).not.toContain("report-table-bound");
+    });
+
+    it("renders the download as a button of the card footer, named for the format of the file", () => {
+        const html = renderTable(block, 2);
         const name = tableSidecarName(tableBinding.hash, tableBinding.path);
 
         // The link is relative, thus the page fetches no host when it opens. The attribute makes the
         // browser save the file instead of navigating to it.
-        expect(html).toContain(`href="assets/${name}"`);
-        expect(html).toContain(`download="${name}"`);
+        expect(html).toContain(`<a class="report-table-download" href="assets/${name}" download="${name}">Download CSV</a>`);
         expect(name.endsWith("de.csv")).toBe(true);
+        // The status and the button sit in one row of the footer, and the print note sits under them.
+        expect(html).toContain(`<div class="report-table-footer"><div class="report-table-footer-row">`);
+        expect(html).toContain(`<div class="${GRID_NOTE_CLASS}"></div></div>`);
+    });
+
+    it("names the format of another file, and it names none where the path carries no extension", () => {
+        const parquet: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, path: "runs/r1/de.parquet" } };
+        expect(renderTable(parquet, 2)).toContain(">Download PARQUET</a>");
+
+        const bare: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, path: "runs/r1/table" } };
+        expect(renderTable(bare, 2)).toContain(">Download</a>");
     });
 
     it("carries no filter, no toggle, and no capped row, because the grid owns the table", () => {
-        const html = renderTable(block);
+        const html = renderTable(block, 25);
 
         for (const retired of ["report-table-filter", "report-table-toggle", "report-row", "data-table"]) {
             expect(html).not.toContain(retired);

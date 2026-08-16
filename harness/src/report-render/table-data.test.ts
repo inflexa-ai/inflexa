@@ -13,7 +13,7 @@ import { encodeTablePayload, tableDataAsset, TABLE_DATA_GLOBAL, type ColumnDispl
  * something else about the payload takes this one and says nothing about the format.
  */
 function displayOf(columns: readonly string[]): ColumnDisplay[] {
-    return columns.map((label) => ({ label, kind: "compact-scientific" }));
+    return columns.map((label) => ({ label, kind: "compact-scientific", filter: "number" }));
 }
 
 describe("encodeTablePayload", () => {
@@ -89,8 +89,8 @@ describe("encodeTablePayload", () => {
 
     it("carries one display entry for each column, at the index of that column", () => {
         const display: ColumnDisplay[] = [
-            { label: "Gene", kind: "identifier" },
-            { label: "Adjusted p-value", kind: "scientific", bound: 0.00036 },
+            { label: "Gene", kind: "identifier", filter: "text" },
+            { label: "Adjusted p-value", kind: "scientific", filter: "number", bound: 0.00036 },
         ];
         const payload = encodeTablePayload(["gene", "padj"], [{ gene: "TP53", padj: 0 }], display);
 

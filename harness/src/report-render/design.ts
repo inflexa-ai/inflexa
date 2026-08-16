@@ -478,16 +478,39 @@ img {
 .report-grid {
   width: 100%;
 }
-/* The footer of a table card. It holds the download of the raw bytes, thus it reads as a foot rule under
-   the table and never as a second control bar. */
+/* The footer of a table card: the status of the table on the left, the download button on the right, and
+   the print note under both. The three read as one surface under the grid. */
 .report-table-footer {
-  display: flex;
-  justify-content: flex-end;
   padding: 8px 16px;
   border-top: 1px solid var(--color-border);
   background: var(--color-bg-alt);
 }
+.report-table-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+/* The status of the table: the row count, and the row bound of the binding beside it. */
+.report-table-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+}
+.report-table-bound {
+  color: var(--color-text-muted);
+}
+/* The bound reads as a second clause of the status line, thus a separator divides the two. The dot is a
+   literal character, because a hex escape eats the space that follows it and the two clauses would touch. */
+.report-table-bound::before {
+  content: " · ";
+}
+/* The download of the raw bytes. It reads as a button, because it is the one action of a table card. */
 .report-table-download {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 6px 12px;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
@@ -495,10 +518,25 @@ img {
   text-transform: uppercase;
   color: var(--color-primary-500);
   text-decoration: none;
+  background: var(--color-card);
+  border: 1px solid var(--color-primary-200);
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
 }
 .report-table-download:hover {
   color: var(--color-primary-700);
-  text-decoration: underline;
+  background: var(--color-primary-50);
+  border-color: var(--color-primary-500);
+}
+/* The print note of a table card. The page script writes the bound of a truncated print form into it at
+   print time, and it clears the text after. An empty note takes no space, thus the screen shows none. */
+.report-grid-note {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.report-grid-note:empty {
+  display: none;
 }
 
 /* ── Figure and citation cards ────────────────────────── */
@@ -821,6 +859,15 @@ export const GRID_MIN_COLUMN_WIDTH_PX = 120;
 
 /** The delay before a cell tooltip shows, in milliseconds. */
 export const GRID_TOOLTIP_DELAY_MS = 200;
+
+/**
+ * The count of rows that a print form holds.
+ *
+ * The print layout lays every row out at once, and a table with no row bound would take hundreds of pages.
+ * The print stops at this count, the note of the card states the truncation, and the download carries the
+ * whole table. A table under the count prints whole.
+ */
+export const GRID_PRINT_ROW_CAP = 1000;
 
 /**
  * The theme parameters of a grid. The page script passes them to `themeQuartz.withParams`.
