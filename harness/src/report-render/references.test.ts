@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { Reference } from "../contracts/report-reference.js";
-import { renderReferenceList } from "./views/references-view.js";
+import { renderBibliography, renderReferenceList } from "./views/references-view.js";
 import { ReferenceLedger } from "./references.js";
 
 describe("ReferenceLedger.mark", () => {
@@ -48,6 +48,28 @@ describe("ReferenceLedger.mark", () => {
         expect(ledger.provenanceEntries().length).toBe(1);
         expect(ledger.citationEntries().length).toBe(2);
     });
+
+    it("gives one number to one paper that two references name with different display text", () => {
+        const first: Reference = { kind: "citation", idKind: "pmid", id: "26997480", raw: "Hugo W, et al. Science. 2016." };
+        const second: Reference = { kind: "citation", idKind: "pmid", id: "26997480", raw: "Hugo 2016" };
+        const ledger = new ReferenceLedger();
+
+        // The key names the paper, thus the identity of the citation ladder reads the key and never the
+        // serialization. A serialization identity would give one paper two numbers here.
+        expect(ledger.mark(first)).toEqual({ ladder: "citation", n: 1 });
+        expect(ledger.mark(second)).toEqual({ ladder: "citation", n: 1 });
+        expect(ledger.citationEntries().length).toBe(1);
+    });
+
+    it("keeps two locators of one artifact apart", () => {
+        const first: Reference = { kind: "artifact-value", path: "runs/r1/a.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
+        const second: Reference = { kind: "artifact-value", path: "runs/r1/a.csv", hash: "sha256:aaa", locator: { column: "padj", row: 1 } };
+        const ledger = new ReferenceLedger();
+
+        // The provenance ladder keeps the whole serialization, because one file holds many cells.
+        expect(ledger.mark(first).n).toBe(1);
+        expect(ledger.mark(second).n).toBe(2);
+    });
 });
 
 describe("renderReferenceList", () => {
@@ -74,17 +96,29 @@ describe("renderReferenceList", () => {
         expect(renderReferenceList(new ReferenceLedger())).toBe("");
     });
 
-    it("names the paper beside the key of a citation that the pin recorded", () => {
+    it("gives an empty string for a ledger that holds citations alone", () => {
+        const ledger = new ReferenceLedger();
+        ledger.mark({ kind: "citation", idKind: "pmid", id: "12345", raw: "Doe 2020" });
+
+        // A citation belongs to the bibliography, thus the provenance list of such a page renders not at
+        // all and its band carries no title.
+        expect(renderReferenceList(ledger)).toBe("");
+    });
+});
+
+describe("renderBibliography", () => {
+    it("names the paper, the key, and the description of a citation that the pin recorded", () => {
         const paper: Reference = { kind: "citation", idKind: "pmid", id: "26997480", raw: "Hugo W, et al." };
         const ledger = new ReferenceLedger();
         ledger.mark(paper);
 
-        const list = renderReferenceList(ledger, { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } });
+        const list = renderBibliography(ledger, { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } });
 
         expect(list).toContain(`id="cite-1"`);
         expect(list).toContain("[1]");
         expect(list).toContain("Hugo et al. 2016");
         expect(list).toContain("pmid:26997480");
+        expect(list).toContain(`<div class="report-cite-description">The resistance paper.</div>`);
     });
 
     it("names the key alone for a citation that the record map does not hold", () => {
@@ -92,10 +126,18 @@ describe("renderReferenceList", () => {
         const ledger = new ReferenceLedger();
         ledger.mark(paper);
 
-        const list = renderReferenceList(ledger, {});
+        const list = renderBibliography(ledger, {});
 
         expect(list).toContain(`id="cite-1"`);
         expect(list).toContain("doi:10.1000/xyz");
         expect(list).not.toContain("report-cite-source");
+        expect(list).not.toContain("report-cite-description");
+    });
+
+    it("gives an empty string for a ledger that holds no citation", () => {
+        const ledger = new ReferenceLedger();
+        ledger.mark({ kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:aaa" });
+
+        expect(renderBibliography(ledger)).toBe("");
     });
 });

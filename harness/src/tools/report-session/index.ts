@@ -30,4 +30,5 @@ export {
     type ListPinnedArtifactsResult,
     type ListPinnedArtifactsToolDeps,
     type PinnedArtifact,
+    type PinnedCitation,
 } from "./list-artifacts.js";

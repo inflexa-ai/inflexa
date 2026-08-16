@@ -134,27 +134,52 @@ describe("renderReportPage assembly", () => {
 });
 
 describe("the page stands alone", () => {
-    it("holds no attribute reference and no style reference with a remote scheme", () => {
+    /** A page whose citation card carries a pinned record, thus the body holds a PubMed navigation. */
+    function pageWithACitation(): string {
+        const document: ReportDocument = {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [{ kind: "citation", id: "cit1", binding: { kind: "citation", idKind: "pmid", id: "26997480", raw: "Hugo W, et al." } }],
+                },
+            ],
+        };
+        return renderReportPage(document, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap();
+    }
+
+    /**
+     * The rule reads the element and never the value. A navigation costs no request when the page opens,
+     * thus an anchor admits a remote host. A `src`, a `srcset`, and a stylesheet source each fetch on
+     * open, thus none of them admits one.
+     */
+    function remoteSitesOf(html: string): string[] {
+        const remote = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)].filter((value) => /^https?:/i.test(value));
+        return [...new Set(remote.flatMap((value) => referenceSites(html, value)))];
+    }
+
+    it("names a remote host at a navigation anchor and at no other element", () => {
+        for (const html of [renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap(), pageWithACitation()]) {
+            const references = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)];
+            expect(references.length).toBeGreaterThan(0);
+
+            // A remote value of the style sheet reaches no element of the page, thus it gives no site and
+            // the empty list fails this equality.
+            expect(remoteSitesOf(html)).toEqual(["a[href]"]);
+
+            // Each other reference resolves inside the page directory: a staged asset, an inline data URI,
+            // or an anchor of the page itself. The scheme test reads the start of the value, thus a
+            // namespace URI inside a data URI never reads as a host.
+            const local = (value: string) =>
+                value.startsWith(`${ASSETS_DIR}/`) || value.startsWith("data:") || value.startsWith("#") || /^https?:/i.test(value);
+            expect(references.filter((value) => !local(value))).toEqual([]);
+        }
+    });
+
+    it("names the brand host one time, thus no second surface fetches it", () => {
         const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
-        const references = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)];
-        expect(references.length).toBeGreaterThan(0);
-
-        // The brand value reaches the page as a navigation and as nothing else. A `src` that names the same
-        // host fetches on open, thus the exemption below binds to the anchor and not to the value.
-        expect(referenceSites(html, BRAND_LINK)).toEqual(["a[href]"]);
-
-        // The scheme test reads the start of the value. A namespace URI inside a data URI names no host to
-        // fetch, thus the test must not read a scheme out of the middle of a value.
-        const remote = references.filter((value) => /^https?:/i.test(value) && value !== BRAND_LINK);
-        expect(remote).toEqual([]);
-
-        // Each reference resolves inside the page directory: a staged asset, an inline data URI, or an
-        // anchor of the page itself. The brand link is the one exception, and it fetches nothing.
-        const local = (value: string) => value.startsWith(`${ASSETS_DIR}/`) || value.startsWith("data:") || value.startsWith("#") || value === BRAND_LINK;
-        const foreign = references.filter((value) => !local(value));
-        expect(foreign).toEqual([]);
-
-        // The one remote value reaches the page one time, thus no second surface names a host.
         expect(html.split(BRAND_LINK).length - 1).toBe(1);
     });
 
@@ -402,6 +427,38 @@ describe("renderReportPage navigation and references", () => {
         // The claim marker and the citation marker point at the same entry.
         expect(html.split(`href="#cite-1"`).length - 1).toBe(2);
     });
+
+    it("lists one entry for one paper that two blocks name with different display text", () => {
+        const document: ReportDocument = {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [
+                        {
+                            kind: "claim",
+                            id: "c1",
+                            content: { prose: "A claim." },
+                            bindings: [{ kind: "citation", idKind: "pmid", id: "26997480", raw: "Hugo W, et al. Science. 2016." }],
+                        },
+                        {
+                            kind: "citation",
+                            id: "cit1",
+                            binding: { kind: "citation", idKind: "pmid", id: "26997480", raw: "Hugo 2016" },
+                        },
+                    ],
+                },
+            ],
+        };
+        const html = renderReportPage(document, {})._unsafeUnwrap();
+
+        // The key names the paper, and the raw text is the words of the author. Thus one paper takes one
+        // number, and the two markers point at the one entry.
+        expect(html.split(`<li id="cite-`).length - 1).toBe(1);
+        expect(html.split(`href="#cite-1"`).length - 1).toBe(2);
+    });
 });
 
 describe("the citation bibliography", () => {
@@ -446,10 +503,21 @@ describe("the citation bibliography", () => {
         expect(card.find("a.report-citation-source").attr("href")).toBe("https://pubmed.ncbi.nlm.nih.gov/26997480/");
         expect(card.find("span.report-citation-note").text()).toBe("the second paper");
         expect(card.find("span.report-citation-key").text()).toBe("pmid:26997480");
-        // The appendix entry names the paper beside the key.
+        // The card sits in the body, thus it carries the short citation and never the description.
+        expect(card.text()).not.toContain("The resistance paper.");
+
+        // The appendix entry names the paper beside the key, and it carries the description under them.
         const entry = load(html)("li#cite-2");
         expect(entry.text()).toContain("Hugo et al. 2016");
         expect(entry.text()).toContain("pmid:26997480");
+        expect(entry.find("div.report-cite-description").text()).toBe("The resistance paper.");
+    });
+
+    it("adds no description line to a record that carries none", () => {
+        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap();
+
+        expect(load(html)("li#cite-2").text()).toContain("Hugo et al. 2016");
+        expect(load(html)("li#cite-2 div.report-cite-description").length).toBe(0);
     });
 
     it("shows the key and the note alone for a key that the record map does not hold", () => {
@@ -574,20 +642,62 @@ describe("the one content column", () => {
     });
 });
 
-describe("the provenance appendix", () => {
-    /** A document with one claim. The ledger then holds one entry, thus the appendix renders. */
-    const claimDocument: ReportDocument = {
+describe("the appendix bands", () => {
+    /** A document whose one claim binds an artifact, thus the provenance ladder holds one entry. */
+    const artifactDocument: ReportDocument = {
+        title: "T",
+        sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "claim", id: "c1", content: { prose: "A claim." }, bindings: [scalarRef] }] }],
+    };
+
+    /** A document whose one claim binds a paper, thus the citation ladder holds the only entry. */
+    const citationDocument: ReportDocument = {
         title: "T",
         sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "claim", id: "c1", content: { prose: "A claim." }, bindings: [citation] }] }],
     };
 
-    it("titles the auto-generated list Data provenance", () => {
-        const html = renderReportPage(claimDocument, {})._unsafeUnwrap();
+    it("titles the provenance list Data provenance", () => {
+        const html = renderReportPage(artifactDocument, {})._unsafeUnwrap();
         expect(html).toContain("Data provenance");
-        // A reader expects literature under "References". The auto-generated list is provenance, thus no
-        // heading of the page carries that word.
+        // A reader expects literature under "References". This list is provenance, thus no heading of the
+        // page carries that word.
         expect(html).not.toContain(">References<");
         expect(load(html)("h2.report-ref-title").length).toBe(1);
+        // The page cites no paper, thus it carries no bibliography band.
+        expect(html).not.toContain("Literature");
+    });
+
+    it("titles the bibliography Literature, and titles no provenance band over it", () => {
+        const html = renderReportPage(citationDocument, {})._unsafeUnwrap();
+        const titles = load(html)("h2.report-ref-title")
+            .toArray()
+            .map((node) => load(html)(node).text());
+
+        // The one appendix of the page holds papers, thus it wears the literature title alone. A reader
+        // never reads a paper under the provenance heading.
+        expect(titles).toEqual(["Literature"]);
+        expect(html).toContain(`<ol class="report-citations">`);
+        expect(html).not.toContain(`<ol class="report-references">`);
+    });
+
+    it("titles the two bands apart when the page holds both kinds of reference", () => {
+        const both: ReportDocument = {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [{ kind: "claim", id: "c1", content: { prose: "A claim." }, bindings: [scalarRef, citation] }],
+                },
+            ],
+        };
+        const html = renderReportPage(both, {})._unsafeUnwrap();
+        const titles = load(html)("h2.report-ref-title")
+            .toArray()
+            .map((node) => load(html)(node).text());
+
+        // The provenance band comes first, and the literature band continues the band alternation.
+        expect(titles).toEqual(["Data provenance", "Literature"]);
     });
 
     it("reads quieter than the body of the report", () => {

@@ -104,10 +104,10 @@ evidence when the block lands. A path that the pinned evidence does not hold com
 back as an unresolved reference, and you repair that path.
 
 The literature of the report composes as citation blocks, and each one binds to a
-citation id of the pinned evidence. \`list_pinned_artifacts\` names those ids in its
-\`citations\` field: read them there, and never take an id out of a refusal. A
-citation that the pinned evidence does not hold does not resolve. Report such a
-citation to the user, and never write it into the prose instead.
+citation of the pinned evidence. \`list_pinned_artifacts\` names the pinned
+literature in its \`citations\` field: read it there, and never take a citation out
+of a refusal. A citation that the pinned evidence does not hold does not resolve.
+Report such a citation to the user, and never write it into the prose instead.
 
 \`finish_draft\` checks the whole draft against the schema, the id rule, and the
 structural tier. It returns each completeness gap, or the finished document. Read
