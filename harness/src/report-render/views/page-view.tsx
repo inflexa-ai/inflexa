@@ -21,6 +21,7 @@ import { raw } from "hono/html";
 
 import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, SECTION_SPY, TABLE_ENHANCER } from "../page.js";
 import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
+import type { CitationRecords } from "../../report-model/reference-resolver.js";
 import type { ReferenceLedger } from "../references.js";
 import { renderReferenceList } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
@@ -69,11 +70,12 @@ export function renderBand(index: number, inner: string): string {
 }
 
 /**
- * Wrap the reference list in the final band. An empty ledger gives an empty string, thus the page shows no
- * empty reference band. The index continues the band alternation of the sections.
+ * Wrap the appendix lists in the final band. An empty ledger gives an empty string, thus the page shows no
+ * empty reference band. The index continues the band alternation of the sections. The records carry the
+ * bibliography of each cited key, and a ledger with no citation reads none of them.
  */
-export function renderReferenceSection(ledger: ReferenceLedger, index: number): string {
-    const list = renderReferenceList(ledger);
+export function renderReferenceSection(ledger: ReferenceLedger, index: number, records?: CitationRecords): string {
+    const list = renderReferenceList(ledger, records);
     if (list === "") {
         return "";
     }

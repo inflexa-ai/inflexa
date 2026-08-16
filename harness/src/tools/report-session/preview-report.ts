@@ -343,7 +343,9 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 return ok({ outcome: "bridge-mismatch", mismatches: bridged.error });
             }
 
-            const rendered = renderReportPage(document, bridged.value);
+            // The records are the bibliography of the pin. They ride the render call and never the value
+            // map, because the appendix reads them beside the cards and the value map is keyed by block.
+            const rendered = renderReportPage(document, bridged.value, snapshot.citationRecords);
             if (rendered.isErr()) {
                 return ok({ outcome: "render-problems", problems: rendered.error });
             }

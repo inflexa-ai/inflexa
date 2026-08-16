@@ -35,6 +35,12 @@ const ArtifactSnapshotSchema = z.object({
 /** The citation list of a stored snapshot. A snapshot with no list reads as an absent field. */
 const CitationsSchema = z.array(z.string()).optional();
 
+/**
+ * The citation records of a stored snapshot, keyed by the citation key. A snapshot with no map reads as
+ * an absent field, thus a pin that predates the map loads the same as it did before.
+ */
+const CitationRecordsSchema = z.record(z.string(), z.object({ citation: z.string(), description: z.string().optional() })).optional();
+
 /** Reduce a zod error to the dotted path and the message of each issue. */
 export function reduceIssues(error: z.ZodError): SchemaIssue[] {
     return error.issues.map((issue) => ({
@@ -78,6 +84,10 @@ export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIss
     if (!citations.success) {
         return err(prefixIssues("citations", reduceIssues(citations.error)));
     }
+    const citationRecords = CitationRecordsSchema.safeParse(stored.citationRecords);
+    if (!citationRecords.success) {
+        return err(prefixIssues("citationRecords", reduceIssues(citationRecords.error)));
+    }
     // The map takes a null prototype, the same as the pin, thus a path such as
     // `__proto__` stays an ordinary entry and never reaches a prototype slot.
     const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
@@ -93,5 +103,11 @@ export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIss
     if (issues.length > 0) {
         return err(issues);
     }
-    return citations.data === undefined ? ok({ artifacts }) : ok({ artifacts, citations: citations.data });
+    // An absent part stays absent in the parsed value. Thus a reload gives the same shape that the pin
+    // wrote, and an equality test over a stored snapshot holds across the round trip.
+    return ok({
+        artifacts,
+        ...(citations.data === undefined ? {} : { citations: citations.data }),
+        ...(citationRecords.data === undefined ? {} : { citationRecords: citationRecords.data }),
+    });
 }

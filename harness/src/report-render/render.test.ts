@@ -359,7 +359,7 @@ describe("renderReportPage value validation", () => {
         expect(result.isOk()).toBe(true);
         const html = result._unsafeUnwrap();
         expect(html).toContain("A claim.");
-        expect(html).toContain(`href="#ref-1"`);
+        expect(html).toContain(`href="#cite-1"`);
     });
 });
 
@@ -397,10 +397,106 @@ describe("renderReportPage navigation and references", () => {
             ],
         };
         const html = renderReportPage(document, {})._unsafeUnwrap();
-        // The reference list holds one entry.
-        expect(html.split(`<li id="ref-`).length - 1).toBe(1);
+        // The bibliography holds one entry.
+        expect(html.split(`<li id="cite-`).length - 1).toBe(1);
         // The claim marker and the citation marker point at the same entry.
-        expect(html.split(`href="#ref-1"`).length - 1).toBe(2);
+        expect(html.split(`href="#cite-1"`).length - 1).toBe(2);
+    });
+});
+
+describe("the citation bibliography", () => {
+    /** One page whose section holds two artifact claims and two citation blocks. */
+    const twoOfEach: ReportDocument = {
+        title: "T",
+        sections: [
+            {
+                kind: "section",
+                id: "s",
+                title: "S",
+                blocks: [
+                    { kind: "claim", id: "c1", content: { prose: "The first claim." }, bindings: [scalarRef] },
+                    {
+                        kind: "claim",
+                        id: "c2",
+                        content: { prose: "The second claim." },
+                        bindings: [{ kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:bbb" }],
+                    },
+                    { kind: "citation", id: "cit1", binding: citation, note: "the first paper" },
+                    {
+                        kind: "citation",
+                        id: "cit2",
+                        binding: { kind: "citation", idKind: "pmid", id: "26997480", raw: "Hugo W, et al." },
+                        note: "the second paper",
+                    },
+                ],
+            },
+        ],
+    };
+
+    it("shows the marker, the short citation, the note, and the PubMed link of a recorded key", () => {
+        const html = renderReportPage(
+            twoOfEach,
+            {},
+            { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } },
+        )._unsafeUnwrap();
+        const card = load(html)("div.report-citation").last();
+
+        expect(card.find("span.report-cite-marker").text()).toBe("[2]");
+        expect(card.find("a.report-citation-source").text()).toBe("Hugo et al. 2016");
+        expect(card.find("a.report-citation-source").attr("href")).toBe("https://pubmed.ncbi.nlm.nih.gov/26997480/");
+        expect(card.find("span.report-citation-note").text()).toBe("the second paper");
+        expect(card.find("span.report-citation-key").text()).toBe("pmid:26997480");
+        // The appendix entry names the paper beside the key.
+        const entry = load(html)("li#cite-2");
+        expect(entry.text()).toContain("Hugo et al. 2016");
+        expect(entry.text()).toContain("pmid:26997480");
+    });
+
+    it("shows the key and the note alone for a key that the record map does not hold", () => {
+        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap();
+        const card = load(html)("div.report-citation").first();
+
+        expect(card.find("a.report-citation-source").length).toBe(0);
+        expect(card.find("span.report-citation-key").text()).toBe("pmid:12345");
+        expect(card.find("span.report-citation-note").text()).toBe("the first paper");
+        // The bibliography entry of a record-less key names the key alone.
+        expect(load(html)("li#cite-1").text()).toContain("pmid:12345");
+        expect(load(html)("li#cite-1 span.report-cite-source").length).toBe(0);
+    });
+
+    it("counts the artifact markers and the citation markers in two ladders", () => {
+        const page = load(renderReportPage(twoOfEach, {})._unsafeUnwrap());
+
+        expect(
+            page("sup.report-marker a")
+                .toArray()
+                .map((node) => page(node).text()),
+        ).toEqual(["1", "2"]);
+        expect(
+            page("span.report-cite-marker a")
+                .toArray()
+                .map((node) => page(node).text()),
+        ).toEqual(["[1]", "[2]"]);
+        // The two appendix lists each hold two entries, thus no marker points across the ladders.
+        expect(page("ol.report-references li").length).toBe(2);
+        expect(page("ol.report-citations li").length).toBe(2);
+    });
+
+    it("names PubMed as a navigation and never as a loaded resource", () => {
+        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap();
+        const link = "https://pubmed.ncbi.nlm.nih.gov/26997480/";
+
+        // A navigation costs no request when the page opens, thus the page still stands alone.
+        expect(referenceSites(html, link)).toEqual(["a[href]"]);
+    });
+
+    it("renders a stored pin that holds no record map as it did before", () => {
+        const withNoRecords = renderReportPage(twoOfEach, {})._unsafeUnwrap();
+        const withEmptyRecords = renderReportPage(twoOfEach, {}, {})._unsafeUnwrap();
+
+        expect(withNoRecords).toBe(withEmptyRecords);
+        expect(withNoRecords).not.toContain("pubmed.ncbi.nlm.nih.gov");
+        expect(withNoRecords).toContain("pmid:12345");
     });
 });
 

@@ -37,14 +37,31 @@ export interface ArtifactSnapshot {
 }
 
 /**
+ * One pinned citation record: the short citation of the paper, and the description that the synthesis
+ * gave. The record is the bibliography of a citation key, and the key alone states the membership.
+ */
+export interface CitationRecord {
+    citation: string;
+    description?: string;
+}
+
+/** The pinned citation records, keyed by the citation key, for example `pmid:12345`. */
+export type CitationRecords = Record<string, CitationRecord>;
+
+/**
  * The pinned evidence that a resolver reads. The `artifacts` map is keyed by the analysis-relative path,
  * the same path that an artifact reference names and the same key as `cortex_artifacts.path`. That path
  * is unique across the analysis, thus one map holds the artifacts of every run without a collision.
  * `citations` holds each known external id as an `idKind:id` string, for example `pmid:12345`.
+ *
+ * `citationRecords` carries the bibliography of a key that the synthesis described. The key list keeps the
+ * membership role, thus a key with no record is a pinned citation and a stored pin with no map reads the
+ * same as one that predates the map.
  */
 export interface ReportSnapshot {
     artifacts: Record<string, ArtifactSnapshot>;
     citations?: string[];
+    citationRecords?: CitationRecords;
 }
 
 /**
@@ -134,4 +151,19 @@ export function fileTypeHoldsNoCell(fileType: string | null | undefined): boolea
  */
 export function snapshotEntry(snapshot: ReportSnapshot, path: string): ArtifactSnapshot | undefined {
     return Object.hasOwn(snapshot.artifacts, path) ? snapshot.artifacts[path] : undefined;
+}
+
+/**
+ * Give back the citation record at `key`, or `undefined` when the map holds no such own key.
+ *
+ * An agent authors the citation key of a block, thus the key is untrusted text. The map can be a plain
+ * object from a `JSON.parse` of a stored snapshot, and a bracket lookup with a key such as `constructor`
+ * finds an inherited member. The `Object.hasOwn` guard admits an own key only, thus an inherited member
+ * reads as absent.
+ *
+ * The card and the appendix both read this one lookup. Thus the two surfaces can never disagree about the
+ * bibliography of one key.
+ */
+export function citationRecordOf(records: CitationRecords | undefined, key: string): CitationRecord | undefined {
+    return records !== undefined && Object.hasOwn(records, key) ? records[key] : undefined;
 }

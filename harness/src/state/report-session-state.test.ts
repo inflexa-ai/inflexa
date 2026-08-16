@@ -79,6 +79,33 @@ describe("createReportSessionStateStore", () => {
         expect(state!.snapshot).toEqual(snapshot);
     });
 
+    it("keeps the citation records of a pin, and reads a pin with no record map as it stands", async () => {
+        const analysisId = "analysis-citation-records";
+        await seedAnalysis(analysisId);
+        const withRecords = "thread-citation-records";
+        const legacy = "thread-citation-legacy";
+
+        const pinned: ReportSnapshot = {
+            ...snapshot,
+            citationRecords: { "pmid:12345": { citation: "Smith 2020", description: "The primary paper." } },
+        };
+        (await store.writeSnapshot({ threadId: withRecords, analysisId, snapshot: pinned }))._unsafeUnwrap();
+        const read = (await store.readState(withRecords))._unsafeUnwrap();
+        expect(read!.snapshot).toEqual(pinned);
+
+        // A stored pin that predates the map carries the key list alone. It loads with no map, thus each
+        // reader falls back to the bare key.
+        (await store.writeSnapshot({ threadId: legacy, analysisId, snapshot }))._unsafeUnwrap();
+        await pool.query({
+            text: `UPDATE cortex_report_session_state SET snapshot = $2::jsonb WHERE thread_id = $1`,
+            values: [legacy, JSON.stringify({ artifacts: snapshot.artifacts, citations: ["pmid:12345"] })],
+        });
+
+        const legacySnapshot = (await store.readState(legacy))._unsafeUnwrap()!.snapshot!;
+        expect(legacySnapshot.citations).toEqual(["pmid:12345"]);
+        expect(legacySnapshot.citationRecords).toBeUndefined();
+    });
+
     it("keeps the first row when a second write runs on the same thread", async () => {
         const analysisId = "analysis-insert-if-absent";
         await seedAnalysis(analysisId);

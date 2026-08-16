@@ -581,8 +581,37 @@ img {
   font-size: 14px;
   color: var(--color-text-secondary);
 }
+/* The bracket marker of the literature ladder. It reads beside the text and not above it, thus it stays a
+   span and never a superscript. */
+.report-cite-marker {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.report-cite-marker a {
+  color: var(--color-primary-500);
+  text-decoration: none;
+}
+.report-cite-marker a:hover {
+  text-decoration: underline;
+}
+/* The short citation is the name of the paper, thus it carries the weight of the card. */
+.report-citation-source {
+  font-weight: 600;
+  color: var(--color-text);
+}
+a.report-citation-source {
+  text-decoration: none;
+}
+a.report-citation-source:hover {
+  text-decoration: underline;
+}
 .report-citation-note {
   color: var(--color-text);
+}
+.report-citation-key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-muted);
 }
 .report-caption {
   margin-top: 8px;
@@ -635,6 +664,20 @@ img {
 }
 .report-ref-detail {
   color: var(--color-text-muted);
+}
+/* The bibliography holds its own bracket number, thus the list shows no decimal marker of its own. */
+.report-citations {
+  padding-left: 0;
+  list-style: none;
+  color: var(--color-text-muted);
+}
+.report-cite-index {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.report-cite-source {
+  color: var(--color-text-secondary);
 }
 
 /* ── Section textures ─────────────────────────────────── */

@@ -321,15 +321,53 @@ describe("renderFigure", () => {
 });
 
 describe("renderCitation", () => {
-    it("renders the marker and the optional note", () => {
-        const block: CitationBlock = {
-            kind: "citation",
-            id: "cit1",
-            binding: { kind: "citation", idKind: "pmid", id: "12345", raw: "Doe 2020" },
-            note: "see figure 2",
-        };
-        const html = renderCitation(block, new ReferenceLedger());
-        expect(html).toContain(`href="#ref-1"`);
+    /** One citation block over the given key, with a note. */
+    function citationBlock(idKind: "pmid" | "doi", id: string): CitationBlock {
+        return { kind: "citation", id: "cit1", binding: { kind: "citation", idKind, id, raw: "Doe 2020" }, note: "see figure 2" };
+    }
+
+    it("renders the bracket marker, the key, and the optional note", () => {
+        const html = renderCitation(citationBlock("pmid", "12345"), new ReferenceLedger());
+        expect(html).toContain(`href="#cite-1"`);
+        expect(html).toContain("[1]");
+        expect(html).toContain("pmid:12345");
         expect(html).toContain("see figure 2");
+    });
+
+    it("renders the short citation of a pmid record as a PubMed link", () => {
+        const html = renderCitation(citationBlock("pmid", "26997480"), new ReferenceLedger(), {
+            citation: "Hugo et al. 2016",
+            description: "The resistance paper.",
+        });
+
+        expect(html).toContain("Hugo et al. 2016");
+        expect(html).toContain(`href="https://pubmed.ncbi.nlm.nih.gov/26997480/"`);
+        // The card is the bibliography entry, thus it names the key beside the paper.
+        expect(html).toContain("pmid:26997480");
+        expect(html).toContain("see figure 2");
+    });
+
+    it("renders a record of another identifier space with no link", () => {
+        const html = renderCitation(citationBlock("doi", "10.1000/xyz"), new ReferenceLedger(), { citation: "Roe et al. 2021" });
+
+        expect(html).toContain("Roe et al. 2021");
+        expect(html).toContain("doi:10.1000/xyz");
+        expect(html).not.toContain("pubmed.ncbi.nlm.nih.gov");
+    });
+
+    it("renders a key that the record map does not hold with no citation and no link", () => {
+        const html = renderCitation(citationBlock("pmid", "12345"), new ReferenceLedger());
+
+        expect(html).not.toContain("report-citation-source");
+        expect(html).not.toContain("pubmed.ncbi.nlm.nih.gov");
+        expect(html).toContain("pmid:12345");
+    });
+
+    it("keeps a hostile id inside the link and inside the key", () => {
+        const html = renderCitation(citationBlock("pmid", '1" onclick="alert(1)'), new ReferenceLedger(), { citation: "Doe 2020" });
+
+        // The escape of the attribute holds the quote, and the encode of the id holds the space.
+        expect(html).not.toContain(`onclick="alert(1)"`);
+        expect(html).toContain("https://pubmed.ncbi.nlm.nih.gov/1%22%20onclick%3D%22alert(1)/");
     });
 });
