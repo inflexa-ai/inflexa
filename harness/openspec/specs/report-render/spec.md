@@ -286,6 +286,11 @@ A horizontal bar MUST render the category axis on y and the value axis on x. The
 - **WHEN** a composition holds a horizontal bar series and a scatter series
 - **THEN** the derivation refuses with a problem that names the mix
 
+#### Scenario: An orientation on a non-bar refuses
+
+- **WHEN** the author states an orientation beside the `line` chart type
+- **THEN** the render refuses with a problem that names the fault
+
 ### Requirement: The chart text reads for a reader
 
 A preset MUST fill its semantic axis titles. A volcano titles "log2 fold change" and "−log10(p)", and a manhattan titles "−log10(p)" on its y axis. The precedence, most specific first: an agent axes title, a declared column label, the preset title, then the raw or derived name.

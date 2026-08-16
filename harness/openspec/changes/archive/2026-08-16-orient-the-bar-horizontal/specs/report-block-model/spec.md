@@ -11,10 +11,6 @@ The bar MUST admit an optional orientation: `vertical`, the default, and `horizo
 - **WHEN** the author binds a quick-path `bar` with the `horizontal` orientation
 - **THEN** the block validates, and the orientation rides the stored document
 
-#### Scenario: An orientation on a non-bar refuses
-
-- **WHEN** the author states an orientation beside the `line` chart type
-- **THEN** the render refuses with a problem that names the fault
 
 #### Scenario: An absent orientation stays vertical
 
