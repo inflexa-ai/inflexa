@@ -24,7 +24,7 @@ import { stagedSource } from "../assets.js";
 import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
 import type { DataAsset } from "../table-data.js";
 import type { CitationRecords } from "../../report-model/reference-resolver.js";
-import type { ReferenceLedger } from "../references.js";
+import type { DerivationChains, ReferenceLedger } from "../references.js";
 import { renderBibliography, renderReferenceList } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
 
@@ -87,10 +87,11 @@ function appendixHeading(title: string): string {
  * An empty ladder renders no band, thus a report with citations alone shows the literature title alone.
  * The index continues the band alternation of the sections, and a band that renders takes the next one.
  * The records carry the bibliography of each cited key, and a ledger with no citation reads none of them.
+ * The chains carry the derivation of each derived path, and a provenance entry of such a path states it.
  */
-export function renderReferenceSection(ledger: ReferenceLedger, index: number, records?: CitationRecords): string {
+export function renderReferenceSection(ledger: ReferenceLedger, index: number, records?: CitationRecords, chains?: DerivationChains): string {
     const bands: string[] = [];
-    const provenance = renderReferenceList(ledger);
+    const provenance = renderReferenceList(ledger, chains);
     if (provenance !== "") {
         bands.push(renderBand(index, appendixHeading(PROVENANCE_TITLE) + provenance));
     }

@@ -176,7 +176,7 @@ describe("renderTable", () => {
     const block: TableBlock = { kind: "table", id: "tb1", binding: tableBinding };
 
     it("renders one empty grid mount that names its block, and no row", () => {
-        const html = renderTable(block, 3);
+        const html = renderTable(block, new ReferenceLedger(), 3);
 
         expect(html).toContain(`<div class="report-grid" ${GRID_MOUNT_ATTRIBUTE}="tb1"></div>`);
         // The rows and the header ride the data asset, thus the markup carries no copy of either.
@@ -186,14 +186,26 @@ describe("renderTable", () => {
     });
 
     it("renders the title of the card and the caption under it", () => {
-        const html = renderTable({ ...block, title: "Top genes", caption: "The hypoxic group." }, 3);
+        const html = renderTable({ ...block, title: "Top genes", caption: "The hypoxic group." }, new ReferenceLedger(), 3);
 
-        expect(html).toContain(`<div class="report-table-title">Top genes</div>`);
+        // The title line carries the marker of the whole-table binding, thus the card names its appendix
+        // entry beside its title.
+        expect(html).toContain(`<div class="report-table-title">Top genes<sup class="report-marker"><a href="#ref-1">1</a></sup></div>`);
         expect(html).toContain(`<p class="report-caption">The hypoxic group.</p>`);
     });
 
+    it("marks the whole-table binding in the provenance ladder, and shows the marker with no title", () => {
+        const ledger = new ReferenceLedger();
+        const html = renderTable(block, ledger, 3);
+
+        // Every evidentiary binding ledgers, thus the appendix names the artifact of a card that carries no
+        // title of its own.
+        expect(html).toContain(`<div class="report-table-title"><sup class="report-marker"><a href="#ref-1">1</a></sup></div>`);
+        expect(ledger.provenanceEntries()).toEqual([tableBinding]);
+    });
+
     it("states the row count of the table in the status line, grouped", () => {
-        const html = renderTable(block, 14201);
+        const html = renderTable(block, new ReferenceLedger(), 14201);
 
         // The count reads as the number format of the page reads a count, thus the card and a cell agree.
         expect(html).toContain(`<span class="${GRID_COUNT_CLASS}">14,201 ${GRID_ROWS_WORD}</span>`);
@@ -202,10 +214,10 @@ describe("renderTable", () => {
     it("names the row bound of the binding beside the count, and nothing where the binding carries none", () => {
         const bounded: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, rowBound: { column: "padj", count: 20, order: "asc" } } };
         // An ascending bound keeps the smallest values, thus the status names that end of the ranked order.
-        expect(renderTable(bounded, 20)).toContain(`<span class="report-table-bound">lowest 20 by padj</span>`);
+        expect(renderTable(bounded, new ReferenceLedger(), 20)).toContain(`<span class="report-table-bound">lowest 20 by padj</span>`);
 
         const top: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, rowBound: { column: "nes", count: 20 } } };
-        expect(renderTable(top, 20)).toContain(`<span class="report-table-bound">top 20 by nes</span>`);
+        expect(renderTable(top, new ReferenceLedger(), 20)).toContain(`<span class="report-table-bound">top 20 by nes</span>`);
 
         // The declared label of the column names the bound, the same as it names the header.
         const labeled: TableBlock = {
@@ -213,16 +225,16 @@ describe("renderTable", () => {
             id: "tb1",
             binding: { ...tableBinding, rowBound: { column: "padj", count: 6 }, columnLabels: { padj: "Adjusted p-value" } },
         };
-        expect(renderTable(labeled, 6)).toContain("top 6 by Adjusted p-value");
+        expect(renderTable(labeled, new ReferenceLedger(), 6)).toContain("top 6 by Adjusted p-value");
 
         // A large bound groups its digits, the same as the count beside it.
         const wide: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, rowBound: { column: "nes", count: 5000 } } };
-        expect(renderTable(wide, 5000)).toContain("top 5,000 by nes");
-        expect(renderTable(block, 6)).not.toContain("report-table-bound");
+        expect(renderTable(wide, new ReferenceLedger(), 5000)).toContain("top 5,000 by nes");
+        expect(renderTable(block, new ReferenceLedger(), 6)).not.toContain("report-table-bound");
     });
 
     it("renders the download as a button of the card footer, named for the format of the file", () => {
-        const html = renderTable(block, 2);
+        const html = renderTable(block, new ReferenceLedger(), 2);
         const name = tableSidecarName(tableBinding.hash, tableBinding.path);
 
         // The link is relative, thus the page fetches no host when it opens. The attribute makes the
@@ -236,14 +248,14 @@ describe("renderTable", () => {
 
     it("names the format of another file, and it names none where the path carries no extension", () => {
         const parquet: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, path: "runs/r1/de.parquet" } };
-        expect(renderTable(parquet, 2)).toContain(">Download PARQUET</a>");
+        expect(renderTable(parquet, new ReferenceLedger(), 2)).toContain(">Download PARQUET</a>");
 
         const bare: TableBlock = { kind: "table", id: "tb1", binding: { ...tableBinding, path: "runs/r1/table" } };
-        expect(renderTable(bare, 2)).toContain(">Download</a>");
+        expect(renderTable(bare, new ReferenceLedger(), 2)).toContain(">Download</a>");
     });
 
     it("carries no filter, no toggle, and no capped row, because the grid owns the table", () => {
-        const html = renderTable(block, 25);
+        const html = renderTable(block, new ReferenceLedger(), 25);
 
         for (const retired of ["report-table-filter", "report-table-toggle", "report-row", "data-table"]) {
             expect(html).not.toContain(retired);

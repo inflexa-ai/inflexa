@@ -20,21 +20,32 @@
  * On a pass the store records the document that the gate validated, the pinned snapshot, and the anchor from
  * the thread row. The one-per-thread rule of the store bounds a concurrent race, and that refusal returns as
  * data. The outcome of a pass carries the version id.
+ *
+ * The prune runs after the version lands. It removes the output file of each derivation that the recorded
+ * document does not reference, under the `derived/` directory of the session alone. The records stay
+ * append-only, because the bytes are reproducible from the script and the sources. A failed removal logs and
+ * changes no outcome.
  */
 
 import { ok, type Result } from "neverthrow";
+import { rm } from "node:fs/promises";
+import { resolve as resolvePath, sep } from "node:path";
 import { z } from "zod";
 
 import type { AuthContext } from "../../auth/types.js";
+import type { ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeDbError } from "../../lib/db-result.js";
-import type { Logger } from "../../lib/logger.js";
+import { describeFsError, tryFsWrite } from "../../lib/fs-result.js";
+import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
-import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
+import { referencedPaths, walkBlocks } from "../../report-model/block-walk.js";
+import { finishDraft, type FinishGap, type SessionDerivation } from "../../report-model/draft-finish.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import type { ReferenceResolver } from "../../report-model/reference-resolver.js";
 import { validateReport, type ResolutionFailure, type SchemaIssue } from "../../report-model/validate.js";
 import type { RecordVersionError, ReportVersionStore } from "../../state/report-versions.js";
+import { reportSessionDerivedDir, resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
@@ -72,11 +83,16 @@ export type RecordVersionResult =
  * version carries the parent conversation and the transcript position. `makeResolver` is optional, because a
  * resolver realization can be absent, and the gate needs one. It binds one analysis, thus the tool makes the
  * resolver over the scope of the call.
+ *
+ * `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root. The prune reaches the
+ * derived directory of the session under that root, thus the seam is mandatory: a composition that bound
+ * none would record a version and leave every unused derivation on disk.
  */
 export interface RecordVersionToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly store: ReportVersionStore;
     readonly threads: Pick<ThreadStore, "getThread">;
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
     readonly logger?: Logger;
 }
@@ -98,6 +114,69 @@ function describeRecordFailure(error: RecordVersionError): string {
 }
 
 /**
+ * Remove the output file of each derivation that the recorded document does not reference.
+ *
+ * The unused set is a set difference: a derivation is used when a binding of the recorded document names its
+ * output path. The document is the one that the gate validated, thus the prune reads what the version holds
+ * and never the draft.
+ *
+ * The prune reaches the `derived/` directory of the session alone. A record whose path resolves outside that
+ * directory is skipped, because this tool never removes a file that it does not own. A stale record from an
+ * earlier layout and a crafted path both land in that arm.
+ *
+ * The version already stands at this point. Thus each failure costs the cleanup alone: an unresolvable root,
+ * a path that escapes, and a failed removal each log and change no outcome. The records stay, and the bytes
+ * are reproducible from the script and the sources.
+ */
+async function pruneUnusedDerivations(args: {
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
+    readonly analysisId: string;
+    readonly threadId: string;
+    readonly document: ReportDocument;
+    readonly derivations: readonly SessionDerivation[];
+    readonly logger: Logger;
+}): Promise<void> {
+    if (args.derivations.length === 0) {
+        return;
+    }
+    const named = referencedPaths(walkBlocks(args.document.sections).references);
+    const unused = args.derivations.filter((record) => !named.has(record.outputPath));
+    if (unused.length === 0) {
+        return;
+    }
+
+    let root: string;
+    try {
+        root = args.resolveWorkspaceRoot(args.analysisId);
+    } catch (cause) {
+        args.logger.warn("the unused derivations did not prune", {
+            threadId: args.threadId,
+            analysisId: args.analysisId,
+            ...defaultErrorFields(cause),
+        });
+        return;
+    }
+    const derivedDir = resolvePath(root, reportSessionDerivedDir(args.threadId));
+
+    for (const record of unused) {
+        const resolved = resolveWorkspacePath({ workspaceRoot: root, analysisId: args.analysisId, path: record.outputPath });
+        if (resolved.kind !== "ok" || !resolved.absolute.startsWith(derivedDir + sep)) {
+            args.logger.warn("an unused derivation sits outside the derived directory of the session", {
+                threadId: args.threadId,
+                analysisId: args.analysisId,
+                path: record.outputPath,
+            });
+            continue;
+        }
+        // An absent file is the normal condition of a prune that ran before, thus `force` treats it as done.
+        const removed = await tryFsWrite("record.rm", () => rm(resolved.absolute, { force: true }), { path: resolved.absolute });
+        if (removed.isErr()) {
+            args.logger.warn("an unused derivation did not go", { path: resolved.absolute, detail: describeFsError(removed.error) });
+        }
+    }
+}
+
+/**
  * Make the record tool over the session-state gateway, the version store, the thread store, and the
  * resolver.
  *
@@ -113,7 +192,8 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
             "Record the current draft as one report version. The tool runs the whole gate first: it finishes the draft, " +
             "resolves each reference, matches each chart encoding, and matches each assert. An incomplete draft gives back the gap list, " +
             "and a failed reference gives back the block that broke. The tool records a version only after the eyes look at the current page. " +
-            "A thread holds one version, thus a second record gives back that the thread already holds one.",
+            "A thread holds one version, thus a second record gives back that the thread already holds one. " +
+            "After the version lands, the tool removes the file of each derived table that no block of the recorded report binds.",
         inputSchema: recordVersionInput,
         executionMode: "inline",
         describeCall: "none",
@@ -125,10 +205,10 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
             if (opened.isErr()) {
                 return ok({ outcome: "refused", refusal: opened.error });
             }
-            const { threadId, analysisId, state, seenDocumentHash } = opened.value;
+            const { threadId, analysisId, state, seenDocumentHash, derivations } = opened.value;
             const { document: draft, snapshot } = state;
 
-            const finished = finishDraft(draft, snapshot);
+            const finished = finishDraft(draft, snapshot, derivations);
             if (!finished.valid) {
                 return ok({ outcome: "gaps", gaps: finished.gaps });
             }
@@ -187,6 +267,18 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
                 parentThreadId: thread.value.parentThreadId,
                 parentSeq: thread.value.parentSeq,
             });
+            if (recorded.isOk()) {
+                // The version stands from here. The prune reclaims the bytes of each derivation that the
+                // recorded document ignores, and it decides nothing about the outcome.
+                await pruneUnusedDerivations({
+                    resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
+                    analysisId,
+                    threadId,
+                    document: finished.document,
+                    derivations,
+                    logger,
+                });
+            }
             return recorded.match(
                 (ref): Result<RecordVersionResult, ToolError> => ok({ outcome: "recorded", versionId: ref.versionId }),
                 (error): Result<RecordVersionResult, ToolError> => {

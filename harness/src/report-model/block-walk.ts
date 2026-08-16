@@ -34,12 +34,24 @@ export interface CollectedReference {
     encodingColumns?: string[];
 }
 
-/** An advisory warning about the content of one block. A warning never makes a report invalid. */
-export interface ReportWarning {
+/** An advisory warning about the prose of one block. The detail is the numeral that the prose carries. */
+export interface FreeNumeralWarning {
     blockId: string;
     kind: "free-numeral";
     detail: string;
 }
+
+/**
+ * An advisory warning about one derivation that no binding of the document names. The detail is the output
+ * path of the record. The record stays, and the bytes are reproducible from the script and the sources.
+ */
+export interface UnusedDerivationWarning {
+    kind: "unused-derivation";
+    detail: string;
+}
+
+/** One advisory warning about a report. A warning never makes a report invalid. */
+export type ReportWarning = FreeNumeralWarning | UnusedDerivationWarning;
 
 /** What one walk over a block tree found. */
 export interface BlockWalk {
@@ -48,7 +60,7 @@ export interface BlockWalk {
     /** Each id that more than one block holds, named one time, in sorted order. */
     repeatedIds: string[];
     /** Each free numeral that prose carries. */
-    warnings: ReportWarning[];
+    warnings: FreeNumeralWarning[];
 }
 
 /**
@@ -66,8 +78,8 @@ export interface BlockWalk {
 const NUMERAL_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?%?/g;
 
 /** Warn for each free-standing numeral that the prose of one block carries. */
-export function numeralWarnings(blockId: string, prose: string): ReportWarning[] {
-    const warnings: ReportWarning[] = [];
+export function numeralWarnings(blockId: string, prose: string): FreeNumeralWarning[] {
+    const warnings: FreeNumeralWarning[] = [];
     for (const match of prose.matchAll(NUMERAL_PATTERN)) {
         warnings.push({ blockId, kind: "free-numeral", detail: match[0] });
     }
@@ -126,7 +138,7 @@ function chartColumns(block: ChartBlock): string[] {
  */
 export function walkBlocks(blocks: readonly AnyBlock[]): BlockWalk {
     const references: CollectedReference[] = [];
-    const warnings: ReportWarning[] = [];
+    const warnings: FreeNumeralWarning[] = [];
     const seenIds = new Set<string>();
     const repeated = new Set<string>();
 
@@ -175,4 +187,31 @@ export function walkBlocks(blocks: readonly AnyBlock[]): BlockWalk {
     }
 
     return { references, repeatedIds: [...repeated].sort(), warnings };
+}
+
+/**
+ * Each artifact path that a set of collected references names.
+ *
+ * An artifact binding names one path. A derivation reference computes over two inputs, thus it names the
+ * path of each input and a table that feeds a derived scalar counts as named. A citation names no path.
+ *
+ * The set answers one question: which files does this document use. The finish reads it against the
+ * derivations of the session, and the record reads it again over the recorded document.
+ */
+export function referencedPaths(references: readonly CollectedReference[]): Set<string> {
+    const paths = new Set<string>();
+    for (const entry of references) {
+        const reference = entry.reference;
+        if (reference.kind === "citation") {
+            continue;
+        }
+        if (reference.kind === "derivation") {
+            for (const input of reference.inputs) {
+                paths.add(input.path);
+            }
+            continue;
+        }
+        paths.add(reference.path);
+    }
+    return paths;
 }

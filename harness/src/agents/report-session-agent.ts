@@ -180,11 +180,13 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             ...(eyes ? { eyes } : {}),
             ...(logger ? { logger } : {}),
         }),
-        // The record tool. It gates the whole document, then records one version.
+        // The record tool. It gates the whole document, records one version, then prunes each
+        // derived table that the recorded document does not bind.
         createRecordVersionTool({
             gateway,
             store,
             threads,
+            resolveWorkspaceRoot,
             ...(makeResolver ? { makeResolver } : {}),
             ...(logger ? { logger } : {}),
         }),

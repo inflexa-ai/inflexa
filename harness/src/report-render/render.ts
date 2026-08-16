@@ -23,7 +23,7 @@ import { renderChart } from "./views/chart-view.js";
 import { deriveChartOption } from "./chart.js";
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
-import { citationKeyOf, ReferenceLedger } from "./references.js";
+import { citationKeyOf, derivationChains, ReferenceLedger, type DerivationChain } from "./references.js";
 import { encodeTablePayload, tableDataAsset, type DataAsset } from "./table-data.js";
 import type { RenderedPage, RenderProblem, RenderValue, RenderValues } from "./types.js";
 import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable, tableColumns, tableDisplay } from "./views/values.js";
@@ -38,10 +38,19 @@ import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTab
  * The records are the bibliography of the pin, and they are optional. A caller that passes none renders
  * each citation from its key alone, thus a stored pin that holds no record map renders as it did before.
  *
+ * The derivations are the chains of the session, and they are optional too. An appendix entry whose path a
+ * chain names states its sources and its script. A document that binds no derived path renders
+ * byte-identically with the chains and without them.
+ *
  * The renderer writes no file. The data assets ride the result, and the caller stages them beside the page.
  * Thus the render stays pure, and two renders of one document give byte-identical assets.
  */
-export function renderReportPage(document: ReportDocument, values: RenderValues, records?: CitationRecords): Result<RenderedPage, RenderProblem[]> {
+export function renderReportPage(
+    document: ReportDocument,
+    values: RenderValues,
+    records?: CitationRecords,
+    derivations?: readonly DerivationChain[],
+): Result<RenderedPage, RenderProblem[]> {
     const problems: RenderProblem[] = [];
     const ledger = new ReferenceLedger();
     const dataAssets: DataAsset[] = [];
@@ -55,7 +64,7 @@ export function renderReportPage(document: ReportDocument, values: RenderValues,
     }
 
     const nav = renderNav(document.sections);
-    const references = renderReferenceSection(ledger, document.sections.length, records);
+    const references = renderReferenceSection(ledger, document.sections.length, records, derivationChains(derivations));
     return ok({ html: assemblePage(document.title, nav, content.join(""), references, dataAssets), dataAssets });
 }
 
@@ -107,7 +116,7 @@ function renderBlock(
             // display entry of that column sits at the same index.
             const columns = tableColumns(entry);
             dataAssets.push(tableDataAsset(block.id, encodeTablePayload(columns, entry.rows, tableDisplay(block, entry, columns))));
-            return renderTable(block, entry.rows.length);
+            return renderTable(block, ledger, entry.rows.length);
         }
         case "figure": {
             const entry = values[block.id];
@@ -136,7 +145,7 @@ function renderBlock(
                 problems.push(option.error);
                 return "";
             }
-            return renderChart(block, option.value);
+            return renderChart(block, ledger, option.value);
         }
         case "section":
             return renderSection(block, depth, renderChildren(block.blocks, values, ledger, records, dataAssets, depth + 1, problems));

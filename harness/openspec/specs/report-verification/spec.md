@@ -17,6 +17,8 @@ visual judgment itself stays with the agent, and it stays advisory.
 ### Requirement: The gate runs before the store
 The record tool MUST run the full validation before `store.record`. The validation MUST cover the finish, the resolution of every reference, the chart-encoding match, and the assert match. Only a pass MUST reach the store. Thus a version that the gate did not accept never exists. The record MUST write the document value that the gate validated. The one-per-thread rule of the store bounds a concurrent race.
 
+The record MUST prune the output file of each derivation that the recorded document does not reference, after the version lands. The prune reaches only a path under the session `derived/` directory. The records stay append-only, because the bytes are reproducible from the script and the sources. A failed removal logs, and it changes no outcome.
+
 #### Scenario: A failed gate records nothing
 - **WHEN** one reference of the document fails its assert
 - **THEN** the record refuses, and the store holds no new row
@@ -24,6 +26,16 @@ The record tool MUST run the full validation before `store.record`. The validati
 #### Scenario: A pass records one version
 - **WHEN** the gate passes and the thread holds no version
 - **THEN** the store records the version, and the tool gives the version id
+
+#### Scenario: The record prunes the unused outputs
+
+- **WHEN** the record lands a version whose document names one of two derivation outputs
+- **THEN** the unused output file goes, the used one stays, and both records stay
+
+#### Scenario: A failed prune keeps the version
+
+- **WHEN** the removal of an unused output throws
+- **THEN** the version stands, and the log names the failed removal
 
 ### Requirement: A failure names its block
 Each gate failure MUST carry the `id` of the block that holds the failed part. Thus the agent repairs one block, and not the report at large.

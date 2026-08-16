@@ -193,6 +193,8 @@ The finish operation MUST validate the whole draft against the full document sch
 
 The finish MUST also carry each advisory warning, in both outcomes. A free numeral in prose is such a warning: it needs no file, thus the finish scans for it. A warning MUST NOT decide the outcome.
 
+The finish MUST list each unused derivation as an advisory warning: a derivation record whose output path no binding of the document names. The warning names the output path, and it decides no outcome, exactly as a free-numeral warning does.
+
 #### Scenario: An empty section is a gap at the finish
 - **WHEN** the agent finishes a draft that holds one empty section
 - **THEN** the finish reports the empty section as a gap, and it gives no document
@@ -208,6 +210,16 @@ The finish MUST also carry each advisory warning, in both outcomes. A free numer
 #### Scenario: A free numeral warns
 - **WHEN** the agent finishes a draft whose prose carries a figure with no metric block behind it
 - **THEN** the finish carries a warning for that block, and the warning does not change the outcome
+
+#### Scenario: An unused derivation warns
+
+- **WHEN** the finish runs over a document that ignores one derivation record
+- **THEN** the finish carries a warning that names the unused output, and the outcome stays as the gaps decide
+
+#### Scenario: A used derivation warns nothing
+
+- **WHEN** every derivation output is named by a binding
+- **THEN** the finish carries no derivation warning
 
 ### Requirement: The authoring tool surface
 The operations MUST ship as harness tools, made with `defineTool` through one factory. The factory closes over a session-state gateway and reads no other ambient state. A tool MUST read the thread id from the scope of the call, and it MUST load the state through the gateway. A landed document MUST persist before the tool reports. A call whose scope carries no thread id MUST refuse as typed data in the ok channel.

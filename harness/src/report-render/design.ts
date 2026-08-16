@@ -638,6 +638,19 @@ a.report-citation-source:hover {
 .report-ref-detail {
   color: var(--color-text-muted);
 }
+/* The chain of a derived path reads under its entry, thus the entry line keeps the form of a pinned
+   artifact and the sources sit on a line of their own. */
+.report-ref-chain {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+}
+/* The head of a content hash. It reads smaller than a path, because it identifies bytes and a reader
+   compares it against a staged file name instead of reading it. */
+.report-ref-hash {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
 /* The bibliography holds its own bracket number, thus the list shows no decimal marker of its own. */
 .report-citations {
   padding-left: 0;

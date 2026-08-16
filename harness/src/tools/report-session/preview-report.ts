@@ -403,10 +403,10 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             if (opened.isErr()) {
                 return ok({ outcome: "refused", refusal: opened.error });
             }
-            const { threadId, analysisId, state } = opened.value;
+            const { threadId, analysisId, state, derivations } = opened.value;
             const { document: draft, snapshot } = state;
 
-            const finished = finishDraft(draft, snapshot);
+            const finished = finishDraft(draft, snapshot, derivations);
             if (!finished.valid) {
                 return ok({ outcome: "gaps", gaps: finished.gaps });
             }
@@ -436,9 +436,10 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 return ok({ outcome: "bridge-mismatch", mismatches: bridged.error });
             }
 
-            // The records are the bibliography of the pin. They ride the render call and never the value
-            // map, because the appendix reads them beside the cards and the value map is keyed by block.
-            const rendered = renderReportPage(document, bridged.value, snapshot.citationRecords);
+            // The citation records are the bibliography of the pin, and the derivation records are the chain
+            // of each derived path. Both ride the render call and never the value map, because the appendix
+            // reads them beside the cards and the value map is keyed by block.
+            const rendered = renderReportPage(document, bridged.value, snapshot.citationRecords, derivations);
             if (rendered.isErr()) {
                 return ok({ outcome: "render-problems", problems: rendered.error });
             }

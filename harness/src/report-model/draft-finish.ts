@@ -14,13 +14,17 @@
  * channel a caller could not read the one signal that catches a figure typed into prose with no metric
  * block behind it.
  *
+ * The unused-derivation scan rides the same channel. The records and the draft both sit in memory, thus the
+ * scan opens no file either. A derivation whose output path no binding names warns, and the derived bytes
+ * stay until the record prunes them.
+ *
  * The result is plain data. A gap is an expected outcome, not an error, thus the finish never throws. On
  * a pass the finish gives the valid document, and it does not change the draft.
  */
 
 import { ReportDocumentSchema, type ReportDocument } from "../contracts/report-blocks.js";
 import type { UnresolvedReference } from "../contracts/report-reference.js";
-import { walkBlocks, type ReportWarning } from "./block-walk.js";
+import { referencedPaths, walkBlocks, type CollectedReference, type ReportWarning, type UnusedDerivationWarning } from "./block-walk.js";
 import type { DraftDocument } from "./draft.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
 import { validateReferenceStructure } from "./structural-validation.js";
@@ -56,10 +60,40 @@ export type FinishResult =
     { valid: true; document: ReportDocument; warnings: ReportWarning[] } | { valid: false; gaps: FinishGap[]; warnings: ReportWarning[] };
 
 /**
- * Finish a draft. The finish validates the schema, the unique ids, and the structural resolution of each
- * reference, and it reports each gap as data. It warns about each free numeral in prose.
+ * One derivation of the session, as the finish reads it. The finish needs the output path alone, because
+ * the used set is the paths that the bindings name.
  */
-export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot): FinishResult {
+export interface SessionDerivation {
+    readonly outputPath: string;
+}
+
+/**
+ * Warn for each derivation that no binding of the draft names.
+ *
+ * A derivation is used when a binding names its output path. Thus the scan is a set difference over the
+ * records and the collected references, and it reads no file. A warning names the output path, and it
+ * decides no outcome.
+ */
+function unusedDerivationWarnings(derivations: readonly SessionDerivation[], references: readonly CollectedReference[]): UnusedDerivationWarning[] {
+    if (derivations.length === 0) {
+        return [];
+    }
+    const named = referencedPaths(references);
+    const warnings: UnusedDerivationWarning[] = [];
+    for (const record of derivations) {
+        if (!named.has(record.outputPath)) {
+            warnings.push({ kind: "unused-derivation", detail: record.outputPath });
+        }
+    }
+    return warnings;
+}
+
+/**
+ * Finish a draft. The finish validates the schema, the unique ids, and the structural resolution of each
+ * reference, and it reports each gap as data. It warns about each free numeral in prose, and about each
+ * derivation of the session that no binding names.
+ */
+export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot, derivations: readonly SessionDerivation[] = []): FinishResult {
     const gaps: FinishGap[] = [];
 
     const parsed = ReportDocumentSchema.safeParse(draft);
@@ -75,7 +109,8 @@ export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot): Fin
 
     // The walk reads the draft tree, not the parse result. The draft is already typed, thus the walk stays
     // well-defined even when the schema parse fails, and a caller still gets the id and reference gaps.
-    const { references, repeatedIds, warnings } = walkBlocks(draft.sections);
+    const { references, repeatedIds, warnings: proseWarnings } = walkBlocks(draft.sections);
+    const warnings: ReportWarning[] = [...proseWarnings, ...unusedDerivationWarnings(derivations, references)];
 
     for (const id of repeatedIds) {
         gaps.push({ kind: "duplicate-id", id });

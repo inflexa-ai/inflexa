@@ -211,14 +211,22 @@ function boundText(binding: TableBlock["binding"]): string | undefined {
  *
  * The download names the staged copy of the pinned artifact. The link is relative and the browser saves
  * the file, thus the page fetches nothing when it opens and the reader still gets the whole table.
+ *
+ * The whole-table binding joins the provenance ladder, thus the title line carries the marker and the
+ * appendix names the artifact. Every evidentiary block ledgers this way, and a card with no title still
+ * shows its marker on the same line.
  */
-export function renderTable(block: TableBlock, rowCount: number): string {
+export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount: number): string {
     const binding = block.binding;
+    const mark = ledger.mark(binding);
     const download = tableSidecarName(binding.hash, binding.path);
     const bound = boundText(binding);
     return String(
         <div class="report-table">
-            {block.title !== undefined ? <div class="report-table-title">{block.title}</div> : null}
+            <div class="report-table-title">
+                {block.title}
+                <LadderMarker mark={mark} />
+            </div>
             <div class="corner-accents">
                 <div class="report-grid" {...{ [GRID_MOUNT_ATTRIBUTE]: block.id }}></div>
                 <div class="report-table-footer">

@@ -26,6 +26,45 @@ export function citationKeyOf(reference: CitationReference): string {
 /** The two ladders of a page: the numeric footnote ladder, and the bracket ladder of the literature. */
 export type ReferenceLadder = "provenance" | "citation";
 
+/** One source of a derivation: the pinned path that the script read, and the content hash of those bytes. */
+export interface DerivationChainSource {
+    readonly path: string;
+    readonly hash: string;
+}
+
+/**
+ * The chain of one derived path: the sources that the script read, and the hash of the script itself.
+ *
+ * The renderer declares the shape that the appendix reads, and never the durable record that carries it.
+ * Thus a caller passes the stored records straight through, and the render stays a pure function of plain
+ * data.
+ */
+export interface DerivationChain {
+    readonly outputPath: string;
+    readonly sources: readonly DerivationChainSource[];
+    readonly scriptHash: string;
+}
+
+/** The chain of each derived path of one render, keyed by the output path that the bindings name. */
+export type DerivationChains = ReadonlyMap<string, DerivationChain>;
+
+/**
+ * Key each chain by its output path.
+ *
+ * The appendix reads one chain for one path, thus the map is the read form of the list. A repeated output
+ * path keeps the first record, because the durable list refuses a repeated path and a second one carries no
+ * new meaning.
+ */
+export function derivationChains(records: readonly DerivationChain[] | undefined): DerivationChains {
+    const chains = new Map<string, DerivationChain>();
+    for (const record of records ?? []) {
+        if (!chains.has(record.outputPath)) {
+            chains.set(record.outputPath, record);
+        }
+    }
+    return chains;
+}
+
 /** Each reference kind that the provenance ladder holds, which is every kind except a citation. */
 export type ProvenanceReference = Exclude<Reference, CitationReference>;
 

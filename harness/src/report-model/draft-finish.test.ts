@@ -16,6 +16,19 @@ const snapshot: ReportSnapshot = {
     },
 };
 
+/** The content hash that each derived table of these tests carries. */
+const DERIVED_HASH = `sha256:${"b".repeat(64)}`;
+
+/** A snapshot that holds the pinned output and one derived table, as the served membership gives it. */
+function derivedSnapshot(derived: string): ReportSnapshot {
+    return {
+        artifacts: {
+            [OUTPUT_PATH]: { hash: OUTPUT_HASH, fileType: "output" },
+            [derived]: { hash: DERIVED_HASH },
+        },
+    };
+}
+
 function valueReference(path: string = OUTPUT_PATH, hash: string = OUTPUT_HASH): ArtifactValueReference {
     return {
         kind: "artifact-value",
@@ -164,6 +177,78 @@ describe("the finish warnings", () => {
 
         expect(result.valid).toBe(false);
         expect(result.warnings).toEqual([{ blockId: "t1", kind: "free-numeral", detail: "12" }]);
+    });
+
+    it("warns about a derivation that no binding names, and the draft still finishes", () => {
+        const used = "report-sessions/t1/derived/used.csv";
+        const unused = "report-sessions/t1/derived/unused.csv";
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [{ kind: "table", id: "tb1", binding: { kind: "artifact-table", path: used, hash: DERIVED_HASH } }],
+                },
+            ],
+        };
+        const result = finishDraft(draft, derivedSnapshot(used), [{ outputPath: used }, { outputPath: unused }]);
+
+        // The used derivation warns nothing, and the unused one names its output path.
+        expect(result.warnings).toEqual([{ kind: "unused-derivation", detail: unused }]);
+        // A warning decides no outcome, thus the draft finishes.
+        expect(result.valid).toBe(true);
+    });
+
+    it("warns nothing when every derivation output is named by a binding", () => {
+        const used = "report-sessions/t1/derived/used.csv";
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [{ kind: "table", id: "tb1", binding: { kind: "artifact-table", path: used, hash: DERIVED_HASH } }],
+                },
+            ],
+        };
+        expect(finishDraft(draft, derivedSnapshot(used), [{ outputPath: used }]).warnings).toEqual([]);
+    });
+
+    it("counts a derivation that a claim binds through a value reference", () => {
+        const used = "report-sessions/t1/derived/used.csv";
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [
+                        {
+                            kind: "claim",
+                            id: "c1",
+                            content: { prose: "A claim." },
+                            bindings: [{ kind: "artifact-value", path: used, hash: DERIVED_HASH, locator: { column: "padj", row: 0 } }],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        // A binding of any kind names the path, thus a cell of the derived table uses the derivation.
+        expect(finishDraft(draft, derivedSnapshot(used), [{ outputPath: used }]).warnings).toEqual([]);
+    });
+
+    it("warns nothing for a session that derived nothing", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "Body." } }] }],
+        };
+        expect(finishDraft(draft, snapshot).warnings).toEqual([]);
+        expect(finishDraft(draft, snapshot, []).warnings).toEqual([]);
     });
 
     it("reports an empty title as a schema gap", () => {
