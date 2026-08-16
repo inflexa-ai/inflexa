@@ -116,8 +116,17 @@ function toBase64(shot: string | Uint8Array): string {
 async function captureShot(page: Page): Promise<Shot> {
     try {
         return { screenshotBase64: toBase64(await page.screenshot({ encoding: "base64", fullPage: true })), coverage: "full" };
-    } catch {
-        return { screenshotBase64: toBase64(await page.screenshot({ encoding: "base64" })), coverage: "viewport" };
+    } catch (refusedFullPage) {
+        try {
+            return { screenshotBase64: toBase64(await page.screenshot({ encoding: "base64" })), coverage: "viewport" };
+        } catch (refusedViewport) {
+            // The two refusals together are the account of a dead look, and the caller reports the second one
+            // alone. Thus the first one rides as the cause, and no reader of that report loses half of it.
+            if (refusedViewport instanceof Error && refusedViewport.cause === undefined) {
+                refusedViewport.cause = refusedFullPage;
+            }
+            throw refusedViewport;
+        }
     }
 }
 

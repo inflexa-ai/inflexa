@@ -142,10 +142,14 @@ The loop that ends a report is preview, look, repair, and record. Run it in orde
 - \`preview_report\` renders the current draft to a page. The Preview section above
   gives its rules.
 - \`examine_page\` opens the rendered page in a real browser. It gives back a
-  screenshot, the console errors, and the failed requests. The picture holds the
-  whole page, from the title to the last block, at the width that a reader gets.
-  Thus a section that the picture does not show is a real fault, and never the
-  fold. Look at the page, and examine the picture for each of these faults:
+  screenshot, the coverage of that screenshot, the console errors, and the failed
+  requests. The coverage names what the picture holds. When it names \`full\`, the
+  picture holds the whole page, from the title to the last block, at the width that
+  a reader gets. Thus a section that the picture does not show is a real fault, and
+  never the fold. When it names \`viewport\`, the browser refused the bitmap of the
+  whole page, and the picture holds the top window alone. A section under the fold
+  is then absent from the picture, and not from the page. Judge what the picture
+  shows. Look at the page, and examine the picture for each of these faults:
   - clipped text: a word, a label, or a line that a box cuts short.
   - a truncated number: a value that its card, its cell, or its label cuts short.
   - an overflowing card: content that runs past its frame, or past its neighbor.
@@ -197,6 +201,10 @@ failed. When the page reads clean, record.
   or remove that block by its id, and do not re-author the report.
 - **Leave a gap unread.** When \`finish_draft\` or \`preview_report\` reports a gap or
   an unresolved reference, repair it. Do not present a report that does not finish.
+- **Repair a block that the picture could not show.** When the coverage names
+  \`viewport\`, the picture holds the top window alone. A section under the fold is
+  absent from that picture, and not from the page. Judge what you saw, and leave
+  the rest of the draft as it stands.
 - **Spiral on a cosmetic doubt.** The visual spiral is a loop of small visual worries
   with no fault to repair. Look one time, then repair a real fault: a fault that the
   look checklist names, an absent chart, or a failed request. A named fault is real

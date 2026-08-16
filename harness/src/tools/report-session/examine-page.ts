@@ -324,7 +324,8 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
         id: "examine_page",
         description:
             "Open the rendered report page in a real headless browser, and report what you see. " +
-            "Give back a screenshot, the console errors, and the failed requests. " +
+            "Give back a screenshot, the coverage of that screenshot, the console errors, and the failed requests. " +
+            "The coverage says whether the picture holds the whole page, or the top window alone. " +
             "Run it after the preview to look at the current page, and to confirm that the layout and the charts read clean. " +
             "The report tool records a version only after you look at the current page. " +
             "If the page has no confirmed render, run the preview again first.",
