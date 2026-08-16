@@ -3,7 +3,7 @@
  *
  * The renderer shows a number in one of five kinds. `scientific` gives a coefficient of two significant
  * digits and an exponent, for example `4.3e-5`. `compact` gives an integer with comma grouping, for example
- * `14,201`. `compact-scientific` gives three significant digits, for example `-3.09`. It gives a grouped
+ * `14,201`. `compact-scientific` gives three significant digits, for example `−3.09`. It gives a grouped
  * whole number for a magnitude from `1e3` to `1e15`, for example `15,235`, and it falls to the scientific
  * form under one thousandth and from `1e15` up. `identifier` gives the source text. `below-resolution`
  * gives a bound over a stored zero, for example `<4e-4`, or `<0.02` where the column is coarse.
@@ -98,6 +98,12 @@ const EXPONENT_PART = /[eE]([+-]?\d+)$/;
  */
 const NEAR_ZERO_FORM = "≈0";
 
+/**
+ * The minus of a shown form. It is the character that a preset axis title carries, thus a card, a cell, and
+ * an axis of one page read one glyph.
+ */
+const TYPOGRAPHIC_MINUS = "−";
+
 /** The delimiter of an encoded set name, for example `HALLMARK_HYPOXIA%MSigDB%M5891`. */
 const NAME_DELIMITER = "%";
 
@@ -132,7 +138,7 @@ export function formatNumberCell(cell: string | number, kind: NumberKind, bound?
     if (value === null) {
         return { text: String(cell) };
     }
-    const text = formatValue(value, kind);
+    const text = shownMinus(formatValue(value, kind));
     if (typeof cell === "string") {
         // A string cell carries its own digits already, thus the source text is the truer full form. A
         // comparison of the two texts also catches a loss that a comparison of two numbers cannot see, for
@@ -420,6 +426,19 @@ function formatValue(value: number, kind: Exclude<NumberKind, "identifier" | "be
             return tidy(value.toPrecision(COMPACT_DIGITS));
         }
     }
+}
+
+/**
+ * One shown form with the sign of its value as the typographic minus.
+ *
+ * The substitution reads the leading character alone. Thus the exponent of a form such as `-1.2e-4` keeps
+ * its own hyphen, and a reader of that exponent reads the notation that the module prints.
+ *
+ * The shown form then no longer parses back to the value, thus the caller carries the raw cell in the full
+ * form. A negative always names its stored digits beside the glyph.
+ */
+function shownMinus(text: string): string {
+    return text.startsWith("-") ? TYPOGRAPHIC_MINUS + text.slice(1) : text;
 }
 
 /** The scientific form, for example `4.3e-5`. */

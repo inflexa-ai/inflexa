@@ -251,8 +251,14 @@ export function deriveChartOption(block: ChartBlock, rows: readonly ChartRow[], 
  * bound the series carry no row, and the option states how the page builds each series from the columnar
  * payload of the artifact. Thus one dense chart costs the page one option and no second copy of the rows.
  *
- * A chart whose series describes no page-side build stays inline. A base chart type bins, summarizes, or
- * addresses a pair, thus no descriptor states its data and the whole option rides the page.
+ * A quick path of a type that draws one point for one row takes a second pass past the bound. The base rule
+ * of such a type builds a bare pair and it collects no descriptor, and the one-series composition plots the
+ * same points with the build beside them. The second pass runs past the bound alone, thus a chart under the
+ * bound keeps its bytes.
+ *
+ * A chart whose series holds a value that no cell gives stays inline whatever its size. A binned count, a
+ * five-number summary, an addressed pair, and the upper half of a band are each such a value, thus no
+ * descriptor can state one.
  */
 export function deriveChartRender(
     block: ChartBlock,
@@ -260,18 +266,75 @@ export function deriveChartRender(
     columns: readonly string[] | undefined,
     target: ChartPayloadTarget,
 ): Result<ChartRender, RenderProblem> {
+    const first = renderPass(block, target, (collector) => deriveRaw(block, rows, columns, collector));
+    if (first.isErr()) {
+        return err(first.error);
+    }
+    const quick = perRowQuickPath(block);
+    if (first.value.readsPayload || !first.value.overBound || quick === undefined) {
+        return ok({ option: first.value.option, readsPayload: first.value.readsPayload });
+    }
+    const second = renderPass(block, target, (collector) =>
+        deriveLabeled(block.id, quick.chartType, quick.encoding, rows, columns, block.binding.columnLabels, block.orientation, collector),
+    );
+    if (second.isErr() || !second.value.readsPayload) {
+        // The composition refused, or it described no build. The first option is a whole chart, thus the
+        // page keeps it and the render reports no problem that the base rule did not raise.
+        return ok({ option: first.value.option, readsPayload: first.value.readsPayload });
+    }
+    return ok({ option: second.value.option, readsPayload: true });
+}
+
+/** One derivation pass: the option, whether it reads the payload, and whether the inline form passed the bound. */
+interface ChartPass {
+    readonly option: EchartOption;
+    readonly readsPayload: boolean;
+    readonly overBound: boolean;
+}
+
+/**
+ * Run one derivation, normalize it, and route it onto the payload where the inline form passes the bound.
+ *
+ * The collector belongs to the pass, thus two passes over one block never mix their descriptors. A pass
+ * whose descriptor count differs from its series count describes the option only in part, thus it keeps the
+ * inline data.
+ */
+function renderPass(
+    block: ChartBlock,
+    target: ChartPayloadTarget,
+    derive: (collector: SourceCollector) => Result<EchartOption, RenderProblem>,
+): Result<ChartPass, RenderProblem> {
     const collector: SourceCollector = { columns: target.columns, series: [], failed: false };
-    return deriveRaw(block, rows, columns, collector).map((raw) => {
+    return derive(collector).map((raw): ChartPass => {
         const option = normalizeEchartSpec(raw, { title: block.title });
         const series = option.series;
         if (!Array.isArray(series) || JSON.stringify(option).length <= CHART_INLINE_OPTION_BOUND) {
-            return { option, readsPayload: false };
+            return { option, readsPayload: false, overBound: false };
         }
         if (collector.failed || collector.series.length === 0 || collector.series.length !== series.length) {
-            return { option, readsPayload: false };
+            return { option, readsPayload: false, overBound: true };
         }
-        return { option: sourcedOption(option, series, collector, target.key), readsPayload: true };
+        return { option: sourcedOption(option, series, collector, target.key), readsPayload: true, overBound: true };
     });
+}
+
+/**
+ * The quick path of one block that draws one point for one row, or `undefined` for every other block.
+ *
+ * A composition, a preset, and a labeled quick path each derive through the composition already, thus each
+ * one states its own build on the first pass. A histogram, a box, a heatmap, and a pie each hold a value
+ * that no cell of the table gives, thus none of them takes a second pass.
+ */
+function perRowQuickPath(block: ChartBlock): { chartType: BaseChartType; encoding: ChartEncoding } | undefined {
+    const chartType = block.chartType;
+    const encoding = block.encoding;
+    if (block.composition !== undefined || chartType === undefined || encoding === undefined || encoding.label !== undefined) {
+        return undefined;
+    }
+    if (isPresetChartType(chartType) || LABELED_FORMS[chartType] === undefined) {
+        return undefined;
+    }
+    return { chartType, encoding };
 }
 
 /**

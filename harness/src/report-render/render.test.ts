@@ -405,6 +405,41 @@ describe("the page stands alone", () => {
     }
 
     /**
+     * A page whose appendix chain links the staged script of a derivation and the derived file itself.
+     *
+     * The derived file sits beside the page and not under `assets/`, thus this page is the one that proves
+     * the containment rule against a page-relative link.
+     */
+    function pageWithADerivationChain(): string {
+        const document: ReportDocument = {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [
+                        {
+                            kind: "claim",
+                            id: "c1",
+                            content: { prose: "The derived table carries the counts." },
+                            bindings: [{ kind: "artifact-file", path: "derived/counts.csv", hash: "sha256:ccc" }],
+                        },
+                    ],
+                },
+            ],
+        };
+        const chain = {
+            outputPath: "derived/counts.csv",
+            sources: [{ path: "runs/r1/de.csv", hash: "sha256:aaa" }],
+            scriptHash: "sha256:bbb",
+            scriptSource: `${ASSETS_DIR}/d-bbb.py`,
+            outputSource: "derived/counts.csv",
+        };
+        return renderReportPage(document, {}, undefined, [chain])._unsafeUnwrap().html;
+    }
+
+    /**
      * The rule reads the element and never the value. A navigation costs no request when the page opens,
      * thus an anchor admits a remote host. A `src`, a `srcset`, and a stylesheet source each fetch on
      * open, thus none of them admits one.
@@ -414,8 +449,26 @@ describe("the page stands alone", () => {
         return [...new Set(remote.flatMap((value) => referenceSites(html, value)))];
     }
 
+    /**
+     * True when one reference resolves inside the page directory.
+     *
+     * A value that names no scheme is relative, thus it resolves beside the page: a staged asset, a derived
+     * file that the appendix chain links, or an anchor of the page itself. A leading slash and a parent
+     * segment each leave that directory, thus neither one passes.
+     *
+     * A value that names a scheme resolves elsewhere. The inline data URI carries its own bytes, and the
+     * remote value answers to the site rule above. Every other scheme fails here. The scheme test reads the
+     * start of the value, thus a namespace URI inside a data URI never reads as one.
+     */
+    function insideThePage(value: string): boolean {
+        if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
+            return value.startsWith("data:") || /^https?:/i.test(value);
+        }
+        return !value.startsWith("/") && !value.split("/").includes("..");
+    }
+
     it("names a remote host at a navigation anchor and at no other element", () => {
-        for (const html of [renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html, pageWithACitation()]) {
+        for (const html of [renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html, pageWithACitation(), pageWithADerivationChain()]) {
             const references = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)];
             expect(references.length).toBeGreaterThan(0);
 
@@ -423,13 +476,25 @@ describe("the page stands alone", () => {
             // the empty list fails this equality.
             expect(remoteSitesOf(html)).toEqual(["a[href]"]);
 
-            // Each other reference resolves inside the page directory: a staged asset, an inline data URI,
-            // or an anchor of the page itself. The scheme test reads the start of the value, thus a
-            // namespace URI inside a data URI never reads as a host.
-            const local = (value: string) =>
-                value.startsWith(`${ASSETS_DIR}/`) || value.startsWith("data:") || value.startsWith("#") || /^https?:/i.test(value);
-            expect(references.filter((value) => !local(value))).toEqual([]);
+            expect(references.filter((value) => !insideThePage(value))).toEqual([]);
         }
+    });
+
+    it("refuses a reference that leaves the page directory", () => {
+        // The rule is containment and not a prefix, thus the two escapes must fail it and the two page-side
+        // forms must pass it.
+        expect(insideThePage("../secret.csv")).toBe(false);
+        expect(insideThePage("/etc/passwd")).toBe(false);
+        expect(insideThePage("file:///etc/passwd")).toBe(false);
+        expect(insideThePage("derived/counts.csv")).toBe(true);
+        expect(insideThePage(`${ASSETS_DIR}/echarts.min.js`)).toBe(true);
+    });
+
+    it("links the derived file of a chain as a page-relative path", () => {
+        // The chain link is the one reference of the page that names no `assets/` prefix. Thus the fixture
+        // holds it, and the containment rule above reads it.
+        const html = pageWithADerivationChain();
+        expect(attributeReferences(html)).toContain("derived/counts.csv");
     });
 
     it("names the brand host one time, thus no second surface fetches it", () => {
@@ -1882,7 +1947,8 @@ describe("renderReportPage number format", () => {
         const document = pageOf([{ kind: "metric", id: "m1", label: "Effect size", value: scalarRef }]);
         const html = renderReportPage(document, { m1: { type: "scalar", value: -5.7618623255 } })._unsafeUnwrap().html;
         const value = load(html)(".stat-card-value");
-        expect(value.text()).toBe("-5.76");
+        // The card signs the value with the typographic minus, and the raw text stays on the title.
+        expect(value.text()).toBe("−5.76");
         expect(value.attr("title")).toBe("-5.7618623255");
     });
 

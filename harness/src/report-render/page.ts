@@ -593,7 +593,7 @@ export const TABLE_DATA_DECODER = `(function () {
  * The rows of a table reach the reader through the data asset, thus the page formats each cell. The server
  * ships the kind of each column, and this fragment reads the cell under that kind: the identifier text, the
  * bound of a stored zero, the exponent of a small probability, the grouped whole number, the rounded float,
- * and the trim of a delimited name.
+ * the typographic minus of a negative, and the trim of a delimited name.
  *
  * The fragment writes its own constants, because a page script reads no module binding. A shared test vector
  * runs the server helper and this twin over the same entries, thus the two cannot give different text in
@@ -620,6 +620,13 @@ function cellText(cell, kind, bound) {
   if (value === null) {
     return String(cell);
   }
+  return shownMinus(numberText(value, kind, bound));
+}
+function shownMinus(text) {
+  // The leading character alone. An exponent keeps its own hyphen, thus one form reads one notation.
+  return text.charAt(0) === "-" ? "−" + text.slice(1) : text;
+}
+function numberText(value, kind, bound) {
   if (kind === "scientific") {
     if (value === 0) {
       return bound !== undefined && bound !== null && bound > 0 ? "<" + boundForm(bound) : "≈" + "0";

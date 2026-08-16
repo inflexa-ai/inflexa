@@ -1676,6 +1676,45 @@ describe("the dense chart reads the shared payload", () => {
         expect(deriveChartRender(histogram, rows, COLUMNS, target)._unsafeUnwrap().readsPayload).toBe(false);
     });
 
+    it("routes a dense quick path that names no point onto the payload", () => {
+        const scatter = chartBlock("scatter", { x: "log2fc", y: "padj", group: "arm" });
+        const rows = denseRows(6000);
+        const render = deriveChartRender(scatter, rows, COLUMNS, target)._unsafeUnwrap();
+
+        // The base rule of a scatter carries every pair inside the option, which is the fault that the
+        // payload rule exists for. The one-series composition plots the same points and states the build.
+        expect(JSON.stringify(derive(scatter, rows, COLUMNS)).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
+        expect(render.readsPayload).toBe(true);
+        for (const series of asArr(render.option.series)) {
+            expect(asObj(series).data).toEqual([]);
+        }
+        const source = sourceOf(render.option);
+        expect(source?.payload).toBe("c1");
+        expect(source?.series.map((entry) => entry.value)).toEqual(["a", "b"]);
+        expect(source?.series[0].x).toEqual({ column: 1 });
+        expect(source?.series[0].y).toEqual({ column: 2 });
+    });
+
+    it("keeps a quick path under the bound on the bytes of its base rule", () => {
+        const scatter = chartBlock("scatter", { x: "log2fc", y: "padj", group: "arm" });
+        const rows = denseRows(20);
+        const render = deriveChartRender(scatter, rows, COLUMNS, target)._unsafeUnwrap();
+
+        // The second pass runs past the bound alone, thus a small quick path keeps the bytes of the base
+        // rule and no page reads a different chart than it read before.
+        expect(render.readsPayload).toBe(false);
+        expect(JSON.stringify(render.option)).toBe(JSON.stringify(derive(scatter, rows, COLUMNS)));
+    });
+
+    it("keeps a dense quick path inline when the payload holds no column of a channel", () => {
+        const scatter = chartBlock("scatter", { x: "log2fc", y: "padj" });
+        const rows = denseRows(6000);
+        const render = deriveChartRender(scatter, rows, COLUMNS, { key: "c1", columns: ["gene", "padj"] })._unsafeUnwrap();
+
+        expect(render.readsPayload).toBe(false);
+        expect(JSON.stringify(render.option)).toBe(JSON.stringify(derive(scatter, rows, COLUMNS)));
+    });
+
     it("keeps a chart inline when the payload holds no column of a channel", () => {
         const rows = denseRows(6000);
         const render = deriveChartRender(volcano, rows, COLUMNS, { key: "c1", columns: ["gene", "padj"] })._unsafeUnwrap();

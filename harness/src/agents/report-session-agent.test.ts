@@ -257,8 +257,8 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("names the path alone");
         expect(reportSessionPrompt).toContain("stamps the hash");
         expect(reportSessionPrompt).toContain("Probe for a hash");
-        // The authoring input carries no hash field, thus the entry bans a typed hash
-        // and it no longer restates what the listing gives.
+        // The authoring input carries no hash field, thus the entry bans a typed hash. The listing has a
+        // paragraph of its own, thus this entry restates none of it.
         expect(reportSessionPrompt).toContain("never type one");
         expect(reportSessionPrompt).not.toContain("names the paths that a reference can bind to");
     });

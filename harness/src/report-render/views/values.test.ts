@@ -33,9 +33,9 @@ describe("renderMetric", () => {
         expect(html).toContain(">0.0123<");
     });
 
-    it("puts the full digits in the title attribute of the value", () => {
+    it("puts the full digits in the title attribute of the value, and signs the card with the minus glyph", () => {
         const html = renderMetric(metric("Effect size"), new ReferenceLedger(), { type: "scalar", value: -5.7618623255 });
-        expect(html).toContain(`<div class="stat-card-value" title="-5.7618623255">-5.76</div>`);
+        expect(html).toContain(`<div class="stat-card-value" title="-5.7618623255">−5.76</div>`);
     });
 
     it("shows a p-value label in the scientific form with the full digits on the title", () => {

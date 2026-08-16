@@ -34,8 +34,9 @@ describe("formatNumberCell compact", () => {
         expect(formatNumberCell(1234567, "compact")).toEqual({ text: "1,234,567" });
     });
 
-    it("keeps the sign in front of the groups", () => {
-        expect(formatNumberCell(-1234567, "compact")).toEqual({ text: "-1,234,567" });
+    it("keeps the sign in front of the groups, as the typographic minus", () => {
+        // The glyph no longer parses back to the value, thus the raw cell rides the full form beside it.
+        expect(formatNumberCell(-1234567, "compact")).toEqual({ text: "−1,234,567", full: "-1234567" });
     });
 
     it("gives no full form for a short integer", () => {
@@ -45,11 +46,12 @@ describe("formatNumberCell compact", () => {
 
 describe("formatNumberCell compact-scientific", () => {
     it("rounds a long float to three significant digits", () => {
-        expect(formatNumberCell(-3.089028528355109, "compact-scientific")).toEqual({ text: "-3.09", full: "-3.089028528355109" });
+        expect(formatNumberCell(-3.089028528355109, "compact-scientific")).toEqual({ text: "−3.09", full: "-3.089028528355109" });
     });
 
     it("falls to the scientific form under one thousandth", () => {
-        expect(formatNumberCell(-0.00012345, "compact-scientific")).toEqual({ text: "-1.2e-4", full: "-0.00012345" });
+        // The leading sign takes the glyph, and the exponent keeps its own hyphen.
+        expect(formatNumberCell(-0.00012345, "compact-scientific")).toEqual({ text: "−1.2e-4", full: "-0.00012345" });
     });
 
     it("keeps a value that three digits already carry, and gives no full form", () => {
@@ -62,7 +64,7 @@ describe("formatNumberCell compact-scientific", () => {
 
     it("gives a grouped whole number from one thousand up, with the full digits", () => {
         expect(formatNumberCell(15234.7, "compact-scientific")).toEqual({ text: "15,235", full: "15234.7" });
-        expect(formatNumberCell(-15234.7, "compact-scientific")).toEqual({ text: "-15,235", full: "-15234.7" });
+        expect(formatNumberCell(-15234.7, "compact-scientific")).toEqual({ text: "−15,235", full: "-15234.7" });
     });
 
     it("groups a value that rounds up to one thousand", () => {
@@ -130,6 +132,41 @@ describe("formatNumberCell below-resolution", () => {
     it("gives the near-zero form when no positive neighbor bounds the zero", () => {
         expect(formatNumberCell(0, "below-resolution")).toEqual({ text: "≈0", full: "0" });
         expect(formatNumberCell("0", "below-resolution", 0)).toEqual({ text: "≈0", full: "0" });
+    });
+});
+
+describe("the typographic minus of a shown form", () => {
+    /** The glyph that a preset axis title carries. One page reads one sign. */
+    const MINUS = "−";
+
+    it("signs a negative of each numeric kind with the glyph", () => {
+        expect(formatNumberCell(-42, "compact").text).toBe(`${MINUS}42`);
+        expect(formatNumberCell(-3.089028528355109, "compact-scientific").text).toBe(`${MINUS}3.09`);
+        expect(formatNumberCell(-0.0000427777663038, "scientific").text).toBe(`${MINUS}4.3e-5`);
+    });
+
+    it("keeps the raw stored cell in the full form beside the glyph", () => {
+        // The shown form carries the glyph, thus it no longer reads as the stored text. A reader of the
+        // card takes the stored digits from the tooltip.
+        expect(formatNumberCell(-42, "compact")).toEqual({ text: `${MINUS}42`, full: "-42" });
+        expect(formatNumberCell("-1.50", "compact-scientific")).toEqual({ text: `${MINUS}1.5`, full: "-1.50" });
+    });
+
+    it("signs the value alone, thus a negative exponent keeps its own hyphen", () => {
+        expect(formatNumberCell(-0.00012345, "compact-scientific").text).toBe(`${MINUS}1.2e-4`);
+        expect(formatNumberCell(0.00012345, "compact-scientific").text).toBe("1.2e-4");
+    });
+
+    it("leaves a positive form and a passed-through cell as they are", () => {
+        expect(formatNumberCell(42, "compact")).toEqual({ text: "42" });
+        expect(formatNumberCell("-", "compact-scientific")).toEqual({ text: "-" });
+        expect(formatNumberCell("-007", "identifier")).toEqual({ text: "-007" });
+    });
+
+    it("reads the drift of an exponent through the glyph, thus a signed form still compares", () => {
+        // The drift test reads the exponent at the end of the form, and the glyph sits at the front.
+        expect(holdsADriftedExponent("-4.3e-05")).toBe(true);
+        expect(holdsADriftedExponent("-4.3e-5")).toBe(false);
     });
 });
 
@@ -419,10 +456,15 @@ describe("the table cell format", () => {
         { cell: 1, kind: "scientific", expected: "1" },
         // A magnitude column: the grouped whole number, the rounded float, the exponent under one thousandth.
         { cell: 14201, kind: "compact-scientific", expected: "14,201" },
-        { cell: -1234567, kind: "compact-scientific", expected: "-1,234,567" },
+        { cell: -1234567, kind: "compact-scientific", expected: "−1,234,567" },
         { cell: 15234.7, kind: "compact-scientific", expected: "15,235" },
-        { cell: -3.089028528355109, kind: "compact-scientific", expected: "-3.09" },
+        { cell: -3.089028528355109, kind: "compact-scientific", expected: "−3.09" },
         { cell: 0.00025, kind: "compact-scientific", expected: "2.5e-4" },
+        // The leading sign takes the glyph, and the exponent of the same form keeps its hyphen.
+        { cell: -0.00012345, kind: "compact-scientific", expected: "−1.2e-4" },
+        { cell: "-42", kind: "compact-scientific", expected: "−42" },
+        // A sentinel that holds a bare hyphen is no number, thus it passes through untouched.
+        { cell: "-", kind: "compact-scientific", expected: "-" },
         { cell: 0, kind: "compact-scientific", expected: "0" },
         { cell: 1e16, kind: "compact-scientific", expected: "1e16" },
         { cell: "1.50", kind: "compact-scientific", expected: "1.5" },

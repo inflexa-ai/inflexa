@@ -142,6 +142,8 @@ The renderer MUST emit the bound table of each table block as a columnar data-sc
 
 A chart whose derived option would exceed the inline bound MUST read its rows from a registered payload, under the same global map. A chart and a table over one artifact MUST share one payload. The page script builds the series from the columns, and the label rides as a column index, not a per-point copy. A chart under the inline bound keeps its inline option, exactly as before.
 
+The payload rule reaches a chart whose every series draws one point for one row. A series that holds a value which no cell of the table gives keeps its rows inline, whatever the size of the option. A binned count, a five-number summary, an addressed pair, and the upper half of a band are each such a value. No descriptor can state one.
+
 The asset name MUST carry the content hash of the payload, in the content-address style of a staged figure. The table card MUST link the raw pinned bytes of its artifact as the reader download, through a relative link.
 
 A data asset past a compression threshold near 10 MB is a later arm, and today every payload stages plain.
@@ -153,6 +155,10 @@ A data asset past a compression threshold near 10 MB is a later arm, and today e
 #### Scenario: A dense chart ships no inline rows
 - **WHEN** the caller renders a chart whose option would exceed the inline bound
 - **THEN** the inline option holds no per-row data, and the chart reads the registered payload
+
+#### Scenario: A binned chart keeps its rows
+- **WHEN** the caller renders a histogram whose option exceeds the inline bound
+- **THEN** the option carries its bins inline, because no descriptor states a binned count
 
 #### Scenario: One artifact feeds one payload
 - **WHEN** a table block and a chart block bind one artifact with one bound
