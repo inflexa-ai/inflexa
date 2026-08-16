@@ -93,6 +93,8 @@ The eyes tool MUST open the session page through a `file://` navigation of headl
 
 The capture MUST settle the page before the screenshot, through reduced-motion emulation. The design source collapses each transition under that preference, thus the picture shows the final state and no mid-fade content. The capture MUST show the whole page at a reader viewport, thus a defect below the fold is visible and the checklist is answerable.
 
+The capture MUST retry one time at the reader viewport when the full-page screenshot throws. The result MUST name the coverage of the picture: the whole page, or the viewport alone. A viewport look MUST still stamp the seen hash, because the agent saw the current document. Thus an oversized page degrades a look, and it never blocks the record path.
+
 The tool MUST reach the browser through the eyes seam of the composition. One look MUST acquire one lease, and the tool MUST release the lease after the look. The release runs on a pass and on a failed capture alike.
 
 A failed release MUST NOT change the outcome of the look, and the log names the failed release. A failed acquire MUST be a typed outcome, and nothing throws.
@@ -110,6 +112,16 @@ An injected capture seam MUST win over the eyes seam, because it replaces the wh
 #### Scenario: No page is a typed outcome
 - **WHEN** the eyes run before any preview
 - **THEN** the result says that no page exists, and nothing throws
+
+#### Scenario: A failed full-page capture degrades to the viewport
+
+- **WHEN** the full-page screenshot throws and the viewport screenshot passes
+- **THEN** the result carries the viewport picture, the coverage names the viewport, and the seen stamp lands
+
+#### Scenario: A failed viewport retry stays a failed capture
+
+- **WHEN** the full-page screenshot throws and the viewport retry also throws
+- **THEN** the result carries the typed capture failure, exactly as before
 
 #### Scenario: One look releases its lease
 
