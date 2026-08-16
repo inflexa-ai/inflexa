@@ -75,7 +75,9 @@ The renderer MUST give each of the eight block kinds a rendered form. The render
 - **THEN** the page holds the chart container, and the inline option holds an empty data list
 
 ### Requirement: The number format of a resolved value
-The renderer MUST format each numeric value that it shows, through one number helper with three kinds: `scientific`, `compact`, and `compact-scientific`. The helper applies to the metric value and to each numeric table cell. The renderer picks the kind by magnitude and by column meaning, and no block carries a format field.
+The renderer MUST format each numeric value that it shows, through one number helper and its closed set of kinds. The kinds are `scientific`, `compact`, `compact-scientific`, `identifier`, and `below-resolution`. The helper applies to the metric value and to each numeric table cell. The renderer picks the kind by magnitude and by column meaning, and no block carries a format field.
+
+A zero in a column whose meaning is a p-value MUST NOT render as a bare `0`. In a table, the cell MUST render `<` the smallest positive value of the same column, rounded up to one significant digit. A stored zero means that the true value sits under the resolution of the estimator, and the smallest positive neighbor bounds that resolution from above. Thus the shown claim is always true. When the column holds no positive value, and on a metric, the form MUST be `≈0`. The raw stored cell MUST ride in the `title` attribute. A zero outside a p-value column keeps its `0`, because a zero count and a zero effect are real values.
 
 The chart option rides as inline JSON, thus no function can format an axis tick. The derivation MUST bound an axis only where a static option field can state the bound. The count axis of a histogram holds whole ticks. Every other axis keeps the tick algorithm of the chart runtime.
 
@@ -116,6 +118,21 @@ The kind resolution MUST read a declared column meaning first, and the name gues
 
 - **WHEN** the caller renders `0.536` in a column declared `p-value`
 - **THEN** the cell shows `0.536`, exactly as a token-matched p-value column shows it
+
+#### Scenario: A zero FDR renders as a data-derived bound
+
+- **WHEN** the table view renders a `0` in an FDR column whose smallest positive value is `0.00036`
+- **THEN** the cell shows `<4e-4`, and the `title` attribute holds the raw stored cell
+
+#### Scenario: A zero with no positive neighbor renders as near-zero
+
+- **WHEN** the table view renders a `0` in a p-value column whose other values are all zero
+- **THEN** the cell shows `≈0`, and the `title` attribute holds the raw stored cell
+
+#### Scenario: A zero count keeps its zero
+
+- **WHEN** the table view renders a `0` in a column declared `count`
+- **THEN** the cell shows `0`, exactly as before
 
 ### Requirement: A declared display label names the column
 

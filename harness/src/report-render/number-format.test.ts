@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { formatNumberCell, selectNumberKind } from "./number-format.js";
+import { formatNumberCell, holdsAPValue, selectNumberKind, smallestPositiveValue } from "./number-format.js";
 
 describe("formatNumberCell scientific", () => {
     it("gives a coefficient of two significant digits and an exponent", () => {
@@ -92,6 +92,40 @@ describe("formatNumberCell identifier", () => {
     });
 });
 
+describe("formatNumberCell below-resolution", () => {
+    it("bounds the zero by the smallest positive neighbor, rounded up to one significant digit", () => {
+        expect(formatNumberCell(0, "below-resolution", 0.00036)).toEqual({ text: "<4e-4", full: "0" });
+        expect(formatNumberCell(0, "below-resolution", 1.234e-7)).toEqual({ text: "<2e-7", full: "0" });
+    });
+
+    it("keeps an exact neighbor on its own digit, thus the round up adds nothing at the boundary", () => {
+        expect(formatNumberCell(0, "below-resolution", 4e-4)).toEqual({ text: "<4e-4", full: "0" });
+        expect(formatNumberCell(0, "below-resolution", 0.001)).toEqual({ text: "<1e-3", full: "0" });
+        // The double under `4e-4` is not `4e-4`, thus the round up must still raise it.
+        expect(formatNumberCell(0, "below-resolution", 3.9999999999999996e-4)).toEqual({ text: "<4e-4", full: "0" });
+    });
+
+    it("carries a digit that reaches ten into the exponent", () => {
+        expect(formatNumberCell(0, "below-resolution", 0.00099)).toEqual({ text: "<1e-3", full: "0" });
+    });
+
+    it("gives the near-zero form when no positive neighbor bounds the zero", () => {
+        expect(formatNumberCell(0, "below-resolution")).toEqual({ text: "≈0", full: "0" });
+        expect(formatNumberCell("0", "below-resolution", 0)).toEqual({ text: "≈0", full: "0" });
+    });
+});
+
+describe("smallestPositiveValue", () => {
+    it("gives the smallest positive cell, and skips each cell that bounds nothing", () => {
+        expect(smallestPositiveValue([0, "0.00036", undefined, "up", -5, 0.9])).toBe(0.00036);
+    });
+
+    it("gives nothing for a column that holds no positive value", () => {
+        expect(smallestPositiveValue([0, 0, "0"])).toBeUndefined();
+        expect(smallestPositiveValue([])).toBeUndefined();
+    });
+});
+
 describe("formatNumberCell pass-through", () => {
     it("passes a non-numeric string through unchanged and gives no full form", () => {
         expect(formatNumberCell("up", "compact-scientific")).toEqual({ text: "up" });
@@ -166,7 +200,6 @@ describe("selectNumberKind", () => {
         expect(selectNumberKind("padj", 0.54)).toBe("compact-scientific");
         expect(selectNumberKind("padj", 3)).toBe("compact");
         expect(selectNumberKind("padj", 1)).toBe("compact");
-        expect(selectNumberKind("padj", 0)).toBe("compact");
         expect(selectNumberKind("padj", 1.5)).toBe("compact-scientific");
     });
 
@@ -258,5 +291,35 @@ describe("selectNumberKind with a declared meaning", () => {
         expect(selectNumberKind("total", 1e21, "count")).toBe(selectNumberKind("genes", 1e21));
         // A whole-number effect takes the compact kind, the same as any other whole number.
         expect(selectNumberKind("shift", 3, "effect")).toBe(selectNumberKind("log2FoldChange", 3));
+    });
+});
+
+describe("selectNumberKind of a zero", () => {
+    it("gives the below-resolution kind to a zero of a p-value column", () => {
+        expect(selectNumberKind("fdr", 0)).toBe("below-resolution");
+        expect(selectNumberKind("padj", "0")).toBe("below-resolution");
+        expect(selectNumberKind("significance", 0, "p-value")).toBe("below-resolution");
+    });
+
+    it("gives the same kind to a declared p-value and to a token-matched one", () => {
+        expect(selectNumberKind("significance", 0, "p-value")).toBe(selectNumberKind("padj", 0));
+    });
+
+    it("keeps the zero of a column of a different nature", () => {
+        expect(selectNumberKind("genes", 0)).toBe("compact");
+        expect(selectNumberKind("significance", 0, "count")).toBe("compact");
+        expect(selectNumberKind("significance", 0, "effect")).toBe("compact");
+        // A zero count and a zero effect are real values, thus each one keeps its own text.
+        expect(formatNumberCell(0, selectNumberKind("genes", 0))).toEqual({ text: "0" });
+    });
+});
+
+describe("holdsAPValue", () => {
+    it("answers for a token-matched name and for a declaration alike", () => {
+        expect(holdsAPValue("fdr")).toBe(true);
+        expect(holdsAPValue("significance")).toBe(false);
+        expect(holdsAPValue("significance", "p-value")).toBe(true);
+        // A declaration replaces the name, thus a p-value name under a different meaning answers false.
+        expect(holdsAPValue("padj", "count")).toBe(false);
     });
 });

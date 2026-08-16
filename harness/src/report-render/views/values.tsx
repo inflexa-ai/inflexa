@@ -23,7 +23,7 @@ import { raw } from "hono/html";
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
 import { Marker } from "./references-view.js";
-import { formatNumberCell, selectNumberKind } from "../number-format.js";
+import { formatNumberCell, holdsAPValue, selectNumberKind, smallestPositiveValue } from "../number-format.js";
 import type { ReferenceLedger } from "../references.js";
 import type { RenderValue } from "../types.js";
 
@@ -67,6 +67,9 @@ type FigureValue = Extract<RenderValue, { type: "figure" }>;
  *
  * The label names the value, thus it selects the number kind. The full digits ride the `title` attribute
  * when the shown form hides one, and no attribute appears at any other time.
+ *
+ * A metric reads one cell and it has no column, thus no neighbor bounds a zero here. A zero under a
+ * p-value label reads as the near-zero form.
  */
 export function renderMetric(block: MetricBlock, value: ScalarValue): string {
     const shown = formatNumberCell(value.value, selectNumberKind(block.label, value.value));
@@ -138,11 +141,36 @@ function columnHeading(column: string, labels: TableBlock["binding"]["columnLabe
 }
 
 /**
+ * The smallest positive value of each p-value column, keyed by the column name.
+ *
+ * A stored zero in such a column renders as a bound under its smallest positive neighbor. The view reads
+ * each p-value column one time here, thus the cell format stays column-blind and a wide table reads no
+ * column twice. A column with no positive value takes no entry, and its zero then renders as the near-zero
+ * form.
+ */
+function pValueBounds(columns: readonly string[], value: TableValue, meanings: TableBlock["binding"]["columnMeanings"]): Map<string, number> {
+    const bounds = new Map<string, number>();
+    for (const column of columns) {
+        if (!holdsAPValue(column, declaredForColumn(meanings, column))) {
+            continue;
+        }
+        const bound = smallestPositiveValue(value.rows.map((row) => row[column]));
+        if (bound !== undefined) {
+            bounds.set(column, bound);
+        }
+    }
+    return bounds;
+}
+
+/**
  * One body cell of a table.
  *
  * The declared meaning selects the number kind, and the column name selects it for a column that declares
  * none. Thus a p-value column reads in the scientific form. The full digits ride the `title` attribute when
  * the shown form hides one. An absent cell renders as an empty cell, thus a ragged row keeps its shape.
+ *
+ * `bound` is the smallest positive value of the column. A stored zero of a p-value column reads as a bound
+ * under it, thus the page never prints a p-value of zero.
  *
  * Each cell carries its raw value in the `data-value` attribute. The page enhancer sorts on that value, thus
  * the shown text stays presentation and a rounded number still sorts by its full magnitude.
@@ -151,11 +179,21 @@ function columnHeading(column: string, labels: TableBlock["binding"]["columnLabe
  * holds no finite number, thus the number format passed it through and this trim reads the text that the
  * format gave.
  */
-function Cell({ column, cell, meaning }: { column: string; cell: string | number | undefined; meaning: ColumnMeaning | undefined }) {
+function Cell({
+    column,
+    cell,
+    meaning,
+    bound,
+}: {
+    column: string;
+    cell: string | number | undefined;
+    meaning: ColumnMeaning | undefined;
+    bound: number | undefined;
+}) {
     if (cell === undefined) {
         return <td data-value=""></td>;
     }
-    const shown = formatNumberCell(cell, selectNumberKind(column, cell, meaning));
+    const shown = formatNumberCell(cell, selectNumberKind(column, cell, meaning), bound);
     const segment = firstNameSegment(shown.text);
     if (segment !== undefined) {
         return (
@@ -191,6 +229,7 @@ export function renderTable(block: TableBlock, value: TableValue): string {
     const columns = tableColumns(value);
     const total = value.rows.length;
     const binding = block.binding;
+    const bounds = pValueBounds(columns, value, binding.columnMeanings);
     return String(
         <div class="report-table">
             {block.title !== undefined ? <div class="report-table-title">{block.title}</div> : null}
@@ -216,7 +255,12 @@ export function renderTable(block: TableBlock, value: TableValue): string {
                             {value.rows.map((row, index) => (
                                 <tr class={index < TABLE_ROW_CAP ? "report-row" : "report-row report-row-hidden"}>
                                     {columns.map((column) => (
-                                        <Cell column={column} cell={row[column]} meaning={declaredForColumn(binding.columnMeanings, column)} />
+                                        <Cell
+                                            column={column}
+                                            cell={row[column]}
+                                            meaning={declaredForColumn(binding.columnMeanings, column)}
+                                            bound={bounds.get(column)}
+                                        />
                                     ))}
                                 </tr>
                             ))}
