@@ -44,6 +44,16 @@ describe("renderMetric", () => {
         expect(html).toContain(`<div class="stat-card-value">42.6M</div>`);
         expect(html).not.toContain("title=");
     });
+
+    it("shows the near-zero form for a zero p-value, because a metric has no column to bound it", () => {
+        const html = renderMetric(metric("padj"), { type: "scalar", value: 0 });
+        expect(html).toContain(`<div class="stat-card-value" title="0">≈0</div>`);
+    });
+
+    it("keeps a zero that names no p-value", () => {
+        const html = renderMetric(metric("Genes tested"), { type: "scalar", value: 0 });
+        expect(html).toContain(`<div class="stat-card-value">0</div>`);
+    });
 });
 
 describe("renderTable", () => {
@@ -192,6 +202,68 @@ describe("renderTable", () => {
         const html = renderTable(declared({ columnMeanings: { significance: "p-value" } }), rows);
         expect(html).toContain(`<td data-value="0.536">0.536</td>`);
         expect(html).not.toContain("5.4e-1");
+    });
+
+    it("bounds a zero FDR by the smallest positive value of its own column", () => {
+        const html = renderTable(block, {
+            type: "table",
+            rows: [
+                { gene: "TP53", fdr: 0 },
+                { gene: "MYC", fdr: 0.00036 },
+                { gene: "EGFR", fdr: 0.02 },
+            ],
+        });
+        // The runtime escapes the `<` of the bound, thus the comparison reaches the page as text.
+        expect(html).toContain(`<td data-value="0" title="0">&lt;4e-4</td>`);
+        expect(html).not.toContain(`>0</td>`);
+    });
+
+    it("bounds a zero of a declared p-value column, the same as a token-matched one", () => {
+        const rows = {
+            type: "table",
+            rows: [
+                { gene: "TP53", significance: 0 },
+                { gene: "MYC", significance: 0.00036 },
+            ],
+        } as const;
+        const html = renderTable(declared({ columnMeanings: { significance: "p-value" } }), rows);
+        expect(html).toContain(`<td data-value="0" title="0">&lt;4e-4</td>`);
+        // With no declaration the name matches no token, thus the zero stays a count-like zero.
+        expect(renderTable(block, rows)).toContain(`<td data-value="0">0</td>`);
+    });
+
+    it("shows the near-zero form for a p-value column that holds no positive value", () => {
+        const html = renderTable(block, {
+            type: "table",
+            rows: [
+                { gene: "TP53", padj: 0 },
+                { gene: "MYC", padj: 0 },
+            ],
+        });
+        expect(html).toContain(`<td data-value="0" title="0">≈0</td>`);
+    });
+
+    it("reads each p-value column on its own, thus a neighbor of one column bounds no other", () => {
+        const html = renderTable(block, {
+            type: "table",
+            rows: [
+                { pvalue: 0, padj: 0.00036 },
+                { pvalue: 0.0002, padj: 0 },
+            ],
+        });
+        expect(html).toContain(`>&lt;2e-4</td>`);
+        expect(html).toContain(`>&lt;4e-4</td>`);
+    });
+
+    it("keeps the zero of a declared count column", () => {
+        const html = renderTable(declared({ columnMeanings: { hits: "count" } }), { type: "table", rows: [{ gene: "TP53", hits: 0 }] });
+        expect(html).toContain(`<td data-value="0">0</td>`);
+        expect(html).not.toContain("≈0");
+    });
+
+    it("keeps the zero of an undeclared column of a different nature", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", log2FoldChange: 0, reads: 0 }] });
+        expect(html.split(`<td data-value="0">0</td>`).length - 1).toBe(2);
     });
 
     it("shows the declared label of a column and keeps the raw name on hover", () => {

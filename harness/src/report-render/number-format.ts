@@ -1,11 +1,12 @@
 /**
  * The number format of a resolved value.
  *
- * The renderer shows a number in one of four kinds. `scientific` gives a coefficient of two significant
+ * The renderer shows a number in one of five kinds. `scientific` gives a coefficient of two significant
  * digits and an exponent, for example `4.3e-5`. `compact` gives an integer with comma grouping, for example
  * `14,201`. `compact-scientific` gives three significant digits, for example `-3.09`. It gives a grouped
  * whole number for a magnitude from `1e3` to `1e15`, for example `15,235`, and it falls to the scientific
- * form under one thousandth and from `1e15` up. `identifier` gives the source text.
+ * form under one thousandth and from `1e15` up. `identifier` gives the source text. `below-resolution`
+ * gives a bound over a stored zero, for example `<4e-4`.
  *
  * The module reads no locale. `toLocaleString` gives different text on a different host, thus the render
  * function would stop being a pure function of its inputs. The comma grouping is written here for that
@@ -21,8 +22,8 @@
 
 import type { ColumnMeaning } from "../contracts/report-reference.js";
 
-/** The four number kinds that the renderer shows. */
-export type NumberKind = "scientific" | "compact" | "compact-scientific" | "identifier";
+/** The five number kinds that the renderer shows. */
+export type NumberKind = "scientific" | "compact" | "compact-scientific" | "identifier" | "below-resolution";
 
 /** One formatted cell. `full` holds the full digits, and it is present only when `text` hides one. */
 export interface FormattedNumber {
@@ -75,16 +76,31 @@ const DIGIT_RUN = /^[0-9]+$/;
 const GROUP_COMMAS = /,/g;
 
 /**
+ * The form of a stored zero that no positive neighbor bounds. It claims nearness, and it claims no bound,
+ * because the column gives nothing better.
+ */
+const NEAR_ZERO_FORM = "≈0";
+
+/**
  * Format one cell in one kind.
  *
  * A cell that holds no finite number passes through as its own text, and it carries no full form. A finite
  * number formats in the kind, and it carries the full digits only when the shown text loses one.
+ *
+ * `bound` is the smallest positive value of the column that the cell sits in. It answers the
+ * below-resolution kind alone, and the caller reads the column one time to get it. Thus this function stays
+ * a pure function of its arguments, and it never reads a column.
  */
-export function formatNumberCell(cell: string | number, kind: NumberKind): FormattedNumber {
+export function formatNumberCell(cell: string | number, kind: NumberKind, bound?: number): FormattedNumber {
     if (kind === "identifier") {
         // An identifier is a name that is written with digits. A group comma and a rounded digit both break
         // the name, thus each character of the source reaches the page.
         return { text: String(cell).trim() };
+    }
+    if (kind === "below-resolution") {
+        // The shown text carries no digit of the cell, thus the raw cell rides the full form in both arms.
+        const text = bound !== undefined && bound > 0 ? `<${boundForm(bound)}` : NEAR_ZERO_FORM;
+        return { text, full: String(cell).trim() };
     }
     const value = finiteValue(cell);
     if (value === null) {
@@ -108,10 +124,11 @@ export function formatNumberCell(cell: string | number, kind: NumberKind): Forma
  * a name match. Thus a declared p-value column gives the same bytes as a p-value column that the tokens
  * match: `3.8e-7` takes the scientific form, and `0.536` stays `0.536`.
  *
- * An identifier column selects the identifier kind. A p-value column selects the scientific kind for a
- * value between zero and one hundredth. A safe integer selects the compact kind. Every other finite number
- * selects the compact-scientific kind. A cell that holds no finite number selects the compact-scientific
- * kind too, because the format passes such a cell through unchanged.
+ * An identifier column selects the identifier kind. A zero of a p-value column selects the below-resolution
+ * kind. A p-value column selects the scientific kind for a value between zero and one hundredth. A safe
+ * integer selects the compact kind. Every other finite number selects the compact-scientific kind. A cell
+ * that holds no finite number selects the compact-scientific kind too, because the format passes such a
+ * cell through unchanged.
  */
 export function selectNumberKind(column: string, cell: string | number, meaning?: ColumnMeaning): NumberKind {
     if (holdsAName(column, meaning)) {
@@ -120,6 +137,12 @@ export function selectNumberKind(column: string, cell: string | number, meaning?
     const value = finiteValue(cell);
     if (value === null) {
         return "compact-scientific";
+    }
+    // A stored zero in a p-value column claims no zero probability. It states that the estimator bottomed
+    // out, for example a permutation count that bounds the smallest value that it can report. Thus the page
+    // shows a bound, and a bare `0` would read as a result.
+    if (value === 0 && holdsAPValue(column, meaning)) {
+        return "below-resolution";
     }
     // From one hundredth up, the plain decimal is as short as the exponent and it is easier to read. Thus
     // `0.05` stays `0.05` and it does not become `5e-2`.
@@ -153,9 +176,45 @@ function holdsAName(column: string, meaning: ColumnMeaning | undefined): boolean
  * A declared `effect` and a declared `count` both hold a magnitude, thus each one takes the magnitude arms
  * below this test. An effect is a float, and it reads there in the compact-scientific kind. A count is a
  * whole number, and it reads there in the compact kind.
+ *
+ * The caller of a table reads this to find the columns whose zeros need a bound.
  */
-function holdsAPValue(column: string, meaning: ColumnMeaning | undefined): boolean {
+export function holdsAPValue(column: string, meaning?: ColumnMeaning): boolean {
     return meaning !== undefined ? meaning === "p-value" : isPValueColumn(column);
+}
+
+/**
+ * The smallest positive value of one column, or `undefined` when the column holds none.
+ *
+ * The value bounds a stored zero of the same column from above. A cell that holds no finite number, and a
+ * cell that is not positive, both give no bound.
+ */
+export function smallestPositiveValue(cells: readonly (string | number | undefined)[]): number | undefined {
+    let smallest: number | undefined;
+    for (const cell of cells) {
+        if (cell === undefined) continue;
+        const value = finiteValue(cell);
+        if (value === null || value <= 0) continue;
+        if (smallest === undefined || value < smallest) smallest = value;
+    }
+    return smallest;
+}
+
+/**
+ * The bound of a stored zero, as one significant digit that rounds up, for example `4e-4` from `0.00036`.
+ *
+ * The rounding reads the decimal text and never the binary value. `toExponential` gives the shortest text
+ * that names the value again, thus a mantissa of one digit names the neighbor exactly, and any other
+ * mantissa holds something under the first digit. A round to the nearest digit would fall under the
+ * neighbor and state a bound that is false. Thus the first digit goes up by one wherever a digit follows
+ * it, and a digit that reaches ten carries into the exponent.
+ */
+function boundForm(bound: number): string {
+    const [mantissa, exponent] = bound.toExponential().split("e");
+    const digits = mantissa.replace(".", "");
+    const raised = Number(digits[0]) + (digits.length > 1 ? 1 : 0);
+    const carries = raised === 10;
+    return `${carries ? 1 : raised}e${Number(exponent) + (carries ? 1 : 0)}`;
 }
 
 /** The finite number of one cell, or `null` when the cell holds no finite number. */
@@ -171,8 +230,11 @@ function finiteValue(cell: string | number): number | null {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** The text of one finite value in one kind. The identifier kind takes no value, thus it is absent here. */
-function formatValue(value: number, kind: Exclude<NumberKind, "identifier">): string {
+/**
+ * The text of one finite value in one kind. The identifier kind and the below-resolution kind both give a
+ * text that carries no digit of the value, thus both are absent here.
+ */
+function formatValue(value: number, kind: Exclude<NumberKind, "identifier" | "below-resolution">): string {
     switch (kind) {
         case "scientific":
             return scientificForm(value);
