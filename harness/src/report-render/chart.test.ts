@@ -4,7 +4,7 @@ import type { ChartBlock, ChartComposition } from "../contracts/report-blocks.js
 import { renderChart } from "./views/chart-view.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "./chart.js";
 import { MANHATTAN_P_THRESHOLD, VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "./chart-presets.js";
-import { DESIGN_CSS } from "./design.js";
+import { DESIGN_CSS, MUTED_CHART_COLOR } from "./design.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 type ChartType = NonNullable<ChartBlock["chartType"]>;
@@ -797,16 +797,18 @@ describe("the preset expansion", () => {
         expect(asArr(series.data)[0]).toEqual({ value: [2.94, 3], name: "CA9" });
         expect(asArr(asObj(series.markLine).data)).toEqual([
             { yAxis: -Math.log10(VOLCANO_P_THRESHOLD), label: { formatter: `p ${VOLCANO_P_THRESHOLD}` } },
-            { xAxis: -VOLCANO_EFFECT_THRESHOLD },
-            { xAxis: VOLCANO_EFFECT_THRESHOLD },
+            // A vertical guide labels at the axis end, thus its value reads clear of the y-axis title.
+            { xAxis: -VOLCANO_EFFECT_THRESHOLD, label: { position: "start" } },
+            { xAxis: VOLCANO_EFFECT_THRESHOLD, label: { position: "start" } },
         ]);
-        expect(asObj(option.xAxis).name).toBe("lfc");
-        // The y channel carries the transform, thus the derived name states the plotted quantity.
-        expect(asObj(option.yAxis).name).toBe("neg_log10(p)");
+        // The preset knows its own quantities, thus each axis reads them in words.
+        expect(asObj(option.xAxis).name).toBe("log2 fold change");
+        expect(asObj(option.yAxis).name).toBe("−log10(p)");
     });
 
-    it("gives no x title to a preset channel that carries a transform", () => {
+    it("gives no semantic x title to a preset channel that carries a transform", () => {
         const option = derive(chartBlock("volcano", { x: { column: "lfc", transform: "abs" }, y: "p" }), rows);
+        // The channel plots the absolute effect, thus the log2 title would state the wrong quantity.
         expect(asObj(option.xAxis).name).toBe("abs(lfc)");
     });
 
@@ -860,6 +862,109 @@ describe("the preset expansion", () => {
         const problem = deriveChartOption(chartBlock("volcano", { x: "lfc" }, { id: "v1" }), rows)._unsafeUnwrapErr();
         expect(problem.detail).toContain("volcano");
         expect(problem.detail).toContain("y");
+    });
+});
+
+describe("the chart text", () => {
+    const rows: ChartRow[] = [
+        { gene: "A", lfc: 2.9, p: 0.001, sig: "up_in_nonresponders" },
+        { gene: "B", lfc: -2.4, p: 0.5, sig: "ns" },
+        { gene: "C", lfc: 0.1, p: 0.9, sig: "ns" },
+    ];
+
+    it("titles the volcano axes with the quantities that the preset plots", () => {
+        const option = derive(chartBlock("volcano", { x: "lfc", y: "p" }), rows);
+        expect(asObj(option.xAxis).name).toBe("log2 fold change");
+        expect(asObj(option.yAxis).name).toBe("−log10(p)");
+    });
+
+    it("titles the manhattan y axis, and keeps the position column on its x axis", () => {
+        const positions: ChartRow[] = [
+            { position: 10, p: 0.001, chrom: "1" },
+            { position: 20, p: 0.5, chrom: "2" },
+        ];
+        const option = derive(chartBlock("manhattan", { x: "position", y: "p" }), positions);
+        expect(asObj(option.yAxis).name).toBe("−log10(p)");
+        expect(asObj(option.xAxis).name).toBe("position");
+    });
+
+    it("keeps a declared column label over the preset title", () => {
+        const option = derive(chartBlock("volcano", { x: "lfc", y: "p" }, { labels: { lfc: "Fold change (log2)" } }), rows);
+        expect(asObj(option.xAxis).name).toBe("Fold change (log2)");
+    });
+
+    it("mutes the null category of a preset, and leaves each other series on the palette", () => {
+        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", group: "sig" }), rows).series);
+        expect(series.map((entry) => asObj(entry).name)).toEqual(["up in nonresponders", "ns"]);
+        expect(asObj(series[1]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
+        // The palette assigns a color by the series order, thus a series that names none keeps its place.
+        expect("itemStyle" in asObj(series[0])).toBe(false);
+    });
+
+    it("leaves the null category of an authored composition on the palette", () => {
+        const option = derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "lfc", y: "p", group: "sig" } }] }), rows);
+        const series = asArr(option.series);
+        expect(asObj(series[1]).name).toBe("ns");
+        // The rule reads the significance split that a preset draws itself, thus no authored series mutes.
+        expect("itemStyle" in asObj(series[1])).toBe(false);
+    });
+
+    it("labels a vertical guide at the axis end, and keeps a horizontal guide at the right edge", () => {
+        const option = derive(
+            composedBlock({
+                series: [{ form: "scatter", encoding: { x: "lfc", y: "p" } }],
+                annotations: [
+                    { kind: "reference-line", axis: "x", value: 1, label: "effect" },
+                    { kind: "reference-line", axis: "y", value: 0.05, label: "p" },
+                ],
+            }),
+            rows,
+        );
+        const marks = asArr(asObj(asObj(asArr(option.series)[0]).markLine).data);
+        expect(marks[0]).toEqual({ xAxis: 1, label: { formatter: "effect", position: "start" } });
+        expect(marks[1]).toEqual({ yAxis: 0.05, label: { formatter: "p" } });
+    });
+
+    it("reads a category series name as words, and keeps the raw value in the data rows", () => {
+        const option = derive(chartBlock("bar", { x: "gene", y: "lfc", group: "sig" }), rows);
+        const series = asArr(option.series);
+        expect(asObj(series[0]).name).toBe("up in nonresponders");
+        // The legend text is presentation. The plotted pair keeps the cells of the row.
+        expect(asObj(series[0]).data).toEqual([["A", 2.9]]);
+        expect(asObj(option.xAxis).data).toEqual(["A", "B", "C"]);
+    });
+
+    it("prettifies the category half of a named series alone", () => {
+        const option = derive(composedBlock({ series: [{ form: "line", encoding: { x: "gene", y: "lfc", group: "sig" }, name: "Effect_size" }] }), rows);
+        // The author wrote the series name, thus it reaches the legend as written.
+        expect(asObj(asArr(option.series)[0]).name).toBe("Effect_size (up in nonresponders)");
+    });
+
+    it("keeps a chart with no preset and no category byte-identical", () => {
+        const option = derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "lfc", y: "p" } }] }), rows);
+        expect(JSON.stringify(option)).toBe(
+            JSON.stringify({
+                tooltip: { trigger: "item", formatter: "{a}: {c}" },
+                xAxis: { type: "value", scale: true, name: "lfc", nameLocation: "middle", nameGap: 34, axisLabel: { interval: 0 } },
+                yAxis: { type: "value", scale: true, name: "p", axisLabel: { interval: 0 } },
+                series: [
+                    {
+                        type: "scatter",
+                        name: "p",
+                        large: true,
+                        largeThreshold: 2000,
+                        data: [
+                            [2.9, 0.001],
+                            [-2.4, 0.5],
+                            [0.1, 0.9],
+                        ],
+                    },
+                ],
+                legend: { show: false },
+                grid: { top: "8%", bottom: "20%", left: "10%", right: "5%" },
+                toolbox: { right: 0, top: 0, feature: { saveAsImage: { type: "png", name: "chart" } } },
+            }),
+        );
     });
 });
 

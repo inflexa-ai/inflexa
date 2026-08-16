@@ -873,6 +873,15 @@ a.report-citation-source:hover {
 export const ECHARTS_THEME_NAME = "inflexa";
 
 /**
+ * The muted chart color, beside the palette of the theme.
+ *
+ * A null category states no finding, thus it must recede behind the categories that do. The value is the
+ * `--color-ns` token of the tokens above. A chart option rides to the page as inline JSON, thus it reads no
+ * custom property and the color is written again here.
+ */
+export const MUTED_CHART_COLOR = "#94a3b8";
+
+/**
  * The ECharts theme as a plain object. The renderer serializes this object and registers it, thus the theme
  * never rides a JSON file and no run-time read is necessary. The palette and the axis styles mirror the
  * light design tokens above.
