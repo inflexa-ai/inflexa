@@ -87,7 +87,14 @@ function makeFakeGateway(): FakeGateway {
                 return Promise.resolve({ outcome: "absent" });
             }
             const copy = structuredClone(state);
-            return Promise.resolve({ outcome: "found", state: copy, analysisId: DEFAULT_ANALYSIS_ID, token: copy.document, seenDocumentHash: null });
+            return Promise.resolve({
+                outcome: "found",
+                state: copy,
+                analysisId: DEFAULT_ANALYSIS_ID,
+                token: copy.document,
+                seenDocumentHash: null,
+                derivations: [],
+            });
         },
         persist(): Promise<SessionStatePersist> {
             return Promise.resolve({ outcome: "persisted" });

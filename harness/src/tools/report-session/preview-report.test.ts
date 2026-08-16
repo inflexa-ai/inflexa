@@ -19,6 +19,7 @@ import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
+import type { DerivationRecord } from "../../state/report-session-state.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
@@ -50,6 +51,8 @@ const DEFAULT_ANALYSIS_ID = "analysis-001";
  */
 interface FakeGateway extends ReportSessionStateGateway {
     seed(threadId: string, state: ReportSessionState, analysisId?: string): void;
+    /** Seed the derivation ledger of a thread. A thread with no seed carries an empty ledger. */
+    seedDerivations(threadId: string, derivations: readonly DerivationRecord[]): void;
     setFault(fault: boolean): void;
     /** The hash that the last `stampRendered` wrote for the thread, or `null` when no stamp landed. */
     renderedHash(threadId: string): string | null;
@@ -60,6 +63,7 @@ interface FakeRow {
     analysisId: string;
     rendered: string | null;
     seen: string | null;
+    derivations: readonly DerivationRecord[];
 }
 
 function makeFakeGateway(): FakeGateway {
@@ -67,7 +71,13 @@ function makeFakeGateway(): FakeGateway {
     let fault = false;
     return {
         seed(threadId, state, analysisId = DEFAULT_ANALYSIS_ID): void {
-            rows.set(threadId, { state: structuredClone(state), analysisId, rendered: null, seen: null });
+            rows.set(threadId, { state: structuredClone(state), analysisId, rendered: null, seen: null, derivations: [] });
+        },
+        seedDerivations(threadId, derivations): void {
+            const row = rows.get(threadId);
+            if (row !== undefined) {
+                rows.set(threadId, { ...row, derivations });
+            }
         },
         setFault(value): void {
             fault = value;
@@ -84,7 +94,14 @@ function makeFakeGateway(): FakeGateway {
                 return Promise.resolve({ outcome: "absent" });
             }
             const state = structuredClone(row.state);
-            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document, seenDocumentHash: row.seen });
+            return Promise.resolve({
+                outcome: "found",
+                state,
+                analysisId: row.analysisId,
+                token: state.document,
+                seenDocumentHash: row.seen,
+                derivations: row.derivations,
+            });
         },
         persist(threadId, document): Promise<SessionStatePersist> {
             const existing = rows.get(threadId);
@@ -95,6 +112,7 @@ function makeFakeGateway(): FakeGateway {
                 analysisId,
                 rendered: existing?.rendered ?? null,
                 seen: existing?.seen ?? null,
+                derivations: existing?.derivations ?? [],
             });
             return Promise.resolve({ outcome: "persisted" });
         },
@@ -243,6 +261,84 @@ describe("the pass path", () => {
         const assetsDir = join(root, "report-sessions", "t1", "assets");
         const staged = await Promise.all(PAGE_ASSETS.map((asset) => readFile(join(assetsDir, asset.file), "utf8")));
         expect(staged).toEqual(PAGE_ASSETS.map(() => "PACKED-ASSET-BYTES"));
+    });
+});
+
+describe("the derivation records of the session", () => {
+    const DERIVED = "report-sessions/t1/derived/merged.csv";
+    const DERIVED_HASH = `sha256:${"d".repeat(64)}`;
+
+    /** One derivation record of the session, over two sources and one script. */
+    const record: DerivationRecord = {
+        outputPath: DERIVED,
+        outputHash: DERIVED_HASH,
+        sources: [
+            { path: "data/x.csv", hash: `sha256:${"a".repeat(64)}` },
+            { path: "data/y.csv", hash: `sha256:${"b".repeat(64)}` },
+        ],
+        scriptHash: `sha256:${"c".repeat(64)}`,
+        script: "import pandas",
+    };
+
+    /** A draft whose one table block binds the derived path. */
+    function derivedDoc(): DraftDocument {
+        return {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [{ kind: "table", id: "tb1", binding: { kind: "artifact-table", path: DERIVED, hash: DERIVED_HASH } }],
+                },
+            ],
+        };
+    }
+
+    /** The served membership: the pinned artifacts, with the derived table as one more entry. */
+    const derivedSnapshot: ReportSnapshot = {
+        artifacts: {
+            "data/x.csv": { hash: "sha256:aaa", rows: [{ n: 42 }] },
+            [DERIVED]: { hash: DERIVED_HASH, rows: [{ gene: "TP53", padj: 0.004 }] },
+        },
+    };
+
+    it("states the chain of the derived path in the appendix of the page", async () => {
+        const root = await makeRoot();
+        // The card of a table offers its pinned bytes as a download, thus the stage copies the derived file.
+        await mkdir(join(root, "report-sessions", "t1", "derived"), { recursive: true });
+        await writeFile(join(root, DERIVED), "gene,padj\nTP53,0.004\n", "utf8");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: derivedDoc(), snapshot: derivedSnapshot });
+        gateway.seedDerivations("t1", [record]);
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            const page = await readFile(result.pagePath, "utf8");
+            // The tool passes the records of the session state to the render, thus the appendix entry of the
+            // derived path names its sources and its script.
+            expect(page).toContain(`<div class="report-ref-chain">`);
+            expect(page).toContain("data/y.csv");
+            expect(page).toContain(`<code class="report-ref-hash">${"c".repeat(12)}</code>`);
+        }
+    });
+
+    it("renders no chain line for a session that derived nothing", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            const page = await readFile(result.pagePath, "utf8");
+            expect(page).not.toContain(`<div class="report-ref-chain">`);
+        }
     });
 });
 

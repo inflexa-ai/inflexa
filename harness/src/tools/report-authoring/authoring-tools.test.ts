@@ -86,7 +86,7 @@ function makeFakeGateway(): FakeGateway {
                 return Promise.resolve({ outcome: "absent" });
             }
             const state = structuredClone(row.state);
-            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document, seenDocumentHash: null });
+            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document, seenDocumentHash: null, derivations: [] });
         },
         ...stampStubs,
         persist(threadId, document): Promise<SessionStatePersist> {
@@ -394,6 +394,7 @@ describe("the tool-layer refusal", () => {
                     analysisId: "analysis-001",
                     token: null,
                     seenDocumentHash: null,
+                    derivations: [],
                 }),
             persist: () => Promise.resolve({ outcome: "conflict" }),
             ...stampStubs,

@@ -962,6 +962,94 @@ describe("the appendix bands", () => {
     });
 });
 
+describe("the whole-table bindings in the appendix", () => {
+    const PINNED = "runs/run-1/step-a/output/de.csv";
+    const DERIVED = "report-sessions/t1/derived/merged.csv";
+    const PINNED_HASH = `sha256:${"a".repeat(64)}`;
+    const DERIVED_HASH = `sha256:${"d".repeat(64)}`;
+
+    /** The chain of the derived path: two sources with their hashes, and the script that made the table. */
+    const chain = {
+        outputPath: DERIVED,
+        sources: [
+            { path: "runs/run-1/step-a/output/de.csv", hash: `sha256:${"a".repeat(64)}` },
+            { path: "runs/run-1/step-b/output/counts.csv", hash: `sha256:${"b".repeat(64)}` },
+        ],
+        scriptHash: `sha256:${"c".repeat(64)}`,
+    };
+
+    /** One page whose section holds the given blocks. */
+    function pageOf(blocks: Block[], values: RenderValues, derivations?: readonly (typeof chain)[]): string {
+        const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] };
+        return renderReportPage(document, values, undefined, derivations)._unsafeUnwrap().html;
+    }
+
+    /** One table block over the given path, and one chart block over it. */
+    function tableBlock(path: string, hash: string): Block {
+        return { kind: "table", id: "tbl", binding: { kind: "artifact-table", path, hash } };
+    }
+
+    function chartBlock(path: string, hash: string): Block {
+        return { kind: "chart", id: "cht", binding: { kind: "artifact-table", path, hash }, chartType: "bar", encoding: { x: "day", y: "count" } };
+    }
+
+    const oneRow: RenderValues = {
+        tbl: { type: "table", rows: [{ day: "Mon", count: 1 }] },
+        cht: { type: "table", rows: [{ day: "Mon", count: 1 }] },
+    };
+
+    it("gives a bound table its marker and its appendix entry", () => {
+        const html = pageOf([tableBlock(PINNED, PINNED_HASH)], oneRow);
+        const page = load(html);
+
+        // Every evidentiary block ledgers, thus the card carries a marker and the appendix names the path.
+        expect(page(".report-table-title .report-marker a").attr("href")).toBe("#ref-1");
+        expect(page("li#ref-1").text()).toContain(PINNED);
+        expect(page("li#ref-1").text()).toContain("Artifact table");
+    });
+
+    it("gives a bound chart its marker and its appendix entry", () => {
+        const html = pageOf([chartBlock(PINNED, PINNED_HASH)], oneRow);
+        const page = load(html);
+
+        expect(page(".report-chart-title .report-marker a").attr("href")).toBe("#ref-1");
+        expect(page("li#ref-1").text()).toContain(PINNED);
+    });
+
+    it("gives one number to a table and a chart over one artifact", () => {
+        const html = pageOf([tableBlock(PINNED, PINNED_HASH), chartBlock(PINNED, PINNED_HASH)], oneRow);
+        const page = load(html);
+
+        // The two blocks bind one reference. The ledger keeps one identity, thus the appendix holds one
+        // entry and both markers point at it.
+        expect(page("ol.report-references li").length).toBe(1);
+        expect(page('.report-marker a[href="#ref-1"]').length).toBe(2);
+    });
+
+    it("states the chain of a derived chart in its appendix entry", () => {
+        const html = pageOf([chartBlock(DERIVED, DERIVED_HASH)], oneRow, [chain]);
+        const entry = load(html)("li#ref-1").text();
+
+        // The entry carries each source with the head of its hash, and the head of the script hash.
+        expect(entry).toContain("runs/run-1/step-a/output/de.csv");
+        expect(entry).toContain("runs/run-1/step-b/output/counts.csv");
+        expect(entry).toContain("a".repeat(12));
+        expect(entry).toContain("b".repeat(12));
+        expect(entry).toContain("c".repeat(12));
+        // A whole hash never reaches the page.
+        expect(html).not.toContain("a".repeat(13));
+    });
+
+    it("renders a document with no derived path byte-identically with the records and without them", () => {
+        const blocks = [tableBlock(PINNED, PINNED_HASH), chartBlock(PINNED, PINNED_HASH)];
+
+        // The chain names a path that no binding of this document holds. Thus the page is a pure function
+        // of the document and the values, exactly as it was before the records rode the call.
+        expect(pageOf(blocks, oneRow, [chain])).toBe(pageOf(blocks, oneRow));
+        expect(load(pageOf(blocks, oneRow))(".report-ref-chain").length).toBe(0);
+    });
+});
+
 describe("the section scrollspy", () => {
     /** The class that the spy writes. The design source holds the matching rule under the same name. */
     const ACTIVE_CLASS = "report-nav-link-active";

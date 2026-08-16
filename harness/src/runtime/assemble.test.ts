@@ -197,7 +197,8 @@ async function makeEyesRoot(threadId: string): Promise<string> {
 function eyesGateway(): ReportSessionStateGateway {
     const state: ReportSessionState = { document: { title: "", sections: [] }, snapshot: { artifacts: {} } };
     return {
-        load: (): Promise<SessionStateLoad> => Promise.resolve({ outcome: "found", state, analysisId: EYES_ANALYSIS_ID, token: null, seenDocumentHash: null }),
+        load: (): Promise<SessionStateLoad> =>
+            Promise.resolve({ outcome: "found", state, analysisId: EYES_ANALYSIS_ID, token: null, seenDocumentHash: null, derivations: [] }),
         persist: () => Promise.resolve({ outcome: "persisted" }),
         stampRendered: () => Promise.resolve({ outcome: "stamped" }),
         stampSeen: () => Promise.resolve({ outcome: "stamped" }),

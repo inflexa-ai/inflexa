@@ -40,6 +40,7 @@ import { buildOutline, childOutline, readBlock, type OutlineEntry, type Readable
 import { finishDraft, type FinishResult } from "../../report-model/draft-finish.js";
 import { DraftBlockSchema, type DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
+import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
 
 /**
@@ -192,15 +193,27 @@ export type SessionStateToken = DraftDocument | null;
 
 /**
  * The outcome of a gateway load. `found` carries the state, the analysis that owns the thread, the
- * concurrency token, and the seen-document hash of the look-before-record rule. `absent` and `wrong-type`
- * are permanent conditions, and `failed` is a transient fault that names its cause.
+ * concurrency token, the seen-document hash of the look-before-record rule, and the derivations of the
+ * session. `absent` and `wrong-type` are permanent conditions, and `failed` is a transient fault that names
+ * its cause.
  *
  * `seenDocumentHash` is the hash that the last eyes capture saw, or `null` before the first look. The record
  * tool compares it against the hash of the current draft, thus a never-seen page and a stale look each
  * refuse.
+ *
+ * `derivations` is the ledger of the session, in the order that the records landed. The snapshot already
+ * carries each derived path as a member, thus a tool that binds reads the snapshot. The records themselves
+ * carry the chain, and the finish, the appendix, and the prune each read them.
  */
 export type SessionStateLoad =
-    | { outcome: "found"; state: ReportSessionState; analysisId: string; token: SessionStateToken; seenDocumentHash: string | null }
+    | {
+          outcome: "found";
+          state: ReportSessionState;
+          analysisId: string;
+          token: SessionStateToken;
+          seenDocumentHash: string | null;
+          derivations: readonly DerivationRecord[];
+      }
     | { outcome: "absent" }
     | { outcome: "wrong-type"; detail: string }
     | { outcome: "failed"; detail: string };
@@ -249,7 +262,7 @@ export interface ReportSessionStateGateway {
 
 /**
  * The thread of a call, its analysis, the loaded state, the concurrency token that the persist compares
- * against, and the seen-document hash of the look-before-record rule.
+ * against, the seen-document hash of the look-before-record rule, and the derivations of the session.
  */
 export interface OpenedThread {
     readonly threadId: string;
@@ -258,6 +271,8 @@ export interface OpenedThread {
     readonly token: SessionStateToken;
     /** The hash that the last eyes capture saw, or `null` before the first look. */
     readonly seenDocumentHash: string | null;
+    /** The derivations of the session, in the order that the records landed. */
+    readonly derivations: readonly DerivationRecord[];
 }
 
 /**
@@ -296,7 +311,14 @@ export async function openReportThread(gateway: ReportSessionStateGateway, scope
             detail: `the scope names the analysis ${analysisId}, but the thread ${threadId} belongs to the analysis ${loaded.analysisId}`,
         });
     }
-    return ok({ threadId, analysisId, state: loaded.state, token: loaded.token, seenDocumentHash: loaded.seenDocumentHash });
+    return ok({
+        threadId,
+        analysisId,
+        state: loaded.state,
+        token: loaded.token,
+        seenDocumentHash: loaded.seenDocumentHash,
+        derivations: loaded.derivations,
+    });
 }
 
 /** The eight authoring tools. */
@@ -763,7 +785,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok({ refused: opened.error });
             }
-            return ok(finishDraft(opened.value.state.document, opened.value.state.snapshot));
+            return ok(finishDraft(opened.value.state.document, opened.value.state.snapshot, opened.value.derivations));
         },
     });
 

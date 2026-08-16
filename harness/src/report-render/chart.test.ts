@@ -5,6 +5,7 @@ import { renderChart } from "./views/chart-view.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "./chart.js";
 import { MANHATTAN_P_THRESHOLD, VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "./chart-presets.js";
 import { DESIGN_CSS, MUTED_CHART_COLOR } from "./design.js";
+import { ReferenceLedger } from "./references.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 type ChartType = NonNullable<ChartBlock["chartType"]>;
@@ -1275,7 +1276,7 @@ describe("renderChart", () => {
     it("places the JSON script as the immediate next sibling of the container", () => {
         const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b1" });
         const option = derive(block, [{ day: "Mon", count: 1 }]);
-        const html = renderChart(block, option);
+        const html = renderChart(block, new ReferenceLedger(), option);
         expect(html).toContain('id="chart-b1"');
         expect(html).toContain('data-echarts-id="b1"');
         expect(html).toContain('</div><script type="application/json">');
@@ -1284,7 +1285,7 @@ describe("renderChart", () => {
     it("escapes a </script> sequence inside a string cell", () => {
         const block = chartBlock("bar", { x: "k", y: "v" }, { id: "b2" });
         const rows: ChartRow[] = [{ k: "a</script>b", v: 1 }];
-        const html = renderChart(block, derive(block, rows));
+        const html = renderChart(block, new ReferenceLedger(), derive(block, rows));
         // The hostile close sequence never reaches the page as raw markup.
         expect(html).not.toContain("a</script>b");
         expect(html).toContain("a\\u003c/script>b");
@@ -1292,7 +1293,7 @@ describe("renderChart", () => {
 
     it("puts the sized container class on the element that carries the option id", () => {
         const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b3" });
-        const html = renderChart(block, derive(block, [{ day: "Mon", count: 1 }]));
+        const html = renderChart(block, new ReferenceLedger(), derive(block, [{ day: "Mon", count: 1 }]));
         // The bootstrap finds the container by `data-echarts-id`, and the style sheet sizes it by the
         // `chart-container` class. The two must sit on one element. A class on a different element, or no
         // class at all, gives the chart runtime a box of zero height and the chart draws into nothing.
@@ -1301,14 +1302,16 @@ describe("renderChart", () => {
 
     it("wraps the chart in the corner-accent card under the mono title line", () => {
         const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b4", title: "Panel title" });
-        const html = renderChart(block, derive(block, [{ day: "Mon", count: 1 }]));
-        expect(html).toContain(`<div class="report-chart-title">Panel title</div>`);
+        const html = renderChart(block, new ReferenceLedger(), derive(block, [{ day: "Mon", count: 1 }]));
+        // The title line carries the marker of the whole-table binding, thus the card names its appendix
+        // entry beside its title.
+        expect(html).toContain(`<div class="report-chart-title">Panel title<sup class="report-marker"><a href="#ref-1">1</a></sup></div>`);
         expect(html).toContain(`class="report-chart-card corner-accents"`);
     });
 
     it("wears no window costume", () => {
         const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b5", title: "Panel title" });
-        const html = renderChart(block, derive(block, [{ day: "Mon", count: 1 }]));
+        const html = renderChart(block, new ReferenceLedger(), derive(block, [{ day: "Mon", count: 1 }]));
         // A report is a document. The dots, the badge, and the chrome bar make a data card read as an
         // application window, thus the card carries none of them.
         expect(html).not.toContain("window-chrome");

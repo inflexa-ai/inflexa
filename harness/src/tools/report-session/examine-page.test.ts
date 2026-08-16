@@ -89,7 +89,14 @@ function makeFakeGateway(): FakeGateway {
             if (row === undefined) {
                 return Promise.resolve({ outcome: "absent" });
             }
-            return Promise.resolve({ outcome: "found", state: row.state, analysisId: row.analysisId, token: null, seenDocumentHash: row.seen });
+            return Promise.resolve({
+                outcome: "found",
+                state: row.state,
+                analysisId: row.analysisId,
+                token: null,
+                seenDocumentHash: row.seen,
+                derivations: [],
+            });
         },
         persist(): Promise<SessionStatePersist> {
             return Promise.resolve({ outcome: "persisted" });

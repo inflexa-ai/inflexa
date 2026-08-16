@@ -51,7 +51,7 @@ import { generateExecutionId } from "../../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../../sandbox/identity.js";
 import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 import type { DerivationRecord, DerivationSource, ReportSessionStateStore } from "../../state/report-session-state.js";
-import { isSafeId, reportSessionDir, toSandboxPath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
+import { isSafeId, reportSessionDerivedDir, toSandboxPath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 import { readHeaderColumns } from "./list-artifacts.js";
@@ -125,9 +125,6 @@ const SCRIPT_CAP_BYTES = 64 * 1024;
 
 /** The cap of the declared inputs. One derivation reads the evidence of a few artifacts, and never a tree. */
 const INPUT_CAP = 20;
-
-/** The directory of the derived tables of a session, under the directory of that session. */
-const DERIVED_DIR = "derived";
 
 /** The environment variable that carries the declared inputs into the container. */
 export const DERIVE_INPUT_ENV = "DERIVE_INPUTS";
@@ -365,7 +362,7 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
 
             // The write tail is the one writable mount of the container, and the output sits inside it. Both
             // compose from the session-directory builder, thus the layout has one owner.
-            const writableTail = `${reportSessionDir(threadId)}/${DERIVED_DIR}`;
+            const writableTail = reportSessionDerivedDir(threadId);
             const outputPath = `${writableTail}/${input.output}`;
             // The served membership carries each derivation of the session, thus this one test refuses a
             // repeated name and a collision with a pinned artifact alike.

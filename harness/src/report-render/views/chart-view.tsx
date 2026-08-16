@@ -13,10 +13,19 @@ import { raw } from "hono/html";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import type { EchartOption } from "../chart.js";
+import type { ReferenceLedger } from "../references.js";
+import { LadderMarker } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
 
-/** Render the card markup for a chart. */
-export function renderChart(block: ChartBlock, option: EchartOption): string {
+/**
+ * Render the card markup for a chart.
+ *
+ * The whole-table binding joins the provenance ladder, thus the title line carries the marker and the
+ * appendix names the artifact that the chart plots. A chart with no title still shows its marker on the
+ * same line.
+ */
+export function renderChart(block: ChartBlock, ledger: ReferenceLedger, option: EchartOption): string {
+    const mark = ledger.mark(block.binding);
     const containerId = chartContainerId(block.id);
     // The JSON goes to the page through `raw()`, thus `scriptJson` is the sole guard of this sink. It
     // replaces every `<` with `\u003c`, thus a `</script` sequence in a string cell cannot close the
@@ -24,7 +33,10 @@ export function renderChart(block: ChartBlock, option: EchartOption): string {
     const json = scriptJson(option);
     return String(
         <div class="report-chart">
-            {block.title !== undefined ? <div class="report-chart-title">{block.title}</div> : null}
+            <div class="report-chart-title">
+                {block.title}
+                <LadderMarker mark={mark} />
+            </div>
             <div class="report-chart-card corner-accents">
                 <div id={containerId} data-echarts-id={block.id} class="chart-container"></div>
                 <script type="application/json">{raw(json)}</script>

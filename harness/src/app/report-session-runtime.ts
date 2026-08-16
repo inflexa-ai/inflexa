@@ -219,7 +219,9 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
      * snapshot cannot serve a tool, because the pin writes the snapshot first.
      *
      * The served snapshot is the stored pin with the derivations merged onto it, thus a
-     * tool reads one membership and it never merges again.
+     * tool reads one membership and it never merges again. The records ride the load
+     * beside the merged snapshot, because the chain of a derived path and the unused set
+     * both read the record and not the membership.
      */
     function toLoad(state: StoredSessionState): SessionStateLoad {
         if (state.snapshot === null) {
@@ -232,6 +234,7 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
             analysisId: state.analysisId,
             token: state.document,
             seenDocumentHash: state.seenDocumentHash,
+            derivations: state.derivations,
         };
     }
 
