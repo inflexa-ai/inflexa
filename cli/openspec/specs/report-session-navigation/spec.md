@@ -129,22 +129,29 @@ The command MUST be offered only when an analysis is open and the boot state is 
 - **THEN** a notice names the state, and the scope does not change
 
 ### Requirement: The chat shows an entry point into each report child at its anchor
-The chat MUST show an openable entry for each report child of the open conversation. The entry MUST sit at the point of the transcript that the anchor of that child names. The entry MUST open that child in place.
+The chat MUST show an openable entry for each report child of the open conversation. The entry MUST sit below the turn that asked for the session. The entry MUST open that child in place.
 
 The entry MUST derive from the thread listing alone. It MUST NOT read a tool result, and no new harness data part is necessary. Thus a child that a different host spawned appears the same way.
 
 The listing MUST read again after the turn that spawns a child settles. The open thread does not change at a spawn. Thus a read that tracks the open thread alone shows nothing until the user leaves the conversation.
 
-The anchor is a store sequence number, and the loaded transcript holds no such number. The load reads each stored message with its sequence number, and the conversion to the display messages drops it. Thus the load path MUST pair each sequence number with the identity of the message that its row ends on. The pair MUST hold an identity and not a position, because a live append drops a message off the front at the cap. The entry MUST sit after the message that the greatest such pair names.
+The anchor is a store sequence number, and the loaded transcript holds no such number. The load reads each stored message with its sequence number, and the conversion to the display messages drops it. Thus the load path MUST pair each sequence number with the identity of the message that its row ends on. The pair MUST hold an identity and not a position, because a live append drops a message off the front at the cap.
 
-When no loaded message sits above the anchor, the entry MUST render at the end of the mounted transcript. Two states reach that rule. An anchor past the end of the loaded transcript is one. The other is a session that the newest turn spawned: the spawn reads the parent before that turn appends its rows, thus the anchor sits below the request that made it.
+The anchor names the last stored row BEFORE the turn that asked for the session. The spawn runs inside that turn, and the append of the turn lands after the spawn. Thus a placement at the anchor paints the entry above the words that asked for the report. The entry MUST instead sit after the reply of the turn that crosses the anchor: the first assistant message at or past the first pair above the anchor. When no assistant message sits at or past that pair, the entry MUST render at the end of the mounted transcript. The rule holds on a live transcript and on a reloaded one alike.
+
+Two states still reach the end position, and both belong there. An anchor past every loaded pair is one. The other is a session that the newest turn spawned, before any of its rows load.
 
 The transcript mounts the newest turns alone, thus an anchor below the mounted window is a normal state. The entry MUST then render at the top. A pair whose message the mounted window no longer holds MUST read the same way. A listing failure MUST show no entry, and it MUST NOT break the transcript. An archived child MUST show no entry, because the listing reads the live children alone.
 
-#### Scenario: An entry sits at the spawn point
+#### Scenario: An entry sits below its request
 
 - **WHEN** the open conversation holds a report child whose anchor names a loaded position
-- **THEN** the transcript shows an openable entry for that child at that position
+- **THEN** the entry renders after the reply of the turn that crossed the anchor, below the request
+
+#### Scenario: A reloaded transcript keeps the entry below the request
+
+- **WHEN** the transcript reloads after a turn that spawned a report child
+- **THEN** the entry renders after the reply of that turn, and never above the message that asked
 
 #### Scenario: A session that a turn spawns gets its entry
 
@@ -163,7 +170,7 @@ The transcript mounts the newest turns alone, thus an anchor below the mounted w
 
 #### Scenario: A session that the newest turn spawned sits below the request
 
-- **WHEN** the newest turn of the open conversation spawns a report child, and no loaded message sits above the anchor of that child
+- **WHEN** the newest turn of the open conversation spawns a report child, and none of its rows are loaded
 - **THEN** the entry renders at the end of the mounted transcript, below the request that asked for the report
 
 #### Scenario: An anchor below the mounted window renders at the top
@@ -180,3 +187,4 @@ The transcript mounts the newest turns alone, thus an anchor below the mounted w
 
 - **WHEN** a report child of the open conversation is archived
 - **THEN** the transcript shows no entry for that child, and each other child keeps its entry
+
