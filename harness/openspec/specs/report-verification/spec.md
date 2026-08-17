@@ -111,7 +111,7 @@ The harness MUST ship the static realization over a standing sidecar. It returns
 - **THEN** the realization bounds how many of those browsers run at one time
 
 ### Requirement: The eyes tool
-The eyes tool MUST open the session page through a `file://` navigation of headless Chrome. It MUST give back the screenshot, the console errors, and the failed requests. A missed page MUST be a typed outcome. The tool MUST NOT block the loop on any judgment, because the judgment belongs to the agent.
+The eyes tool MUST open the session page in headless Chrome, through the URL that the composition names. The URL seam of the composition maps the page of the thread onto the URL of one look. Absent the seam, the tool MUST navigate through a `file://` URL of the page path. A throw of the seam MUST be a typed outcome, and no look runs. The tool MUST give back the screenshot, the console errors, and the failed requests. A missed page MUST be a typed outcome. The tool MUST NOT block the loop on any judgment, because the judgment belongs to the agent.
 
 The capture MUST settle the page before the screenshot, through reduced-motion emulation. The design source collapses each transition under that preference, thus the picture shows the final state and no mid-fade content. The capture MUST show the whole page at a reader viewport, thus a defect below the fold is visible and the checklist is answerable.
 
@@ -134,6 +134,14 @@ An injected capture seam MUST win over the eyes seam, because it replaces the wh
 #### Scenario: No page is a typed outcome
 - **WHEN** the eyes run before any preview
 - **THEN** the result says that no page exists, and nothing throws
+
+#### Scenario: A bound URL seam names the served page
+- **WHEN** the composition binds the URL seam and a look runs
+- **THEN** the navigation opens the URL that the seam gave, and no `file://` URL forms
+
+#### Scenario: A failed URL formation is a typed outcome
+- **WHEN** the bound URL seam throws
+- **THEN** the result carries the typed capture failure, and no look runs
 
 #### Scenario: A failed full-page capture degrades to the viewport
 

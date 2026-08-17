@@ -49,6 +49,8 @@ import {
     createPreviewReportTool,
     createRecordVersionTool,
     type ResolvePageAsset,
+    type ResolvePageUrl,
+    type SessionPagePublisher,
 } from "../tools/report-session/index.js";
 import { createFileStatTool, createGrepTool, createListFilesTool, createReadFileTool, createWorkspaceSearchTool } from "../tools/workspace/index.js";
 import { createInspectDataProfileTool, createInspectRunTool } from "../tools/research/index.js";
@@ -119,6 +121,18 @@ export interface ReportSessionAgentDeps {
      * installation of the harness.
      */
     readonly resolvePageAsset?: ResolvePageAsset;
+    /**
+     * Session-page publisher -- the hosted view of the rendered page. Bound, the preview
+     * tool mints one grant after the page lands and attaches the URL beside the path.
+     * Omitted, the result carries the page path alone.
+     */
+    readonly sessionPages?: SessionPagePublisher;
+    /**
+     * Page-URL formation of the eyes -- the URL that one look opens. A composition whose
+     * browser cannot reach the workspace tree binds a resolver that names a served URL.
+     * Omitted, the eyes tool navigates through a `file://` URL of the page path.
+     */
+    readonly resolvePageUrl?: ResolvePageUrl;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
 }
@@ -126,7 +140,7 @@ export interface ReportSessionAgentDeps {
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
-    const { derivations, sandboxClient, runAuthorizer } = deps;
+    const { derivations, sandboxClient, runAuthorizer, sessionPages, resolvePageUrl } = deps;
     const authoring = createReportAuthoringTools(gateway);
 
     const tools: Tool[] = [
@@ -171,6 +185,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             resolveWorkspaceRoot,
             ...(makeResolver ? { makeResolver } : {}),
             ...(resolvePageAsset ? { resolvePageAsset } : {}),
+            ...(sessionPages ? { sessionPages } : {}),
             ...(logger ? { logger } : {}),
         }),
         // The eyes tool. It opens the rendered page in headless Chrome.
@@ -179,6 +194,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             resolveWorkspaceRoot,
             chrome,
             ...(eyes ? { eyes } : {}),
+            ...(resolvePageUrl ? { resolvePageUrl } : {}),
             ...(logger ? { logger } : {}),
         }),
         // The record tool. It gates the whole document, records one version, then prunes each

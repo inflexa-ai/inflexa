@@ -12,6 +12,7 @@ export {
     type PreviewReportResult,
     type PreviewReportToolDeps,
     type ResolvePageAsset,
+    type SessionPageAccess,
 } from "./preview-report.js";
 export {
     createExaminePageTool,
@@ -21,7 +22,15 @@ export {
     type ExaminePageToolDeps,
     type FailedRequest,
     type PageCapture,
+    type ResolvePageUrl,
 } from "./examine-page.js";
+export {
+    describeSessionPageMintFailure,
+    UnavailableSessionPagePublisher,
+    type SessionPageMintFailure,
+    type SessionPageMintResult,
+    type SessionPagePublisher,
+} from "./session-page-publisher.js";
 export { createRecordVersionTool, type RecordVersionInput, type RecordVersionResult, type RecordVersionToolDeps } from "./record-version.js";
 export { createDeriveTableTool, type DeriveTableInput, type DeriveTableResult, type DeriveTableToolDeps } from "./derive-table.js";
 export {
