@@ -241,18 +241,23 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
             }
 
             const spawned = await spawn.spawnReportSession(parentThreadId, brief);
-            return ok(
-                spawned.match(
-                    (child): StartReportSessionResult => ({ outcome: "started", threadId: child.threadId, title: child.title }),
-                    (fault): StartReportSessionResult => {
-                        const outcome = toOutcome(fault);
-                        if (outcome.outcome === "failed") {
-                            logger.warn("the report session did not start", { parentThreadId, reason: fault.type, ...logger.errorFields(causeOf(fault)) });
-                        }
-                        return outcome;
-                    },
-                ),
-            );
+            if (spawned.isOk()) {
+                const child = spawned.value;
+                // The part rides the started arm only. The existing-session arm
+                // names a session that an earlier turn announced, thus a second
+                // part would put a second entry into the transcript.
+                await ctx.emit({
+                    type: "data-report-session-started",
+                    data: { threadId: child.threadId, parentThreadId },
+                });
+                return ok({ outcome: "started", threadId: child.threadId, title: child.title });
+            }
+            const fault = spawned.error;
+            const outcome = toOutcome(fault);
+            if (outcome.outcome === "failed") {
+                logger.warn("the report session did not start", { parentThreadId, reason: fault.type, ...logger.errorFields(causeOf(fault)) });
+            }
+            return ok(outcome);
         },
     });
 }

@@ -145,6 +145,48 @@ describe("the started arm", () => {
     });
 });
 
+describe("the started part", () => {
+    /** A tool context for one conversation thread, plus the record of its emitted events. */
+    function watchedCtxForThread(threadId: string): { ctx: ToolContext; emitted: unknown[] } {
+        const { ctx, emitted } = makeToolContext();
+        const scope: Scope = { kind: "analysis", analysisId: ANALYSIS, threadId };
+        return { ctx: { ...ctx, session: { ...ctx.session, scope } }, emitted };
+    }
+
+    it("emits one data-report-session-started part on the started arm", async () => {
+        await seedConversation("p1", "Parent");
+        const { ctx, emitted } = watchedCtxForThread("p1");
+
+        const result = (await tool.execute(INPUT, ctx))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("started");
+        if (result.outcome !== "started") return;
+        expect(emitted).toEqual([{ type: "data-report-session-started", data: { threadId: result.threadId, parentThreadId: "p1" } }]);
+    });
+
+    it("emits nothing on the existing-session arm", async () => {
+        await seedConversation("p1", "Parent");
+        expect((await run(INPUT, ctxForThread("p1"))).outcome).toBe("started");
+        const { ctx, emitted } = watchedCtxForThread("p1");
+
+        const result = (await tool.execute(INPUT, ctx))._unsafeUnwrap();
+
+        // The arm names a session that an earlier turn announced, thus a second
+        // part would put a second entry into the transcript.
+        expect(result.outcome).toBe("existing-session");
+        expect(emitted).toEqual([]);
+    });
+
+    it("emits nothing on a refusal", async () => {
+        const { ctx, emitted } = watchedCtxForThread("ghost");
+
+        const result = (await tool.execute(INPUT, ctx))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("parent_not_found");
+        expect(emitted).toEqual([]);
+    });
+});
+
 describe("the refused arm", () => {
     it("refuses a scope that carries no thread id, and writes no row", async () => {
         await seedConversation("p1", "Parent");

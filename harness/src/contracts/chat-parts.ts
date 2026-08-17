@@ -421,6 +421,25 @@ export interface DataPreviewFailedPart {
     errorKind?: "render" | "submit" | "build" | "timeout" | "internal";
 }
 
+// ── Report Session Started (report session spawn) ──────────────────
+
+/**
+ * The record that a turn started a report session. It rides the chat stream
+ * live, and it persists into the turn at the position of the spawn.
+ *
+ * The part is a placement record and a freshness signal only. The thread
+ * store is the authority for the session: its existence, its title, and its
+ * archived state. When the thread of the part is archived or absent, a
+ * consumer renders nothing for it.
+ */
+export interface ReportSessionStartedPart {
+    type: "data-report-session-started";
+    /** The id of the report thread that the spawn made. */
+    threadId: string;
+    /** The id of the conversation thread that spawned it. */
+    parentThreadId: string;
+}
+
 // ── Union ───────────────────────────────────────────────────────────
 
 export type CortexChatPart =
@@ -442,4 +461,5 @@ export type CortexChatPart =
     | RunCompletedPart
     | RunFailedPart
     | PreviewPart
-    | DataPreviewFailedPart;
+    | DataPreviewFailedPart
+    | ReportSessionStartedPart;
