@@ -233,7 +233,7 @@ The claim carries the analysis id, because the URL needs an authorization bounda
 - **THEN** the URL is the base, the res, and the page path, with the encoded token under the `t` query parameter
 
 ### Requirement: The session-page publisher seam
-The composition MUST give the hosted view of a session page through one publisher seam. The mint operation takes the analysis id and the thread id, and it returns the grant or the typed refusal. A grant carries the base URL of the content server, the token, and the expiry — the caller spells the whole URL through `buildReportSessionUrl`, thus the formula lives in the contract and never in a realization. The local default MUST return the not-ok arm, thus a composition with no hosted surface stays on the page path.
+The composition MUST give the hosted view of a session page through one publisher seam, bound as a per-call factory over the analysis and the auth of the tool call — a realization mints under the credential of the caller, and it holds no ambient state. The mint operation takes the thread id, and it returns the grant or the typed refusal. A grant carries the base URL of the content server, the token, and the expiry — the caller spells the whole URL through `buildReportSessionUrl`, thus the formula lives in the contract and never in a realization. The local default MUST return the not-ok arm, thus a composition with no hosted surface stays on the page path.
 
 #### Scenario: The local default refuses
 - **WHEN** the unavailable publisher mints

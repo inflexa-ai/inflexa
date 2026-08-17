@@ -27,6 +27,7 @@ export {
 export {
     describeSessionPageMintFailure,
     UnavailableSessionPagePublisher,
+    type MakeSessionPagePublisher,
     type SessionPageMintFailure,
     type SessionPageMintResult,
     type SessionPagePublisher,

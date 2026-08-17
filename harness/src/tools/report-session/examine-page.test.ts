@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Browser } from "puppeteer-core";
 
-import type { Scope } from "../../auth/types.js";
+import type { AuthContext, Scope } from "../../auth/types.js";
 import { setBrowserConnector } from "../../lib/chrome.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { AcquireEyes, EyesLease, EyesScope } from "../../lib/eyes.js";
@@ -651,7 +651,7 @@ describe("the URL seam", () => {
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
         let capturedUrl: string | undefined;
-        let resolvedArgs: { pagePath: string; analysisId: string; threadId: string } | undefined;
+        let resolvedArgs: { pagePath: string; analysisId: string; threadId: string; auth: AuthContext } | undefined;
         const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = (url) => {
             capturedUrl = url;
@@ -668,13 +668,20 @@ describe("the URL seam", () => {
             },
         });
 
-        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+        const ctx = ctxForThread(threadId);
+        const result = (await tool.execute({}, ctx))._unsafeUnwrap();
 
         expect(result.outcome).toBe("examined");
         // The seam replaces the file URL, thus the look opens the served page.
         expect(capturedUrl).toBe("https://content.test/report-sessions/analysis-001/t1/index.html?t=tok");
-        // The seam reads the page of the thread, thus a realization maps it with no second resolver.
-        expect(resolvedArgs).toEqual({ pagePath: join(root, "report-sessions", threadId, "index.html"), analysisId: DEFAULT_ANALYSIS_ID, threadId });
+        // The seam reads the page of the thread and the auth of the call, thus a realization maps the
+        // page with no second resolver and mints under the credential of the caller.
+        expect(resolvedArgs).toEqual({
+            pagePath: join(root, "report-sessions", threadId, "index.html"),
+            analysisId: DEFAULT_ANALYSIS_ID,
+            threadId,
+            auth: ctx.session.auth,
+        });
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
     });
 

@@ -16,11 +16,12 @@
  * namespace belongs to this path alone, thus the tool never writes under the old `previews/` or `reports/`
  * trees. The result carries the absolute page path, thus a local host shows the page with no seam.
  *
- * A hosted view rides the same result. When the composition binds the session-page publisher, the tool
- * mints one grant after the page lands, and the `rendered` arm carries the URL of the URL space
- * `report-sessions/{analysisId}/{threadId}` (`contracts/content-url.ts`) beside the path. A refused mint
- * rides the arm as data, and the page path stays good — a broken grant surface never costs the render. An
- * unbound publisher changes nothing: the arm carries no access field, and a local host opens the file.
+ * A hosted view rides the same result. When the composition binds the session-page factory, the tool
+ * builds the publisher over the scope of the call, mints one grant after the page lands, and the
+ * `rendered` arm carries the URL of the URL space `report-sessions/{analysisId}/{threadId}`
+ * (`contracts/content-url.ts`) beside the path. A refused mint rides the arm as data, and the page path
+ * stays good — a broken grant surface never costs the render. An unbound factory changes nothing: the
+ * arm carries no access field, and a local host opens the file.
  *
  * Each degraded condition is a typed outcome in the ok channel: a session refusal, a gap list, a resolver
  * absence, an unresolvable root at resolver construction, an unresolved reference, a bridge mismatch, a
@@ -61,7 +62,7 @@ import type { RenderProblem } from "../../report-render/types.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
-import { describeSessionPageMintFailure, type SessionPageMintResult, type SessionPagePublisher } from "./session-page-publisher.js";
+import { describeSessionPageMintFailure, type MakeSessionPagePublisher, type SessionPageMintResult } from "./session-page-publisher.js";
 
 /** The empty input. The tool renders the current draft of the thread, thus it needs no field. */
 const previewReportInput = z.object({});
@@ -111,16 +112,18 @@ export type ResolvePageAsset = (specifier: string) => string;
  * harness. An embedder that ships the asset bytes packed, for example a compiled single-file binary with no
  * `node_modules` tree, materializes them to disk and binds its own lookup here.
  *
- * `sessionPages` is optional, because a local host opens the page path itself. Bound, the tool mints one
- * grant after the page lands and attaches the URL beside the path. A refused mint rides the `rendered` arm
- * as data, and it never fails the render.
+ * `makeSessionPages` is optional, because a local host opens the page path itself. It binds one analysis
+ * and the auth of the call, like `makeResolver`, thus a realization mints under the credential of the
+ * caller. Bound, the tool builds the publisher over the scope of the call, mints one grant after the page
+ * lands, and attaches the URL beside the path. A refused mint rides the `rendered` arm as data, and it
+ * never fails the render.
  */
 export interface PreviewReportToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly resolvePageAsset?: ResolvePageAsset;
-    readonly sessionPages?: SessionPagePublisher;
+    readonly makeSessionPages?: MakeSessionPagePublisher;
     readonly logger?: Logger;
 }
 
@@ -456,23 +459,26 @@ async function sweepAssets(assetsDir: string, staged: ReadonlySet<string>, logge
 /**
  * Mint the hosted view of the page that landed.
  *
- * An absent publisher gives no grant, and the arm carries no access field — the page path stays the whole
- * local contract. A refusal and a thrown realization each become the not-granted arm, thus a broken grant
- * surface never costs the render. The URL spells through `buildReportSessionUrl`, thus the formula lives in
- * the contract and the seam gives the content-server base alone.
+ * An absent factory gives no grant, and the arm carries no access field — the page path stays the whole
+ * local contract. The tool builds the publisher over the scope of the call, thus the mint runs under the
+ * auth of the caller. A refusal, a thrown construction, and a thrown realization each become the
+ * not-granted arm, thus a broken grant surface never costs the render. The URL spells through
+ * `buildReportSessionUrl`, thus the formula lives in the contract and the seam gives the content-server
+ * base alone.
  */
 async function mintAccess(
-    publisher: SessionPagePublisher | undefined,
+    makeSessionPages: MakeSessionPagePublisher | undefined,
     analysisId: string,
     threadId: string,
+    auth: AuthContext,
     logger: Logger,
 ): Promise<SessionPageAccess | undefined> {
-    if (publisher === undefined) {
+    if (makeSessionPages === undefined) {
         return undefined;
     }
     let minted: SessionPageMintResult;
     try {
-        minted = await publisher.mintSessionPageAccess(analysisId, threadId);
+        minted = await makeSessionPages({ analysisId, auth }).mintSessionPageAccess(threadId);
     } catch (cause) {
         logger.warn("the session-page mint threw", { threadId, analysisId, ...defaultErrorFields(cause) });
         return { granted: false, detail: "session-page-access mint failed" };
@@ -605,7 +611,7 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 return ok({ outcome: "stamp-failed", pagePath: written.value, detail });
             }
 
-            const access = await mintAccess(deps.sessionPages, analysisId, threadId, logger);
+            const access = await mintAccess(deps.makeSessionPages, analysisId, threadId, ctx.session.auth, logger);
             return ok({ outcome: "rendered", pagePath: written.value, ...(access !== undefined ? { access } : {}) });
         },
     });

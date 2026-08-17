@@ -7,10 +7,15 @@
  * `report-sessions/{analysisId}/{threadId}` (`contracts/content-url.ts`). That mint hides behind this
  * one method.
  *
- * The managed realization owns the grant mint and its client. The local default
- * (`UnavailableSessionPagePublisher`) returns not-ok, thus the preview tool attaches no URL and the
- * render still lands — the page path stays the whole local contract.
+ * The managed realization owns the grant mint and its client. A mint runs under the credential of the
+ * tool call, thus the composition binds a factory and the preview tool builds the publisher over the
+ * scope of the call — exactly as it builds the reference resolver. A boot-time singleton could not
+ * carry that credential, and a host that bans ambient state could not bind one at all. The local
+ * default (`UnavailableSessionPagePublisher`) returns not-ok, thus the preview tool attaches no URL
+ * and the render still lands — the page path stays the whole local contract.
  */
+
+import type { AuthContext } from "../../auth/types.js";
 
 export type SessionPageMintResult =
     { ok: true; data: { baseUrl: string; token: string; expiresAt: string } } | { ok: false; status?: number; error: { message?: string } };
@@ -36,19 +41,26 @@ export function describeSessionPageMintFailure(failure: SessionPageMintFailure):
 
 export interface SessionPagePublisher {
     /**
-     * Mint the access grant of one session page. `baseUrl` is the base URL of the content server, with
-     * no res path — the caller spells the whole URL through `buildReportSessionUrl`, thus the formula
-     * lives in the contract and never in a realization.
+     * Mint the access grant of one session page. The publisher binds the analysis, thus the mint takes
+     * the thread id alone. `baseUrl` is the base URL of the content server, with no res path — the
+     * caller spells the whole URL through `buildReportSessionUrl`, thus the formula lives in the
+     * contract and never in a realization.
      */
-    mintSessionPageAccess(analysisId: string, threadId: string): Promise<SessionPageMintResult>;
+    mintSessionPageAccess(threadId: string): Promise<SessionPageMintResult>;
 }
+
+/**
+ * The per-call construction of the publisher. The factory binds one analysis and the auth of the tool
+ * call, thus a realization mints under the credential of the caller and holds no ambient state.
+ */
+export type MakeSessionPagePublisher = (scope: { analysisId: string; auth: AuthContext }) => SessionPagePublisher;
 
 /**
  * Local default — no hosted view of a session page. Returns not-ok, thus the preview tool carries the
  * refusal as data and the page path stays the whole result.
  */
 export class UnavailableSessionPagePublisher implements SessionPagePublisher {
-    async mintSessionPageAccess(_analysisId: string, _threadId: string): Promise<SessionPageMintResult> {
+    async mintSessionPageAccess(_threadId: string): Promise<SessionPageMintResult> {
         return {
             ok: false,
             error: { message: "the hosted view of a session page is unavailable in this environment" },

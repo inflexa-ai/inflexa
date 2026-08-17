@@ -7,9 +7,9 @@
 ## What Changes
 
 - A second `res` formula beside `previewResourceId`: `reportSessionResourceId` gives `report-sessions/{analysisId}/{threadId}`, and `buildReportSessionUrl` spells the full URL. The TypeScript side and the Go side stay locked by the shared test vectors, which this change adds under `src/__tests__/fixtures/` as byte-identical copies of the storage backend's `kernel/contenttoken/testdata` files: `preview-res.json` and `report-session-res.json`.
-- A session-page publisher seam, shaped like `PreviewPublisher`: `SessionPagePublisher.mintSessionPageAccess(analysisId, threadId)`, with `UnavailableSessionPagePublisher` as the local default.
+- A session-page publisher seam, shaped like `PreviewPublisher` behind a per-call factory: `makeSessionPages({ analysisId, auth })` gives the publisher of one call, `mintSessionPageAccess(threadId)` mints, and `UnavailableSessionPagePublisher` stays the local default. The factory carries the auth of the tool call, thus a host that mints under the credential of the caller binds it with no ambient state.
 - The access arm returns to `preview_report`. When the composition binds the publisher and the render lands, the `rendered` arm carries the URL beside the path. A refused mint rides the arm as data, and it never fails the render. Unbound, the result is exactly what it was.
-- The eyes URL becomes seam-resolved. `examine_page` gains an optional `resolvePageUrl` dep, and absent it navigates through a `file://` URL as today. Thus a managed browser with no workspace mount looks at the served page.
+- The eyes URL becomes seam-resolved. `examine_page` gains an optional `resolvePageUrl` dep whose args carry the auth of the tool call beside the page identity, and absent it navigates through a `file://` URL as today. Thus a managed browser with no workspace mount looks at the served page.
 - The two seams thread through `createReportSessionAgent` and `assembleCoreRuntime`, thus an embedder binds them at its composition root.
 
 ## Capabilities

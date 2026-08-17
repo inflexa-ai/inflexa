@@ -12,7 +12,7 @@ The preview tool of a report session returns the page path alone (`src/tools/rep
 
 ### D2: The publisher gives the base, and the tool spells the URL
 
-`SessionPagePublisher.mintSessionPageAccess(analysisId, threadId)` returns the same result arms as `PreviewPublisher`. Its `baseUrl` is the base URL of the content server, with no res path: the preview tool spells the whole URL through `buildReportSessionUrl`, thus the formula lives in the contract and a realization cannot drift from it. The seam lives beside the tools that hold it, in `src/tools/report-session/`, and it does not reuse the preview types — the two seams degrade independently, and a shared type would couple their wording.
+`SessionPagePublisher.mintSessionPageAccess(threadId)` returns the same result arms as `PreviewPublisher`. The composition binds the publisher as a per-call factory over `{ analysisId, auth }`, like the reference resolver, thus a realization mints under the credential of the caller and no boot-time singleton forms. Its `baseUrl` is the base URL of the content server, with no res path: the preview tool spells the whole URL through `buildReportSessionUrl`, thus the formula lives in the contract and a realization cannot drift from it. The seam lives beside the tools that hold it, in `src/tools/report-session/`, and it does not reuse the preview types — the two seams degrade independently, and a shared type would couple their wording.
 
 ### D3: A mint refusal is data on the `rendered` arm
 
@@ -20,7 +20,7 @@ The tool contract is ok-channel data for each degraded condition. The page lande
 
 ### D4: The eyes URL is a seam with the `file://` default
 
-`resolvePageUrl` takes the page path, the analysis id, and the thread id, and it gives the URL of one look. The default stays `pathToFileURL(pagePath).href` at the one call site, thus the CLI changes nothing. The seam replaces the URL and nothing else: the navigation, the readiness wait, the capture, and the seen stamp stay in the tool. A throw of the seam becomes the typed capture failure before any lease is acquired.
+`resolvePageUrl` takes the page path, the analysis id, the thread id, and the auth of the tool call, and it gives the URL of one look. The default stays `pathToFileURL(pagePath).href` at the one call site, thus the CLI changes nothing. The seam replaces the URL and nothing else: the navigation, the readiness wait, the capture, and the seen stamp stay in the tool. A throw of the seam becomes the typed capture failure before any lease is acquired.
 
 ## Risks / Trade-offs
 

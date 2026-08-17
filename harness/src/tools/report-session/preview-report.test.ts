@@ -13,7 +13,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Scope } from "../../auth/types.js";
+import type { AuthContext, Scope } from "../../auth/types.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
@@ -826,16 +826,24 @@ describe("the hosted view", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        let scope: { analysisId: string; auth: AuthContext } | undefined;
         const tool = createPreviewReportTool({
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            sessionPages: grantingPublisher,
+            makeSessionPages: (s) => {
+                scope = s;
+                return grantingPublisher;
+            },
         });
 
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        const ctx = ctxForThread("t1");
+        const result = (await tool.execute({}, ctx))._unsafeUnwrap();
 
         expect(result.outcome).toBe("rendered");
+        // The factory binds the analysis and the auth of the call, thus a realization mints under the
+        // credential of the caller.
+        expect(scope).toEqual({ analysisId: DEFAULT_ANALYSIS_ID, auth: ctx.session.auth });
         if (result.outcome === "rendered") {
             // The page path stays the local contract, and the URL rides beside it. The URL spells the
             // res space of the contract, thus the analysis id and the thread id both name the boundary.
@@ -856,7 +864,7 @@ describe("the hosted view", () => {
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            sessionPages: { mintSessionPageAccess: () => Promise.resolve({ ok: false as const, status: 403, error: { message: "no grant" } }) },
+            makeSessionPages: () => ({ mintSessionPageAccess: () => Promise.resolve({ ok: false as const, status: 403, error: { message: "no grant" } }) }),
         });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
@@ -876,7 +884,7 @@ describe("the hosted view", () => {
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            sessionPages: new UnavailableSessionPagePublisher(),
+            makeSessionPages: () => new UnavailableSessionPagePublisher(),
         });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
@@ -898,7 +906,29 @@ describe("the hosted view", () => {
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            sessionPages: { mintSessionPageAccess: () => Promise.reject(new Error("the grant surface is down")) },
+            makeSessionPages: () => ({ mintSessionPageAccess: () => Promise.reject(new Error("the grant surface is down")) }),
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            expect(existsSync(result.pagePath)).toBe(true);
+            expect(result.access).toEqual({ granted: false, detail: "session-page-access mint failed" });
+        }
+    });
+
+    it("carries a thrown construction as data, and the render stays good", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            makeSessionPages: () => {
+                throw new Error("the publisher did not build");
+            },
         });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();

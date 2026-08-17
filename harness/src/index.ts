@@ -106,10 +106,12 @@ export type { PreviewPublisher, PreviewMintResult } from "./tools/report/preview
 
 // Seam: the hosted view of a report-session page. A managed host serves the URL space
 // `report-sessions/{analysisId}/{threadId}` and mints access through its own publisher,
-// thus the seam belongs on the front door. The URL seam of the eyes rides beside it: a
-// host whose browser cannot reach the workspace tree binds a served URL for the look.
+// thus the seam belongs on the front door. Both seams bind per call over the auth of the
+// tool call, thus a host mints under the credential of the caller and holds no ambient
+// state. The URL seam of the eyes rides beside the publisher factory: a host whose
+// browser cannot reach the workspace tree binds a served URL for the look.
 export { UnavailableSessionPagePublisher } from "./tools/report-session/session-page-publisher.js";
-export type { SessionPagePublisher, SessionPageMintResult } from "./tools/report-session/session-page-publisher.js";
+export type { MakeSessionPagePublisher, SessionPagePublisher, SessionPageMintResult } from "./tools/report-session/session-page-publisher.js";
 export type { ResolvePageUrl, SessionPageAccess } from "./tools/report-session/index.js";
 
 // Run launching.
