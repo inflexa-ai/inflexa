@@ -896,13 +896,27 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
         expect(toolResultParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-1"]);
     });
 
-    it("settles a call that rides a plain stop finish", async () => {
+    it("dispatches a call that rides a stop finish, because a local model labels its tool replies stop", async () => {
         const { tool, wasExecuted } = probeTool();
-        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-x", "probe", {})], "end_turn")]);
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-x", "probe", {})], "end_turn"), makeMessage([textBlock("done")], "end_turn")]);
 
         const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider));
 
         expect(finish.reason).toBe("stop");
+        expect(wasExecuted()).toBe(true);
+        // [user, assistant(tu-x), tool(result), assistant("done")] — the round ran and the loop continued.
+        expect(messages).toHaveLength(4);
+        expect(toolResultParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-x"]);
+        expect(messages.at(-1)!.content).toEqual([{ type: "text", text: "done" }]);
+    });
+
+    it("settles a call that rides an unknown finish", async () => {
+        const { tool, wasExecuted } = probeTool();
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-x", "probe", {})], "unknown")]);
+
+        const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("unknown");
         expect(wasExecuted()).toBe(false);
         expect(messages).toEqual([...GO]);
     });

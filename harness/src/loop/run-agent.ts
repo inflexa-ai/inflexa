@@ -229,8 +229,9 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     /**
      * Settle the transcript on the way out — called at every return. A reply can
      * carry a complete tool call beside ANY finish reason, because the call
-     * streams before the stop reason arrives, and only the `tool-calls` and
-     * `length` branches dispatch. A call this run never dispatched is stripped
+     * streams before the stop reason arrives, and only the dispatching branches
+     * (`tool-calls`, a call-carrying `stop`, and `length`) run one. A call this
+     * run never dispatched is stripped
      * rather than executed (a filtered or aborted reply must not act) or answered
      * with an invented result (the model would read a fabrication as ground
      * truth). Without the strip, the unanswered call violates the wire contract —
@@ -444,7 +445,13 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             continue;
         }
 
-        if (reply.finishReason !== "tool-calls") {
+        // A local model behind an OpenAI-compatible server routinely labels a
+        // tool-calling reply `stop`. The calls are complete and the model waits
+        // on their results, thus the mislabeled round dispatches like a
+        // `tool-calls` one. Every other terminal keeps the strip: a filtered or
+        // aborted reply must not act.
+        const dispatchesRound = reply.finishReason === "tool-calls" || (reply.finishReason === "stop" && toolCalls.length > 0);
+        if (!dispatchesRound) {
             settleTranscript();
             // The settle can remove a call-only aborted partial whole; the
             // interruption marker then rides the last assistant that survived,
