@@ -349,6 +349,14 @@ export const DataPreviewFailedPartSchema = z.object({
     errorKind: z.enum(["render", "submit", "build", "timeout", "internal"]).optional(),
 });
 
+// ── Report Session Started ─────────────────────────────────────────
+
+export const ReportSessionStartedPartSchema = z.object({
+    type: z.literal("data-report-session-started"),
+    threadId: z.string(),
+    parentThreadId: z.string(),
+});
+
 // ── Union ───────────────────────────────────────────────────────────
 
 export const CortexChatPartSchema = z.discriminatedUnion("type", [
@@ -371,4 +379,5 @@ export const CortexChatPartSchema = z.discriminatedUnion("type", [
     RunFailedPartSchema,
     PreviewPartSchema,
     DataPreviewFailedPartSchema,
+    ReportSessionStartedPartSchema,
 ]);

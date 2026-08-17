@@ -57,11 +57,22 @@ describe("conversation display recorder", () => {
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "b", name: "tool_b", outcome: "ok" });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "a", name: "tool_a", outcome: "ok" });
 
-        expect(recorder.finish()[1]!.parts.map((part) => ("id" in part ? part.id : part.type))).toEqual([
-            "a",
-            "b",
-            "from-b",
-            "from-a",
+        expect(recorder.finish()[1]!.parts.map((part) => ("id" in part ? part.id : part.type))).toEqual(["a", "b", "from-b", "from-a"]);
+    });
+
+    it("records a report-session-started part in the position of its emission", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "starting" });
+        await recorder.emit({ type: "data-report-session-started", source: TOP, data: { threadId: "r1", parentThreadId: "p1" } });
+        await recorder.emit({ type: "text-delta", text: "done" });
+
+        // The part is durable conversation display, thus the recorder keeps it
+        // between the two text runs and a reload shows it where the spawn ran.
+        const display = recorder.finish();
+        expect(display[1]!.parts).toEqual([
+            { type: "text", text: "starting", state: "done" },
+            { type: "data-report-session-started", data: { threadId: "r1", parentThreadId: "p1" } },
+            { type: "text", text: "done", state: "done" },
         ]);
     });
 

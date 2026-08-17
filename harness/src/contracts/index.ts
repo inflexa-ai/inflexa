@@ -35,6 +35,7 @@ export type {
     RunFailedPart,
     PreviewPart,
     DataPreviewFailedPart,
+    ReportSessionStartedPart,
     CortexChatPart,
 } from "./chat-parts.js";
 
