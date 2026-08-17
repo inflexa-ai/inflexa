@@ -21,6 +21,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
+import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
@@ -225,6 +226,27 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         log[level]("run finished", { iterations, reason, cappedOut, truncationRecoveries, toolCalls: toolCallCount, toolErrors: toolErrorCount, usage });
     };
 
+    /**
+     * Settle the transcript on the way out — called at every return. A reply can
+     * carry a complete tool call beside ANY finish reason, because the call
+     * streams before the stop reason arrives, and only the `tool-calls` and
+     * `length` branches dispatch. A call this run never dispatched is stripped
+     * rather than executed (a filtered or aborted reply must not act) or answered
+     * with an invented result (the model would read a fabrication as ground
+     * truth). Without the strip, the unanswered call violates the wire contract —
+     * every tool call carries a result — and the provider boundary then refuses
+     * the whole transcript on every later turn of the thread. Scoped past
+     * `initial`: the caller's prefix is not this run's to repair.
+     */
+    const settleTranscript = (): void => {
+        const droppedCalls = stripUnansweredToolCalls(messages, initial.length);
+        if (droppedCalls.length === 0) return;
+        log.warn("undispatched tool calls stripped at run exit", {
+            toolCallIds: droppedCalls.map((d) => d.toolCallId),
+            tools: droppedCalls.map((d) => d.toolName),
+        });
+    };
+
     const usageRecorder = opts.usageRecorder ?? createNoopUsageRecorder();
 
     /**
@@ -272,6 +294,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // lands in a dispatch round — after the concurrent siblings in that same round
     // have completed and been appended. Mirrors the clean-stop terminal path.
     const stopOnDenial = async (i: number): Promise<RunAgentResult> => {
+        settleTranscript();
         await emit({ type: "iteration", source, index: i, final: true });
         recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
         logFinish("warn", "denied", false);
@@ -341,6 +364,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     };
 
     const stopOnResolved = async (i: number): Promise<RunAgentResult> => {
+        settleTranscript();
         await emit({ type: "iteration", source, index: i, final: true });
         recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
         return { messages, finish: { reason: "stop", cappedOut: false, truncationRecoveries } };
@@ -421,6 +445,11 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         }
 
         if (reply.finishReason !== "tool-calls") {
+            settleTranscript();
+            // The settle can remove a call-only aborted partial whole; the
+            // interruption marker then rides the last assistant that survived,
+            // matching the no-output abort contract above.
+            if (reply.finishReason === "aborted") markLastLoopAssistant(messages, initial.length);
             await emit({ type: "iteration", source, index: i, final: true });
             recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
             logFinish("info", reply.finishReason, false);
@@ -470,6 +499,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         // from every downstream reader; `cappedOut` stays true because the loop genuinely
         // exhausted its iterations, while the reason carries the abort.
         if (assistantHasContent(wrapUp.message)) messages.push(wrapUp.message);
+        settleTranscript();
         markLastLoopAssistant(messages, initial.length);
         await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
         recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
@@ -478,6 +508,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     }
 
     messages.push(wrapUp.message);
+    settleTranscript();
     await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
     recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
     logFinish("warn", "max_iterations", true);

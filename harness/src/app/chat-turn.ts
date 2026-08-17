@@ -102,6 +102,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         runActivityContext,
         history,
         workingMemory: createWorkingMemory(pool),
+        ...(deps.logger ? { logger: deps.logger } : {}),
     });
 
     return { kind: "ok", threadType, messages, userMessage };

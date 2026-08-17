@@ -1,8 +1,10 @@
 import { describe, test, expect } from "bun:test";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ModelMessage } from "ai";
 import { okAsync } from "neverthrow";
 
 import { assembleMessages } from "./message-assembly.js";
+import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import type { ThreadHistory } from "../memory/thread-history.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import { emptyWorkingMemory } from "../memory/working-memory.js";
@@ -220,5 +222,69 @@ describe("assembleMessages", () => {
         expect(contentText(messages[0]!)).toContain(secret);
         // Analysis context message is passed through verbatim.
         expect(contentText(messages[1]!)).toContain(secret);
+    });
+
+    /** {@link stubHistory} typed over the AI SDK shape, for a window that carries tool parts. */
+    function modelHistory(window: ModelMessage[]): ThreadHistory {
+        return {
+            ...stubHistory([]),
+            loadRecent: () => okAsync(window),
+        };
+    }
+
+    test("repairs a stored dangling tool call and logs the strip", async () => {
+        const logger = createCapturingLogger();
+        const window: ModelMessage[] = [
+            { role: "user", content: "earlier question" },
+            {
+                role: "assistant",
+                content: [
+                    { type: "text", text: "on it" },
+                    { type: "tool-call", toolCallId: "tu-x", toolName: "update_working_memory", input: {} },
+                ],
+            },
+        ];
+
+        const { messages } = await assembleMessages({
+            threadId: "thread-1",
+            threadType: "conversation",
+            analysisId: "analysis-1",
+            userInput: "what happened?",
+            analysisContext: null,
+            runActivityContext: RUN_ACTIVITY,
+            history: modelHistory(window),
+            workingMemory: stubWorkingMemory(),
+            logger,
+        });
+
+        // The unanswered call is gone; the prose of the turn survives.
+        expect(messages[1]).toEqual({ role: "assistant", content: [{ type: "text", text: "on it" }] });
+        const warn = logger.records.find((r) => r.level === "warn");
+        expect(warn?.msg).toContain("unanswered tool calls stripped from thread history");
+        expect(warn?.fields).toMatchObject({ threadId: "thread-1", toolCallIds: ["tu-x"], tools: ["update_working_memory"] });
+    });
+
+    test("keeps an answered tool call untouched and logs nothing", async () => {
+        const logger = createCapturingLogger();
+        const window: ModelMessage[] = [
+            { role: "user", content: "earlier question" },
+            { role: "assistant", content: [{ type: "tool-call", toolCallId: "tu-1", toolName: "read_file", input: {} }] },
+            { role: "tool", content: [{ type: "tool-result", toolCallId: "tu-1", toolName: "read_file", output: { type: "json", value: {} } }] },
+        ];
+
+        const { messages } = await assembleMessages({
+            threadId: "thread-1",
+            threadType: "conversation",
+            analysisId: "analysis-1",
+            userInput: "continue",
+            analysisContext: null,
+            runActivityContext: RUN_ACTIVITY,
+            history: modelHistory(window),
+            workingMemory: stubWorkingMemory(),
+            logger,
+        });
+
+        expect(messages.slice(0, 3)).toEqual(window);
+        expect(logger.records).toEqual([]);
     });
 });
