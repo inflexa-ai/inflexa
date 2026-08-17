@@ -837,6 +837,94 @@ describe("runAgent — aborted wrap-up path", () => {
     });
 });
 
+// ── undispatched tool calls at a terminal finish ────────────────────
+
+describe("runAgent — undispatched tool calls at a terminal finish", () => {
+    /** A tool that records whether the loop ever executed it. */
+    function probeTool(): { tool: Tool; wasExecuted: () => boolean } {
+        let executed = false;
+        const tool = defineTool({
+            id: "probe",
+            description: "Record that the loop executed this call.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async () => {
+                executed = true;
+                return ok({});
+            },
+        });
+        return { tool, wasExecuted: () => executed };
+    }
+
+    function toolCallIdsOf(messages: readonly ModelMessage[]): string[] {
+        return messages.flatMap((m) =>
+            m.role === "assistant" && typeof m.content !== "string" ? m.content.filter((p) => p.type === "tool-call").map((p) => p.toolCallId) : [],
+        );
+    }
+
+    it("strips the call a content-filter finish carried, keeps the prose, and never executes it", async () => {
+        const { tool, wasExecuted } = probeTool();
+        const provider = scriptedProvider([makeMessage([textBlock("I cannot continue with this."), toolUseBlock("tu-x", "probe", {})], "refusal")]);
+        const logger = createCapturingLogger();
+
+        const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider, { logger }));
+
+        expect(finish.reason).toBe("content-filter");
+        expect(wasExecuted()).toBe(false);
+        expect(toolCallIdsOf(messages)).toEqual([]);
+        const last = messages.at(-1)!;
+        expect(last.role).toBe("assistant");
+        expect(last.content).toEqual([{ type: "text", text: "I cannot continue with this." }]);
+        const warn = logger.records.find((r) => r.level === "warn" && r.msg.includes("undispatched tool calls stripped"));
+        expect(warn?.fields).toMatchObject({ toolCallIds: ["tu-x"], tools: ["probe"] });
+    });
+
+    it("keeps the earlier, dispatched round intact and removes only the trailing call-only reply", async () => {
+        const { tool, wasExecuted } = probeTool();
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "probe", {})], "tool_use"),
+            makeMessage([toolUseBlock("tu-2", "probe", {})], "refusal"),
+        ]);
+
+        const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("content-filter");
+        expect(wasExecuted()).toBe(true);
+        // [user, assistant(tu-1), tool(result tu-1)] — the call-only filtered reply is gone whole.
+        expect(messages).toHaveLength(3);
+        expect(toolCallIdsOf(messages)).toEqual(["tu-1"]);
+        expect(toolResultParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-1"]);
+    });
+
+    it("settles a call that rides a plain stop finish", async () => {
+        const { tool, wasExecuted } = probeTool();
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-x", "probe", {})], "end_turn")]);
+
+        const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("stop");
+        expect(wasExecuted()).toBe(false);
+        expect(messages).toEqual([...GO]);
+    });
+
+    it("re-marks the surviving step when the strip removes a call-only aborted partial", async () => {
+        const { tool } = probeTool();
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "probe", {})], "tool_use"),
+            makeMessage([toolUseBlock("tu-2", "probe", {})], "aborted"),
+        ]);
+
+        const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("aborted");
+        // [user, assistant(tu-1), tool(result)] — the aborted call-only partial is gone.
+        expect(messages).toHaveLength(3);
+        expect(toolCallIdsOf(messages)).toEqual(["tu-1"]);
+        // The interruption marker rides the last assistant that survived the strip.
+        expect(isInterruptedMessage(messages[1]!)).toBe(true);
+    });
+});
+
 // ── finish signal on a clean stop ───────────────────────────────────
 
 describe("runAgent — finish signal", () => {

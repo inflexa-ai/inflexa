@@ -37,10 +37,13 @@
 
 import type { ModelMessage } from "ai";
 
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { LoopMessage } from "../loop/types.js";
 import type { ThreadHistory } from "../memory/thread-history.js";
 import type { ThreadType } from "../memory/thread-store.js";
+import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import { normalizeUnicode, redactSecrets } from "../input-sanitization.js";
 
@@ -70,6 +73,8 @@ export interface AssembleMessagesArgs {
     readonly workingMemory: WorkingMemoryStore;
     /** History-window token budget. Defaults to {@link DEFAULT_HISTORY_TOKEN_BUDGET}. */
     readonly tokenBudget?: number;
+    /** Diagnostic seam for the history repair record; omitted falls back to no-op. */
+    readonly logger?: Logger;
 }
 
 export interface AssembledMessages {
@@ -91,6 +96,22 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
     const budget = args.tokenBudget ?? DEFAULT_HISTORY_TOKEN_BUDGET;
 
     const history = unwrapOrThrow(await args.history.loadRecent(args.threadId, budget, { keepFirstTurn: args.threadType === "report" }));
+
+    // Read-side safety net for the wire contract: every tool call carries a
+    // result. The loop upholds it at every exit, but the store outlives any one
+    // writer — a row an older build wrote, or a hand-edited database, can carry
+    // an unanswered call, and the provider boundary then refuses the WHOLE
+    // transcript on every turn: the thread is wedged forever. Stripping the
+    // orphan here degrades one message instead. The warning is the only account
+    // a reader gets that the stored thread and the assembled one differ.
+    const repaired = stripUnansweredToolCalls(history);
+    if (repaired.length > 0) {
+        (args.logger ?? createNoopLogger()).named("assembly").warn("unanswered tool calls stripped from thread history", {
+            threadId: args.threadId,
+            toolCallIds: repaired.map((d) => d.toolCallId),
+            tools: repaired.map((d) => d.toolName),
+        });
+    }
 
     // Sanitization — applied once, here, to the new user input only.
     const userMessage: ModelMessage = {
