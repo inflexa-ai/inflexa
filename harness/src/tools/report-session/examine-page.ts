@@ -51,6 +51,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 
+import type { AuthContext } from "../../auth/types.js";
 import { hasBrowserUrl, type ChromeConfig } from "../../lib/chrome.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { createStaticEyes, type AcquireEyes, type EyesLease, type EyesScope } from "../../lib/eyes.js";
@@ -67,8 +68,10 @@ export type { CapturePage, FailedRequest, PageCapture };
 /**
  * The URL formation of one look. It maps the page of the thread onto the URL that the browser opens.
  * A composition whose browser cannot reach the workspace tree binds a resolver that names a served URL.
+ * The args carry the auth of the tool call beside the page identity, thus a realization mints the URL
+ * under the credential of the caller and holds no ambient state.
  */
-export type ResolvePageUrl = (args: { pagePath: string; analysisId: string; threadId: string }) => Promise<string>;
+export type ResolvePageUrl = (args: { pagePath: string; analysisId: string; threadId: string; auth: AuthContext }) => Promise<string>;
 
 /** The empty input. The tool examines the current page of the thread, thus it needs no field. */
 const examinePageInput = z.object({});
@@ -386,7 +389,10 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
             // becomes a typed outcome and the look never starts.
             let url: string;
             try {
-                url = deps.resolvePageUrl !== undefined ? await deps.resolvePageUrl({ pagePath, analysisId, threadId }) : pathToFileURL(pagePath).href;
+                url =
+                    deps.resolvePageUrl !== undefined
+                        ? await deps.resolvePageUrl({ pagePath, analysisId, threadId, auth: ctx.session.auth })
+                        : pathToFileURL(pagePath).href;
             } catch (cause) {
                 logger.warn("the page URL did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
                 return ok({ outcome: "capture-failed", detail: "the page URL did not resolve" });

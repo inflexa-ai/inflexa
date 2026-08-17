@@ -48,9 +48,9 @@ import {
     createListPinnedArtifactsTool,
     createPreviewReportTool,
     createRecordVersionTool,
+    type MakeSessionPagePublisher,
     type ResolvePageAsset,
     type ResolvePageUrl,
-    type SessionPagePublisher,
 } from "../tools/report-session/index.js";
 import { createFileStatTool, createGrepTool, createListFilesTool, createReadFileTool, createWorkspaceSearchTool } from "../tools/workspace/index.js";
 import { createInspectDataProfileTool, createInspectRunTool } from "../tools/research/index.js";
@@ -122,15 +122,18 @@ export interface ReportSessionAgentDeps {
      */
     readonly resolvePageAsset?: ResolvePageAsset;
     /**
-     * Session-page publisher -- the hosted view of the rendered page. Bound, the preview
-     * tool mints one grant after the page lands and attaches the URL beside the path.
-     * Omitted, the result carries the page path alone.
+     * Session-page publisher factory -- the hosted view of the rendered page. The factory
+     * binds one analysis and the auth of the call, like `makeResolver`, thus the mint runs
+     * under the credential of the caller. Bound, the preview tool builds the publisher over
+     * the scope of the call, mints one grant after the page lands, and attaches the URL
+     * beside the path. Omitted, the result carries the page path alone.
      */
-    readonly sessionPages?: SessionPagePublisher;
+    readonly makeSessionPages?: MakeSessionPagePublisher;
     /**
      * Page-URL formation of the eyes -- the URL that one look opens. A composition whose
-     * browser cannot reach the workspace tree binds a resolver that names a served URL.
-     * Omitted, the eyes tool navigates through a `file://` URL of the page path.
+     * browser cannot reach the workspace tree binds a resolver that names a served URL, and
+     * the args carry the auth of the tool call beside the page identity. Omitted, the eyes
+     * tool navigates through a `file://` URL of the page path.
      */
     readonly resolvePageUrl?: ResolvePageUrl;
     /** Operational logging seam; omitted falls back to no-op. */
@@ -140,7 +143,7 @@ export interface ReportSessionAgentDeps {
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
-    const { derivations, sandboxClient, runAuthorizer, sessionPages, resolvePageUrl } = deps;
+    const { derivations, sandboxClient, runAuthorizer, makeSessionPages, resolvePageUrl } = deps;
     const authoring = createReportAuthoringTools(gateway);
 
     const tools: Tool[] = [
@@ -185,7 +188,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             resolveWorkspaceRoot,
             ...(makeResolver ? { makeResolver } : {}),
             ...(resolvePageAsset ? { resolvePageAsset } : {}),
-            ...(sessionPages ? { sessionPages } : {}),
+            ...(makeSessionPages ? { makeSessionPages } : {}),
             ...(logger ? { logger } : {}),
         }),
         // The eyes tool. It opens the rendered page in headless Chrome.

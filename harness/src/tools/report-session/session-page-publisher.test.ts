@@ -5,7 +5,7 @@ import { describeSessionPageMintFailure, UnavailableSessionPagePublisher } from 
 describe("UnavailableSessionPagePublisher", () => {
     test("mintSessionPageAccess returns the not-ok unavailable shape", async () => {
         const publisher = new UnavailableSessionPagePublisher();
-        const result = await publisher.mintSessionPageAccess("analysis-001", "t1");
+        const result = await publisher.mintSessionPageAccess("t1");
         expect(result.ok).toBe(false);
         if (result.ok) throw new Error("expected not-ok");
         expect(result.error.message).toBe("the hosted view of a session page is unavailable in this environment");
