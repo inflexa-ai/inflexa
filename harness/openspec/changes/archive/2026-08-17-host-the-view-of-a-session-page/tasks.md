@@ -3,7 +3,7 @@
 ## 1. The contract
 
 - [x] 1.1 Add `reportSessionResourceId` and `buildReportSessionUrl` to `src/contracts/content-url.ts`, beside the preview pair, with the Go-mirror note and the vector note. Export both from `src/contracts/index.ts`.
-- [x] 1.2 Add the shared test vector at `src/__tests__/fixtures/preview-res.json`: the preview vectors of the storage-backend copy, and the report-session vectors.
+- [x] 1.2 Add the shared test vectors at `src/__tests__/fixtures/preview-res.json` and `src/__tests__/fixtures/report-session-res.json`, as byte-identical copies of the storage backend's `kernel/contenttoken/testdata` files, exempt from prettier.
 - [x] 1.3 Add `src/contracts/content-url.test.ts`, and lock both TypeScript formulas to every vector of the fixture.
 
 ## 2. The publisher seam
