@@ -42,7 +42,6 @@ import type { Pool } from "pg";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
-import { REPORT_BUILDER_AGENT_ID, REPORT_BUILDER_SKILLS } from "../agents/report-builder.js";
 import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
 import { initCortexState } from "../state/init.js";
 import { backfillConversationDisplayEnvelopes } from "../memory/conversation-display-backfill.js";
@@ -55,16 +54,8 @@ import { runShutdownSequence } from "./shutdown.js";
 const noop = (): void => {};
 const noopAsync = (): Promise<void> => Promise.resolve();
 
-/**
- * Every agent whose declared packs must resolve before the first run. The
- * report-builder is not in the sandbox catalog — it is not plannable — but it
- * declares a pack all the same, and a missing one there surfaces as a failed
- * render partway through a report rather than at boot.
- */
-const SKILL_DECLARING_AGENTS = {
-    ...SANDBOX_AGENT_META,
-    [REPORT_BUILDER_AGENT_ID]: { id: REPORT_BUILDER_AGENT_ID, skills: REPORT_BUILDER_SKILLS },
-};
+/** Every agent whose declared packs must resolve before the first run. */
+const SKILL_DECLARING_AGENTS = SANDBOX_AGENT_META;
 
 export interface BootHarnessDeps {
     /** Everything `assembleCoreRuntime` needs (workflow + conversation deps, resource policy). */
@@ -123,7 +114,6 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
 
     await backfillConversationDisplayEnvelopes({
         pool,
-        resolveWorkspaceRoot: core.conversation.resolveWorkspaceRoot,
         tools: conversationAgent.tools,
     });
 

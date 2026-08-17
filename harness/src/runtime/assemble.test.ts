@@ -381,9 +381,6 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
         runAuthorizer: {} as RunAuthorizer,
         runLauncher: {} as RunLauncher,
-        createPreviewPublisher: (async () => {
-            throw new Error("not used at composition time");
-        }) as never,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         templatesDir: "/templates",
         skillsDir: "/skills",

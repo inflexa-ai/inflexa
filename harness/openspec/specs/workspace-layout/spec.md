@@ -15,17 +15,13 @@ scripts agents run.
 
 The tree is rooted at the embedder-resolved workspace root (see the
 workspace-root-resolution spec); host paths carry no `{resourceId}` segment.
-Report previews live inside the tree like every other analysis artifact; the
-browser-facing authorization boundary (`previews/{analysisId}/{previewId}`)
-is the content-token `res` claim — URL space, not a filesystem path — which a
-host that serves previews maps onto the workspace-root storage itself.
 
 ## Requirements
 
 ### Requirement: Per-analysis workspace tree
 
 
-Each analysis SHALL have a workspace tree rooted at the embedder-resolved workspace root (`resolveWorkspaceRoot(resourceId)` — see the workspace-root-resolution capability) containing `data/` for immutable input files (per-file directories under `data/inputs/`, staged by the embedder before any run), `runs/` for workflow-run artifacts, `reports/` for flat report output, `previews/` for versioned report previews, and `report-sessions/` for the page of a report session. Host paths carry no `{resourceId}` segment — the resolved root already identifies the resource. The `data/` tree SHALL be treated as read-only by every surface; only a step's own run directory, or one declared session write tail, is writable.
+Each analysis SHALL have a workspace tree rooted at the embedder-resolved workspace root (`resolveWorkspaceRoot(resourceId)` — see the workspace-root-resolution capability) containing `data/` for immutable input files (per-file directories under `data/inputs/`, staged by the embedder before any run), `runs/` for workflow-run artifacts, `reports/` for flat report output, and `report-sessions/` for the page of a report session. Host paths carry no `{resourceId}` segment — the resolved root already identifies the resource. The `data/` tree SHALL be treated as read-only by every surface; only a step's own run directory, or one declared session write tail, is writable.
 
 A sandbox write tail is a workspace-relative path that a sandbox creation declares in place of the step directory. Each segment passes the safe-id discipline of the step builder. The session derivation declares `report-sessions/{threadId}/derived`, and the run path declares none, thus the run mounts stay as they are.
 
@@ -89,31 +85,11 @@ validated so `reportId` cannot contain path-traversal characters.
 - **THEN** it SHALL return `reports/{reportId}` under the resolved workspace
   root, and SHALL reject ids that are not safe path segments
 
-### Requirement: Versioned report previews live inside the analysis workspace
-
-
-Iterative report previews SHALL be stored inside the analysis workspace tree at `{workspaceRoot}/previews/{previewId}/v{N}`, where `previewId` groups all versions of one preview and `N` is a positive, monotonically increasing version number. Shared assets SHALL live once at the preview root (`{workspaceRoot}/previews/{previewId}/assets/`) and be referenced from each version directory. The content-token `res` claim SHALL remain `previews/{analysisId}/{previewId}` (the `previewResourceId` formula, unchanged): it is URL space, no longer a filesystem sub-path, and a host that serves previews SHALL map it onto the workspace-root storage location itself.
-
-#### Scenario: Report version directory structure
-
-- **WHEN** a report iteration creates version N for preview `prv-abc` of analysis `A`
-- **THEN** the directory `{workspaceRoot of A}/previews/prv-abc/v{N}/` SHALL exist and contain the report template source (`report.html.j2`) and the built output (`index.html`), with an `assets/` entry resolving to the shared preview-root assets
-
-#### Scenario: Versions are independent and monotonic
-
-- **WHEN** a new iteration runs against an existing preview
-- **THEN** the new version number SHALL be one greater than the highest existing `v{N}` directory, and prior version directories SHALL remain unchanged
-
-#### Scenario: URL claim is decoupled from storage
-
-- **WHEN** a preview URL is minted for analysis `A`, preview `prv-abc`
-- **THEN** the token `res` claim SHALL be `previews/A/prv-abc` regardless of where `A`'s workspace root lives on disk
-
 ### Requirement: The page of a report session lives under one named directory
 
 The page of a report session and its staged assets MUST live at `{workspaceRoot}/report-sessions/{threadId}/`. The thread id names the directory, thus one session owns one directory and two sessions never collide.
 
-One helper of the workspace paths MUST compose that directory, workspace-root-relative. The preview helpers beside it take the same form, thus a reader meets one shape. Each caller joins the root that it holds already.
+One helper of the workspace paths MUST compose that directory, workspace-root-relative. Each sibling path builder takes the same form, thus a reader meets one shape. Each caller joins the root that it holds already.
 
 The helper MUST assert the thread id, exactly as each sibling path builder asserts its own. An id reaches a path builder from a caller, and one crafted segment climbs out of the root. One rule at every builder beats a judgment for each one.
 

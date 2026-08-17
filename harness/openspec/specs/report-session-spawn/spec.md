@@ -169,17 +169,17 @@ When the seed write fails after the thread insert, the spawn MUST purge the chil
 
 ### Requirement: The roster of the conversation agent holds one report path
 
-The roster of the conversation agent MUST hold `start_report_session`. The roster MUST NOT hold `plan_report`, and it MUST NOT hold `submit_report`. The prompt of the conversation agent MUST describe the session path, and it MUST NOT describe the brief flow.
+The roster of the conversation agent MUST hold `start_report_session`, and it MUST hold no other report tool. The prompt of the conversation agent MUST describe the session path, and it MUST describe no other report flow.
 
-#### Scenario: The roster holds the start tool and not the pair
+#### Scenario: The roster holds the start tool
 
 - **WHEN** the assembled conversation agent lists its tools
-- **THEN** `start_report_session` is present, and neither `plan_report` nor `submit_report` is present
+- **THEN** `start_report_session` is present, and no other report tool is present
 
 #### Scenario: The prompt describes one path
 
 - **WHEN** a reviewer reads the report section of the conversation prompt
-- **THEN** the section names `start_report_session`, and no brief tool is named
+- **THEN** the section names `start_report_session`, and no other report tool is named
 
 ### Requirement: The thin-delta advice steers to the existing report chat
 

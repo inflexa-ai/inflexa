@@ -55,16 +55,7 @@ const COMPOSITION_SURFACE = [
 // A tool that starts a run or writes an analysis has no place on this roster. Its
 // absence is the whole guarantee — no runtime guard blocks these; the roster omits
 // them.
-const FORBIDDEN = [
-    "generate_plan",
-    "execute_analysis",
-    "plan_report",
-    "submit_report",
-    "write_file",
-    "edit_file",
-    "execute_command",
-    "update_working_memory",
-] as const;
+const FORBIDDEN = ["generate_plan", "execute_analysis", "write_file", "edit_file", "execute_command", "update_working_memory"] as const;
 
 describe("createReportSessionAgent", () => {
     test("assembles the report AgentDefinition with the report-session id", () => {

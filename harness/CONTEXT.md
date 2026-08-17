@@ -146,7 +146,7 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
 - **Workspace working directory** — Each agent run has one writable **working
   directory** that the composition root supplies. A plannable step gets
   `runs/{runId}/{stepId}`. The data profiler gets `runs/data-profile/profile`. A
-  report build gets `reports/{reportId}`. The conversation agent gets the analysis
+  report-session derivation gets `report-sessions/{threadId}/derived`. The conversation agent gets the analysis
   root, which is read-only, because chat cannot write. The working directory is
   the `cwd` of `execute_command` for that agent, and it is the confinement root
   for its writes.
@@ -191,7 +191,7 @@ Examples are:
 - the issue of a durable run
 - the record of an artifact
 - the resolution of the call attribution
-- the publication of a report preview.
+- the publication of a report-session page.
 
 The OSS build wires a trivial **local realization** for each of them. The harness
 never branches on which realization is bound, and a unit test passes a fake.
@@ -238,7 +238,7 @@ never branches on which realization is bound, and a unit test passes a fake.
   `auth` (`makeLocalAuth`, `auth/local-auth-context.ts`), and the local harness
   never inspects it.
 
-### The six seams
+### The five seams
 
 The harness declares each seam as an interface. An embedder binds one realization
 at the composition root.
@@ -271,9 +271,6 @@ at the composition root.
   not block. A consumer upserts on the replay-stable `recordKey` of the record.
   Local realization: `createNoopUsageRecorder`
   (`billing/noop-usage-recorder.ts`) drops each record.
-- **`PreviewPublisher`** (`tools/report/preview-publisher.ts`) — it publishes the
-  URL of a report preview. Local realization: `UnavailablePreviewPublisher`. A
-  report still builds, but the mint of a preview URL is gated.
 - **`RunLauncher`** (`execution/run-launcher.ts`) — it starts a registered
   workflow under an id that the caller chooses. `launch` is fire-and-forget.
   `launchAndAwait` is inline with cancel-on-abort, and a discriminated
@@ -307,8 +304,8 @@ its process bootstrap, and any adapter that is not local.
   [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
 - **A DBOS workflow** is reserved for a *durable operation*: `executeAnalysis`,
   `executeTargetAssessment`, and the background `runDataProfile`. **Each run that
-  a sandbox backs is a DBOS workflow.** A report is the exception: it renders
-  in-process with `iterate_report`, and it is not a DBOS workflow. There is no in-process sandbox consumer,
+  a sandbox backs is a DBOS workflow.** A report session is the exception: it
+  renders in-process, and it is not a DBOS workflow. There is no in-process sandbox consumer,
   and no in-memory exec transport. A sandbox exec callback routes only through
   `DBOS.send` and `DBOS.recv`.
 - **Turn-scoped workflow** — `runEphemeral` is a DBOS workflow with a deliberately

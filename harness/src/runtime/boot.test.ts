@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { silentLogger } from "../__tests__/setup/logger.js";
 import type { Pool } from "pg";
 
-import { REPORT_BUILDER_SKILLS } from "../agents/report-builder.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { bootHarness, type BootHarnessDeps } from "./boot.js";
 import type { CoreRuntimeDeps } from "./assemble.js";
@@ -76,30 +75,13 @@ describe("bootHarness", () => {
         expect(beforeLaunchRan).toBe(false);
     });
 
-    it("fails fast when the report path's pack is absent from an otherwise complete tree", async () => {
-        let poolUsed = false;
-
-        await expect(
-            bootHarness(
-                bootDeps({
-                    skillsDir: await skillsDirWith(SANDBOX_SKILLS),
-                    pool: explodingPool(() => {
-                        poolUsed = true;
-                    }),
-                }),
-            ),
-        ).rejects.toThrow(/report-builder[\s\S]*report-html/);
-
-        expect(poolUsed).toBe(false);
-    });
-
     it("clears skill validation once every declared pack resolves", async () => {
         let poolUsed = false;
 
         await expect(
             bootHarness(
                 bootDeps({
-                    skillsDir: await skillsDirWith([...SANDBOX_SKILLS, ...REPORT_BUILDER_SKILLS]),
+                    skillsDir: await skillsDirWith(SANDBOX_SKILLS),
                     pool: explodingPool(() => {
                         poolUsed = true;
                     }),

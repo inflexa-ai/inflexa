@@ -18,23 +18,12 @@
 import { validateUIMessages, type DataUIPart, type UIMessage, type UIMessagePart } from "ai";
 import { z } from "zod";
 
-import type {
-    AskPart,
-    FileReferencePart,
-    PlanPart,
-    PresentationPart,
-    PreviewPart,
-    DataPreviewFailedPart,
-    ReportSessionStartedPart,
-    RunCardPart,
-} from "../contracts/chat-parts.js";
+import type { AskPart, FileReferencePart, PlanPart, PresentationPart, ReportSessionStartedPart, RunCardPart } from "../contracts/chat-parts.js";
 import {
     AskPartSchema,
-    DataPreviewFailedPartSchema,
     FileReferencePartSchema,
     PlanPartSchema,
     PresentationPartSchema,
-    PreviewPartSchema,
     ReportSessionStartedPartSchema,
     RunCardPartSchema,
 } from "../contracts/schemas/chat-parts.js";
@@ -60,8 +49,6 @@ export type ConversationUIData = {
     "run-card": Payload<RunCardPart>;
     "file-reference": Payload<FileReferencePart>;
     ask: Payload<AskPart>;
-    "report-preview": Payload<PreviewPart>;
-    "report-preview-failed": Payload<DataPreviewFailedPart>;
     "report-session-started": Payload<ReportSessionStartedPart>;
 };
 
@@ -108,8 +95,6 @@ const dataSchemas = {
     "run-card": RunCardPartSchema.omit({ type: true }).strict(),
     "file-reference": FileReferencePartSchema.omit({ type: true }).strict(),
     ask: AskPartSchema.omit({ type: true }).strict(),
-    "report-preview": PreviewPartSchema.omit({ type: true }).strict(),
-    "report-preview-failed": DataPreviewFailedPartSchema.omit({ type: true }).strict(),
     "report-session-started": ReportSessionStartedPartSchema.omit({ type: true }).strict(),
 };
 

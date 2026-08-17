@@ -106,18 +106,13 @@ describe("conversation display recorder", () => {
         expect(recorder.finish()[1]!.parts).toEqual([{ type: "data-ask", id: "ask-1", data: { ...base, status: "resolved" } }]);
     });
 
-    it("persists failed previews and leaves an unfinished call incomplete on interruption", async () => {
+    it("leaves an unfinished call incomplete on interruption", async () => {
         const { recorder } = harness();
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "report-1", name: "submit_report", input: { report: "brief" } });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "call-1", name: "execute_analysis", input: { mode: "plan" } });
         await recorder.emit({
             type: "data-ask",
             source: TOP,
             data: { id: "ask-interrupted", title: "Run?", command: "inflexa run", status: "pending" },
-        });
-        await recorder.emit({
-            type: "data-report-preview-failed",
-            source: TOP,
-            data: { id: "failed-1", previewId: "prv-1", version: 1, reason: "render failed", errorKind: "render" },
         });
 
         const assistant = recorder.finish({ interrupted: true })[1]!;
@@ -127,18 +122,13 @@ describe("conversation display recorder", () => {
         // carrying `incomplete` says so without a reader having to combine two.
         expect(assistant.parts[0]).toEqual({
             type: "data-tool-call",
-            id: "report-1",
-            data: { toolCallId: "report-1", toolName: "submit_report", outcome: "incomplete" },
+            id: "call-1",
+            data: { toolCallId: "call-1", toolName: "execute_analysis", outcome: "incomplete" },
         });
         expect(assistant.parts[1]).toEqual({
             type: "data-ask",
             id: "ask-interrupted",
             data: { id: "ask-interrupted", title: "Run?", command: "inflexa run", status: "aborted" },
-        });
-        expect(assistant.parts[2]).toEqual({
-            type: "data-report-preview-failed",
-            id: "failed-1",
-            data: { id: "failed-1", previewId: "prv-1", version: 1, reason: "render failed", errorKind: "render" },
         });
     });
 

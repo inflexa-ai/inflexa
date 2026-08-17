@@ -4,15 +4,13 @@
  * through the pre-v1 direct-upgrade window, then remove its runtime fallback
  * in a dedicated compatibility change.
  *
- * `show_plan` / `show_user` / `show_file` / `execute_analysis` / `iterate_report` emit
- * `data-plan` / `data-presentation` / `data-file-reference` / `data-run-card` /
- * `data-report-preview` cards
+ * `show_plan` / `show_user` / `show_file` / `execute_analysis` emit
+ * `data-plan` / `data-presentation` / `data-file-reference` / `data-run-card` cards
  * live over the chat SSE stream. On reload, `content-to-cortex` calls this
  * resolver for each AI SDK tool-call part: a recognised display tool yields its card (rebuilt via the
  * shared `card-builders`); anything else yields `null` and falls back to a
- * generic `tool-call` chip. Keyed by the analysis `Pool` + id (plan / run) or
- * the analysis's workspace root (preview, filesystem-backed) so the card can
- * be re-loaded.
+ * generic `tool-call` chip. Keyed by the analysis `Pool` + id (plan / run) so
+ * the card can be re-loaded.
  */
 
 import type { CortexPart } from "@inflexa-ai/harness/contracts/message.js";
@@ -21,7 +19,7 @@ import type { Pool } from "pg";
 import { unwrapOrThrow } from "../lib/result.js";
 import { adHocPlanId, adHocRunId } from "../tools/analysis-invocation.js";
 import { validatePath } from "../tools/lib/path-validation.js";
-import { buildFileReferenceCardData, buildPlanCardData, buildPresentationCardData, buildPreviewCardData, buildRunCardData } from "./card-builders.js";
+import { buildFileReferenceCardData, buildPlanCardData, buildPresentationCardData, buildRunCardData } from "./card-builders.js";
 
 /** @deprecated Used only by the legacy display backfill/fallback. */
 export interface StoredToolCallForCard {
@@ -35,23 +33,10 @@ export interface StoredToolCallForCard {
 export type ToolCardResolver = (block: StoredToolCallForCard) => Promise<CortexPart | null>;
 
 /** @deprecated Use persisted conversation display envelopes for runtime reads. */
-export function createCardResolver(pool: Pool, analysisId: string, workspaceRoot: string): ToolCardResolver {
+export function createCardResolver(pool: Pool, analysisId: string): ToolCardResolver {
     return async (block) => {
         if (block.type !== "tool_use") return null;
         const input = (block.input ?? {}) as Record<string, unknown>;
-
-        // The report tool is `submit_report`; legacy transcripts carry the
-        // former ids `iterate_report` / `iterateReport` — accept all three. The
-        // brief-carrying field is still `report`, so the card reads identically.
-        if (block.name === "submit_report" || block.name === "iterate_report" || block.name === "iterateReport") {
-            const report = (input.report ?? null) as { title?: unknown } | null;
-            const card = await buildPreviewCardData(workspaceRoot, {
-                previewId: typeof input.previewId === "string" ? input.previewId : undefined,
-                title: report && typeof report.title === "string" ? report.title : undefined,
-                format: input.format === "pdf" || input.format === "html" ? input.format : undefined,
-            });
-            return card ? ({ type: "data-report-preview", ...card } as CortexPart) : null;
-        }
 
         if (block.name === "show_user") {
             // The live tool rejects a malformed/traversal echart `dataPath` and emits nothing; the

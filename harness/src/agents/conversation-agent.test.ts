@@ -37,9 +37,6 @@ function buildAgent(hostTools?: readonly Tool[]) {
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
         runAuthorizer: {} as RunAuthorizer,
         runLauncher: {} as RunLauncher,
-        createPreviewPublisher: (async () => {
-            throw new Error("not used at composition time");
-        }) as never,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         templatesDir: "/templates",
         skillsDir: "/skills",
@@ -127,22 +124,11 @@ describe("createConversationAgent", () => {
         }
     });
 
-    // The roster is the whole guarantee of one report path. No runtime guard
-    // blocks the old pair; the roster omits it.
-    test("holds one report path and neither tool of the old pair", () => {
-        const ids = new Set(buildAgent().tools.map((tool) => tool.id));
-        expect(ids.has("start_report_session")).toBe(true);
-        expect(ids.has("plan_report")).toBe(false);
-        expect(ids.has("submit_report")).toBe(false);
-    });
-
     // The prompt is agent-facing copy, and no typechecker reads it. A name of a
     // tool that the roster does not hold spends a turn on a call that cannot
     // dispatch.
-    test("the prompt names the one report path and neither tool of the old pair", () => {
+    test("the prompt names the one report path", () => {
         expect(conversationPrompt).toContain("start_report_session");
-        expect(conversationPrompt).not.toContain("plan_report");
-        expect(conversationPrompt).not.toContain("submit_report");
     });
 
     test("places citation verification beside literature discovery", () => {

@@ -33,8 +33,6 @@ export type {
     RunCompletedFinding,
     RunCompletedPart,
     RunFailedPart,
-    PreviewPart,
-    DataPreviewFailedPart,
     ReportSessionStartedPart,
     CortexChatPart,
 } from "./chat-parts.js";
@@ -126,4 +124,4 @@ export {
 } from "./target-assessment-row.js";
 export type { TargetAssessmentStatus, TargetAssessmentError, TargetAssessmentListRow, TargetAssessmentRow } from "./target-assessment-row.js";
 
-export { buildPreviewUrl, buildReportSessionUrl, previewResourceId, reportSessionResourceId } from "./content-url.js";
+export { buildReportSessionUrl, reportSessionResourceId } from "./content-url.js";

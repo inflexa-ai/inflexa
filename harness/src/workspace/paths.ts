@@ -212,46 +212,6 @@ export function toSandboxPath(workspaceRoot: string, resourceId: string, hostAbs
 }
 
 /**
- * Parent of every preview, workspace-root-relative. Callers that enumerate
- * previews join this; callers that address one join {@link previewDir}. Both
- * spell the segment through this constant so the tree has one owner.
- */
-export const PREVIEWS_ROOT = "previews";
-
-/**
- * Versioned preview directory, workspace-root-relative. Previews live inside
- * the analysis tree (`previews/{previewId}/v{N}`); the content-token `res`
- * claim keeps the separate `previews/{analysisId}/{previewId}` formula in
- * `contracts/content-url.ts` — that is URL space, not a filesystem sub-path,
- * and hosts that serve previews map one onto the other themselves.
- */
-export function previewVersionDir(previewId: string, version: number): string {
-    return `${previewDir(previewId)}/v${version}`;
-}
-
-/** Preview root for a specific preview (all versions), workspace-root-relative. */
-export function previewDir(previewId: string): string {
-    assertSafeId(previewId, "previewId");
-    return `${PREVIEWS_ROOT}/${previewId}`;
-}
-
-/**
- * Find the highest version number from a list of version directory names.
- * Expects names like "v1", "v2", etc. Returns 0 if no versions found.
- */
-export function latestPreviewVersion(dirNames: string[]): number {
-    let max = 0;
-    for (const name of dirNames) {
-        const match = name.match(/^v(\d+)$/);
-        if (match) {
-            const n = parseInt(match[1], 10);
-            if (n > max) max = n;
-        }
-    }
-    return max;
-}
-
-/**
  * Parent of every report session, workspace-root-relative. Callers that
  * enumerate the sessions join this. Callers that address one join
  * {@link reportSessionDir}. Both spell the segment through this constant, thus

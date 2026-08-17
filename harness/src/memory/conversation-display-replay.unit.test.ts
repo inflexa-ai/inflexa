@@ -39,16 +39,6 @@ describe("recorded conversation display replay", () => {
             data: { id: "files", files: [{ path: "runs/run-1/output/result.csv", runId: "run-1" }] },
         });
         await recorder.emit({
-            type: "data-report-preview",
-            source: SOURCE,
-            data: { id: "preview", previewId: "preview-1", version: 1, title: "Report", previewPath: "index.html", format: "html" },
-        });
-        await recorder.emit({
-            type: "data-report-preview-failed",
-            source: SOURCE,
-            data: { id: "preview-failed", previewId: "preview-2", version: 2, reason: "failed", errorKind: "render" },
-        });
-        await recorder.emit({
             type: "data-ask",
             source: SOURCE,
             data: { id: "ask", title: "Proceed?", command: "inflexa run", status: "resolved" },
@@ -72,8 +62,6 @@ describe("recorded conversation display replay", () => {
             "data-run-card",
             "data-presentation",
             "data-file-reference",
-            "data-report-preview",
-            "data-report-preview-failed",
             "data-ask",
             "text",
         ]);

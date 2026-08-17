@@ -13,10 +13,9 @@
  *    ` ```json {…}``` `). The payload is complete; only the wrapper makes it a
  *    string.
  *
- * This module owns both halves of the response for the four model-facing
+ * This module owns both halves of the response for the three model-facing
  * validation sites (`loop/run-agent.ts`'s tool-input boundary,
- * `execution/run-synthesis.ts`, `tools/research/generate-plan.ts`,
- * `tools/iterate-report.ts`):
+ * `execution/run-synthesis.ts`, `tools/research/generate-plan.ts`):
  *
  *  - `hintForZodIssue` — a **diagnostic only**. It parses nothing into the
  *    caller's data; it distinguishes the two modes so the message the model
