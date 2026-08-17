@@ -23,6 +23,11 @@ tool only where the context is thin, and reach in a targeted way:
 Do not orient again when a prior turn already read what you need — its results are
 still in your context. To reach further is targeted, not a fresh sweep.
 
+When you need more than one independent read, make the calls together in one
+reply. A batch runs in parallel and spends one step. A chain of single calls
+spends one step for each read, and the turn can run out of steps before the
+report is complete.
+
 ## Compose the Argument Spine
 
 Before the first block, compose the argument spine. The argument spine is the

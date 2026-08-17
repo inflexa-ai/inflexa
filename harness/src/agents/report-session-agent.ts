@@ -59,10 +59,11 @@ import { composeSystemPrompt } from "./system-prompt.js";
 export const REPORT_SESSION_AGENT_ID = "report-session" as const;
 
 /**
- * Runaway guard. A report turn drives many small tool calls, thus it needs the
- * same headroom as the conversation agent.
+ * Runaway guard. A full session — orient, derive, compose each section, preview,
+ * look, record — drives more small tool calls than a conversation turn, thus it
+ * gets the headroom of the report runner (REPORT_AGENT_MAX_STEPS).
  */
-const REPORT_SESSION_MAX_ITERATIONS = 50;
+const REPORT_SESSION_MAX_ITERATIONS = 75;
 
 /**
  * The shared dependencies of the report agent. The gateway binds the per-session

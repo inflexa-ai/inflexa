@@ -72,9 +72,9 @@ describe("createReportSessionAgent", () => {
         expect(agent.id).toBe(REPORT_SESSION_AGENT_ID);
         expect(agent.id).toBe("report-session");
         expect(agent.model).toBe("anthropic/claude-opus-4-8");
-        // The report turn drives many small tool calls, the same headroom the
-        // conversation agent uses.
-        expect(agent.maxIterations).toBe(50);
+        // A full session drives more small tool calls than a conversation turn,
+        // thus the cap matches the report runner (REPORT_AGENT_MAX_STEPS).
+        expect(agent.maxIterations).toBe(75);
     });
 
     test("holds the analysis read surface", () => {
