@@ -241,7 +241,13 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
     // store a figure that reads shorter than the one the user watched.
     const turnStartedAt = Date.now();
     try {
-        const prepared = await ResultAsync.fromPromise(seams.prepare({ pool }, { analysisId, threadId, userInput }), (e): unknown => e).match(
+        // The logger rides into preparation so the history-repair warning of the
+        // message assembly reaches the file log — without it, a repaired thread
+        // heals silently and the writer defect it covers stays invisible.
+        const prepared = await ResultAsync.fromPromise(
+            seams.prepare({ pool, logger: harnessLogger("harness") }, { analysisId, threadId, userInput }),
+            (e): unknown => e,
+        ).match(
             (r) => r,
             (cause): { readonly kind: "prepare_failed"; readonly cause: unknown } => ({ kind: "prepare_failed", cause }),
         );
