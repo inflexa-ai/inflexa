@@ -3,8 +3,10 @@
  *
  * The `res` claim formulas and URL shapes are the canonical TypeScript contract
  * for the content-token flow. The storage backend mirrors each formula in Go; both
- * sides are locked by the shared test vector at
- * `src/__tests__/fixtures/preview-res.json`.
+ * sides are locked by the shared test vectors at
+ * `src/__tests__/fixtures/preview-res.json` (previews) and
+ * `src/__tests__/fixtures/report-session-res.json` (report-session pages), each a
+ * byte-identical copy of the storage backend's `kernel/contenttoken/testdata` file.
  *
  * End-to-end contract (previews):
  *   token res claim : "previews/{analysisId}/{previewId}"
@@ -72,7 +74,7 @@ export function buildPreviewUrl(contentBaseUrl: string, analysisId: string, prev
  *
  * MUST match `fmt.Sprintf("report-sessions/%s/%s", analysisID, threadID)` in
  * the storage backend's Go `kernel/contenttoken` implementation. Drift is caught by the
- * shared test vector at `src/__tests__/fixtures/preview-res.json`.
+ * shared test vector at `src/__tests__/fixtures/report-session-res.json`.
  */
 export function reportSessionResourceId(analysisId: string, threadId: string): string {
     return `report-sessions/${analysisId}/${threadId}`;

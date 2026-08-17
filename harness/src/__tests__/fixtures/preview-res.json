@@ -1,42 +1,30 @@
 {
-    "$schema": "Shared test vector for the `res` claim formulas of the content-token flow. The canonical fixture lives in TWO places: harness/src/__tests__/fixtures/preview-res.json (this repo) and kernel/contenttoken/testdata/preview-res.json (the nexus repo). Both sides assert that their res builders match every vector. If you add a vector in one copy, add it in the other in the same cycle.",
-    "vectors": [
-        {
-            "analysisId": "abc",
-            "previewId": "xyz",
-            "expectedRes": "previews/abc/xyz"
-        },
-        {
-            "analysisId": "analysis-001",
-            "previewId": "prv-abc",
-            "expectedRes": "previews/analysis-001/prv-abc"
-        },
-        {
-            "analysisId": "res_42",
-            "previewId": "prv_99_z",
-            "expectedRes": "previews/res_42/prv_99_z"
-        },
-        {
-            "analysisId": "study.2024.v3",
-            "previewId": "p.2",
-            "expectedRes": "previews/study.2024.v3/p.2"
-        },
-        {
-            "analysisId": "A1B2C3",
-            "previewId": "PRV-ABC-999",
-            "expectedRes": "previews/A1B2C3/PRV-ABC-999"
-        }
-    ],
-    "reportSessionVectors": [
-        {
-            "analysisId": "0192f3a1-7c4e-7d21-b111-3f6f0a9d21aa",
-            "threadId": "0192f3a1-8888-7abc-9def-1234567890ab",
-            "expectedRes": "report-sessions/0192f3a1-7c4e-7d21-b111-3f6f0a9d21aa/0192f3a1-8888-7abc-9def-1234567890ab"
-        },
-        {
-            "analysisId": "a1",
-            "threadId": "t9",
-            "expectedRes": "report-sessions/a1/t9"
-        }
-    ]
+  "$schema": "Shared test vector for the `res` claim formula used by the content-token preview flow. MUST be kept in sync with cortex-client/src/__tests__/fixtures/preview-res.json in the cortex repo. A copy of this file lives in cortex-client; both sides assert that their preview-res builder matches every vector. If you add a vector here, add it there.",
+  "vectors": [
+    {
+      "analysisId": "abc",
+      "previewId": "xyz",
+      "expectedRes": "previews/abc/xyz"
+    },
+    {
+      "analysisId": "analysis-001",
+      "previewId": "prv-abc",
+      "expectedRes": "previews/analysis-001/prv-abc"
+    },
+    {
+      "analysisId": "res_42",
+      "previewId": "prv_99_z",
+      "expectedRes": "previews/res_42/prv_99_z"
+    },
+    {
+      "analysisId": "study.2024.v3",
+      "previewId": "p.2",
+      "expectedRes": "previews/study.2024.v3/p.2"
+    },
+    {
+      "analysisId": "A1B2C3",
+      "previewId": "PRV-ABC-999",
+      "expectedRes": "previews/A1B2C3/PRV-ABC-999"
+    }
+  ]
 }

@@ -1,3 +1,8 @@
 # Hand-maintained data corpora — keep their own formatting, don't let
 # prettier churn them (they are large, edited by hand, and diff-noisy).
 src/data/
+
+# Byte-locked cross-repo test vectors — exact copies of the storage backend's
+# kernel/contenttoken/testdata files; local formatting must not touch them.
+src/__tests__/fixtures/preview-res.json
+src/__tests__/fixtures/report-session-res.json

@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: The URL space of a session page
-The `res` claim formula of a session page MUST be `report-sessions/{analysisId}/{threadId}`, with no leading slash and no trailing slash (`reportSessionResourceId` in `contracts/content-url.ts`). The URL of a served page MUST be `{contentBaseUrl}/report-sessions/{analysisId}/{threadId}/{pagePath}?t={token}`, with the token URL-encoded (`buildReportSessionUrl`). The TypeScript formulas and the Go mirrors of the storage backend MUST stay locked by the shared test vector at `src/__tests__/fixtures/preview-res.json`.
+The `res` claim formula of a session page MUST be `report-sessions/{analysisId}/{threadId}`, with no leading slash and no trailing slash (`reportSessionResourceId` in `contracts/content-url.ts`). The URL of a served page MUST be `{contentBaseUrl}/report-sessions/{analysisId}/{threadId}/{pagePath}?t={token}`, with the token URL-encoded (`buildReportSessionUrl`). The TypeScript formulas and the Go mirrors of the storage backend MUST stay locked by the shared test vectors at `src/__tests__/fixtures/preview-res.json` and `src/__tests__/fixtures/report-session-res.json`, each a byte-identical copy of the storage backend's `kernel/contenttoken/testdata` file.
 
 The claim carries the analysis id, because the URL needs an authorization boundary. On disk the page sits at `report-sessions/{threadId}/` under the workspace root, thus a host that serves the space owns the map between the two.
 
