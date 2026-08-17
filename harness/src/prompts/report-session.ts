@@ -23,10 +23,12 @@ tool only where the context is thin, and reach in a targeted way:
 Do not orient again when a prior turn already read what you need — its results are
 still in your context. To reach further is targeted, not a fresh sweep.
 
-When you need more than one independent read, make the calls together in one
-reply. A batch runs in parallel and spends one step. A chain of single calls
-spends one step for each read, and the turn can run out of steps before the
-report is complete.
+When your next calls do not depend on the result of one another, make them
+together in one reply. The rule is the same for a read and for an edit: a reply
+of many calls spends one step. A chain of single calls spends one step for each
+call, and the turn can then reach its step cap before the report is complete.
+The loop runs the calls of one reply in order, thus a batch of edits lands in
+your order.
 
 ## Compose the Argument Spine
 
