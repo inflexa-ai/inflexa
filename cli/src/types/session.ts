@@ -201,6 +201,20 @@ export type OpenableCardPart = {
     folderPath?: string;
 };
 
+/**
+ * The record that a turn started a report session, from the harness
+ * `data-report-session-started` part. It carries the thread id alone: the part is a
+ * placement record, and the thread store is the authority for the session — its
+ * existence, its title, and its archived state. The renderer joins the live
+ * report-children listing by this id, and it renders nothing when the row is absent.
+ */
+export type ReportSessionPart = {
+    id: string;
+    type: "report-session";
+    /** The id of the report thread that the spawn made — the join key into the listing. */
+    threadId: string;
+};
+
 /** The status an ask card can carry: `pending`, then exactly one terminal outcome (latest-wins on re-emit). */
 export type AskCardStatus = "pending" | "resolved" | "rejected" | "aborted" | "expired";
 
@@ -253,11 +267,12 @@ export type FileEditPart = {
 };
 
 /**
- * A message part. `text`, `tool-call`, `plan-card`, `run-card`, `presentation`, and
- * `openable-card` are produced live by the harness emit adapter (and reconstructed on
- * transcript reload from the thread's stored turns); `ask-card` is produced live only (a
- * live-turn-only visual, never reconstructed on reload — the ledger is its durable record);
- * `thinking`/`file-edit` remain MOCK (fixture-driven) so the gallery can render every
- * design-system state. Discriminated on `type`.
+ * A message part. `text`, `tool-call`, `plan-card`, `run-card`, `presentation`,
+ * `openable-card`, and `report-session` are produced live by the harness emit adapter (and
+ * reconstructed on transcript reload from the thread's stored turns); `ask-card` is produced
+ * live only (a live-turn-only visual, never reconstructed on reload — the ledger is its
+ * durable record); `thinking`/`file-edit` remain MOCK (fixture-driven) so the gallery can
+ * render every design-system state. Discriminated on `type`.
  */
-export type Part = TextPart | ThinkingPart | ToolCallPart | FileEditPart | PlanCardPart | RunCardPart | PresentationPart | OpenableCardPart | AskCardPart;
+export type Part =
+    TextPart | ThinkingPart | ToolCallPart | FileEditPart | PlanCardPart | RunCardPart | PresentationPart | OpenableCardPart | AskCardPart | ReportSessionPart;
