@@ -16,9 +16,11 @@
  * namespace belongs to this path alone, thus the tool never writes under the old `previews/` or `reports/`
  * trees. The result carries the absolute page path, thus a local host shows the page with no seam.
  *
- * The result carries no access grant. `PreviewPublisher` authorizes the URL space
- * `previews/{analysisId}/{previewId}` (`contracts/content-url.ts`), and that space cannot name a page of
- * this tree. A hosted view of a session page is a later capability, with a URL space of its own.
+ * A hosted view rides the same result. When the composition binds the session-page publisher, the tool
+ * mints one grant after the page lands, and the `rendered` arm carries the URL of the URL space
+ * `report-sessions/{analysisId}/{threadId}` (`contracts/content-url.ts`) beside the path. A refused mint
+ * rides the arm as data, and the page path stays good — a broken grant surface never costs the render. An
+ * unbound publisher changes nothing: the arm carries no access field, and a local host opens the file.
  *
  * Each degraded condition is a typed outcome in the ok channel: a session refusal, a gap list, a resolver
  * absence, an unresolvable root at resolver construction, an unresolved reference, a bridge mismatch, a
@@ -39,6 +41,7 @@ import { z } from "zod";
 
 import { reportSessionDir, resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import type { AuthContext } from "../../auth/types.js";
+import { buildReportSessionUrl } from "../../contracts/content-url.js";
 import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeFsError, tryFsWrite, type FsError } from "../../lib/fs-result.js";
@@ -58,6 +61,7 @@ import type { RenderProblem } from "../../report-render/types.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
+import { describeSessionPageMintFailure, type SessionPageMintResult, type SessionPagePublisher } from "./session-page-publisher.js";
 
 /** The empty input. The tool renders the current draft of the thread, thus it needs no field. */
 const previewReportInput = z.object({});
@@ -65,8 +69,16 @@ const previewReportInput = z.object({});
 export type PreviewReportInput = z.infer<typeof previewReportInput>;
 
 /**
+ * The access grant of the hosted view, as data on the `rendered` arm. A granted mint carries the URL of
+ * the served page and its expiry. A refused mint carries the described refusal, and the page path stays
+ * good.
+ */
+export type SessionPageAccess = { granted: true; url: string; expiresAt: string } | { granted: false; detail: string };
+
+/**
  * The typed outcome of the preview tool. Each arm is ok-channel data, thus the tool never throws for a
- * degraded condition. `rendered` carries the absolute page path.
+ * degraded condition. `rendered` carries the absolute page path, and the access grant of the hosted view
+ * when the composition binds the publisher.
  */
 export type PreviewReportResult =
     | { outcome: "refused"; refusal: SessionRefusal }
@@ -79,7 +91,7 @@ export type PreviewReportResult =
     | { outcome: "figure-out-of-scope"; blockId: string; path: string }
     | { outcome: "write-failed"; detail: string }
     | { outcome: "stamp-failed"; pagePath: string; detail: string }
-    | { outcome: "rendered"; pagePath: string };
+    | { outcome: "rendered"; pagePath: string; access?: SessionPageAccess };
 
 /**
  * The lookup of the source file of one staged asset. It maps the module specifier of a manifest entry
@@ -98,12 +110,17 @@ export type ResolvePageAsset = (specifier: string) => string;
  * `resolvePageAsset` is optional, and absent it resolves each specifier against the installation of the
  * harness. An embedder that ships the asset bytes packed, for example a compiled single-file binary with no
  * `node_modules` tree, materializes them to disk and binds its own lookup here.
+ *
+ * `sessionPages` is optional, because a local host opens the page path itself. Bound, the tool mints one
+ * grant after the page lands and attaches the URL beside the path. A refused mint rides the `rendered` arm
+ * as data, and it never fails the render.
  */
 export interface PreviewReportToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly resolvePageAsset?: ResolvePageAsset;
+    readonly sessionPages?: SessionPagePublisher;
     readonly logger?: Logger;
 }
 
@@ -437,6 +454,41 @@ async function sweepAssets(assetsDir: string, staged: ReadonlySet<string>, logge
 }
 
 /**
+ * Mint the hosted view of the page that landed.
+ *
+ * An absent publisher gives no grant, and the arm carries no access field — the page path stays the whole
+ * local contract. A refusal and a thrown realization each become the not-granted arm, thus a broken grant
+ * surface never costs the render. The URL spells through `buildReportSessionUrl`, thus the formula lives in
+ * the contract and the seam gives the content-server base alone.
+ */
+async function mintAccess(
+    publisher: SessionPagePublisher | undefined,
+    analysisId: string,
+    threadId: string,
+    logger: Logger,
+): Promise<SessionPageAccess | undefined> {
+    if (publisher === undefined) {
+        return undefined;
+    }
+    let minted: SessionPageMintResult;
+    try {
+        minted = await publisher.mintSessionPageAccess(analysisId, threadId);
+    } catch (cause) {
+        logger.warn("the session-page mint threw", { threadId, analysisId, ...defaultErrorFields(cause) });
+        return { granted: false, detail: "session-page-access mint failed" };
+    }
+    if (!minted.ok) {
+        logger.warn("the session-page mint refused", { threadId, analysisId, detail: describeSessionPageMintFailure(minted) });
+        return { granted: false, detail: describeSessionPageMintFailure(minted) };
+    }
+    return {
+        granted: true,
+        url: buildReportSessionUrl(minted.data.baseUrl, analysisId, threadId, "index.html", minted.data.token),
+        expiresAt: minted.data.expiresAt,
+    };
+}
+
+/**
  * Make the render-and-preview tool over the session-state gateway and the render seams.
  *
  * The tool reads the thread id from the scope of the call, and it loads the state through the gateway. Thus
@@ -553,7 +605,8 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 return ok({ outcome: "stamp-failed", pagePath: written.value, detail });
             }
 
-            return ok({ outcome: "rendered", pagePath: written.value });
+            const access = await mintAccess(deps.sessionPages, analysisId, threadId, logger);
+            return ok({ outcome: "rendered", pagePath: written.value, ...(access !== undefined ? { access } : {}) });
         },
     });
 }

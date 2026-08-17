@@ -175,7 +175,7 @@ The listing MUST give each pinned citation as its key with the short citation be
 ### Requirement: The render-and-preview tool
 The preview tool MUST run the finish on the draft first. A gap list MUST return as data, and no render runs. On a pass, the tool MUST resolve each reference through the injected `ReferenceResolver`, bridge the values, and render with `renderReportPage`. The page and its staged assets MUST land in the session directory `report-sessions/{threadId}/` under the workspace root. The result MUST carry the page path as data. When the page lands, the tool MUST stamp the hash of the rendered document on the session state.
 
-The hosted view of a session page is a later capability with its own URL space, and the result carries no access grant. An unresolved reference, a resolver absence, and a failed write MUST each return a typed outcome that names the cause. The tool MUST NOT throw for any of these outcomes.
+When the composition binds the session-page publisher, the tool MUST mint one grant after the page lands, and the `rendered` arm MUST carry the URL of the space `report-sessions/{analysisId}/{threadId}` beside the page path. A refused mint MUST ride the arm as data, and it MUST NOT fail the render. An unbound publisher MUST change nothing: the arm carries the path alone. An unresolved reference, a resolver absence, and a failed write MUST each return a typed outcome that names the cause. The tool MUST NOT throw for any of these outcomes.
 
 The preview MUST stage each data-script payload and each table sidecar beside the page, in the pipeline that stages the figures. It MUST stage the script of each derivation that the document references as a content-addressed asset, from the script text of the record. It MUST place each manifest static under `assets/deps/`, and each report-side file at the `assets/` root. The stage MUST be authoritative over the assets directory: after the page lands, every file that the new page does not reference goes, and the `deps/` statics stay. Thus a removed block leaves no orphan, and the directory is exactly the page's closure.
 
@@ -186,6 +186,14 @@ The preview MUST stage each data-script payload and each table sidecar beside th
 #### Scenario: The page path returns for a local host
 - **WHEN** the render passes
 - **THEN** the result carries the page path, and the page is on disk
+
+#### Scenario: The URL rides beside the path
+- **WHEN** the render passes and the bound publisher grants
+- **THEN** the `rendered` arm carries the page path and the URL of the session page
+
+#### Scenario: A refused mint keeps the render
+- **WHEN** the render passes and the bound publisher refuses
+- **THEN** the `rendered` arm carries the page path, the refusal as data, and the page is on disk
 
 #### Scenario: The session directory stays off the old namespaces
 - **WHEN** the preview tool writes a page
@@ -210,6 +218,26 @@ The preview MUST stage each data-script payload and each table sidecar beside th
 #### Scenario: The stage removes what nothing references
 - **WHEN** a block goes and the next preview runs
 - **THEN** the stale data asset, the stale sidecar, and the stale script are gone, and the `deps/` statics stay
+
+### Requirement: The URL space of a session page
+The `res` claim formula of a session page MUST be `report-sessions/{analysisId}/{threadId}`, with no leading slash and no trailing slash (`reportSessionResourceId` in `contracts/content-url.ts`). The URL of a served page MUST be `{contentBaseUrl}/report-sessions/{analysisId}/{threadId}/{pagePath}?t={token}`, with the token URL-encoded (`buildReportSessionUrl`). The TypeScript formulas and the Go mirrors of the storage backend MUST stay locked by the shared test vector at `src/__tests__/fixtures/preview-res.json`.
+
+The claim carries the analysis id, because the URL needs an authorization boundary. On disk the page sits at `report-sessions/{threadId}/` under the workspace root, thus a host that serves the space owns the map between the two.
+
+#### Scenario: The formula matches the shared vector
+- **WHEN** the TypeScript formula runs over each report-session vector of the shared fixture
+- **THEN** each result equals the recorded res of that vector
+
+#### Scenario: The URL spells the res space
+- **WHEN** `buildReportSessionUrl` composes a URL over a base, an analysis, a thread, a page path, and a token
+- **THEN** the URL is the base, the res, and the page path, with the encoded token under the `t` query parameter
+
+### Requirement: The session-page publisher seam
+The composition MUST give the hosted view of a session page through one publisher seam. The mint operation takes the analysis id and the thread id, and it returns the grant or the typed refusal. A grant carries the base URL of the content server, the token, and the expiry — the caller spells the whole URL through `buildReportSessionUrl`, thus the formula lives in the contract and never in a realization. The local default MUST return the not-ok arm, thus a composition with no hosted surface stays on the page path.
+
+#### Scenario: The local default refuses
+- **WHEN** the unavailable publisher mints
+- **THEN** the result is not-ok, and the message names the unavailable hosted view
 
 ### Requirement: The value bridge
 A pure module beside the renderer MUST map resolved values onto `RenderValues`: a scalar to a metric value, rows to a table, and a file echo to a figure source through a caller-supplied policy. The policy of the preview tool MUST stage the bound image into `assets/` beside the page, and the `src` is that relative path. The bridge MUST NOT read a file and MUST NOT resolve a reference itself.

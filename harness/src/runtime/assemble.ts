@@ -51,7 +51,7 @@ import { createThreadStore } from "../memory/thread-store.js";
 import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
-import type { ResolvePageAsset } from "../tools/report-session/index.js";
+import type { ResolvePageAsset, ResolvePageUrl, SessionPagePublisher } from "../tools/report-session/index.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
 export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -161,6 +161,19 @@ export interface CoreRuntimeDeps {
      * materializes them to disk and binds its own lookup here.
      */
     readonly resolveReportPageAsset?: ResolvePageAsset;
+    /**
+     * The hosted view of a report-session page. A managed host that serves the session URL
+     * space binds its publisher here, and the preview tool of the report agent then attaches
+     * the minted URL beside the page path. Absent, the tool attaches nothing and the page
+     * path stays the whole result, which is the whole local path.
+     */
+    readonly sessionPagePublisher?: SessionPagePublisher;
+    /**
+     * The page-URL formation of the report-session eyes. A managed host whose browser cannot
+     * reach the workspace tree binds a resolver that names a served URL for the look. Absent,
+     * the eyes tool navigates through a `file://` URL of the page path.
+     */
+    readonly resolveReportPageUrl?: ResolvePageUrl;
     /**
      * The eyes of a report session — where a browser comes from for one look at the rendered
      * page. A host with no standing sidecar starts a browser for one look. Thus it binds its own
@@ -362,6 +375,8 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         makeResolver: makeReportResolver,
         ...(eyes ? { eyes } : {}),
         ...(deps.resolveReportPageAsset ? { resolvePageAsset: deps.resolveReportPageAsset } : {}),
+        ...(deps.sessionPagePublisher ? { sessionPages: deps.sessionPagePublisher } : {}),
+        ...(deps.resolveReportPageUrl ? { resolvePageUrl: deps.resolveReportPageUrl } : {}),
         ...(conversation.logger ? { logger: conversation.logger } : {}),
     });
 

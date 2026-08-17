@@ -125,4 +125,4 @@ export {
 } from "./target-assessment-row.js";
 export type { TargetAssessmentStatus, TargetAssessmentError, TargetAssessmentListRow, TargetAssessmentRow } from "./target-assessment-row.js";
 
-export { buildPreviewUrl, previewResourceId } from "./content-url.js";
+export { buildPreviewUrl, buildReportSessionUrl, previewResourceId, reportSessionResourceId } from "./content-url.js";

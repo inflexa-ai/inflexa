@@ -642,3 +642,64 @@ describe("the result detail", () => {
         expect(detailOf(tool, result)).toBe("capture-failed");
     });
 });
+
+describe("the URL seam", () => {
+    it("opens the URL that the bound resolver names", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        let capturedUrl: string | undefined;
+        let resolvedArgs: { pagePath: string; analysisId: string; threadId: string } | undefined;
+        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = (url) => {
+            capturedUrl = url;
+            return Promise.resolve(stub);
+        };
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => root,
+            chrome: {},
+            capture,
+            resolvePageUrl: (args) => {
+                resolvedArgs = args;
+                return Promise.resolve("https://content.test/report-sessions/analysis-001/t1/index.html?t=tok");
+            },
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        // The seam replaces the file URL, thus the look opens the served page.
+        expect(capturedUrl).toBe("https://content.test/report-sessions/analysis-001/t1/index.html?t=tok");
+        // The seam reads the page of the thread, thus a realization maps it with no second resolver.
+        expect(resolvedArgs).toEqual({ pagePath: join(root, "report-sessions", threadId, "index.html"), analysisId: DEFAULT_ANALYSIS_ID, threadId });
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+
+    it("gives the typed capture failure when the resolver throws, and no look runs", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when the URL did not resolve"));
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => root,
+            chrome: {},
+            capture,
+            resolvePageUrl: () => Promise.reject(new Error("the grant surface is down")),
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("capture-failed");
+        if (result.outcome === "capture-failed") {
+            expect(result.detail).toBe("the page URL did not resolve");
+        }
+        // The look never started, thus the seen hash stays short and the record still refuses.
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+});

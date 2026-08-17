@@ -24,6 +24,7 @@ import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, S
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
 import { createPreviewReportTool, type PreviewReportResult } from "./preview-report.js";
+import { UnavailableSessionPagePublisher, type SessionPagePublisher } from "./session-page-publisher.js";
 
 /** Each root that a test made. The cleanup removes them after the suite. */
 const roots: string[] = [];
@@ -811,5 +812,118 @@ describe("the result detail", () => {
 
         expect(detailOf(tool, { outcome: "stamp-failed", pagePath: join(root, "page.html"), detail: "the store is down" })).toBe("stamp-failed");
         expect(detailOf(tool, { outcome: "refused", refusal: { reason: "absent-state", detail: "no session" } })).toBe("refused");
+    });
+});
+
+describe("the hosted view", () => {
+    /** A publisher whose one grant carries the content-server base, thus the tool spells the whole URL. */
+    const grantingPublisher: SessionPagePublisher = {
+        mintSessionPageAccess: () =>
+            Promise.resolve({ ok: true as const, data: { baseUrl: "https://content.test/", token: "tok/en", expiresAt: "2026-08-17T00:00:00Z" } }),
+    };
+
+    it("attaches the URL of the session page beside the path when the publisher grants", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            sessionPages: grantingPublisher,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            // The page path stays the local contract, and the URL rides beside it. The URL spells the
+            // res space of the contract, thus the analysis id and the thread id both name the boundary.
+            expect(result.pagePath).toBe(join(root, "report-sessions", "t1", "index.html"));
+            expect(result.access).toEqual({
+                granted: true,
+                url: `https://content.test/report-sessions/${DEFAULT_ANALYSIS_ID}/t1/index.html?t=tok%2Fen`,
+                expiresAt: "2026-08-17T00:00:00Z",
+            });
+        }
+    });
+
+    it("carries a refused mint as data, and the render stays good", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            sessionPages: { mintSessionPageAccess: () => Promise.resolve({ ok: false as const, status: 403, error: { message: "no grant" } }) },
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            expect(existsSync(result.pagePath)).toBe(true);
+            expect(result.access).toEqual({ granted: false, detail: "session-page-access mint failed: status=403 no grant" });
+        }
+    });
+
+    it("carries the unavailable default as data", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            sessionPages: new UnavailableSessionPagePublisher(),
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            expect(result.access).toEqual({
+                granted: false,
+                detail: "session-page-access mint failed: the hosted view of a session page is unavailable in this environment",
+            });
+        }
+    });
+
+    it("carries a thrown realization as data, and the render stays good", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            sessionPages: { mintSessionPageAccess: () => Promise.reject(new Error("the grant surface is down")) },
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            expect(existsSync(result.pagePath)).toBe(true);
+            expect(result.access).toEqual({ granted: false, detail: "session-page-access mint failed" });
+        }
+    });
+
+    it("carries no access field when the composition binds no publisher", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        // An unbound publisher changes nothing: the arm carries the path alone, the same as before the seam.
+        expect("access" in result).toBe(false);
     });
 });

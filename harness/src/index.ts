@@ -104,6 +104,14 @@ export type { ProvenanceCollector } from "./provenance/collector.js";
 export { UnavailablePreviewPublisher } from "./tools/report/preview-publisher.js";
 export type { PreviewPublisher, PreviewMintResult } from "./tools/report/preview-publisher.js";
 
+// Seam: the hosted view of a report-session page. A managed host serves the URL space
+// `report-sessions/{analysisId}/{threadId}` and mints access through its own publisher,
+// thus the seam belongs on the front door. The URL seam of the eyes rides beside it: a
+// host whose browser cannot reach the workspace tree binds a served URL for the look.
+export { UnavailableSessionPagePublisher } from "./tools/report-session/session-page-publisher.js";
+export type { SessionPagePublisher, SessionPageMintResult } from "./tools/report-session/session-page-publisher.js";
+export type { ResolvePageUrl, SessionPageAccess } from "./tools/report-session/index.js";
+
 // Run launching.
 export { createDbosRunLauncher } from "./execution/dbos-run-launcher.js";
 export type { RunLauncher, LaunchOptions } from "./execution/run-launcher.js";

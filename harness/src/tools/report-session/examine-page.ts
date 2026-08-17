@@ -5,16 +5,18 @@
  * see: the screenshot, the console errors, and the failed requests. The agent reads the picture and the
  * faults, decides, and repairs. The tool never judges, thus it never blocks the loop.
  *
- * The session tree has no URL space, thus the tool navigates to the page file through a `file://` URL. The
- * page lives at `report-sessions/{threadId}/index.html` under the workspace root, which the preview writes.
- * A missed page means that no preview ran, and it is a typed outcome, not a throw.
+ * The composition says which URL one look opens, and the URL seam is that answer. Absent the seam, the tool
+ * navigates to the page file through a `file://` URL. The page lives at `report-sessions/{threadId}/index.html`
+ * under the workspace root, which the preview writes. A missed page means that no preview ran, and it is a
+ * typed outcome, not a throw.
  *
  * The composition says where a browser comes from, and the eyes seam is that answer. One look acquires one
  * lease, and the tool captures against the endpoint of that lease.
  *
- * The `file://` URL resolves on the filesystem of the browser, because the connection is out of process.
- * Thus the browser of a lease must hold the workspace tree of the harness host at the same path. A browser
- * with no such mount reports the page as an unreachable request, and the tool gives back that fault.
+ * The default `file://` URL resolves on the filesystem of the browser, because the connection is out of
+ * process. Thus, absent the URL seam, the browser of a lease must hold the workspace tree of the harness host
+ * at the same path. A browser with no such mount reports the page as an unreachable request, and the tool
+ * gives back that fault. A bound URL seam lifts that constraint, because the browser then opens a served URL.
  *
  * The tool releases the lease after the look. The release runs on a pass and on a failed capture alike. That
  * release is hygiene, and it is not the guarantee against a leak. A process can die between the acquire and
@@ -62,6 +64,12 @@ import { openReportThread, type ReportSessionStateGateway, type SessionRefusal }
 // keeps them on its own surface, thus a consumer of the tool imports one module.
 export type { CapturePage, FailedRequest, PageCapture };
 
+/**
+ * The URL formation of one look. It maps the page of the thread onto the URL that the browser opens.
+ * A composition whose browser cannot reach the workspace tree binds a resolver that names a served URL.
+ */
+export type ResolvePageUrl = (args: { pagePath: string; analysisId: string; threadId: string }) => Promise<string>;
+
 /** The empty input. The tool examines the current page of the thread, thus it needs no field. */
 const examinePageInput = z.object({});
 
@@ -91,15 +99,17 @@ export type ExaminePageResult =
  * `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root, thus one singleton tool
  * serves every analysis. `eyes` gives a browser for one look, and the scope of the acquire carries that
  * analysis and its root. `chrome` carries the connection settings of the capture, and the browser that it
- * names must hold the workspace tree at the same path, because the tool navigates to a `file://` URL.
- * `capture` is optional and it replaces the whole transport, thus a test injects a seam that reads no
- * browser.
+ * names must hold the workspace tree at the same path when the tool navigates to a `file://` URL.
+ * `resolvePageUrl` is optional and it replaces that URL, thus a composition whose browser cannot reach the
+ * tree names a served URL instead. `capture` is optional and it replaces the whole transport, thus a test
+ * injects a seam that reads no browser.
  */
 export interface ExaminePageToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly chrome: ChromeConfig;
     readonly eyes?: AcquireEyes;
+    readonly resolvePageUrl?: ResolvePageUrl;
     readonly capture?: CapturePage;
     readonly logger?: Logger;
     /**
@@ -372,13 +382,23 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 return ok({ outcome: "capture-failed", detail: "the session page could not be read" });
             }
 
+            // The URL seam speaks the throw protocol like the other seams, thus a fault of the formation
+            // becomes a typed outcome and the look never starts.
+            let url: string;
+            try {
+                url = deps.resolvePageUrl !== undefined ? await deps.resolvePageUrl({ pagePath, analysisId, threadId }) : pathToFileURL(pagePath).href;
+            } catch (cause) {
+                logger.warn("the page URL did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
+                return ok({ outcome: "capture-failed", detail: "the page URL did not resolve" });
+            }
+
             // The scope of the acquire carries the analysis and the root that this call resolved. Thus a
             // realization that starts a browser mounts the same tree, and it holds no second resolver.
             const looked = await runLook({
                 transport,
                 chrome: deps.chrome,
                 scope: { analysisId, workspaceRoot: root },
-                url: pathToFileURL(pagePath).href,
+                url,
                 acquireMs,
                 releaseMs,
                 logger,
