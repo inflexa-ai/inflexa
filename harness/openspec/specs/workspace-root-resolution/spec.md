@@ -13,11 +13,11 @@ varies per resource — which is what makes per-resource roots possible at all.
 ## Requirements
 ### Requirement: The workspace root is resolved through an embedder-supplied seam
 
-The harness SHALL derive every host-side workspace path through a single construction-time dependency, `resolveWorkspaceRoot(resourceId) → absolute path`, supplied by the embedder at the composition root and closed over once at workflow registration. The returned path IS the analysis workspace tree root: the harness joins its own interior layout (`data/`, `runs/{runId}/{stepId}/…`, `reports/`, `previews/`) directly onto it, with no `{resourceId}` path segment on the host. No harness module SHALL accept or derive a global session base (`sessionsBasePath` / `sessionPath` / `SESSION_PATH`).
+The harness SHALL derive every host-side workspace path through a single construction-time dependency, `resolveWorkspaceRoot(resourceId) → absolute path`, supplied by the embedder at the composition root and closed over once at workflow registration. The returned path IS the analysis workspace tree root: the harness joins its own interior layout (`data/`, `runs/{runId}/{stepId}/…`, `reports/`, `report-sessions/`) directly onto it, with no `{resourceId}` path segment on the host. No harness module SHALL accept or derive a global session base (`sessionsBasePath` / `sessionPath` / `SESSION_PATH`).
 
 #### Scenario: All consumers derive from the resolver
 
-- **WHEN** any harness surface needs a host path for resource `A` (sandbox mount source, post-step summary write, synthesis persist, data-profile scratch, report preview dir, workspace filesystem read)
+- **WHEN** any harness surface needs a host path for resource `A` (sandbox mount source, post-step summary write, synthesis persist, data-profile scratch, report-session page dir, workspace filesystem read)
 - **THEN** the path SHALL be `resolveWorkspaceRoot("A")` joined with a tree-relative subpath, and no other base SHALL be consulted
 
 #### Scenario: Roots vary per resource within one process

@@ -11,7 +11,7 @@
  * `RunSession` with no host call, no jti, no revoke. The harness's tools depend only on
  * this interface and never read a credential.
  *
- * Mirrors the `PreviewPublisher` seam: a narrow interface in the harness, the managed
+ * Mirrors the `SessionPagePublisher` seam: a narrow interface in the harness, the managed
  * realization injected at the composition root.
  */
 

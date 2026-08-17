@@ -2,7 +2,6 @@ import type { Pool } from "pg";
 
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { Tool } from "../tools/define-tool.js";
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { envelopeDisplayMessages, cortexMessagesToConversationUI, parseStoredDisplayEnvelope } from "./conversation-display-storage.js";
 import { parseStoredMessageEnvelope } from "./ai-sdk-message-storage.js";
 import { contentToCortexMessages } from "./content-to-cortex.js";
@@ -22,7 +21,6 @@ const GENUINE_USER_SQL = `m.message_envelope->'message'->>'role' = 'user'
 
 export interface ConversationDisplayBackfillDeps {
     readonly pool: Pool;
-    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /**
      * The conversation agent's composed roster, used to recover each legacy call's
      * one-line detail from its persisted input. Tools contributed through the
@@ -37,8 +35,8 @@ export interface ConversationDisplayBackfillDeps {
  * Freeze the migration renderer's output into display envelopes, once per legacy
  * turn, so the runtime read path never has to reconstruct anything.
  *
- * Missing mutable resources degrade to a generic, cardless display — a workspace
- * that has moved is normal historical absence, not a fault. Malformed stored rows
+ * Missing mutable resources degrade to a generic, cardless display — a plan
+ * that is absent is normal historical absence, not a fault. Malformed stored rows
  * and database faults remain startup-fatal: a turn that cannot be migrated must
  * not be silently skipped and then read as if it had no display.
  */
@@ -103,12 +101,7 @@ export async function backfillConversationDisplayEnvelopes(deps: ConversationDis
 
             let resolveCard;
             if (head.analysis_id !== null) {
-                try {
-                    resolveCard = createCardResolver(deps.pool, head.analysis_id, deps.resolveWorkspaceRoot(head.analysis_id));
-                } catch {
-                    // A removed/moved workspace is normal historical absence.
-                    resolveCard = undefined;
-                }
+                resolveCard = createCardResolver(deps.pool, head.analysis_id);
             }
             const cortex = await contentToCortexMessages(stored, { resolveCard, resolveDetail });
             const uiMessages = cortexMessagesToConversationUI(cortex);

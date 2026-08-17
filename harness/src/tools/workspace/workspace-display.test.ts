@@ -171,7 +171,7 @@ describe("showFile", () => {
 
         // The show_file resolver branch touches neither the pool nor the workspace, so a fake pool +
         // dummy root suffice. The reconstructed part is the live card data spread under the part type.
-        const resolver = createCardResolver({} as unknown as Pool, "analysis-x", "/tmp/none");
+        const resolver = createCardResolver({} as unknown as Pool, "analysis-x");
         const reconstructed = (await resolver({ type: "tool_use", id: "call-1", name: "show_file", input })) as Record<string, unknown>;
         const { type, ...cardData } = reconstructed;
         expect(type).toBe("data-file-reference");

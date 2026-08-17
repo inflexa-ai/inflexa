@@ -387,40 +387,6 @@ export interface RunFailedPart {
     reason?: string;
 }
 
-// ── Preview (iterative report) ─────────────────────────────────────
-
-export interface PreviewPart {
-    type: "data-report-preview";
-    /** Unique per emission (UUID). */
-    id: string;
-    /** Groups all versions of the same preview. */
-    previewId: string;
-    /** Version number (1, 2, 3, ...). */
-    version: number;
-    /** Report title. */
-    title: string;
-    /** Version-relative path (e.g., "v1/index.html"). */
-    previewPath: string;
-    /** Report format. */
-    format: "html" | "pdf";
-}
-
-// ── Preview Failed (iterative report) ──────────────────────────────
-
-export interface DataPreviewFailedPart {
-    type: "data-report-preview-failed";
-    /** Unique per emission (UUID). */
-    id: string;
-    /** Groups all versions of the same preview. */
-    previewId: string;
-    /** Attempted version number that failed. */
-    version: number;
-    /** Human-readable failure reason. */
-    reason: string;
-    /** Optional taxonomy of failure kinds. */
-    errorKind?: "render" | "submit" | "build" | "timeout" | "internal";
-}
-
 // ── Report Session Started (report session spawn) ──────────────────
 
 /**
@@ -460,6 +426,4 @@ export type CortexChatPart =
     | SynthesisProgressPart
     | RunCompletedPart
     | RunFailedPart
-    | PreviewPart
-    | DataPreviewFailedPart
     | ReportSessionStartedPart;

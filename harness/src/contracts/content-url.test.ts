@@ -1,8 +1,8 @@
 /**
  * The tests of the content-URL contract.
  *
- * The `res` claim formulas are locked to the shared test vectors at
- * `src/__tests__/fixtures/preview-res.json` and `src/__tests__/fixtures/report-session-res.json`. Each
+ * The `res` claim formula is locked to the shared test vector at
+ * `src/__tests__/fixtures/report-session-res.json`. The
  * fixture is a byte-identical copy of the storage backend's `kernel/contenttoken/testdata` file, and both
  * sides assert against every vector. Thus a drift on either side fails one CI, and code review catches the
  * other copy.
@@ -11,13 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { buildPreviewUrl, buildReportSessionUrl, previewResourceId, reportSessionResourceId } from "./content-url.js";
-
-interface PreviewVector {
-    analysisId: string;
-    previewId: string;
-    expectedRes: string;
-}
+import { buildReportSessionUrl, reportSessionResourceId } from "./content-url.js";
 
 interface ReportSessionVector {
     analysisId: string;
@@ -29,26 +23,7 @@ function readFixture<T>(name: string): { vectors: T[] } {
     return JSON.parse(readFileSync(new URL(`../__tests__/fixtures/${name}`, import.meta.url), "utf8")) as { vectors: T[] };
 }
 
-const previewFixture = readFixture<PreviewVector>("preview-res.json");
 const reportSessionFixture = readFixture<ReportSessionVector>("report-session-res.json");
-
-describe("previewResourceId", () => {
-    test("matches every vector of the shared fixture", () => {
-        expect(previewFixture.vectors.length).toBeGreaterThanOrEqual(4);
-        for (const vector of previewFixture.vectors) {
-            expect(previewResourceId(vector.analysisId, vector.previewId)).toBe(vector.expectedRes);
-        }
-    });
-
-    test("gives no leading and no trailing slash", () => {
-        for (const vector of previewFixture.vectors) {
-            const res = previewResourceId(vector.analysisId, vector.previewId);
-            expect(res.startsWith("previews/")).toBe(true);
-            expect(res.startsWith("/")).toBe(false);
-            expect(res.endsWith("/")).toBe(false);
-        }
-    });
-});
 
 describe("reportSessionResourceId", () => {
     test("matches every vector of the shared fixture", () => {
@@ -65,13 +40,6 @@ describe("reportSessionResourceId", () => {
             expect(res.startsWith("/")).toBe(false);
             expect(res.endsWith("/")).toBe(false);
         }
-    });
-});
-
-describe("buildPreviewUrl", () => {
-    test("composes the base, the res, the path, and the encoded token", () => {
-        const url = buildPreviewUrl("https://content.test/", "analysis-001", "prv-abc", "/v1/index.html", "tok/en+1");
-        expect(url).toBe("https://content.test/previews/analysis-001/prv-abc/v1/index.html?t=tok%2Fen%2B1");
     });
 });
 

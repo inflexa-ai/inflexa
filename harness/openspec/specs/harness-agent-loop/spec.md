@@ -42,7 +42,7 @@ so the tool-call↔tool-result correspondence holds regardless of execution
 order.
 
 A thin wrapper, `runToTerminal`, drives agents whose result is delivered
-exclusively through a terminal tool (`submit_plan`, `submit_report`,
+exclusively through a terminal tool (`submit_plan`,
 `submit_profile`, `submit_synthesis`, …): it runs the agent, then, if the
 outcome cell is still empty and the run was not aborted, grants one focused
 salvage continuation whose only tools are the terminal tools, opened by a

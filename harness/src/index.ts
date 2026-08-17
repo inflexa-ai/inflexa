@@ -100,10 +100,6 @@ export type { ArtifactRegistry, ArtifactRegistrationInput, ArtifactSyncInput, Ex
 export type { ArtifactManifestEntry } from "./schemas/artifact-manifest.js";
 export type { ProvenanceCollector } from "./provenance/collector.js";
 
-// Seam: report preview publishing.
-export { UnavailablePreviewPublisher } from "./tools/report/preview-publisher.js";
-export type { PreviewPublisher, PreviewMintResult } from "./tools/report/preview-publisher.js";
-
 // Seam: the hosted view of a report-session page. A managed host serves the URL space
 // `report-sessions/{analysisId}/{threadId}` and mints access through its own publisher,
 // thus the seam belongs on the front door. Both seams bind per call over the auth of the
@@ -377,8 +373,6 @@ export type {
     RunCompletedPart,
     RunCompletedFinding,
     RunFailedPart,
-    PreviewPart,
-    DataPreviewFailedPart,
 } from "./contracts/chat-parts.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./contracts/part-registry.js";
 export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./contracts/part-registry.js";

@@ -326,29 +326,6 @@ export const RunFailedPartSchema = z.object({
     reason: z.string().optional(),
 });
 
-// ── Preview ────────────────────────────────────────────────────────
-
-export const PreviewPartSchema = z.object({
-    type: z.literal("data-report-preview"),
-    id: z.string(),
-    previewId: z.string(),
-    version: z.number(),
-    title: z.string(),
-    previewPath: z.string(),
-    format: z.enum(["html", "pdf"]),
-});
-
-// ── Preview Failed ─────────────────────────────────────────────────
-
-export const DataPreviewFailedPartSchema = z.object({
-    type: z.literal("data-report-preview-failed"),
-    id: z.string(),
-    previewId: z.string(),
-    version: z.number(),
-    reason: z.string(),
-    errorKind: z.enum(["render", "submit", "build", "timeout", "internal"]).optional(),
-});
-
 // ── Report Session Started ─────────────────────────────────────────
 
 export const ReportSessionStartedPartSchema = z.object({
@@ -377,7 +354,5 @@ export const CortexChatPartSchema = z.discriminatedUnion("type", [
     SynthesisProgressPartSchema,
     RunCompletedPartSchema,
     RunFailedPartSchema,
-    PreviewPartSchema,
-    DataPreviewFailedPartSchema,
     ReportSessionStartedPartSchema,
 ]);

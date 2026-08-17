@@ -2,7 +2,7 @@
  * `runToTerminal` — terminal-salvage wrapper around `runAgent`.
  *
  * Some agents communicate their result EXCLUSIVELY through a terminal tool
- * (`submit_plan`, `submit_report`, `submit_profile`, `submit_synthesis`, …):
+ * (`submit_plan`, `submit_profile`, `submit_synthesis`, …):
  * the loop's text reply is discarded and the outcome is read from a closure
  * cell the terminal tool writes. Plain `runAgent` ends a capped run on a
  * tool-LESS wrap-up turn, so an agent that burns its whole iteration budget —

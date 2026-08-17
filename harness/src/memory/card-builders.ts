@@ -17,21 +17,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
 
 import { okAsync, type ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { tryQuery, type DbError } from "../lib/db-result.js";
-import { tryFs, type FsError } from "../lib/fs-result.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
 import { loadPlan } from "../state/index.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { validatePath } from "../tools/lib/path-validation.js";
-import { latestPreviewVersion, previewDir, PREVIEWS_ROOT } from "../workspace/paths.js";
-
-const PREVIEW_META_FILE = "preview-meta.json";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -59,15 +53,6 @@ export interface RunCardData {
     planId: string;
     title: string;
     stepCount: number;
-}
-
-export interface PreviewCardData {
-    id: string;
-    previewId: string;
-    version: number;
-    title: string;
-    previewPath: string;
-    format: "html" | "pdf";
 }
 
 /** Deterministic presentation id — must match `show_user`'s. */
@@ -237,87 +222,4 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
         title,
     )}`;
     return { id, ...(title !== undefined ? { title } : {}), files };
-}
-
-interface StoredPreviewMeta {
-    title?: string;
-    format?: "html" | "pdf";
-}
-
-/** The stored preview metadata, or `null` when the file is absent — a malformed
- *  file is a genuine read failure (`err`), folded to `null` at the call site. */
-function readPreviewMeta(previewRootAbs: string): ResultAsync<StoredPreviewMeta | null, FsError> {
-    const path = join(previewRootAbs, PREVIEW_META_FILE);
-    return tryFs("cardBuilders.readPreviewMeta", async () => JSON.parse(await readFile(path, "utf8")) as StoredPreviewMeta, { path, onAbsent: () => null });
-}
-
-/** Directory names (not files) directly under `dir`, or `[]` when absent. */
-function subdirs(dir: string): ResultAsync<string[], FsError> {
-    return tryFs("cardBuilders.subdirs", async () => (await readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name), {
-        path: dir,
-        onAbsent: () => [],
-    });
-}
-
-/** The most-recently-modified previewId under an analysis, or null when none. */
-function latestPreviewId(previewsRootAbs: string): ResultAsync<string | null, FsError> {
-    return subdirs(previewsRootAbs).map(async (dirs) => {
-        if (dirs.length <= 1) return dirs[0] ?? null;
-        let best: { name: string; mtimeMs: number } | null = null;
-        for (const name of dirs) {
-            const path = join(previewsRootAbs, name);
-            const mtimeMs = await tryFs("cardBuilders.latestPreviewId.stat", async () => (await stat(path)).mtimeMs, { path }).unwrapOr(null); // skip an unreadable/absent entry
-            if (mtimeMs !== null && (!best || mtimeMs > best.mtimeMs)) {
-                best = { name, mtimeMs };
-            }
-        }
-        return best?.name ?? dirs[0]!;
-    });
-}
-
-/**
- * Build the `data-report-preview` payload for an `iterate_report` tool_use. The
- * preview's source of truth is the filesystem under
- * `previews/{previewId}/`: directory layout yields `version`
- * (latest `vN`) + `previewPath`, and `preview-meta.json` yields title/format.
- * Mirrors `buildRunCardData` — the live emit knows the server-generated
- * `previewId`, while the reconstruct-on-read path resolves it (from the
- * iteration's `previewId` input, or else the analysis's latest preview). The
- * card is keyed by `previewId` only, so every iteration's tool_use rebuilds
- * the same card and the frontend groups them into one with all versions selectable.
- * Null when nothing renders — the caller falls back to a chip.
- */
-export async function buildPreviewCardData(
-    /** Absolute host root of the analysis's workspace tree (previews live inside it). */
-    workspaceRoot: string,
-    opts: { previewId?: string; title?: string; format?: "html" | "pdf" },
-): Promise<PreviewCardData | null> {
-    const previewsRootAbs = join(workspaceRoot, PREVIEWS_ROOT);
-
-    const resolveId: ResultAsync<string | null, FsError> = opts.previewId ? okAsync(opts.previewId) : latestPreviewId(previewsRootAbs);
-
-    return resolveId
-        .andThen((previewId) => {
-            if (!previewId) return okAsync<PreviewCardData | null, FsError>(null);
-
-            const previewRootAbs = join(workspaceRoot, previewDir(previewId));
-
-            return subdirs(previewRootAbs).andThen((versionDirs) => {
-                const version = latestPreviewVersion(versionDirs);
-                if (version === 0) return okAsync<PreviewCardData | null, FsError>(null);
-
-                return readPreviewMeta(previewRootAbs).map((meta): PreviewCardData => {
-                    const id = `prev-${createHash("sha256").update(previewId).digest("hex").slice(0, 16)}`;
-                    return {
-                        id,
-                        previewId,
-                        version,
-                        title: opts.title ?? meta?.title ?? "Report",
-                        previewPath: `v${version}/index.html`,
-                        format: opts.format ?? (meta?.format === "pdf" ? "pdf" : "html"),
-                    };
-                });
-            });
-        })
-        .unwrapOr(null);
 }

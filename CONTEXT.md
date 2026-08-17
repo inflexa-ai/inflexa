@@ -18,8 +18,8 @@ container runs the R code and the Python code that the agent writes, against the
 data of the user. Then the container sends a report through a callback with an
 HMAC signature.
 
-The agent reads the task knowledge from `skills/`. It uses `templates/` to make
-the report of the results.
+The agent reads the task knowledge from `skills/`. It makes the report of the
+results in a report session.
 
 ## Subsystem boundaries
 
@@ -38,8 +38,8 @@ the report of the results.
   the PROV dialect vocabulary, the document model, and the chain and signature
   primitives. The harness emits observation hooks. Each host owns its recorder
   and consumes this kernel.
-- **`skills/` and `templates/` — shared runtime content.** The harness reads them
-  at runtime. They are not code, and no package holds them. They are at the root,
+- **`skills/` — shared runtime content.** The harness reads the skill packs at
+  runtime. They are not code, and no package holds them. They are at the root,
   thus the two hosts load the same content.
 - **`images/sandbox-base/` — the execution boundary.** One sandbox image for each
   step. Its Go `sandbox-server` is the counterpart of the sandbox client in the

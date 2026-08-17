@@ -23,7 +23,7 @@ are:
 - the sandbox submit and recv protocol
 - the memory
 - the storage layout
-- the six capability **seams** that the harness declares, plus the shared
+- the five capability **seams** that the harness declares, plus the shared
   `RunLauncher` seam.
 
 An embedder gives its own composition root. It can also swap a local seam
@@ -41,10 +41,10 @@ CLI from this directory (`cd harness && openspec ...`).
 that an embedder faces:
 
 - `assembleCoreRuntime` and `createConversationAgent`
-- the six capability seams and their local adapters:
+- the five capability seams and their local adapters:
   `RunAuthorizer`/`createLocalRunAuthorizer`, `ResolveBilling`/`createNoopBillingResolver`,
   `ArtifactRegistry`/`createNoopArtifactRegistry`, `RunCharge`/`createNoopRunCharge`,
-  `UsageRecorder`/`createNoopUsageRecorder`, `PreviewPublisher`/`UnavailablePreviewPublisher`
+  `UsageRecorder`/`createNoopUsageRecorder`
 - `RunLauncher`/`createDbosRunLauncher`
 - the `Logger` seam and its realizations (`createConsoleLogger`,
   `createNoopLogger`, `defaultErrorFields`)
@@ -89,7 +89,7 @@ It registers the durable workflows with DBOS, and it builds the conversation age
 over the registered callables. The local seam realizations have no dependencies,
 and `index.ts` exports them: `createLocalRunAuthorizer`,
 `createNoopBillingResolver`, `createNoopRunCharge`, `createNoopUsageRecorder`,
-`createNoopArtifactRegistry`, `UnavailablePreviewPublisher`, and `makeLocalAuth`.
+`createNoopArtifactRegistry`, and `makeLocalAuth`.
 An embedder constructs them, or its own realizations, and passes them into
 `assembleCoreRuntime` at its composition root. The local sandbox path makes an
 ephemeral Docker container for each analysis step. The session data, the lib store,
@@ -190,7 +190,7 @@ harness only ever sees the interface, and it never branches on which realization
 is bound.**
 
 Each seam, its path, and its OSS realization are in [`CONTEXT.md`](CONTEXT.md),
-under `The six seams`.
+under `The five seams`.
 
 ### Sandbox Architecture
 
@@ -289,7 +289,7 @@ is an embedder concern.
 - **Conversation Agent** (`agents/conversation-agent.ts`): the single user-facing
   agent. It has the bio-lookup tools, the workspace search, `inspectRun`,
   `inspectDataProfile`, `updateWorkingMemory`, `generatePlan`, `executePlan`,
-  `runEphemeral`, `iterateReport`, `generateAnalogyReport`, and `showUser`.
+  `runEphemeral`, `startReportSession`, `generateAnalogyReport`, and `showUser`.
   `createConversationAgent(deps)` is the composition root that wires the deps of
   each tool.
 - **Literature Reviewer** (`tools/research/literature-reviewer.ts`): a sub-agent
@@ -326,9 +326,8 @@ is an embedder concern.
   the conversation agent over them. The local seam realizations that it can be
   wired with carry zero cloud deps, and `index.ts` re-exports them:
   `auth/local-run-authorizer.ts`, `auth/local-auth-context.ts`,
-  `billing/noop-resolver.ts`, `billing/noop-run-charge.ts`,
-  `execution/noop-artifact-registry.ts`, and the `UnavailablePreviewPublisher` of
-  `tools/report/preview-publisher.ts`. Refer to
+  `billing/noop-resolver.ts`, `billing/noop-run-charge.ts`, and
+  `execution/noop-artifact-registry.ts`. Refer to
   [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
 - **Workflow recovery**: there is no standing component. Each host supplies a
   stable `executorID`. Refer to [`CONTEXT.md`](CONTEXT.md), under
@@ -482,7 +481,7 @@ bind mount decouples the two.
 |       +-- logs/                # Execution logs
 |       +-- notebooks/           # Generated notebooks
 +-- reports/{reportId}/          # Report output
-+-- previews/{previewId}/        # Iterative report previews (shared assets/ + v{N}/)
++-- report-sessions/{threadId}/  # The page of a report session
 ```
 
 The file scratch of the data profiler is under `runs/data-profile/`, and it is

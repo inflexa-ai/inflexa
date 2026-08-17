@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ModelMessage } from "ai";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { ok } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -506,7 +503,7 @@ describe("contentToCortexMessages", () => {
                     ],
                 }),
             ],
-            { resolveCard: createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews") },
+            { resolveCard: createCardResolver(pool, analysisId) },
         );
 
         expect(cortex[0]!.parts[0]).toEqual({ type: "text", text: "Starting the run." });
@@ -570,7 +567,7 @@ describe("contentToCortexMessages", () => {
                     content: [{ type: "tool-call", toolCallId: "call-ep", toolName: "execute_analysis", input: { mode: "plan", planId } }],
                 }),
             ],
-            { resolveCard: createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews") },
+            { resolveCard: createCardResolver(pool, analysisId) },
         );
 
         const card = cortex[0]!.parts[0] as unknown as Record<string, unknown>;
@@ -642,7 +639,7 @@ describe("contentToCortexMessages", () => {
                     ],
                 }),
             ],
-            { resolveCard: createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews") },
+            { resolveCard: createCardResolver(pool, analysisId) },
         );
 
         expect(cortex[0]!.parts[0]).toMatchObject({
@@ -654,87 +651,11 @@ describe("contentToCortexMessages", () => {
         });
     });
 
-    it("reconstructs a data-report-preview from a migrated iterateReport tool-call", async () => {
-        const analysisId = "analysis-preview-reconstruct";
-        const previewId = "prv-3860785d";
-        const sessions = await mkdtemp(join(tmpdir(), "cortex-preview-rc-"));
-        try {
-            const workspaceRoot = join(sessions, analysisId);
-            const root = join(workspaceRoot, "previews", previewId);
-            await mkdir(join(root, "v1"), { recursive: true });
-            await writeFile(join(root, "v1", "index.html"), "<html></html>");
-            await writeFile(join(root, "preview-meta.json"), JSON.stringify({ title: "Meta Title", format: "html" }));
-
-            const cortex = await contentToCortexMessages(
-                [
-                    stored(0, {
-                        role: "assistant",
-                        content: [
-                            // Migrated transcripts carry the legacy camelCase tool name and
-                            // a creation-mode input with no `previewId`.
-                            {
-                                type: "tool-call",
-                                toolCallId: "toolu_x",
-                                toolName: "iterateReport",
-                                input: { report: { title: "Tirzepatide Report" } },
-                            },
-                            { type: "tool-call", toolCallId: "toolu_y", toolName: "legacy_workspace_read_file", input: {} },
-                        ],
-                    }),
-                ],
-                { resolveCard: createCardResolver(pool, analysisId, workspaceRoot) },
-            );
-
-            expect(cortex[0]!.parts).toEqual([
-                {
-                    type: "data-report-preview",
-                    id: expect.stringMatching(/^prev-[0-9a-f]{16}$/),
-                    previewId,
-                    version: 1,
-                    // Input title wins over the meta file.
-                    title: "Tirzepatide Report",
-                    previewPath: "v1/index.html",
-                    format: "html",
-                },
-                // Unrecognised tool → generic chip fallback (unchanged behaviour).
-                {
-                    type: "tool-call",
-                    toolCallId: "toolu_y",
-                    toolName: "legacy_workspace_read_file",
-                    outcome: "incomplete",
-                },
-            ]);
-        } finally {
-            await rm(sessions, { recursive: true, force: true });
-        }
-    });
-
-    it("falls back to a chip when the preview is absent on disk", async () => {
-        const cortex = await contentToCortexMessages(
-            [
-                stored(0, {
-                    role: "assistant",
-                    content: [{ type: "tool-call", toolCallId: "toolu_z", toolName: "iterate_report", input: {} }],
-                }),
-            ],
-            { resolveCard: createCardResolver(pool, "analysis-no-preview", "/tmp/cortex-test-no-previews") },
-        );
-
-        expect(cortex[0]!.parts).toEqual([
-            {
-                type: "tool-call",
-                toolCallId: "toolu_z",
-                toolName: "iterate_report",
-                outcome: "incomplete",
-            },
-        ]);
-    });
-
     it("reconstructs a data-presentation card for a show_user echart with a valid dataPath", async () => {
         const input = { kind: "echart", title: "DE", spec: { series: [{ type: "scatter" }] }, dataPath: "runs/run-abc/step-2/output/de.csv" };
         const cortex = await contentToCortexMessages(
             [stored(0, { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-su", toolName: "show_user", input }] })],
-            { resolveCard: createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews") },
+            { resolveCard: createCardResolver(pool, "analysis-x") },
         );
 
         const card = cortex[0]!.parts[0] as unknown as Record<string, unknown>;
@@ -752,7 +673,7 @@ describe("contentToCortexMessages", () => {
                     ],
                 }),
             ],
-            { resolveCard: createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews") },
+            { resolveCard: createCardResolver(pool, "analysis-x") },
         );
 
         // The live tool rejected this path and emitted nothing; the reload path must not resurrect an
@@ -767,7 +688,7 @@ describe("contentToCortexMessages", () => {
         };
         const cortex = await contentToCortexMessages(
             [stored(0, { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", input }] })],
-            { resolveCard: createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews") },
+            { resolveCard: createCardResolver(pool, "analysis-x") },
         );
 
         expect(cortex[0]!.parts[0]).toMatchObject({
@@ -789,7 +710,7 @@ describe("contentToCortexMessages", () => {
                     content: [{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", input: { files: [{ path: "../../etc/passwd" }] } }],
                 }),
             ],
-            { resolveCard: createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews") },
+            { resolveCard: createCardResolver(pool, "analysis-x") },
         );
 
         expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", outcome: "incomplete" }]);

@@ -17,8 +17,8 @@ lists), drug-discovery / translational agents, and infrastructure agents (the
 data profiler and the two executors). These groupings are descriptive prose
 only — `AgentMeta` carries **no** `tier` and **no** `languages` field; an agent
 advertises itself solely through `capabilities` and `suitableFor`. There is no
-`report-renderer` agent: reports render in-process via the Nunjucks renderer,
-not as a sandbox agent.
+`report-renderer` agent: a report page renders in-process in
+`src/report-render/`, not in a sandbox agent.
 ## Requirements
 ### Requirement: The sandbox-agent catalog is the single source of truth
 

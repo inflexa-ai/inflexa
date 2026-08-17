@@ -27,8 +27,6 @@ export {
     RunCompletedFindingSchema,
     RunCompletedPartSchema,
     RunFailedPartSchema,
-    PreviewPartSchema,
-    DataPreviewFailedPartSchema,
     CortexChatPartSchema,
 } from "./chat-parts.js";
 

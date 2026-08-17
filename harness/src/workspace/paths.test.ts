@@ -4,7 +4,6 @@ import { resolve as resolvePath, sep } from "node:path";
 import {
     assertSafeId,
     assertSafeTail,
-    previewDir,
     reportSessionDir,
     resolveForWrite,
     resolveWorkspacePath,
@@ -243,13 +242,11 @@ describe("reportSessionDir", () => {
         expect(reportSessionDir("thread-a")).not.toBe(reportSessionDir("thread-b"));
     });
 
-    it("gives the workspace-root-relative form of the preview helpers", () => {
+    it("gives the workspace-root-relative form", () => {
         // A host joins the form onto the root that it resolves. A leading slash makes
         // `join` give an absolute path, thus the form carries no leading slash.
         expect(reportSessionDir("thread-a").startsWith("/")).toBe(false);
-        expect(previewDir("preview-a").startsWith("/")).toBe(false);
         expect(reportSessionDir("thread-a").split("/")).toEqual(["report-sessions", "thread-a"]);
-        expect(previewDir("preview-a").split("/")).toEqual(["previews", "preview-a"]);
     });
 
     it("rejects a thread id that is not safe", () => {

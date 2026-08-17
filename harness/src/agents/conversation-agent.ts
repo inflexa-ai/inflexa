@@ -78,7 +78,6 @@ import { createListAvailableRefsTool } from "../tools/sandbox/list-available-ref
 import { createExecuteAnalysisTool } from "../tools/execute-analysis.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
-import type { SubmitReportDeps } from "../tools/iterate-report.js";
 import { createStartReportSessionTool } from "../tools/start-report-session.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -148,12 +147,6 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      * workflows through it so the durability engine stays out of the tools.
      */
     readonly runLauncher: RunLauncher;
-    /**
-     * Preview-publishing seam factory. No tool of the roster reads it. The field
-     * stays, because a change to the deps breaks an embedder at its composition
-     * root.
-     */
-    readonly createPreviewPublisher: SubmitReportDeps["createPreviewPublisher"];
     /** API keys for the external bio/chem data sources. */
     readonly bioKeys: BioToolKeys;
     /** Root templates dir. No tool of the roster reads it. */
