@@ -18,7 +18,14 @@ import { describeCause, findAuthCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
-import { isSubAgentEvent, readAskPart, readPlanCard, readRunCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
+import {
+    isSubAgentEvent,
+    readAskPart,
+    readPlanCard,
+    readReportSessionStarted,
+    readRunCard,
+    subAgentActivityLabel,
+} from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
 import {
     buildChatSession,
@@ -33,6 +40,7 @@ import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { harnessRuntime } from "./boot.ts";
 import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
+import { refreshReportChildren } from "./report_children.ts";
 import { notify } from "./notice.ts";
 import { chatStatus, setChatStatus } from "./status.ts";
 import { runTurnWrite } from "./thread_write.ts";
@@ -106,27 +114,6 @@ export type UIMessage = {
 const MESSAGE_CAP = 200;
 
 const [messages, setMessages] = createStore<UIMessage[]>([]);
-/**
- * Which mounted message one loaded row ENDS on, beside the store `seq` that the row carried.
- *
- * A spawned thread records its spawn point as a `messages.seq` of the harness store, but a
- * {@link UIMessage} carries no such number: the display projection gives back the messages alone.
- * These marks are the join between the two, thus a `seq` names a position between two mounted entries.
- */
-export type MessageSeqMark = {
-    /** The `messages.seq` of the stored row that produced the message {@link MessageSeqMark.afterMessageId} names. */
-    readonly seq: number;
-    /**
-     * The id of the LAST message that this row produced.
-     *
-     * An identity and not an index, because the mounted array moves under the marks. The trailing cap
-     * drops messages off the FRONT as a live turn appends, thus an index recorded at the load names a
-     * different message one turn later. An id that no mounted message carries is a row that left the
-     * window, which a reader treats as a position below it.
-     */
-    readonly afterMessageId: string;
-};
-const [messageSeqMarks, setMessageSeqMarks] = createSignal<readonly MessageSeqMark[]>([]);
 const [streamText, setStreamText] = createSignal("");
 const [streamPartId, setStreamPartId] = createSignal<string | null>(null);
 const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
@@ -138,12 +125,6 @@ const [lastTurnFailure, setLastTurnFailure] = createSignal<unknown>(null);
 
 /** The conversation's messages — read in a tracking scope to react to appends/edits. */
 export { messages };
-/**
- * The store positions of the LOADED transcript, one mark for each row that contributed a message —
- * read reactively. A live turn appends past the last mark and mints none, because a mark describes
- * where a stored row landed and the durable `seq` of an in-flight turn is not known here.
- */
-export { messageSeqMarks };
 /** The live streaming text for the in-flight part — read reactively. */
 export { streamText };
 /** The id of the part currently streaming, or `null` — read reactively. */
@@ -517,6 +498,8 @@ type EmitEventArg = Parameters<EmitFn>[0];
  *   - `tool-started`/`tool-finished` become one live tool part paired by tool-use id, with a
  *     duration and error outcome on finish;
  *   - `data-plan`/`data-run-card` become card parts via the shared readers;
+ *   - `data-report-session-started` becomes a report-session part at its position, and it pokes the
+ *     report-children listing so the entry paints inside the turn;
  *   - any other `data-*` part renders a visible tagged mention (observed, not swallowed);
  *   - `iteration`/`done` are dropped.
  *
@@ -638,6 +621,14 @@ function renderDataPart(type: `data-${string}`, data: unknown): void {
         case "data-report-preview-failed":
             appendPart(reportPreviewFailedPart(data, currentAnalysisId ?? ""));
             return;
+        case "data-report-session-started": {
+            appendPart({ id: randomUUIDv7(), type: "report-session", threadId: readReportSessionStarted(data).threadId });
+            // The spawn wrote its thread row BEFORE it emitted this part, thus a read now finds the
+            // row and the entry paints inside the turn. The settle-edge read of `watchReportChildren`
+            // stays the authority for the title, which pg seeds after the child's first message.
+            if (currentAnalysisId !== null && currentSessionId !== null) void refreshReportChildren(currentAnalysisId, currentSessionId);
+            return;
+        }
         case "data-ask": {
             // The ask part reconciles under one id: `pending` opens the card and docks the prompt; a
             // terminal re-emission folds latest-wins onto the same card and drains the queue entry.
@@ -1036,8 +1027,8 @@ function replayedToolStatus(outcome: ToolCallOutcome | undefined): ToolCallPart[
 /**
  * Map a reconstructed {@link CortexMsg} to a {@link UIMessage}: text → text part; a replayed
  * tool-call → a finished tool part; recognized cards (`data-plan`/`data-run-card`) → card parts via
- * the SAME readers the live adapter uses; anything else the harness resolver kept → a visible tagged
- * mention. The harness resolver already dropped what the UI does not render (reasoning, tool
+ * the SAME readers the live adapter uses; a `data-report-session-started` → a report-session part at
+ * its stored position; anything else the harness resolver kept → a visible tagged mention. The harness resolver already dropped what the UI does not render (reasoning, tool
  * results). Card parts are FLAT on the reconstructed part, and the readers narrow off any object, so
  * the part is passed straight through. A persisted `interrupted` marker re-derives the same live flag
  * so a reloaded transcript renders exactly what the live abort showed.
@@ -1091,6 +1082,9 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
                 break;
             case "data-report-preview-failed":
                 parts.push(reportPreviewFailedPart(part, analysisId));
+                break;
+            case "data-report-session-started":
+                parts.push({ id: randomUUIDv7(), type: "report-session", threadId: readReportSessionStarted(part).threadId });
                 break;
             default:
                 // Observe a reconstructed part the UI has no first-class renderer for as a one-line tagged
@@ -1242,34 +1236,7 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
     const replayed = seams.toCortex(rows);
     const mounted = replayed.map((m) => cortexToUiMessage(m, sessionId, analysisId)).slice(-MESSAGE_CAP);
     setMessages(mounted);
-    setMessageSeqMarks(seqMarksFor(rows, seams));
     loadedSessionId = sessionId;
-}
-
-/**
- * Pair each loaded row with the message that its own messages end on.
- *
- * The replay is a concatenation in row order, thus the messages that ONE row contributes are what the
- * same call over that row alone gives back. The bulk call stays the source of the transcript, because a
- * row that carries a usage figure and no display projection folds that figure onto the append before
- * it, which a per-row call cannot see. The second pass is the price of the row boundaries that the bulk
- * call drops, and it is bounded by the two loaded pages.
- *
- * The mark records the id and never an index. A trailing cap drops messages off the front of the
- * mounted array, thus an index recorded here names a different message after enough live turns. The id
- * is the one handle that survives both the cap of the load and the cap of a live append.
- *
- * A row that contributes nothing takes no mark, because it names no message. A `seq` that lands on such
- * a row resolves to the mark before it, which is the end of the append that the row belongs to.
- */
-function seqMarksFor(rows: Parameters<LoadSeams["toCortex"]>[0], seams: LoadSeams): MessageSeqMark[] {
-    const marks: MessageSeqMark[] = [];
-    for (const row of rows) {
-        const last = seams.toCortex([row]).at(-1);
-        if (last === undefined) continue;
-        marks.push({ seq: row.seq, afterMessageId: last.id });
-    }
-    return marks;
 }
 
 // The in-flight chat request. Module-private: only `send`/`abort`/`resetHotState` touch it, so the
@@ -1341,9 +1308,6 @@ export function resetHotState(): void {
     setLastTurnFailure(null);
     setChatStatus("idle");
     setMessages([]);
-    // The marks describe the cleared transcript, thus they go with it. A stale mark would place a
-    // spawned thread's entry against a message that is no longer mounted.
-    setMessageSeqMarks([]);
 }
 
 /**

@@ -1637,6 +1637,25 @@ describe("display-card parts map identically live and on reload", () => {
         expect(reloadedPart?.type === "openable-card" ? reloadedPart.folderPath : null).toBe("runs/r");
     });
 
+    test("a report-session spawn maps to the same report-session part in both paths", async () => {
+        const data = { threadId: "child-1", parentThreadId: SID };
+        await send(
+            { sessionId: SID, analysisId: AID, userText: "?" },
+            fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => void emit({ type: "data-report-session-started", source: TOP, data })),
+        );
+        const live = messages[1]?.parts.find((p) => p.type === "report-session");
+
+        const reloaded = cortexToUiMessage(
+            { id: "m1", role: "assistant", parts: [{ type: "data-report-session-started", ...data }] } as unknown as CortexMsg,
+            SID,
+            AID,
+        );
+        const reloadedPart = reloaded.parts.find((p) => p.type === "report-session");
+
+        expect(live?.type === "report-session" ? live.threadId : null).toBe("child-1");
+        expect(reloadedPart?.type === "report-session" ? reloadedPart.threadId : null).toBe("child-1");
+    });
+
     test("an unknown reconstructed part still surfaces as a tagged mention on reload", () => {
         const reloaded = cortexToUiMessage({ id: "m1", role: "assistant", parts: [{ type: "data-widget" }] } as unknown as CortexMsg, SID, AID);
         const mention = reloaded.parts.find((p) => p.type === "text" && "text" in p && p.text.includes("[part:data-widget]"));

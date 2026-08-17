@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
+import type { Thread } from "@inflexa-ai/harness";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { space, GLYPHS, MARKERS, type ThemeColors } from "../../lib/design_system.ts";
@@ -11,7 +12,10 @@ import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { RunCardBlock, type RunCardState } from "../components/run_card_block.tsx";
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock, type OpenableRowView } from "../components/openable_card_block.tsx";
+import { ReportSessionBlock } from "../components/report_session_block.tsx";
 import { Bold, Fg, Italic } from "../components/emphasis.tsx";
+import { useWorkspace } from "../contexts/workspace.ts";
+import { reportChildren } from "../hooks/report_children.ts";
 import { entryDegraded, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
 import { activeRunProgress, runsSnapshot, RUN_STATUS_TERMINAL } from "../hooks/sidebar_live.ts";
@@ -181,6 +185,8 @@ export function MessageBlock(props: MessageBlockProps) {
                         return <OpenableCard part={part} />;
                     case "ask-card":
                         return <AskCard part={part} />;
+                    case "report-session":
+                        return <ReportSessionEntry threadId={part.threadId} />;
                     default: {
                         // Exhaustive: a new Part kind without a case fails the build here.
                         const _exhaustive: never = part;
@@ -230,6 +236,37 @@ export function MessageBlock(props: MessageBlockProps) {
                 </box>
             </Show>
         </box>
+    );
+}
+
+/**
+ * The transcript entry for one report session, anchored by its persisted `report-session` part and
+ * joined by thread id against the live report-children listing. The listing is the authority for the
+ * session: its title, its activity stamp, and its liveness come from the row, thus a part whose row
+ * the listing does not hold — an archived child, or a listing that failed — renders nothing. `Chat`
+ * renders the same entry at the transcript tail for a row that no mounted part claims, for example a
+ * session spawned before the part became durable.
+ *
+ * Reads the workspace context for the in-place open, thus a mount outside the provider is a wiring
+ * bug — the same rule as each other consumer of {@link useWorkspace}.
+ */
+export function ReportSessionEntry(props: { threadId: string }) {
+    const ws = useWorkspace();
+    const row = (): Thread | undefined => reportChildren().find((child) => child.threadId === props.threadId);
+    // An unscoped chat has no analysis to open a session against, thus the click does nothing.
+    const open = (): void => {
+        const analysis = ws.analysis;
+        if (!analysis) return;
+        ws.openSession(props.threadId, ws.workingDir, analysis);
+    };
+    // The title is pg-owned and seeded from the first message of the session, thus a row can
+    // legitimately carry none. Say so rather than render a blank line, as the sidebar SESSION rail does.
+    return (
+        <Show when={row()}>
+            {(child: Accessor<Thread>): JSX.Element => (
+                <ReportSessionBlock title={child().title ?? "untitled"} activityLabel={Date.relativeAge(child().updatedAt.getTime())} onOpen={open} />
+            )}
+        </Show>
     );
 }
 
