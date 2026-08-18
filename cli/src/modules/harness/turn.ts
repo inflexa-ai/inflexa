@@ -56,15 +56,15 @@ import { enterChatTurn } from "./agent_switch.ts";
 export type TurnUsage = Readonly<NonNullable<AgentFinish["turnUsage"]>>;
 
 /**
- * The result of running one chat turn. The three `runAgent`-reaching kinds
- * (`ok`/`aborted`/`failed`) each carry an optional {@link TurnOutcome.appendError}
+ * The result of running one chat turn. The four `runAgent`-reaching kinds
+ * (`ok`/`filtered`/`aborted`/`failed`) each carry an optional {@link TurnOutcome.appendError}
  * because `appendTurn` runs unconditionally on all of them (the partial turn
  * must survive an abort/throw), so its persistence fault is surfaced ORTHOGONALLY
  * to the turn's own fate rather than collapsing two independent failures into
  * one. `prepare_failed`/`thread_gone`/`agent_unresolved` bail BEFORE `runAgent`,
  * so they never append and never carry an append error.
  *
- * Those same three kinds also carry an optional {@link TurnUsage}. It rides here rather
+ * Those same four kinds also carry an optional {@link TurnUsage}. It rides here rather
  * than being read back out of the usage ledger because the ledger structurally cannot
  * answer "what did THIS turn cost": a chat-path usage record is attributed to a thread,
  * never to a turn. The run's finish already holds the whole-turn total, so reading it
@@ -75,6 +75,9 @@ export type TurnUsage = Readonly<NonNullable<AgentFinish["turnUsage"]>>;
  * - `ok` — the loop finished; `fallbackText` is `finalText(result.messages)`,
  *   the turn's final assistant text (a streamed surface suppresses it as a
  *   duplicate; a delta-less surface renders it).
+ * - `filtered` — the model's safety classifier declined and stopped the turn (an
+ *   Anthropic `refusal`, normalized to `content-filter`). A completed reply, not a
+ *   fault: it keeps the ok path's persistence, `fallbackText`, and cost.
  * - `aborted` — the turn-scoped signal fired mid-run; the run resolves with an
  *   "aborted" finish carrying its partial transcript, so the engine persists
  *   `[userMessage, ...partial]` (an empty partial degenerates to `[userMessage]`).
@@ -91,6 +94,13 @@ export type TurnUsage = Readonly<NonNullable<AgentFinish["turnUsage"]>>;
  */
 export type TurnOutcome =
     | { readonly kind: "ok"; readonly fallbackText: string; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
+    | {
+          readonly kind: "filtered";
+          readonly fallbackText: string;
+          readonly rawFinishReason?: string;
+          readonly turnUsage?: TurnUsage;
+          readonly appendError?: DbError;
+      }
     | { readonly kind: "aborted"; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
     | { readonly kind: "failed"; readonly cause: unknown; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
     | { readonly kind: "prepare_failed"; readonly cause: unknown }
@@ -211,6 +221,13 @@ export function buildChatSession(agentId: string, analysisId: string, threadId: 
  */
 type RunPhase =
     | { readonly kind: "ok"; readonly fallbackText: string; readonly turnUsage?: TurnUsage; readonly durationMs?: number }
+    | {
+          readonly kind: "filtered";
+          readonly fallbackText: string;
+          readonly rawFinishReason?: string;
+          readonly turnUsage?: TurnUsage;
+          readonly durationMs?: number;
+      }
     | { readonly kind: "aborted"; readonly turnUsage?: TurnUsage; readonly durationMs?: number }
     | { readonly kind: "failed"; readonly cause: unknown; readonly turnUsage?: TurnUsage; readonly durationMs?: number };
 
@@ -328,9 +345,23 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
                 // The two spans come from one `Date.now` pair in one process. The gap is milliseconds, thus
                 // the printed figures differ only on a short turn or on a rounding step.
                 const durationMs = Date.now() - turnStartedAt;
-                return result.finish.reason === "aborted"
-                    ? { phase: { kind: "aborted", durationMs, ...(turnUsage ? { turnUsage } : {}) }, toPersist }
-                    : { phase: { kind: "ok", fallbackText: finalText(result.messages), durationMs, ...(turnUsage ? { turnUsage } : {}) }, toPersist };
+                const spend = turnUsage ? { turnUsage } : {};
+                if (result.finish.reason === "aborted") return { phase: { kind: "aborted", durationMs, ...spend }, toPersist };
+                // A `content-filter` finish is a refusal: a completed reply, not a fault. It
+                // keeps the ok path's persistence and cost; only the kind differs.
+                if (result.finish.reason === "content-filter") {
+                    return {
+                        phase: {
+                            kind: "filtered",
+                            fallbackText: finalText(result.messages),
+                            ...(result.finish.rawFinishReason !== undefined ? { rawFinishReason: result.finish.rawFinishReason } : {}),
+                            durationMs,
+                            ...spend,
+                        },
+                        toPersist,
+                    };
+                }
+                return { phase: { kind: "ok", fallbackText: finalText(result.messages), durationMs, ...spend }, toPersist };
             },
             // `runAgent` threw rather than resolving. For an abort this is the DEFENSIVE path — one that
             // never reached the streaming wrapper (e.g. the signal fired before the first model call), so
@@ -370,7 +401,7 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // shown nothing. `finish` is therefore called before the append, not inside the `ok` branch —
         // an aborted turn displayed real work, and its projection is what the retract window renders.
         const displayMessages = display.finish({
-            ...(run.phase.kind === "ok" ? { fallbackText: run.phase.fallbackText } : {}),
+            ...(run.phase.kind === "ok" || run.phase.kind === "filtered" ? { fallbackText: run.phase.fallbackText } : {}),
             ...(run.phase.kind === "aborted" ? { interrupted: true } : {}),
         });
         const appendError = (
@@ -395,6 +426,16 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         switch (run.phase.kind) {
             case "ok":
                 return { kind: "ok", fallbackText: run.phase.fallbackText, ...spend, appendError };
+            case "filtered":
+                // The one place the endpoint's own word survives — the banner shows only the generic line.
+                getLogger("harness").warn({ rawFinishReason: run.phase.rawFinishReason }, "chat turn stopped by the model content filter");
+                return {
+                    kind: "filtered",
+                    fallbackText: run.phase.fallbackText,
+                    ...(run.phase.rawFinishReason !== undefined ? { rawFinishReason: run.phase.rawFinishReason } : {}),
+                    ...spend,
+                    appendError,
+                };
             case "aborted":
                 return { kind: "aborted", ...spend, appendError };
             case "failed":

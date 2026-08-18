@@ -289,6 +289,11 @@ async function runTurn(
                 reportAppendError(outcome.appendError);
                 printer.finishTurn();
                 break;
+            case "filtered":
+                sink.errLine("The model declined this request and stopped the turn (content filter). Switch the chat model, then send the message again.");
+                reportAppendError(outcome.appendError);
+                printer.finishTurn(outcome.fallbackText);
+                break;
             case "failed":
                 sink.errLine(`The turn failed: ${describeCause(outcome.cause)}`);
                 reportAppendError(outcome.appendError);
