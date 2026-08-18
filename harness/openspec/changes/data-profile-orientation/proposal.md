@@ -111,10 +111,10 @@ staleness), `tools/research/inspect-data-profile.ts` (`kinds` scope, honest tota
 `prompts/sandbox/data-profiler.ts` (rewrite), `agents/sandbox/data-profiler.ts` (roster,
 `defaultMaxSteps`), plus the new scan tool and its sandbox-side script.
 
-**Out of scope, tracked separately** — the sandbox reaper owner-workflow-id label round-trip and
-the provenance socket `sun_path` overflow are in progress on
-`fix/sandbox-owner-annotation-provenance-socket`; both are prerequisites for a profile whose
-sandbox outlives 10 minutes, but neither belongs to this change.
+**Out of scope, unrelated** — the sandbox reaper owner-workflow-id label round-trip and the
+provenance socket `sun_path` overflow are real defects tracked separately. Neither gates this
+change: the reaper reaps on a ten-minute creation grace that the 25-minute profile which exposed
+it reached and a profile finishing in minutes does not.
 
 **Cortex host, separate change** — `managed/http/analyses.ts` re-derives the staleness predicate
 with `.includes()` inside `.some()` (O(n²); ~12.3M comparisons per GET at 3513 files) instead of
