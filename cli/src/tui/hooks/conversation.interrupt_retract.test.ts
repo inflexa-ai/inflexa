@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { errAsync, ok, okAsync, ResultAsync } from "neverthrow";
-import type { DbError, MessagePage } from "@inflexa-ai/harness";
+import type { DbError, StoredMessage } from "@inflexa-ai/harness";
 
 import {
     abort,
@@ -649,7 +649,7 @@ describe("the interrupted marker on an aborted turn", () => {
 });
 
 describe("the interrupted marker survives a transcript reload", () => {
-    const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
+    const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
     // A reconstructed transcript: a user turn, then the interrupted assistant turn carrying its partial —
     // the durable `interrupted` field is what the reload must re-derive onto the UI message.
     const interruptedTranscript = (): CortexMsg[] =>
@@ -661,7 +661,7 @@ describe("the interrupted marker survives a transcript reload", () => {
     test("a loaded transcript flags the marked message and leaves the unmarked one clean", async () => {
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
-            loadPage: () => okAsync(emptyPage(2)),
+            loadAll: () => okAsync(emptyTurns(2)),
             toCortex: () => interruptedTranscript(),
         };
         await loadMessages(SID, AID, loadSeams);
@@ -684,7 +684,7 @@ describe("the interrupted marker survives a transcript reload", () => {
         // message's interruption badge is what says it will never finish.
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
-            loadPage: () => okAsync(emptyPage(1)),
+            loadAll: () => okAsync(emptyTurns(1)),
             toCortex: () =>
                 [
                     {
@@ -711,7 +711,7 @@ describe("the interrupted marker survives a transcript reload", () => {
 // The retract is a first-class store writer (it claims the generation token), so it must supersede a
 // transcript load the same way `send` does — mirrors the load-vs-turn interleaving in conversation.test.ts.
 describe("a transcript load resolving mid-retract", () => {
-    const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
+    const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
     // A stale reload the dropped load WOULD have mounted — present so a failure to drop would be visible as
     // a resurrected message rather than merely an empty store that happened to stay empty.
     const staleCortex = (): CortexMsg[] => [{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }] as unknown as CortexMsg[];
@@ -726,7 +726,7 @@ describe("a transcript load resolving mid-retract", () => {
         });
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
-            loadPage: () => ResultAsync.fromSafePromise(loadGate.then(() => emptyPage(1))),
+            loadAll: () => ResultAsync.fromSafePromise(loadGate.then(() => emptyTurns(1))),
             toCortex: () => staleCortex(),
         };
         const load = loadMessages(SID, AID, loadSeams); // parks at its page read

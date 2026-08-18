@@ -1356,10 +1356,10 @@ describe("loadAll", () => {
             (await append(THREAD, [userText(`ask ${i}`), assistantText(`answer ${i}`)]))._unsafeUnwrap();
         }
 
-        const all = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(all.total).toBe(TURNS);
-        expect(all.messages).toHaveLength(TURNS * 2);
-        expect(all.messages.at(-1)!.message).toEqual(assistantText(`answer ${TURNS - 1}`));
+        const turns = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(turns).toHaveLength(TURNS);
+        expect(turns.flat()).toHaveLength(TURNS * 2);
+        expect(turns.at(-1)!.map((m) => m.message)).toEqual([userText(`ask ${TURNS - 1}`), assistantText(`answer ${TURNS - 1}`)]);
 
         // The single page loadPage can serve stops short, which is the whole
         // reason loadAll exists.
@@ -1374,15 +1374,14 @@ describe("loadAll", () => {
             (await append(THREAD, [userText(`ask ${i}`), assistantText(`answer ${i}`)]))._unsafeUnwrap();
         }
 
-        const all = (await history.loadAll(THREAD))._unsafeUnwrap();
+        const turns = (await history.loadAll(THREAD))._unsafeUnwrap();
         const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(all.total).toBe(page.total);
-        expect(all.messages.map((m) => m.message)).toEqual(page.messages.map((m) => m.message));
+        expect(turns).toHaveLength(page.total);
+        expect(turns.flat().map((m) => m.message)).toEqual(page.messages.map((m) => m.message));
     });
 
     it("reads an empty thread as no turns rather than an error", async () => {
-        const all = (await history.loadAll("thread-with-no-rows"))._unsafeUnwrap();
-        expect(all).toEqual({ messages: [], total: 0 });
+        expect((await history.loadAll("thread-with-no-rows"))._unsafeUnwrap()).toEqual([]);
     });
 });
 

@@ -111,8 +111,10 @@ function recordingHistory(append: () => ResultAsync<void, DbError> = () => okAsy
         },
         loadRecent: () => okAsync([]),
         loadPage: () => okAsync({ messages: [], total: 0, page: 1, perPage: 200, hasMore: false }),
+        loadAll: () => okAsync([]),
         retractLastTurn: () => okAsync({ kind: "empty-thread" }),
         latestSeq: () => okAsync(null),
+        latestTurnAt: () => okAsync(null),
         countUserTurnsAfter: () => okAsync(0),
     };
     return { history, appended };
@@ -546,30 +548,28 @@ describe("runChatTurn hands runAgent the caller's usage recorder", () => {
 // --- healTailOrphan ---------------------------------------------------------
 
 /**
- * A `ThreadHistory` staged at one tail shape: `loadPage` reports `turns.length` as the turn count and
- * returns the addressed turn's rows, so the heal's two reads see a real thread without a Postgres. Every
- * `retractLastTurn` is counted, which is the whole point — the guard's job is to not call it.
+ * A `ThreadHistory` staged at one tail shape: `loadAll` returns the staged turns, so the heal's single
+ * read sees a real thread without a Postgres. Every `retractLastTurn` is counted, which is the whole
+ * point — the guard's job is to not call it.
  */
 function stagedHistory(turns: ModelMessage[][]): { history: ThreadHistory; retracts: () => number } {
     let retracts = 0;
     const history: ThreadHistory = {
         appendTurn: () => okAsync(undefined),
         loadRecent: () => okAsync(turns.flat()),
-        loadPage: (_threadId, page, perPage) => {
-            const turn = turns[page] ?? [];
-            return okAsync({
-                messages: turn.map((message, seq) => ({ seq, envelope: { kind: "ai-sdk-model-message" as const, aiSdkMajor: 7 as const, message }, message })),
-                total: turns.length,
-                page,
-                perPage,
-                hasMore: page + 1 < turns.length,
-            });
-        },
+        loadPage: () => okAsync({ messages: [], total: turns.length, page: 0, perPage: 200, hasMore: false }),
+        loadAll: () =>
+            okAsync(
+                turns.map((turn) =>
+                    turn.map((message, seq) => ({ seq, envelope: { kind: "ai-sdk-model-message" as const, aiSdkMajor: 7 as const, message }, message })),
+                ),
+            ),
         retractLastTurn: () => {
             retracts++;
             return okAsync({ kind: "retracted", messages: turns[turns.length - 1]?.length ?? 0 });
         },
         latestSeq: () => okAsync(null),
+        latestTurnAt: () => okAsync(null),
         countUserTurnsAfter: () => okAsync(0),
     };
     return { history, retracts: () => retracts };

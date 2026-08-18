@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { createMockMouse } from "@opentui/core/testing";
 import { errAsync, okAsync } from "neverthrow";
-import type { DbError, MessagePage, Pool, Thread } from "@inflexa-ai/harness";
+import type { DbError, Pool, StoredMessage, Thread } from "@inflexa-ai/harness";
 
 import { reportThread, threadPageOf } from "../../test_support/threads.ts";
 import { Chat } from "./chat.tsx";
@@ -70,18 +70,12 @@ const ROWS: FixtureRow[] = [
     { seq: 15, role: "assistant" },
 ];
 
-/** Page reads and a replay that model the store: one row in, one message of that row's role out. */
+/** A read and a replay that model the store: one row in, one message of that row's role out. */
 function transcriptSeams(rows: FixtureRow[]): LoadSeams {
     return {
         runtime: () => fakeRuntime,
-        loadPage: () =>
-            okAsync({
-                messages: rows as unknown as MessagePage["messages"],
-                total: rows.length,
-                page: 0,
-                perPage: 200,
-                hasMore: false,
-            }),
+        // One turn carrying every fixture row: the replay below reads rows, not turn boundaries.
+        loadAll: () => okAsync([rows] as unknown as StoredMessage[][]),
         toCortex: (loaded) =>
             (loaded as unknown as FixtureRow[]).map((r) => ({
                 id: `id-${r.seq}`,

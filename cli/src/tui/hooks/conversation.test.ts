@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { ok, okAsync, ResultAsync } from "neverthrow";
-import type { AskContext, AskRequest, EmitFn, MessagePage } from "@inflexa-ai/harness";
+import type { AskContext, AskRequest, EmitFn, StoredMessage } from "@inflexa-ai/harness";
 
 import {
     applyEmitEvent,
@@ -986,11 +986,10 @@ describe("send() turn cleanup", () => {
     });
 });
 
-describe("loadMessages windows the newest turns past one page", () => {
-    // A faithful page-slicing fake: the fixture is N single-message turns (turn t -> message "m<t>"),
-    // and loadPage slices whole turns by page/perPage exactly as the harness does — so the test drives
-    // the real concatenate-last-two-pages + trailing message cap, not a blind stub that ignores `page`.
-    // The page indices fetched are recorded so a test can assert page 0 is never re-read redundantly.
+describe("loadMessages mounts the newest MESSAGE_CAP messages of a long thread", () => {
+    // The fixture is N single-message turns (turn t -> message "m<t>"), handed back whole because the
+    // store has no window of its own. What is under test is the trailing cap: the mount holds the
+    // NEWEST messages and drops the oldest, whatever the thread's length.
     type Row = { seq: number; role: "user" | "assistant"; text: string };
 
     function turns(n: number): Row[][] {
@@ -999,30 +998,19 @@ describe("loadMessages windows the newest turns past one page", () => {
         return out;
     }
 
-    function pagingSeams(fixture: Row[][]): LoadSeams & { fetched: () => number[] } {
-        const fetched: number[] = [];
+    function loadSeams(fixture: Row[][]): LoadSeams & { reads: () => number } {
+        let reads = 0;
         return {
             runtime: () => stubRuntime,
-            loadPage: (_pool, _threadId, page, perPage) => {
-                fetched.push(page);
-                const safePerPage = Math.min(Math.max(perPage, 1), 200);
-                const safePage = Math.max(page, 0);
-                const offset = safePage * safePerPage;
-                const pageTurns = fixture.slice(offset, offset + safePerPage);
-                const result: MessagePage = {
-                    messages: pageTurns.flat() as unknown as MessagePage["messages"],
-                    total: fixture.length,
-                    page: safePage,
-                    perPage: safePerPage,
-                    hasMore: offset + pageTurns.length < fixture.length,
-                };
-                return okAsync(result);
+            loadAll: () => {
+                reads++;
+                return okAsync(fixture as unknown as StoredMessage[][]);
             },
             // Faithful reconstruction: each stored row (a fixture Row, cast through the seam's harness
             // message type) becomes one CortexMsg carrying its text, so the trailing message cap is exercised.
             toCortex: (rows) =>
                 (rows as unknown as Row[]).map((r) => ({ id: `id-${r.seq}`, role: r.role, parts: [{ type: "text", text: r.text }] })) as unknown as CortexMsg[],
-            fetched: () => fetched,
+            reads: () => reads,
         };
     }
 
@@ -1031,49 +1019,48 @@ describe("loadMessages windows the newest turns past one page", () => {
         return p?.type === "text" ? p.text : undefined;
     }
 
-    test("exactly 200 turns mount as one page (no second fetch)", async () => {
-        const seams = pagingSeams(turns(200));
+    test("a thread at the cap mounts whole", async () => {
+        const seams = loadSeams(turns(200));
         await loadMessages(SID, AID, seams);
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m0");
         expect(textAt(199)).toBe("m199");
-        // One page holds the whole thread — the last-two-pages branch never runs.
-        expect(seams.fetched()).toEqual([0]);
     });
 
-    test("201 turns mount the newest 200 messages, NOT the boundary remainder", async () => {
-        const seams = pagingSeams(turns(201));
+    test("one past the cap drops the oldest message, not the newest", async () => {
+        const seams = loadSeams(turns(201));
         await loadMessages(SID, AID, seams);
-        // A page-aligned fetch of only the LAST page would collapse this thread to total mod 200 = 1
-        // message; the window must hold the newest 200 messages (turns 1..200), dropping only the oldest.
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m1");
         expect(textAt(199)).toBe("m200");
     });
 
-    test("250 turns mount the newest 200 messages across the last two pages", async () => {
-        const seams = pagingSeams(turns(250));
-        await loadMessages(SID, AID, seams);
-        expect(messages.length).toBe(200);
-        expect(textAt(0)).toBe("m50");
-        expect(textAt(199)).toBe("m249");
-    });
-
-    test("a total divisible by the page size reuses page 0 without re-fetching it", async () => {
-        const seams = pagingSeams(turns(400));
+    test("a thread far past the cap still ends on its newest message", async () => {
+        const seams = loadSeams(turns(400));
         await loadMessages(SID, AID, seams);
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m200");
         expect(textAt(199)).toBe("m399");
-        // Window pages are [0, 1]: page 0 is already in hand from the total probe, so it is reused —
-        // exactly two loadPage calls, page 0 never read twice.
-        expect(seams.fetched()).toEqual([0, 1]);
+    });
+
+    test("a thread shorter than the cap mounts whole", async () => {
+        const seams = loadSeams(turns(3));
+        await loadMessages(SID, AID, seams);
+        expect(messages.length).toBe(3);
+        expect(textAt(0)).toBe("m0");
+        expect(textAt(2)).toBe("m2");
+    });
+
+    test("one read, whatever the thread's length", async () => {
+        const seams = loadSeams(turns(400));
+        await loadMessages(SID, AID, seams);
+        expect(seams.reads()).toBe(1);
     });
 });
 
 describe("loadMessages staleness guard", () => {
-    // A full MessagePage (single turn, no rows — the toCortex fakes ignore the rows entirely).
-    const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
+    // N rowless turns — the toCortex fakes ignore the rows entirely and answer with their own message.
+    const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
     // One assistant text message, shaped enough for cortexToUiMessage to read role/id/parts.
     const cortexText = (id: string, text: string): CortexMsg[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }] as unknown as CortexMsg[];
 
@@ -1087,12 +1074,12 @@ describe("loadMessages staleness guard", () => {
         });
         const oldSeams: LoadSeams = {
             runtime: () => stubRuntime,
-            loadPage: () => ResultAsync.fromSafePromise(oldGate.then(() => emptyPage(1))),
+            loadAll: () => ResultAsync.fromSafePromise(oldGate.then(() => emptyTurns(1))),
             toCortex: () => cortexText("old", "old-msg"),
         };
         const newSeams: LoadSeams = {
             runtime: () => stubRuntime,
-            loadPage: () => okAsync(emptyPage(1)),
+            loadAll: () => okAsync(emptyTurns(1)),
             toCortex: () => cortexText("new", "new-msg"),
         };
 
@@ -1117,7 +1104,7 @@ describe("loadMessages staleness guard", () => {
 // `ready` — the same instant `handleSubmit`'s gate opens — so a message pre-typed during the boot
 // animation is submitted while that load is still awaiting Postgres. A turn must supersede a load.
 describe("a turn supersedes a transcript load in flight", () => {
-    const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
+    const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
     const cortexText = (id: string, text: string): CortexMsg[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }] as unknown as CortexMsg[];
 
     /** Load seams whose page read parks until the returned release is called. */
@@ -1129,7 +1116,7 @@ describe("a turn supersedes a transcript load in flight", () => {
         return {
             seams: {
                 runtime: () => stubRuntime,
-                loadPage: () => ResultAsync.fromSafePromise(gate.then(() => emptyPage(1))),
+                loadAll: () => ResultAsync.fromSafePromise(gate.then(() => emptyTurns(1))),
                 toCortex: () => cortexText("stale", "stale-transcript"),
             },
             release: () => release(),
@@ -1270,25 +1257,24 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
     });
 });
 
-describe("MESSAGE_CAP is coupled to loadPage's perPage clamp", () => {
-    test("the mounted window never exceeds the harness's 200-turn page clamp", async () => {
-        // `loadPage` clamps `perPage` to 200 (harness/src/memory/thread-history.ts). MESSAGE_CAP doubles
-        // as that `perPage`, so a value above 200 would silently strand every turn past the clamp on each
-        // page — `loadMessages` would mount a window missing the thread's tail rather than error. There is
-        // no compile-time guard for the coupling, so pin it here.
-        const seams: LoadSeams & { perPage: () => number } = {
+describe("MESSAGE_CAP answers to the display alone", () => {
+    test("the read is asked for the whole thread, never for a window", async () => {
+        // MESSAGE_CAP once doubled as `loadPage`'s `perPage`, which the store clamped to 200 — so a
+        // larger cap silently stranded every turn past the clamp. `loadAll` takes no size, so the cap
+        // is now a display bound and nothing else. Pin the read taking no window, since a reintroduced
+        // size argument would quietly restore the coupling.
+        const seams: LoadSeams & { args: () => unknown[] } = {
             runtime: () => stubRuntime,
-            loadPage: (_pool, _threadId, _page, perPage) => {
-                seen = perPage;
-                return okAsync({ messages: [], total: 0, page: 0, perPage, hasMore: false } as MessagePage);
+            loadAll: (...args: unknown[]) => {
+                seen = args;
+                return okAsync([] as StoredMessage[][]);
             },
             toCortex: () => [],
-            perPage: () => seen,
+            args: () => seen,
         };
-        let seen = 0;
+        let seen: unknown[] = [];
         await loadMessages(SID, AID, seams);
-        expect(seams.perPage()).toBeLessThanOrEqual(200);
-        expect(seams.perPage()).toBeGreaterThan(0);
+        expect(seams.args()).toEqual([stubRuntime.pool, SID]);
     });
 });
 
@@ -1479,7 +1465,7 @@ describe("reload maps a reconstructed tool call's outcome and detail", () => {
 // load's history never remounted until a manual session swap. `send` re-fires the load after the turn;
 // the pg thread now carries the appended turn, so the reload is convergent — history + the turn mount.
 describe("a superseded initial load is retried after the turn finishes", () => {
-    const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
+    const emptyTurns = (count: number): StoredMessage[][] => Array.from({ length: count }, () => []);
 
     test("history mounts once the boot-edge turn completes", async () => {
         // The initial (boot-edge) load parks on its page read; the submit below supersedes and drops it.
@@ -1489,7 +1475,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         });
         const initialLoad: LoadSeams = {
             runtime: () => stubRuntime,
-            loadPage: () => ResultAsync.fromSafePromise(initialGate.then(() => emptyPage(1))),
+            loadAll: () => ResultAsync.fromSafePromise(initialGate.then(() => emptyTurns(1))),
             toCortex: () => [{ id: "old", role: "assistant", parts: [{ type: "text", text: "never-mounted" }] }] as unknown as CortexMsg[],
         };
 
@@ -1497,7 +1483,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         // turn (what appendTurn wrote), so the convergent reconstruction carries all three messages.
         const reloadSeams: LoadSeams = {
             runtime: () => stubRuntime,
-            loadPage: () => okAsync(emptyPage(3)),
+            loadAll: () => okAsync(emptyTurns(3)),
             toCortex: () =>
                 [
                     { id: "h1", role: "assistant", parts: [{ type: "text", text: "prior history" }] },
@@ -1537,7 +1523,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         // history is already on screen, and the reload replaces the store wholesale.
         const completedLoad: LoadSeams = {
             runtime: () => stubRuntime,
-            loadPage: () => okAsync(emptyPage(1)),
+            loadAll: () => okAsync(emptyTurns(1)),
             toCortex: () => [{ id: "h1", role: "assistant", parts: [{ type: "text", text: "history" }] }] as unknown as CortexMsg[],
         };
         await loadMessages(SID, AID, completedLoad);
@@ -1714,14 +1700,8 @@ describe("promptHistory", () => {
     function seedSeams(fixture: Turn[]): LoadSeams {
         return {
             runtime: () => stubRuntime,
-            loadPage: (_pool, _threadId, _page, perPage) =>
-                okAsync({
-                    messages: fixture as unknown as MessagePage["messages"],
-                    total: fixture.length,
-                    page: 0,
-                    perPage,
-                    hasMore: false,
-                }),
+            // One turn per fixture entry; the replay below reads entries, not turn boundaries.
+            loadAll: () => okAsync(fixture.map((t) => [t]) as unknown as StoredMessage[][]),
             toCortex: (rows) =>
                 (rows as unknown as Turn[]).map((t, i) => ({
                     id: `id-${i}`,
@@ -1780,14 +1760,8 @@ describe("hasPromptHistory", () => {
     function seedSeams(fixture: Turn[]): LoadSeams {
         return {
             runtime: () => stubRuntime,
-            loadPage: (_pool, _threadId, _page, perPage) =>
-                okAsync({
-                    messages: fixture as unknown as MessagePage["messages"],
-                    total: fixture.length,
-                    page: 0,
-                    perPage,
-                    hasMore: false,
-                }),
+            // One turn per fixture entry; the replay below reads entries, not turn boundaries.
+            loadAll: () => okAsync(fixture.map((t) => [t]) as unknown as StoredMessage[][]),
             toCortex: (rows) =>
                 (rows as unknown as Turn[]).map((t, i) => ({
                     id: `id-${i}`,
