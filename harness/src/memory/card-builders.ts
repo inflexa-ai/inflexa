@@ -3,12 +3,10 @@
  * `data-presentation`, `data-run-card`, `data-file-reference`).
  *
  * Display tools (`show_plan`, `show_user`, `show_file`) emit these cards live
- * over the chat SSE stream, but the persisted turn keeps only the Anthropic
- * transcript (text / tool_use / tool_result) — the cards are not stored. To
- * re-render a card on reload, `content-to-cortex` reconstructs it from the
- * tool_use block via these same builders, so the live and replayed cards are
- * byte-identical (the deterministic `id` matches, enabling downstream
- * reconciliation).
+ * over the chat SSE stream, and the turn persists what it emitted, so a reload
+ * replays the built card rather than rebuilding it. These builders therefore run
+ * once per card, on the live path only. The `id` stays deterministic all the
+ * same: it is what a re-emission of the same card reconciles on.
  *
  * The builders return the FLAT wire `data` payload (no `type` wrapper, no
  * `source`): the tool emits `{ type, source, data }` (the emit pipeline

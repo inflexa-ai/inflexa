@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { PoolClient } from "pg";
 
-import { contentToCortexMessages } from "./content-to-cortex.js";
 import { envelopeMessage, legacyAnthropicToModelMessage, parseStoredMessageEnvelope } from "./ai-sdk-message-storage.js";
 import { backfillAiSdkMessageEnvelopes } from "./message-backfill.js";
 
@@ -177,31 +176,5 @@ describe("backfillAiSdkMessageEnvelopes", () => {
 describe("AI SDK message envelope runtime path", () => {
     it("rejects old-format rows without a message envelope", () => {
         expect(() => parseStoredMessageEnvelope([{ type: "text", text: "legacy" }], "thread-1/0")).toThrow(/Invalid stored AI SDK message envelope/);
-    });
-
-    it("converts stored AI SDK messages to Cortex display without mutating storage", async () => {
-        const message = {
-            role: "assistant" as const,
-            content: [
-                { type: "reasoning" as const, text: "hidden", providerOptions: { anthropic: { signature: "sig" } } },
-                { type: "text" as const, text: "Visible" },
-                { type: "tool-call" as const, toolCallId: "call-1", toolName: "show_plan", input: { planId: "pln-1" } },
-            ],
-        };
-        const before = JSON.stringify(message);
-
-        const display = await contentToCortexMessages([{ seq: 0, envelope: envelopeMessage(message), message }]);
-
-        expect(display).toEqual([
-            {
-                id: "0",
-                role: "assistant",
-                parts: [
-                    { type: "text", text: "Visible" },
-                    { type: "tool-call", toolCallId: "call-1", toolName: "show_plan", outcome: "incomplete" },
-                ],
-            },
-        ]);
-        expect(JSON.stringify(message)).toBe(before);
     });
 });

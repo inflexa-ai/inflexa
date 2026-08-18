@@ -8,11 +8,12 @@
  * no filesystem or database lookup — nothing that could render a reloaded
  * conversation differently from the one the user was shown.
  *
- * A row with no envelope predates the display projection and is skipped. The
- * startup backfill (`conversation-display-backfill.ts`) writes one for every such
- * row before the runtime serves traffic, so in a booted harness there are none;
- * skipping rather than falling back to the migration renderer is what keeps the
- * reconstruction path out of the runtime entirely.
+ * A row with no envelope predates the display projection and is skipped — the
+ * only handling there is or will be. Reconstructing one from the model
+ * transcript instead is what the deleted migration renderer did, and rebuilding
+ * a display from a transcript that never carried one makes every later change to
+ * a tool or a card silently rewrite history. Skipping keeps the gap observable
+ * and the read total in what it consults: the stored projection, nothing else.
  */
 
 import type { CortexMessage } from "../contracts/message.js";

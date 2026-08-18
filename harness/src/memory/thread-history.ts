@@ -31,6 +31,7 @@ import type { Pool } from "pg";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
+import type { Logger } from "../lib/logger.js";
 import { hasReportedUsage } from "../loop/metrics.js";
 import { countTokens } from "./count-tokens.js";
 import {
@@ -401,8 +402,13 @@ export const EVICTION_BLOCK_TURNS = 4;
  * Create a `ThreadHistory` bound to a Postgres pool — a factory closure
  * capturing `pool` (dependency injection per the harness-durable-runtime spec). The `messages` table is
  * provisioned by the project's state-init DDL.
+ *
+ * `logger` serves exactly one purpose: reporting a stored display part the
+ * current vocabulary had to drop. It is optional because the read returns the
+ * same messages either way — the drop reports a deploy, not a failed read — and
+ * requiring it would break every call site over a diagnostic.
  */
-export function createThreadHistory(pool: Pool): ThreadHistory {
+export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory {
     function appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError> {
         const { modelMessages: messages, displayMessages, turnUsage, turnDurationMs } = turn;
         if (messages.length === 0) return okVoid();
@@ -650,7 +656,7 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             rows.map(async (r) => {
                 const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
                 const displayEnvelope =
-                    r.display_envelope == null ? undefined : await parseStoredDisplayEnvelope(r.display_envelope, `${threadId}/${r.seq}/display`);
+                    r.display_envelope == null ? undefined : await parseStoredDisplayEnvelope(r.display_envelope, `${threadId}/${r.seq}/display`, logger);
                 return {
                     seq: Number(r.seq),
                     envelope,

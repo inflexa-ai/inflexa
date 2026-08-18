@@ -312,9 +312,11 @@ export { envelopeDisplayMessages, parseStoredDisplayEnvelope } from "./memory/co
 export type { ConversationDisplayMetadata, ConversationUIData, ConversationUIMessage, StoredDisplayEnvelope } from "./memory/conversation-display-storage.js";
 // The transcript read. Every append persists what it displayed, so replay concatenates stored
 // projections and consults nothing else — no tool names, no card builders, no workspace or database
-// lookups. The migration renderer that DOES consult those (`content-to-cortex.js`,
-// `reconstruct-cards.js`, `tools/detail-resolver.js`) is deliberately absent from this barrel: it
-// runs once per legacy row at startup and has no runtime caller.
+// lookups. A row written before the projection existed carries none and is skipped; there is no
+// reconstruction to fall back to, the migration renderer that once supplied one having been deleted
+// along with the startup backfill that was its only caller. `parseStoredDisplayEnvelope` absorbs the
+// one thing a read can now meet and not understand — a part whose key this vocabulary has retired —
+// by dropping that part, so one stale row cannot fail a whole thread.
 export { storedMessagesToCortex } from "./memory/conversation-display-replay.js";
 
 // Chat wire contracts — the Cortex-native chat-stream vocabulary a consumer
