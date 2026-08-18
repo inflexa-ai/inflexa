@@ -387,10 +387,10 @@ export interface RunFailedPart {
     reason?: string;
 }
 
-// ── Report Session Started (report session spawn) ──────────────────
+// ── Child Session Started (parent→child session spawn) ─────────────
 
 /**
- * The record that a turn started a report session. It rides the chat stream
+ * The record that a turn started a child session. It rides the chat stream
  * live, and it persists into the turn at the position of the spawn.
  *
  * The part is a placement record and a freshness signal only. The thread
@@ -398,12 +398,17 @@ export interface RunFailedPart {
  * archived state. When the thread of the part is archived or absent, a
  * consumer renders nothing for it.
  */
-export interface ReportSessionStartedPart {
-    type: "data-report-session-started";
-    /** The id of the report thread that the spawn made. */
+export interface ChildSessionStartedPart {
+    type: "data-child-session-started";
+    /** The id of the child thread that the spawn made. */
     threadId: string;
     /** The id of the conversation thread that spawned it. */
     parentThreadId: string;
+    /**
+     * The type of the child thread, in the thread store's vocabulary.
+     * Known values today: `"report"`.
+     */
+    threadType: string;
 }
 
 // ── Report Rendered (report session preview) ───────────────────────
@@ -448,5 +453,5 @@ export type CortexChatPart =
     | SynthesisProgressPart
     | RunCompletedPart
     | RunFailedPart
-    | ReportSessionStartedPart
+    | ChildSessionStartedPart
     | ReportRenderedPart;

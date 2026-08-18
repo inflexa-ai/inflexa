@@ -16,3 +16,10 @@
 
 - [x] 3.1 Emit the part in `src/tools/report-session/preview-report.ts` on the rendered arm, with a per-emission `id`, `renderedAt`, and the document `title`.
 - [x] 3.2 Test the arms: the rendered arm emits one well-formed part, and a degraded arm emits nothing.
+
+## 4. The spawn-part rename
+
+- [x] 4.1 Rename `ReportSessionStartedPart` to `ChildSessionStartedPart` (`data-child-session-started`) and add `threadType`, across the contract, the schema, the registry, and the index barrel.
+- [x] 4.2 Rename the durable display key to `child-session-started` in `src/memory/conversation-display-storage.ts`. No dual-read of the old key.
+- [x] 4.3 Emit the new type with `threadType: "report"` in `src/tools/start-report-session.ts`.
+- [x] 4.4 Sweep each harness reference to the old literal and type name. The CLI keeps the old literal until it adopts the 0.24.0 release.

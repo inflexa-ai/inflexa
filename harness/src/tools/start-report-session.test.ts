@@ -153,7 +153,7 @@ describe("the started part", () => {
         return { ctx: { ...ctx, session: { ...ctx.session, scope } }, emitted };
     }
 
-    it("emits one data-report-session-started part on the started arm", async () => {
+    it("emits one data-child-session-started part on the started arm", async () => {
         await seedConversation("p1", "Parent");
         const { ctx, emitted } = watchedCtxForThread("p1");
 
@@ -161,7 +161,7 @@ describe("the started part", () => {
 
         expect(result.outcome).toBe("started");
         if (result.outcome !== "started") return;
-        expect(emitted).toEqual([{ type: "data-report-session-started", data: { threadId: result.threadId, parentThreadId: "p1" } }]);
+        expect(emitted).toEqual([{ type: "data-child-session-started", data: { threadId: result.threadId, parentThreadId: "p1", threadType: "report" } }]);
     });
 
     it("emits nothing on the existing-session arm", async () => {
