@@ -109,7 +109,11 @@ describe("ensureLibStoreUsable — the refusal the two direct sandbox commands k
         mkdirSync(env.libStoreDir, { recursive: true });
         writeFileSync(
             join(env.libStoreDir, "deps.json"),
-            JSON.stringify({ version: 1, nodes: { "numpy-1.26.4-0000000000000000": { track: "python", imports: ["numpy"], entry_points: [], edges: [] } } }),
+            JSON.stringify({
+                version: 1,
+                nodes: { "numpy-1.26.4-0000000000000000": { track: "python", imports: ["numpy"], entry_points: [], edges: [] } },
+                by_name: { python: { numpy: ["numpy-1.26.4-0000000000000000"] }, r: {} },
+            }),
         );
         const result = refusal();
         expect(result.exited).toBe(false);

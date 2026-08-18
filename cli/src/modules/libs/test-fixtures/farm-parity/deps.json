@@ -1,4 +1,44 @@
 {
+  "by_name": {
+    "python": {
+      "airr-like": [
+        "airr-like-2.0.0-00000000000ab002"
+      ],
+      "alpha": [
+        "alpha-2.0.0-00000000000a2222",
+        "alpha-1.2.0-000000000000aaaa"
+      ],
+      "beta": [
+        "beta-0.4.1-000000000000bbbb"
+      ],
+      "delta": [
+        "delta-0.9-000000000000dddd"
+      ],
+      "extradep": [
+        "extradep-1.0.0-00000000000ex001"
+      ],
+      "gamma": [
+        "gamma-3.0.0-000000000000cccc"
+      ],
+      "omega": [
+        "omega-9.9-0000000000009999"
+      ],
+      "spectrum-like": [
+        "spectrum-like-0.5.0-00000000000ab001"
+      ],
+      "typing-ext": [
+        "typing-ext-4.9.0-00000000000eeeee"
+      ]
+    },
+    "r": {
+      "rpkga": [
+        "rpkga-1.0-000000000000fff0"
+      ],
+      "rpkgb": [
+        "rpkgb-2.1-000000000000fff1"
+      ]
+    }
+  },
   "nodes": {
     "airr-like-2.0.0-00000000000ab002": {
       "edges": [],

@@ -23,7 +23,15 @@ import { join } from "node:path";
 
 import { capture, type ContainerRuntime } from "../../lib/container.ts";
 import { mkdirResult, readFileResult, renameResult, statResult, writeFileResult } from "../../lib/fs.ts";
-import { INVENTORY_HEADER, INVENTORY_ORDER, INVENTORY_TRACKS, nameOfStoreDir, readDepsGraph, type DepsGraph } from "./composition.ts";
+import {
+    canonicalDistributionName,
+    INVENTORY_HEADER,
+    INVENTORY_ORDER,
+    INVENTORY_TRACKS,
+    nameOfStoreDir,
+    readDepsGraph,
+    type DepsGraph,
+} from "./composition.ts";
 
 /** The dependency graph at the store root. It names every store directory that composition can link. */
 const STORE_GRAPH = "deps.json";
@@ -129,14 +137,14 @@ function derivePoolInventory(storePath: string): string | null {
 
     const template = readTemplateSections(storePath);
     const placed = new Map<string, { readonly title: string; readonly name: string }>();
-    for (const [title, names] of template) for (const name of names) placed.set(canonicalName(name), { title, name });
+    for (const [title, names] of template) for (const name of names) placed.set(canonicalDistributionName(name), { title, name });
 
     // The titles of the template seed the order, thus the sections come out in the
     // order the shared producer writes them.
     const sections = new Map<string, string[]>([...template.keys()].map((title) => [title, []]));
     let listed = 0;
     for (const [name, track] of poolNames(graph.value)) {
-        const known = placed.get(canonicalName(name));
+        const known = placed.get(canonicalDistributionName(name));
         const title = known?.title ?? TRACK_SECTION[track];
         sections.set(title, [...(sections.get(title) ?? []), known?.name ?? name]);
         listed += 1;
@@ -199,11 +207,6 @@ function readTemplateSections(storePath: string): Map<string, string[]> {
         );
     }
     return sections;
-}
-
-/** The canonical form of a distribution name, so two spellings of one package count one time. */
-function canonicalName(name: string): string {
-    return name.replace(/[-_.]+/g, "-").toLowerCase();
 }
 
 /**

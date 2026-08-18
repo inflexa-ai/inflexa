@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, uti
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { nameOfStoreDir } from "./composition.ts";
 import { imagePackagesFile, storePackagesFile } from "./packages.ts";
 import * as container from "../../lib/container.ts";
 import type { CaptureResult } from "../../lib/container.ts";
@@ -109,11 +110,29 @@ describe("imagePackagesFile — extract and cache the image inventory fragment",
 
 const NODE = { imports: [], entry_points: [], edges: [] };
 
+/**
+ * The version ordering that the emitter publishes beside the nodes.
+ *
+ * A fixture derives it from its own nodes, thus the two halves of a graph never
+ * disagree. The emitter settles the order of two versions of one name, and no
+ * fixture here holds two, thus a group of one needs no rule.
+ */
+function orderingOf(nodes: Record<string, unknown>): Record<"python" | "r", Record<string, string[]>> {
+    const ordering: Record<"python" | "r", Record<string, string[]>> = { python: {}, r: {} };
+    for (const [storeDir, node] of Object.entries(nodes)) {
+        const name = nameOfStoreDir(storeDir);
+        if (name === null) continue;
+        const track = (node as { track: "python" | "r" }).track;
+        (ordering[track][name] ??= []).push(storeDir);
+    }
+    return ordering;
+}
+
 /** A store root with a graph, and with the template inventory when one is asked for. */
 function poolStore(nodes: Record<string, unknown>, templateInventory?: string): string {
     const root = mkdtempSync(join(tmpdir(), "inflexa-pool-"));
     roots.push(root);
-    writeFileSync(join(root, "deps.json"), `${JSON.stringify({ version: 1, nodes })}\n`);
+    writeFileSync(join(root, "deps.json"), `${JSON.stringify({ version: 1, nodes, by_name: orderingOf(nodes) })}\n`);
     if (templateInventory !== undefined) {
         mkdirSync(join(root, "farms", "catalog"), { recursive: true });
         writeFileSync(join(root, "farms", "catalog", "packages.txt"), templateInventory);
@@ -199,13 +218,8 @@ describe("storePackagesFile — the pool inventory of the store", () => {
         expect(statSync(first).mtimeMs).toBe(stamp);
 
         // A `store add` appends to the graph. The next read sees the newer graph and derives again.
-        writeFileSync(
-            join(root, "deps.json"),
-            `${JSON.stringify({
-                version: 1,
-                nodes: { "six-1.17.0-000000000000aaaa": { track: "python", ...NODE }, "attrs-24.2-000000000000cccc": { track: "python", ...NODE } },
-            })}\n`,
-        );
+        const grown = { "six-1.17.0-000000000000aaaa": { track: "python", ...NODE }, "attrs-24.2-000000000000cccc": { track: "python", ...NODE } };
+        writeFileSync(join(root, "deps.json"), `${JSON.stringify({ version: 1, nodes: grown, by_name: orderingOf(grown) })}\n`);
         utimesSync(join(root, "deps.json"), new Date(), new Date(stamp + 5_000));
 
         expect(readFileSync(storePackagesFile(root) as string, "utf8")).toContain("attrs, six");

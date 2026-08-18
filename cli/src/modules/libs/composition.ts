@@ -33,7 +33,7 @@ import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
+import { acquireInstanceLock, instanceLockHolder, releaseInstanceLock, LIB_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
 import { type FsError, readFileResult, writeFileResult } from "../../lib/fs.ts";
 
 // --- The store layout ---------------------------------------------------------
@@ -82,6 +82,12 @@ const R_SUBTREES = ["cran", "bioconductor", "github"] as const;
 /** One of the three R library subtrees. */
 type RSubtree = (typeof R_SUBTREES)[number];
 
+/** The two runtime tracks of the store, in the order that a request searches them. */
+const TRACKS = ["python", "r"] as const;
+
+/** One of the two runtime tracks. */
+type Track = (typeof TRACKS)[number];
+
 /**
  * The prepared cache directories of the catalog template. Composition LINKS them
  * into each analysis farm, and it never copies them. A cache entry that does not
@@ -124,19 +130,59 @@ export const INVENTORY_TRACKS: Readonly<Record<(typeof INVENTORY_ORDER)[number],
 /** The distribution name that a `.dist-info` directory name records. The shared producer uses this rule. */
 const DIST_INFO_NAME = /^(.+?)-[^-]+\.dist-info$/;
 
-/** The canonical name that a store directory name records: `<canon-name>-<version>-<digest>`. */
-const STORE_DIR_NAME = /^(.+)-[^-]+-[0-9a-f]{16}$/;
+/** The canonical name and the version that a store directory name records: `<canon-name>-<version>-<digest>`. */
+const STORE_DIR_NAME = /^(.+)-([^-]+)-[0-9a-f]{16}$/;
 
-// --- The per-farm mutex -------------------------------------------------------
+/**
+ * The form that a distribution request takes: `name`, or `name==version`.
+ *
+ * `==` is the ONE operator that the pool can answer. The pool holds resolved
+ * versions, thus a range would ask the host to compare two version strings, and
+ * neither ecosystem uses semantic versioning. Any other operator refuses.
+ */
+const DISTRIBUTION_REQUIREMENT = /^([A-Za-z0-9][A-Za-z0-9._-]*?)\s*(?:==\s*([^\s=<>!~][^\s]*))?$/;
 
-/** The instance-lock key of one farm. The analysis id is a UUIDv7, thus it collides with no sentinel key. */
-const FARM_LOCK_KEY_PREFIX = "farm-";
+// --- The two locks of a composition -------------------------------------------
+//
+// A composition meets two different locks, and each one protects a different thing.
+//
+// The PER-FARM MUTEX (`farm-<analysisId>`) protects one farm against a second
+// writer of that same farm. It is also the liveness record of the composition,
+// because a reclamation reads the live holders of this key family and waits for
+// them.
+//
+// The RECLAMATION LOCK ({@link LIB_STORE_RECLAIM_LOCK_KEY}) protects the POOL. A
+// reclamation holds it for its whole run, and it frees a store directory that a
+// walk of the graph can already name.
+//
+// The ORDER is fixed, and the fixed order is what prevents a deadlock. A
+// reclamation takes the reclamation lock FIRST, and it takes a farm key later,
+// inside its orphan-farm reaper. A composition waits for the reclamation lock while
+// it holds NO farm key, and a reclamation that starts under the key makes it release
+// that key and wait again. Thus no party holds one lock and waits for the other, and
+// there is no cycle.
+
+/**
+ * The prefix of the instance-lock key of one farm. The analysis id follows it, and
+ * that id is a UUIDv7, thus the key collides with no sentinel key.
+ *
+ * A reclamation reads the live holders of this key family, because that is the
+ * liveness record of a composition and the reclamation cannot name the analysis ids
+ * itself.
+ */
+export const FARM_LOCK_KEY_PREFIX = "farm-";
 
 /** How long to wait between two attempts on the per-farm lock. */
 const FARM_MUTEX_POLL_MS = 25;
 
 /** How long to wait for the per-farm lock before the composition refuses. Composition costs milliseconds, thus a live holder that outlasts this is stuck. */
 const FARM_MUTEX_WAIT_MS = 30_000;
+
+/** How long to wait between two reads of the reclamation lock. It is the cadence an acquisition flight uses for the same lock. */
+const RECLAIM_POLL_MS = 250;
+
+/** How long a composition yields to a live reclamation before it refuses. It is the wait an acquisition flight gives the same lock. */
+const RECLAIM_WAIT_MS = 120_000;
 
 /**
  * The tail of the in-process work of each farm key.
@@ -146,6 +192,9 @@ const FARM_MUTEX_WAIT_MS = 30_000;
  * chain does. The lock file serializes the compositions across two processes.
  */
 const farmQueue = new Map<string, Promise<unknown>>();
+
+/** The two waits of the yield to a reclamation, which a test shortens. */
+type ReclaimYield = { readonly waitMs: number; readonly pollMs: number };
 
 // --- The graph ----------------------------------------------------------------
 
@@ -157,9 +206,13 @@ const depsNodeSchema = z.object({
     r_dir: z.string().optional(),
 });
 
+/** The store directories of each distribution name of one track, newest first. */
+const depsPoolSchema = z.record(z.string(), z.array(z.string()));
+
 const depsGraphSchema = z.object({
     version: z.number(),
     nodes: z.record(z.string(), depsNodeSchema),
+    by_name: z.object({ python: depsPoolSchema.default({}), r: depsPoolSchema.default({}) }),
 });
 
 /**
@@ -192,6 +245,16 @@ export type DepsGraph = {
     readonly version: number;
     /** One node for each store directory, keyed by the name of that directory. */
     readonly nodes: ReadonlyMap<string, DepsNode>;
+    /**
+     * The store directories of each distribution, for each track, keyed by the
+     * canonical name and ordered NEWEST FIRST.
+     *
+     * The EMITTER settles the order, and a release comes before a pre-release of a
+     * later version. Neither ecosystem uses semantic versioning, thus a host that
+     * compared two version strings would guess. A request that names no version takes
+     * the head of the list, and it orders nothing itself.
+     */
+    readonly byName: Readonly<Record<Track, ReadonlyMap<string, readonly string[]>>>;
 };
 
 // --- The errors ---------------------------------------------------------------
@@ -214,6 +277,8 @@ export type FarmCompositionError =
     | { readonly type: "version_collision"; readonly name: string; readonly existing: string; readonly incoming: string }
     /** A different process composes this farm right now, and it did not finish inside the wait. */
     | { readonly type: "farm_locked"; readonly analysisId: string; readonly holderPid: number }
+    /** A reclamation of the pool runs right now, and it did not finish inside the wait. */
+    | { readonly type: "reclaim_in_flight"; readonly analysisId: string; readonly holderPid: number }
     /** A lease records a live sandbox of the farm, thus the removal refuses. */
     | { readonly type: "farm_leased"; readonly analysisId: string; readonly leases: readonly string[] };
 
@@ -234,6 +299,8 @@ export function describeFarmCompositionError(error: FarmCompositionError): strin
             return `two store directories claim the name "${error.name}": ${error.existing} and ${error.incoming}`;
         case "farm_locked":
             return `another process (pid ${error.holderPid}) composes this farm right now`;
+        case "reclaim_in_flight":
+            return `a package-store reclamation (pid ${error.holderPid}) runs right now, and it frees the pool content that this farm would link`;
         case "farm_leased":
             return `${error.leases.length} sandbox lease(s) hold this farm (${error.leases.slice(0, 3).join(", ")})`;
         default: {
@@ -247,10 +314,10 @@ export function describeFarmCompositionError(error: FarmCompositionError): strin
 /**
  * The composition failure that a reader has not reported yet.
  *
- * Composition runs INSIDE the farm provider, thus it runs after the sandbox gate
- * decided and the user never meets the error type. This holder is the channel back:
- * {@link composeFarm} records a failure here, and the gate names it at the next
- * sandbox action. The direction is the only one the layering permits, because a
+ * The farm provider makes a farm INSIDE the harness, thus it runs after the sandbox
+ * gate decided and the user never meets the error type. This holder is the channel
+ * back: {@link makeEmptyFarm} records a failure here, and the gate names it at the
+ * next sandbox action. The direction is the only one the layering permits, because a
  * module must never import the presentation layer.
  */
 let pendingFailure: FarmCompositionFailure | null = null;
@@ -303,20 +370,6 @@ export type FarmRemoval = {
 
 // --- The parameters -----------------------------------------------------------
 
-/** What a composition of a farm needs. */
-export type ComposeFarmParams = {
-    /** The store root that the CLI owns, which is `env.libStoreDir`. */
-    readonly storeRoot: string;
-    /** The analysis whose farm this is. It is also the name of the farm directory. */
-    readonly analysisId: string;
-    /**
-     * The store directories to take the closure of. Omit them to take the requested
-     * set of the catalog template, which is the set that one shared farm served
-     * before a farm belonged to one analysis.
-     */
-    readonly roots?: readonly string[];
-};
-
 /** What an extension of a farm needs. */
 export type ExtendFarmParams = {
     /** The store root that the CLI owns, which is `env.libStoreDir`. */
@@ -326,6 +379,22 @@ export type ExtendFarmParams = {
     /** The store directories to add. Their closure joins the closure that the farm already holds. */
     readonly roots: readonly string[];
 };
+
+/**
+ * The waits that a caller of a composition can shorten. Production passes none, and a
+ * test passes both, so that the refusal of a wait costs milliseconds.
+ */
+export type FarmCompositionDeps = {
+    /** How long a composition yields to a live reclamation before it refuses. Default: {@link RECLAIM_WAIT_MS}. */
+    readonly reclaimWaitMs?: number;
+    /** How long one step of that yield is. Default: {@link RECLAIM_POLL_MS}. */
+    readonly reclaimPollMs?: number;
+};
+
+/** The yield of a caller that links pool content, from what that caller asked for. */
+function reclaimYield(deps: FarmCompositionDeps): ReclaimYield {
+    return { waitMs: deps.reclaimWaitMs ?? RECLAIM_WAIT_MS, pollMs: deps.reclaimPollMs ?? RECLAIM_POLL_MS };
+}
 
 /** What a removal of a farm needs. */
 export type RemoveFarmParams = {
@@ -381,7 +450,8 @@ export function readDepsGraph(storeRoot: string): Result<DepsGraph, FarmComposit
         }
         if (dangling.length > 0) return err<DepsGraph, FarmCompositionError>({ type: "graph_dangling_edge", edges: dangling });
 
-        return ok<DepsGraph, FarmCompositionError>({ version: parsed.version, nodes });
+        const byName = { python: new Map(Object.entries(parsed.by_name.python)), r: new Map(Object.entries(parsed.by_name.r)) };
+        return ok<DepsGraph, FarmCompositionError>({ version: parsed.version, nodes, byName });
     });
 }
 
@@ -410,6 +480,141 @@ export function closureOf(graph: DepsGraph, roots: readonly string[]): Result<Re
         }
     }
     return ok(reached);
+}
+
+// --- The request resolution ---------------------------------------------------
+
+/** What a caller asked for: a distribution requirement, or the module name of a failed import. */
+export type PackageRequestRef =
+    | {
+          /** A requirement in the form `name` or `name==version`. */
+          readonly kind: "distribution";
+          /** The requirement exactly as the caller wrote it. */
+          readonly requirement: string;
+      }
+    | {
+          /** The module name that an import inside the sandbox could not find. */
+          readonly kind: "import";
+          /** The module name exactly as the caller wrote it. */
+          readonly module: string;
+      };
+
+/** The store directory that answers one request, with the facts a caller reports back. */
+export type ResolvedRequest = {
+    /** The store directory of the pool, which is a root of a composition. */
+    readonly storeDir: string;
+    /** The canonical name of the distribution that the store directory holds. */
+    readonly name: string;
+    /** The resolved version of that distribution. */
+    readonly version: string;
+    /** Which runtime the distribution serves. */
+    readonly track: Track;
+};
+
+/** Why the graph answers a request with nothing. */
+export type RequestResolutionError =
+    | {
+          /** No track of the pool holds the name. */
+          readonly type: "unknown_distribution";
+          /** The request exactly as the caller wrote it. */
+          readonly requested: string;
+          /** The canonical form of the name that the request named. */
+          readonly name: string;
+      }
+    | {
+          /** The pool holds the name, and it holds no such version of it. */
+          readonly type: "unknown_version";
+          /** The request exactly as the caller wrote it. */
+          readonly requested: string;
+          /** The canonical form of the name that the request named. */
+          readonly name: string;
+          /** The version that the request named. */
+          readonly version: string;
+          /** The versions that the pool does hold, newest first. */
+          readonly available: readonly string[];
+      }
+    | {
+          /** No node of the graph gives the module. */
+          readonly type: "unknown_import";
+          /** The request exactly as the caller wrote it. */
+          readonly requested: string;
+          /** The module name that the request named. */
+          readonly module: string;
+      }
+    | {
+          /** The requirement is not `name` or `name==version`. */
+          readonly type: "malformed_requirement";
+          /** The request exactly as the caller wrote it. */
+          readonly requested: string;
+      };
+
+/**
+ * The store directory of the pool that answers one package request.
+ *
+ * `store link` and the farm-extension seam of the harness share this one lookup, thus
+ * a package that a person names and a package that a failed import names reach the
+ * pool by one rule. The answer is a root of a composition, and the composition takes
+ * its closure.
+ *
+ * The lookup NEVER orders two versions. {@link DepsGraph.byName} arrives newest
+ * first, because the emitter has the metadata of each ecosystem and the host does
+ * not. Thus a request with no version takes the head of that list.
+ *
+ * A store directory whose name records no version cannot answer a request, and the
+ * search passes over it. Such an entry is a pool record that the provisioner did not
+ * mint, thus no request can name its version and a guess would be worse than a miss.
+ */
+export function resolvePackageRequest(graph: DepsGraph, request: PackageRequestRef): Result<ResolvedRequest, RequestResolutionError> {
+    return request.kind === "distribution" ? resolveDistribution(graph, request.requirement) : resolveImport(graph, request.module);
+}
+
+/** The store directory that a `name` or `name==version` requirement names, searched over both tracks. */
+function resolveDistribution(graph: DepsGraph, requirement: string): Result<ResolvedRequest, RequestResolutionError> {
+    const [, spelled, version] = DISTRIBUTION_REQUIREMENT.exec(requirement.trim()) ?? [];
+    if (spelled === undefined) return err({ type: "malformed_requirement", requested: requirement });
+    const name = canonicalDistributionName(spelled);
+
+    for (const track of TRACKS) {
+        const candidates = (graph.byName[track].get(name) ?? []).flatMap((storeDir) => {
+            const parts = partsOfStoreDir(storeDir);
+            return parts === null ? [] : [{ storeDir, name, version: parts.version, track }];
+        });
+
+        const [head] = candidates;
+        if (head === undefined) continue;
+        if (version === undefined) return ok(head);
+
+        const exact = candidates.find((candidate) => candidate.version === version);
+        if (exact === undefined) {
+            return err({ type: "unknown_version", requested: requirement, name, version, available: candidates.map((candidate) => candidate.version) });
+        }
+        return ok(exact);
+    }
+    return err({ type: "unknown_distribution", requested: requirement, name });
+}
+
+/**
+ * The store directory that gives one module name.
+ *
+ * More than one node can give one module: two distributions share a namespace
+ * portion, and two versions of one distribution give the same top-level names. The
+ * lookup prefers a claimant that heads the pool of its own name, thus a module of a
+ * superseded version resolves to the newest. The rest of the order is the sort of the
+ * store directories, so one graph always answers one way.
+ */
+function resolveImport(graph: DepsGraph, module: string): Result<ResolvedRequest, RequestResolutionError> {
+    const wanted = module.trim();
+    const claimants: ResolvedRequest[] = [];
+    for (const [storeDir, node] of graph.nodes) {
+        if (!node.imports.includes(wanted)) continue;
+        const parts = partsOfStoreDir(storeDir);
+        if (parts === null) continue;
+        claimants.push({ storeDir, name: canonicalDistributionName(parts.name), version: parts.version, track: node.track });
+    }
+    claimants.sort((one, two) => one.storeDir.localeCompare(two.storeDir));
+
+    const chosen = claimants.find((claimant) => graph.byName[claimant.track].get(claimant.name)?.[0] === claimant.storeDir) ?? claimants[0];
+    return chosen === undefined ? err({ type: "unknown_import", requested: module, module: wanted }) : ok(chosen);
 }
 
 // --- The two path spaces ------------------------------------------------------
@@ -458,8 +663,8 @@ function isHostDir(path: string): boolean {
  * top-level `tests`, `benchmarks`, or `resources` directory that carries its own
  * `__init__.py`. The published catalog holds each of those three, from two
  * distributions each. A merge is what the provisioner does with them, and what an
- * install into one `site-packages` produces. Thus a refusal there would refuse the
- * whole default closure, and no analysis could compose a farm.
+ * install into one `site-packages` produces. Thus a refusal there would refuse each
+ * farm that links both distributions, which the published catalog makes common.
  */
 function isVersionCollision(existingTarget: string, incomingTarget: string): boolean {
     const existingDir = storeDirOf(existingTarget);
@@ -512,7 +717,7 @@ function entryAt(plan: LinkPlan, path: string): FarmEntry {
  *
  * It is not a refusal. Two distributions give one name, and one side is a file, thus
  * no merge holds both. The provisioner keeps the first side and logs, and a farm that
- * refused here would refuse the default closure of the published catalog.
+ * refused here would refuse a pair that the published catalog holds.
  */
 function keepFirst(plan: LinkPlan, name: string, existing: string, incoming: string): void {
     plan.keptFirst.push(`${name}: ${storeDirOf(existing) ?? existing} over ${storeDirOf(incoming) ?? incoming}`);
@@ -628,16 +833,10 @@ function applyLinkPlan(ops: readonly LinkOp[]): void {
 
 // --- The template -------------------------------------------------------------
 
-/** What the catalog template gives a new farm: its store directories, its R subtree map, and its warm caches. */
+/** What the catalog template gives a new farm: the home of its warm caches, its R subtree map, and its architecture. */
 type Template = {
-    /** The farm of the template on the host. */
+    /** The farm of the template on the host. A warm-cache link of an analysis farm points into it. */
     readonly path: string;
-    /**
-     * EVERY store directory that the template links, of both tracks. It is the default
-     * content of a new farm, and it is content and not a set of roots — refer to
-     * {@link readTemplate}.
-     */
-    readonly storeDirs: readonly string[];
     /** Which R subtree each R store directory of the template belongs to. */
     readonly rSubtrees: ReadonlyMap<string, RSubtree>;
     /** The `arch` field of the template metadata, which every farm of the store shares. */
@@ -653,16 +852,48 @@ const farmLockSchema = z.object({
 const farmMetaSchema = z.object({ arch: z.string().optional() });
 
 /**
- * The canonical name that a store-directory name records, or `null` when the name
- * has a different shape.
+ * The canonical name and the version that a store-directory name records, or `null`
+ * when the name has a different shape.
  *
  * The provisioner mints the name as `<canonical name>-<version>-<digest>`
  * (`ensure_stored`), thus the leading part is the distribution name in the form of
- * PEP 503. The pool inventory reads it too, because the graph is keyed by store
- * directory and a reader wants the name of the distribution.
+ * PEP 503 and the middle part is the resolved version. The name is the ONE record of
+ * a version on the host, because the graph keys a node by its store directory.
+ */
+function partsOfStoreDir(storeDir: string): { readonly name: string; readonly version: string } | null {
+    const [, name, version] = STORE_DIR_NAME.exec(storeDir) ?? [];
+    if (name === undefined || version === undefined) return null;
+    return { name, version };
+}
+
+/**
+ * The canonical name that a store-directory name records, or `null` when the name
+ * has a different shape.
+ *
+ * The pool inventory reads it, because the graph is keyed by store directory and a
+ * reader wants the name of the distribution.
  */
 export function nameOfStoreDir(storeDir: string): string | null {
-    return STORE_DIR_NAME.exec(storeDir)?.[1] ?? null;
+    return partsOfStoreDir(storeDir)?.name ?? null;
+}
+
+/**
+ * The canonical form of a distribution name, in the rule of PEP 503: each run of
+ * `-`, `_`, and `.` becomes one `-`, and the result is lower case.
+ *
+ * A store directory carries the canonical name already, and the emitter keys
+ * {@link DepsGraph.byName} by that same form. Thus the rule applies to the name that
+ * a CALLER gives, so `Typing_Ext` and `typing-ext` reach one pool. An R name reaches
+ * the same rule, because a store directory of the R track carries a lowercase name
+ * too.
+ *
+ * This is the one host copy of the rule. The flight key, the pool inventory, and the
+ * request resolution each name one distribution, thus each one must agree. The
+ * provisioner holds the matching copy (`emit_deps.py`, `canon`), because the graph
+ * that it writes carries these names.
+ */
+export function canonicalDistributionName(name: string): string {
+    return name.replace(/[-_.]+/g, "-").toLowerCase();
 }
 
 /** Which R subtree each R store directory of a farm belongs to, read from the links of that farm. */
@@ -691,29 +922,18 @@ function readRSubtrees(farmPath: string): Map<string, RSubtree> {
 /**
  * Read the catalog template.
  *
- * A new farm gets EVERY store directory that the template holds, and it does not get
- * the closure of the requested set of the template. The two are not the same set,
- * and the difference is a silent loss.
+ * The template is the one home of a prepared cache, and it is NEVER the content of an
+ * analysis farm. A composition invents no package set: it links what its caller
+ * names, and it links nothing else. Thus the template gives three facts only — the
+ * path that a warm-cache link points at, the R subtree of each R store directory, and
+ * the architecture that every farm of the store shares.
  *
- * A requirement under an extra carries a marker, for example
- * `Requires-Dist: pydantic-settings; extra == "settings"`. The emitter evaluates a
- * marker with NO extra active, thus such a requirement gives no edge. The
- * distribution still reaches the pool, because a manifest spec names the extra
- * (`dask[array,dataframe]`), so it becomes a node that no edge points at. A closure
- * walk from the requested roots never reaches it. Measured on the published catalog:
- * 16 distributions are lost that way, and `import scanpy` then fails inside the
- * sandbox, because `scverse_misc` hides its `Settings` export behind an
- * `ImportError` of `pydantic-settings`.
+ * The R subtree comes from the links of the template, because the lock of the
+ * provisioner records counts for R and never names.
  *
- * The template is the reference environment, thus a copy of what it links cannot
- * lose a package that it holds. A closure walk can. The graph stays necessary for
- * the metadata of each node, and for the closure of a root that
- * {@link extendFarm} adds later.
- *
- * The Python store directories come from the lock, which records each one. The R
- * store directories come from the links of the template, because the lock of the
- * provisioner records counts for R and never names. The links also give the subtree
- * of each R store directory.
+ * A template whose lock names no store directory is not a template that a download
+ * wrote, thus the read refuses. A farm that guessed the two facts above would bake a
+ * link target or an architecture that the store does not serve.
  */
 function readTemplate(storeRoot: string): Result<Template, FarmCompositionError> {
     const path = join(storeRoot, FARMS_DIR, CATALOG_FARM);
@@ -733,11 +953,11 @@ function readTemplate(storeRoot: string): Result<Template, FarmCompositionError>
             const lock = JSON.parseWith(raw, farmLockSchema);
             if (lock === null) return err<Template, FarmCompositionError>({ type: "template_unusable", path, detail: "the lock of the template is malformed" });
 
-            const storeDirs = [...new Set([...lock.store_dirs, ...rSubtrees.keys()])].sort();
-            if (storeDirs.length === 0) {
+            const storeDirs = new Set([...lock.store_dirs, ...rSubtrees.keys()]);
+            if (storeDirs.size === 0) {
                 return err<Template, FarmCompositionError>({ type: "template_unusable", path, detail: "the lock of the template names no store directory" });
             }
-            return ok<Template, FarmCompositionError>({ path, storeDirs, rSubtrees, arch });
+            return ok<Template, FarmCompositionError>({ path, rSubtrees, arch });
         });
 }
 
@@ -973,7 +1193,26 @@ function hoistEntryPoints(storeRoot: string, farmPath: string): void {
 }
 
 /**
- * Run one composition of a farm under the per-farm mutex.
+ * Hold a composition while a live process holds the reclamation lock, and report
+ * that process when the wait passes `deadline`.
+ *
+ * An acquisition flight waits for the same lock in the same shape, because it meets
+ * the same hazard: a reclamation frees pool content that the caller is about to
+ * reference. The holder of the lock is the signal, and the lock file alone is not —
+ * {@link instanceLockHolder} answers `null` for a record that a dead process left.
+ */
+async function waitForNoReclamation(pollMs: number, deadline: number): Promise<number | null> {
+    for (;;) {
+        const holder = instanceLockHolder(LIB_STORE_RECLAIM_LOCK_KEY);
+        if (holder === null) return null;
+        if (Date.now() >= deadline) return holder;
+        await Promise.sleep(pollMs);
+    }
+}
+
+/**
+ * Run one composition of a farm under the per-farm mutex, and yield to a live
+ * reclamation when the caller links pool content.
  *
  * Two compositions of ONE farm serialize, because namespace promotion re-writes a
  * link as a directory and a reader between the unlink and the mkdir would see
@@ -984,22 +1223,62 @@ function hoistEntryPoints(storeRoot: string, farmPath: string): void {
  * serializes them across two processes. Both are necessary:
  * {@link acquireInstanceLock} is re-entrant for the pid that holds the key, thus the
  * lock file alone would let two callers of one process into the critical section.
+ *
+ * `reclaim` is the yield of a caller that LINKS a store directory, and it is `null`
+ * for a caller that links none. A caller that yields does three steps, and the ORDER
+ * of the last two is what makes the two parties exclusive:
+ *
+ * 1. It waits while a live process holds the reclamation lock. It holds NO farm key
+ *    for that wait, thus a reclamation never waits for a composition that waits for
+ *    the reclamation, and there is no deadlock.
+ * 2. It takes the farm key, which is its liveness record.
+ * 3. It reads the reclamation lock AGAIN, under that key, and it releases the key and
+ *    waits again when a reclamation holds it.
+ *
+ * Step 3 is what closes the race. Each party writes its own record before it reads
+ * the record of the other: a composition writes the farm key and then reads the
+ * reclamation lock, and a reclamation takes its lock and then reads the farm keys.
+ * Thus at least one of the two sees the other, and they never interleave.
+ *
+ * Each wait is bounded and each one ends in a named refusal, because a wait with no
+ * end is worse than a refusal that the caller can report.
  */
-async function underFarmMutex<T>(analysisId: string, critical: () => Result<T, FarmCompositionError>): Promise<Result<T, FarmCompositionError>> {
+async function underFarmMutex<T>(
+    analysisId: string,
+    reclaim: ReclaimYield | null,
+    critical: () => Result<T, FarmCompositionError>,
+): Promise<Result<T, FarmCompositionError>> {
     const key = `${FARM_LOCK_KEY_PREFIX}${analysisId}`;
+    const deadline = Date.now() + (reclaim?.waitMs ?? 0);
     const ahead = farmQueue.get(key) ?? Promise.resolve();
     const run = ahead.then(async (): Promise<Result<T, FarmCompositionError>> => {
-        for (let waited = 0; ; waited += FARM_MUTEX_POLL_MS) {
-            const lock = acquireInstanceLock(key);
-            if (lock.acquired) {
-                try {
-                    return critical();
-                } finally {
-                    releaseInstanceLock(key);
-                }
+        let mutexWaited = 0;
+        for (;;) {
+            if (reclaim !== null) {
+                const blocker = await waitForNoReclamation(reclaim.pollMs, deadline);
+                if (blocker !== null) return err({ type: "reclaim_in_flight", analysisId, holderPid: blocker });
             }
-            if (waited >= FARM_MUTEX_WAIT_MS) return err({ type: "farm_locked", analysisId, holderPid: lock.holderPid });
-            await Promise.sleep(FARM_MUTEX_POLL_MS);
+
+            const lock = acquireInstanceLock(key);
+            if (!lock.acquired) {
+                if (mutexWaited >= FARM_MUTEX_WAIT_MS) return err({ type: "farm_locked", analysisId, holderPid: lock.holderPid });
+                mutexWaited += FARM_MUTEX_POLL_MS;
+                await Promise.sleep(FARM_MUTEX_POLL_MS);
+                continue;
+            }
+
+            // The second read: a reclamation that started while this call took the key
+            // cannot have seen the key, thus this call is the one that yields.
+            if (reclaim !== null && instanceLockHolder(LIB_STORE_RECLAIM_LOCK_KEY) !== null) {
+                releaseInstanceLock(key);
+                continue;
+            }
+
+            try {
+                return critical();
+            } finally {
+                releaseInstanceLock(key);
+            }
         }
     });
 
@@ -1019,59 +1298,59 @@ async function underFarmMutex<T>(analysisId: string, critical: () => Result<T, F
 }
 
 /**
- * Compose the farm of an analysis from the pool, on the host, with no container.
+ * Make the farm of an analysis, empty and with its markers. It links no package.
  *
- * The caller is the farm provider that the CLI hands the harness. Thus the first
- * sandbox action of an analysis makes its farm, and an analysis that starts no
- * sandbox gets none.
+ * The farm is made with the analysis, because the planner names the packages of a
+ * plan INTO a farm and it cannot name them into a farm that does not exist. A farm is
+ * a tree of links and a few small records, thus an empty one costs almost nothing and
+ * an analysis that only chats keeps it that way.
  *
- * Omit `roots` to take the requested set of the catalog template, which is the set
- * that one shared farm served before a farm belonged to one analysis.
+ * The farm carries the same three markers that a composed farm carries, and the two
+ * completeness markers advertise an empty inventory. Thus the usability gate of the
+ * harness accepts the farm, and the sandbox of a chat-only analysis mounts it.
  *
- * A composition that fails before the link pass makes no directory, thus a refused
- * root leaves no partial farm. A composition that fails during the link pass leaves
- * links with no markers, and the usability gate of the harness refuses that farm.
+ * The read of the template is what gives the architecture of the store. A farm that
+ * guessed it would record an architecture that the store does not serve.
  *
- * The outcome also lands in {@link takeFarmCompositionFailure}, because the caller of
- * the provider is the harness and the user never sees the Result. A success clears
- * the record, thus a farm that composes leaves nothing for the gate to report.
+ * It takes the per-farm mutex, and it does NOT yield to a live reclamation. The
+ * yield exists for one hazard only: a walk of the graph names a store directory that
+ * no farm links yet, and a reclamation between the walk and the link would free it.
+ * An empty farm walks no graph and it links no store directory, thus it can hold no
+ * link that resolves to nothing. It still records its liveness through the mutex, so
+ * a reclamation waits for the markers of the farm instead of reaping a farm that is
+ * half written.
  */
-export async function composeFarm(params: ComposeFarmParams): Promise<Result<FarmComposition, FarmCompositionError>> {
-    const composed = await underFarmMutex(params.analysisId, () =>
+export async function makeEmptyFarm(params: {
+    readonly storeRoot: string;
+    readonly analysisId: string;
+}): Promise<Result<FarmComposition, FarmCompositionError>> {
+    const farmPath = analysisFarmPath(params.storeRoot, params.analysisId);
+    const made = await underFarmMutex(params.analysisId, null, () =>
         readTemplate(params.storeRoot).andThen((template) =>
-            readDepsGraph(params.storeRoot).andThen((graph) => {
-                const roots = params.roots ?? template.storeDirs;
-                // An explicit root set takes its closure, because a caller names a package and
-                // wants what it needs. The DEFAULT takes no closure: the store directories of
-                // the template are already the content, and a walk over them would drop a node
-                // that no edge reaches (refer to `readTemplate`).
-                const content =
-                    params.roots === undefined ? ok<ReadonlySet<string>, FarmCompositionError>(new Set(template.storeDirs)) : closureOf(graph, roots);
-                return content.andThen((closure) =>
-                    tryFs("make the farm directory", () => mkdirSync(analysisFarmPath(params.storeRoot, params.analysisId), { recursive: true })).andThen(() =>
-                        linkClosure(
-                            params.storeRoot,
-                            analysisFarmPath(params.storeRoot, params.analysisId),
-                            params.analysisId,
-                            graph,
-                            closure,
-                            template,
-                            roots,
-                        ),
-                    ),
-                );
-            }),
+            tryFs("make the farm directory", () => mkdirSync(farmPath, { recursive: true })).andThen(() =>
+                writeFarmMarkers(farmPath, params.analysisId, template.arch, [], [])
+                    .mapErr((cause): FarmCompositionError => cause)
+                    .map((tracks) => ({ farmPath, roots: [], storeDirs: [], added: [], tracks })),
+            ),
         ),
     );
-    pendingFailure = composed.match(
+    // The farm provider calls this inside the harness, thus the user never meets the
+    // error type. The record is the channel back to the sandbox gate, which refuses
+    // BEFORE an action starts and never sees a harness error.
+    pendingFailure = made.match(
         () => null,
         (error) => ({ analysisId: params.analysisId, reason: describeFarmCompositionError(error) }),
     );
-    return composed;
+    return made;
 }
 
 /**
  * Extend the farm of an analysis with the closure of more roots.
+ *
+ * This is the ONE writer of the package links of a farm. It links the closure of
+ * the roots that its caller names, and it links nothing else. It invents no
+ * package set: the two routes that fill a farm are the plan of the analysis and a
+ * step that names what its import could not find.
  *
  * The extension adds links and touches no existing link, thus a live sandbox of the
  * farm keeps every resolution that it made, and the next import inside that same
@@ -1080,10 +1359,13 @@ export async function composeFarm(params: ComposeFarmParams): Promise<Result<Far
  * A version collision refuses with both store directories, and the farm stays
  * exactly as it was, because the pass plans the whole extension before it writes
  * anything.
+ *
+ * The extension yields to a live reclamation, because the walk of the graph can
+ * name a store directory that no farm links yet — refer to {@link underFarmMutex}.
  */
-export function extendFarm(params: ExtendFarmParams): Promise<Result<FarmComposition, FarmCompositionError>> {
+export function extendFarm(params: ExtendFarmParams, deps: FarmCompositionDeps = {}): Promise<Result<FarmComposition, FarmCompositionError>> {
     const farmPath = analysisFarmPath(params.storeRoot, params.analysisId);
-    return underFarmMutex(params.analysisId, () =>
+    return underFarmMutex(params.analysisId, reclaimYield(deps), () =>
         readTemplate(params.storeRoot).andThen((template) =>
             readDepsGraph(params.storeRoot).andThen((graph) => {
                 const previous = readFarmRoots(farmPath);
@@ -1110,10 +1392,15 @@ export function extendFarm(params: ExtendFarmParams): Promise<Result<FarmComposi
  * An absent farm is a normal state, not an error: a chat-only analysis composes no
  * farm, and its deletion has nothing to remove. The pool is untouched either way,
  * and reclamation frees what no farm references.
+ *
+ * The removal takes the per-farm mutex, and it does NOT yield to a live reclamation.
+ * It links nothing, thus it can hold no link that resolves to nothing. It is also
+ * the orphan-farm reaper of the reclamation itself, and a yield there would make the
+ * reclamation wait for its own lock.
  */
 export function removeAnalysisFarm(params: RemoveFarmParams): Promise<Result<FarmRemoval, FarmCompositionError>> {
     const farmPath = analysisFarmPath(params.storeRoot, params.analysisId);
-    return underFarmMutex(params.analysisId, () => {
+    return underFarmMutex(params.analysisId, null, () => {
         if (!isHostDir(farmPath)) return ok<FarmRemoval, FarmCompositionError>({ farmPath, removed: false });
         const holders = leasesOfFarm(params.storeRoot, params.analysisId);
         if (holders.length > 0) return err<FarmRemoval, FarmCompositionError>({ type: "farm_leased", analysisId: params.analysisId, leases: holders });
