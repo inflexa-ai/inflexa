@@ -81,8 +81,8 @@ async function reportThreadCount(): Promise<number> {
 
 /** The text of each message of a transcript, oldest first. */
 async function transcriptOf(threadId: string): Promise<string[]> {
-    const page = (await createThreadHistory(pool).loadPage(threadId, 0, 50))._unsafeUnwrap();
-    return page.messages.map((row) => (typeof row.message.content === "string" ? row.message.content : JSON.stringify(row.message.content)));
+    const page = (await createThreadHistory(pool).loadAll(threadId))._unsafeUnwrap();
+    return page.flat().map((row) => (typeof row.message.content === "string" ? row.message.content : JSON.stringify(row.message.content)));
 }
 
 /**

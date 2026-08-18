@@ -43,8 +43,12 @@ describe("conversation display startup backfill", () => {
         const threadId = "thread-display-backfill";
         (await createThreadStore(pool).createThread({ threadId, analysisId: "analysis-1", title: "Backfill" }))._unsafeUnwrap();
         const history = createThreadHistory(pool);
-        (await history.appendTurn(threadId, modelOnly(legacyTurn("show-1", "show_user", { kind: "markdown", title: "Finding", body: "old body" }))))._unsafeUnwrap();
-        (await history.appendTurn(threadId, modelOnly(legacyTurn("show-2", "show_file", { files: [{ path: "runs/run-1/output/figure.png" }] }))))._unsafeUnwrap();
+        (
+            await history.appendTurn(threadId, modelOnly(legacyTurn("show-1", "show_user", { kind: "markdown", title: "Finding", body: "old body" })))
+        )._unsafeUnwrap();
+        (
+            await history.appendTurn(threadId, modelOnly(legacyTurn("show-2", "show_file", { files: [{ path: "runs/run-1/output/figure.png" }] })))
+        )._unsafeUnwrap();
 
         const migrated = await backfillConversationDisplayEnvelopes({
             pool,
@@ -55,8 +59,11 @@ describe("conversation display startup backfill", () => {
         expect(migrated).toBe(2);
         expect(await backfillConversationDisplayEnvelopes({ pool, resolveWorkspaceRoot: () => "/tmp/missing-analysis", tools: [], batchSize: 1 })).toBe(0);
 
-        const page = (await history.loadPage(threadId, 0, 10))._unsafeUnwrap();
-        const envelopes = page.messages.filter((message) => message.displayEnvelope).map((message) => message.displayEnvelope!);
+        const page = (await history.loadAll(threadId))._unsafeUnwrap();
+        const envelopes = page
+            .flat()
+            .filter((message) => message.displayEnvelope)
+            .map((message) => message.displayEnvelope!);
         expect(envelopes).toHaveLength(2);
         expect(envelopes[0]!.messages[1]!.parts.some((part) => part.type === "data-presentation")).toBe(true);
         expect(envelopes[1]!.messages[1]!.parts.some((part) => part.type === "data-file-reference")).toBe(true);
@@ -69,8 +76,8 @@ describe("conversation display startup backfill", () => {
         (await history.appendTurn(threadId, modelOnly(legacyTurn("plan-1", "show_plan", { planId: "pln-deadbeef" }))))._unsafeUnwrap();
 
         expect(await backfillConversationDisplayEnvelopes({ pool, resolveWorkspaceRoot: () => "/tmp/missing-analysis", tools: [] })).toBe(1);
-        const page = (await history.loadPage(threadId, 0, 10))._unsafeUnwrap();
-        const display = page.messages[0]!.displayEnvelope!.messages;
+        const page = (await history.loadAll(threadId))._unsafeUnwrap();
+        const display = page.flat()[0]!.displayEnvelope!.messages;
         // The plan card cannot be rebuilt — the workspace is gone — so the call is
         // frozen as a plain tool call. Its OUTCOME still survives: that comes from the
         // paired tool-result block in the transcript, which does not depend on any
@@ -103,8 +110,8 @@ describe("conversation display startup backfill", () => {
         )._unsafeUnwrap();
 
         expect(await backfillConversationDisplayEnvelopes({ pool, resolveWorkspaceRoot: () => "/tmp/missing-analysis", tools: [] })).toBe(1);
-        const page = (await history.loadPage(threadId, 0, 10))._unsafeUnwrap();
-        expect(page.messages[0]!.displayEnvelope!.messages[1]!.parts).toEqual([
+        const page = (await history.loadAll(threadId))._unsafeUnwrap();
+        expect(page.flat()[0]!.displayEnvelope!.messages[1]!.parts).toEqual([
             { type: "data-tool-call", id: "boom", data: { toolCallId: "boom", toolName: "run_pca", outcome: "error" } },
         ]);
     });

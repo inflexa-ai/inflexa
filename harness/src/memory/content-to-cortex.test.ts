@@ -66,8 +66,8 @@ describe("contentToCortexMessages", () => {
         ];
         (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }))._unsafeUnwrap();
 
-        const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
-        const cortex = await contentToCortexMessages(page.messages);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        const cortex = await contentToCortexMessages(page.flat());
 
         // The tool-result-only tool message is dropped (no renderable parts), and
         // the two assistant rows it separated are coalesced into one turn — matching
@@ -115,8 +115,8 @@ describe("contentToCortexMessages", () => {
         turn.push({ role: "assistant", content: [{ type: "text", text: "Here is the report." }] });
         (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }))._unsafeUnwrap();
 
-        const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
-        const cortex = await contentToCortexMessages(page.messages);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        const cortex = await contentToCortexMessages(page.flat());
 
         // One user bubble + one assistant bubble for the whole turn.
         expect(cortex.map((m) => m.role)).toEqual(["user", "assistant"]);
@@ -386,8 +386,8 @@ describe("contentToCortexMessages", () => {
         ];
         (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [], turnUsage: usage, turnDurationMs: 8765 }))._unsafeUnwrap();
 
-        const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
-        const cortex: CortexMessage[] = await contentToCortexMessages(page.messages);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        const cortex: CortexMessage[] = await contentToCortexMessages(page.flat());
 
         // A display consumer reads the time of the turn off the message, with no second query.
         expect(cortex[1]!.usage).toEqual(usage);
@@ -407,8 +407,8 @@ describe("contentToCortexMessages", () => {
         ];
         (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [], turnUsage: usage }))._unsafeUnwrap();
 
-        const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
-        const cortex: CortexMessage[] = await contentToCortexMessages(page.messages);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        const cortex: CortexMessage[] = await contentToCortexMessages(page.flat());
 
         expect(cortex.map((m) => m.role)).toEqual(["user", "assistant"]);
         expect(cortex[1]!.usage).toEqual(usage);
@@ -717,8 +717,8 @@ describe("contentToCortexMessages", () => {
     });
 });
 
-describe("ThreadHistory.loadPage", () => {
-    it("paginates by turns oldest-first with total and hasMore, no token eviction (3.1)", async () => {
+describe("ThreadHistory.loadAll", () => {
+    it("groups rows into turns oldest-first, with no token eviction (3.1)", async () => {
         // Six user/assistant pairs = six turns (each user message starts a turn).
         const messages: ModelMessage[] = [];
         for (let i = 0; i < 6; i++) {
@@ -727,24 +727,18 @@ describe("ThreadHistory.loadPage", () => {
         }
         (await history.appendTurn(THREAD, { modelMessages: messages, displayMessages: [] }))._unsafeUnwrap();
 
-        const first = (await history.loadPage(THREAD, 0, 5))._unsafeUnwrap();
-        expect(first.total).toBe(6); // six turns, not twelve rows
-        expect(first.messages).toHaveLength(10); // five turns × two rows each
-        expect(first.messages[0]!.seq).toBe(0);
-        expect(first.hasMore).toBe(true);
-
-        const last = (await history.loadPage(THREAD, 1, 5))._unsafeUnwrap();
-        expect(last.total).toBe(6);
-        expect(last.messages).toHaveLength(2); // the remaining sixth turn
-        expect(last.messages[0]!.seq).toBe(10);
-        expect(last.hasMore).toBe(false);
+        const turns = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(turns).toHaveLength(6); // six turns, not twelve rows
+        expect(turns.flat()).toHaveLength(12);
+        expect(turns.every((t) => t.length === 2)).toBe(true); // each turn is its user row + its reply
+        expect(turns.flat()[0]!.seq).toBe(0);
+        expect(turns.at(-1)!.at(-1)!.seq).toBe(11);
     });
 
-    it("returns a whole multi-row turn intact regardless of perPage (no row truncation)", async () => {
+    it("returns a multi-row turn as one group (no row truncation)", async () => {
         // One turn: prompt + five serial tool steps (one assistant row each, with a
-        // tool-result row between) + a trailing summary. Row-windowed paging
-        // would cut the summary off the page the UI fetches; turn-based paging keeps
-        // the whole turn — the regression this change fixes.
+        // tool-result row between) + a trailing summary. A row-windowed read would cut
+        // the summary off the end; grouping by turn keeps the whole turn together.
         const turn: ModelMessage[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
         for (let i = 0; i < 5; i++) {
             turn.push({
@@ -759,14 +753,12 @@ describe("ThreadHistory.loadPage", () => {
         turn.push({ role: "assistant", content: [{ type: "text", text: "summary" }] });
         (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }))._unsafeUnwrap();
 
-        // Even with perPage 1, the single turn loads whole: 1 user + 5 tool-call +
-        // 5 tool-result + 1 summary = 12 rows.
-        const page = (await history.loadPage(THREAD, 0, 1))._unsafeUnwrap();
-        expect(page.total).toBe(1);
-        expect(page.hasMore).toBe(false);
-        expect(page.messages).toHaveLength(12);
-        expect(page.messages[0]!.seq).toBe(0);
-        expect(page.messages.at(-1)!.message.content).toEqual([{ type: "text", text: "summary" }]);
+        // 1 user + 5 tool-call + 5 tool-result + 1 summary = 12 rows, in ONE turn.
+        const turns = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(turns).toHaveLength(1);
+        expect(turns[0]).toHaveLength(12);
+        expect(turns[0]![0]!.seq).toBe(0);
+        expect(turns[0]!.at(-1)!.message.content).toEqual([{ type: "text", text: "summary" }]);
     });
 
     it("orders by seq numerically, not lexicographically, across the 10-boundary", async () => {
@@ -776,10 +768,10 @@ describe("ThreadHistory.loadPage", () => {
         }
         (await history.appendTurn(THREAD, { modelMessages: messages, displayMessages: [] }))._unsafeUnwrap();
 
-        // One page covering all 24 — a lexicographic sort on the bigint `seq`
-        // would yield 0,1,10,11,...,2,20,...,3,... and place seq 9 last.
-        const page = (await history.loadPage(THREAD, 0, 40))._unsafeUnwrap();
-        const seqs = page.messages.map((m) => m.seq);
+        // A lexicographic sort on the bigint `seq` would yield
+        // 0,1,10,11,...,2,20,...,3,... and place seq 9 last.
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        const seqs = page.flat().map((m) => m.seq);
         expect(seqs).toEqual(Array.from({ length: 24 }, (_, i) => i));
     });
 });

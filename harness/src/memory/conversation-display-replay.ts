@@ -1,7 +1,7 @@
 /**
  * The runtime transcript read: stored display projections → `CortexMessage[]`.
  *
- * `ThreadHistory.loadPage` returns a thread's rows in `seq` order, and every
+ * `ThreadHistory.loadAll` returns a thread's rows in `seq` order, and every
  * append's first row carries the display projection for that append. Replay is
  * therefore a concatenation: walk the rows, emit each envelope's messages in
  * order, done. No turn grouping, no tool-name recognition, no card rebuilding,
