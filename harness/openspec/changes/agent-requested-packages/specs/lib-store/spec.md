@@ -81,6 +81,38 @@ store belongs to the embedder.
 
 ## MODIFIED Requirements
 
+### Requirement: The lib-store resolver env is injected only when the store is mounted
+
+When the lib store is mounted, the mount plan MUST emit the package-resolver
+env so language runtimes resolve imports against `/mnt/libs/current`:
+`R_LIBS_SITE` covering the github/bioconductor/cran subtrees, and `PATH`
+with `/opt/conda/bin` in it. `NODE_PATH` MUST be `/opt/node/node_modules`.
+`PYTHONPATH` MUST NOT be set — system Python resolves the store through a `.pth`
+file. When the store is not mounted, the plan MUST emit none of these vars.
+
+The image paths MUST lead `PATH`, and `NODE_PATH` MUST name an image path only.
+The image owns the conda track and the Node track. A `PATH` that put a store path
+before the image paths would let a farm shadow the command-line tools of the
+image.
+
+The `bin` directory of the farm MUST append at the end of `PATH`. A farm hoists
+the console scripts of its packages there, and without that entry no script of a
+farm is callable by name. The image paths come first, thus a farm script MUST
+NOT shadow an image tool. A farm with no `bin` directory costs nothing, because
+a `PATH` lookup skips an absent directory.
+
+#### Scenario: A console script of a farm is callable by name
+
+- **GIVEN** a farm whose `python/bin` holds a hoisted console script
+- **WHEN** a sandbox runs that script by its bare name
+- **THEN** the script resolves through the farm entry at the end of `PATH`
+
+#### Scenario: An image tool always wins over a farm script
+
+- **GIVEN** a farm script and an image tool that share one name
+- **WHEN** a sandbox runs that name
+- **THEN** the image tool resolves, because the image paths come before the farm entry
+
 ### Requirement: Package installation is host-mediated and never reaches the sandbox
 
 A sandbox step MUST NOT install packages. The library store MUST stay read-only

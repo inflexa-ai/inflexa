@@ -58,13 +58,16 @@ describe("buildMountPlan", () => {
         expect(plan.env.PATH).toContain("/opt/conda/bin");
     });
 
-    test("the injected env names the image paths, not a path under the store mount", () => {
-        // The image owns the conda track and the Node track. A store mounts
-        // read-only over /mnt/libs, so a store-relative value would remove the
-        // command-line tools of the image from every sandbox that has a store.
+    test("the image paths lead PATH, and the farm bin appends at the end", () => {
+        // The image owns the conda track and the Node track. The farm hoists its
+        // console scripts into `python/bin`, and only this entry makes one callable
+        // by name. The image paths come first, so a farm never shadows an image
+        // tool, and NODE_PATH stays an image path because a farm carries no Node.
         const plan = buildMountPlan(COORDS, { libs: true, refs: false });
         expect(plan.env.NODE_PATH).not.toContain("/mnt/libs");
-        expect(plan.env.PATH).not.toContain("/mnt/libs");
+        const path = plan.env.PATH ?? "";
+        expect(path.endsWith(":/mnt/libs/current/python/bin")).toBe(true);
+        expect(path.indexOf("/opt/conda/bin")).toBeLessThan(path.indexOf("/mnt/libs/current/python/bin"));
     });
 
     test("libs unset omits lib-store env, libsPath, and farmPath", () => {

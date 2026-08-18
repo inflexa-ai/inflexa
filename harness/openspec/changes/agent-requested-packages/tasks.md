@@ -47,14 +47,19 @@
 
 ## 6. The effectiveness check through the entrypoint
 
-- [x] 6.1 Start the runtime image through its own entrypoint in the check, and remove the copy commands of the invoker
+- [x] 6.1 Run the seed code of the image in the check, and remove the copy commands of the invoker
 - [x] 6.2 Point the check at a composed farm, whose cache directories are links into the shared home
-- [x] 6.3 Do a test: an entrypoint that seeds nothing fails the check
+- [x] 6.3 Do a test: a seed that copies nothing fails the check
 - [x] 6.4 Make sure that the check still reads the record of the preparation run, and that it fails on a write to a recorded entry
 
 ## 7. The spec sync
 
-- [ ] 7.1 Correct the `lib-store` claim that a store change reaches only a later sandbox, and keep the refusal of an in-sandbox install
-- [ ] 7.2 Make sure that the `per-analysis-farm-mount` deltas still hold beside these deltas, and adjust where they disagree
+- [x] 7.1 Correct the `lib-store` claim that a store change reaches only a later sandbox, and keep the refusal of an in-sandbox install
+- [x] 7.2 Make sure that the `per-analysis-farm-mount` deltas still hold beside these deltas, and adjust where they disagree
 - [x] 7.4 Guard where a preparation run writes its record. Only the farm that holds the shared cache home can be prepared
-- [ ] 7.3 Run `openspec validate agent-requested-packages --strict` and resolve each finding
+- [x] 7.3 Run `openspec validate agent-requested-packages --strict` and resolve each finding
+
+## 8. The console scripts of a farm
+
+- [x] 8.1 Append the `bin` of the farm at the end of the sandbox `PATH`, thus a hoisted console script is callable by name
+- [x] 8.2 Do a test: the image paths lead `PATH`, and the farm entry comes last

@@ -127,17 +127,21 @@ export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: 
  * Lib-store package-discovery env. PYTHONPATH is intentionally omitted —
  * system Python resolves via a `.pth` file in the lib store.
  *
- * `PATH` and `NODE_PATH` name a path in the runtime image, never a path under
- * `/mnt/libs`. The store carries packages only; the image owns the conda track at
- * `/opt/conda` and the Node track at `/opt/node`. A store mounts read-only over
- * `/mnt/libs`, so a store-relative `PATH` here would remove the command-line tools
- * of the image from every sandbox that has a store.
+ * The image paths lead `PATH`, and `NODE_PATH` names an image path only. The store
+ * carries packages only; the image owns the conda track at `/opt/conda` and the
+ * Node track at `/opt/node`. A `PATH` that put a store path before the image paths
+ * would let a farm shadow the command-line tools of the image.
+ *
+ * The `bin` of the farm appends at the END. A farm hoists the console scripts of
+ * its packages there, and without this entry no script is callable by name. The
+ * image paths come first, thus a farm script never shadows an image tool, and a
+ * farm with no `bin` costs nothing because PATH lookup skips an absent directory.
  */
 function libStoreEnv(): Record<string, string> {
     return {
         R_LIBS_SITE: `${FARM_CONTAINER_PATH}/r/github:${FARM_CONTAINER_PATH}/r/bioconductor:${FARM_CONTAINER_PATH}/r/cran`,
         NODE_PATH: "/opt/node/node_modules",
-        PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin",
+        PATH: `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin:${FARM_CONTAINER_PATH}/python/bin`,
     };
 }
 
