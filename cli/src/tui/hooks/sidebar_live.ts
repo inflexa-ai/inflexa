@@ -319,9 +319,10 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
                     for (const f of p.result.files) lines.push(`  ${f.path} ${GLYPHS.emDash} ${f.description}`);
                 }
             }
-            // `seedInputFileIds` is the desired-parity set; fall back to the profiled inputs when the
-            // seed set was not recorded (older rows), else 0.
-            const seedCount = p.seedInputFileIds?.length ?? p.result?.inputFileIds.length ?? 0;
+            // `seedInputFileIds` is the desired-parity set; fall back to the count the profile itself
+            // covered when the seed set was not recorded (older rows) — the input signature on current
+            // rows, the identity list on rows that predate it — else 0.
+            const seedCount = p.seedInputFileIds?.length ?? p.result?.inputSignature?.count ?? p.result?.inputFileIds?.length ?? 0;
             lines.push("");
             lines.push(`${seedCount} seed input${seedCount === 1 ? "" : "s"}`);
             return lines;

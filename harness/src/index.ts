@@ -449,7 +449,24 @@ export { upsertAnalysis } from "./state/analyses.js";
 // analysis's input set empties (deferring on a running workflow), so the UI
 // stops advertising a profile that describes files the analysis no longer has.
 export { clearDataProfile, loadDataProfileStatus, tryRetryDataProfile, reconcileOrphanedDataProfile } from "./state/data-profile.js";
-export type { DataProfileInputFile, DataProfileResult, DataProfileStatus } from "./state/data-profile.js";
+// The persisted record's shape is declared in `contracts/` — a consumer interpreting a
+// stored profile (a host route, a UI) imports it without taking the ledger's query
+// surface with it. Re-exported here so a consumer already importing from the root need
+// not know which half of the package declares what.
+export type {
+    DataProfileAxis,
+    DataProfileCoverage,
+    DataProfileFile,
+    DataProfileInputFile,
+    DataProfileInputSignature,
+    DataProfileKind,
+    DataProfileLifecycleStatus,
+    DataProfileOrganism,
+    DataProfileQualityAssessment,
+    DataProfileResult,
+    DataProfileSubjectSource,
+} from "./contracts/data-profile.js";
+export type { DataProfileStatus } from "./state/data-profile.js";
 
 // Analysis reclamation — `purgeAnalysis` reclaims an analysis's whole Postgres
 // footprint from its id alone; workspace files stay the embedder's to dispose of.
@@ -458,6 +475,13 @@ export type { AnalysisPurge, AnalysisPurgeDeps, AnalysisPurgeOutcome } from "./s
 
 // Staged-input manifest contract (the embedder stages; the harness only reads).
 export type { StagedInput } from "./execution/staged-input.js";
+
+// The input signature a completed profile persists. Exported because the embedder owns
+// the OTHER side of the comparison — it enumerates the current input set — and a second
+// implementation of the digest would silently disagree with the one on the row, which is
+// the failure a fixed-width comparand exists to prevent.
+export { computeInputSignature } from "./execution/input-signature.js";
+export type { SignableInput } from "./execution/input-signature.js";
 
 // Sandbox + workspace seams over the embedder-resolved workspace roots.
 // `ResolveWorkspaceRoot` is the location seam itself: the embedder maps each

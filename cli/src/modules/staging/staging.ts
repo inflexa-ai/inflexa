@@ -1,6 +1,7 @@
 import { linkSync, copyFileSync, readdirSync, rmSync, rmdirSync, existsSync, utimesSync, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { ok, err, Result } from "neverthrow";
+import { computeInputSignature, type DataProfileInputSignature } from "@inflexa-ai/harness";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
@@ -466,6 +467,34 @@ export function enumerateInputSignatures(analysisId: string): Result<ReadonlySet
         }
         return new Set(byPath.values());
     });
+}
+
+/**
+ * Digest an enumerated signature set into the comparand a completed profile carries.
+ *
+ * The harness records `inputSignature: { count, digest }` on the profile row and drops
+ * the per-file list it replaced, so parity against a current profile is a digest
+ * comparison, not a set comparison. The digest itself is the harness's — imported, never
+ * reimplemented, because two implementations of "the same set" is exactly the
+ * disagreement a fixed-width comparand exists to prevent.
+ *
+ * This lives here because this module owns the signature format: {@link inputSignature}
+ * writes `fileId:size:mtimeMs`, so this is the only place entitled to take it apart. The
+ * two separators are found from the RIGHT, so a `fileId` containing a colon would still
+ * split correctly.
+ */
+export function inputSignatureDigest(signatures: ReadonlySet<string>): DataProfileInputSignature {
+    return computeInputSignature(
+        [...signatures].map((signature) => {
+            const mtimeSep = signature.lastIndexOf(":");
+            const sizeSep = signature.lastIndexOf(":", mtimeSep - 1);
+            return {
+                fileId: signature.slice(0, sizeSep),
+                size: Number(signature.slice(sizeSep + 1, mtimeSep)),
+                mtimeMs: Number(signature.slice(mtimeSep + 1)),
+            };
+        }),
+    );
 }
 
 /**
