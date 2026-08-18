@@ -48,9 +48,9 @@ export function isToolError(value: unknown): value is ToolError {
 }
 
 /**
- * The picture that a tool ok value carries beside its JSON data. `base64` holds
+ * One picture that a tool ok value carries beside its JSON data. `base64` holds
  * the bytes, and `mediaType` names the IANA type, for example "image/png". The
- * loop splits the picture out of the JSON text, and it rides the tool result as
+ * loop splits each picture out of the JSON text, and it rides the tool result as
  * an image content block. Thus the model sees the picture, and the JSON text
  * holds no bytes.
  */
@@ -60,17 +60,17 @@ export interface ToolResultImage {
 }
 
 /**
- * The reserved key that carries a picture on a tool ok value. It is a symbol,
+ * The reserved key that carries the pictures on a tool ok value. It is a symbol,
  * thus it never collides with a data field. `JSON.stringify` also omits a symbol
  * key, thus the bytes never reach the JSON text by accident.
  */
 export const toolResultImageKey: unique symbol = Symbol("toolResultImage");
 
-/** A tool ok value that can carry a picture under the reserved key. */
-export type WithToolResultImage<T> = T & { readonly [toolResultImageKey]?: ToolResultImage };
+/** A tool ok value that can carry one picture or an ordered list of them under the reserved key. */
+export type WithToolResultImage<T> = T & { readonly [toolResultImageKey]?: ToolResultImage | readonly ToolResultImage[] };
 
 /**
- * Attach a picture to a tool ok value. The value keeps its own fields, and the
+ * Attach one picture to a tool ok value. The value keeps its own fields, and the
  * picture rides under the reserved key. The loop reads the key, and it moves the
  * bytes into an image content block on the tool result.
  */
@@ -78,14 +78,33 @@ export function withToolResultImage<T extends object>(value: T, image: ToolResul
     return { ...value, [toolResultImageKey]: image };
 }
 
-/** Read the picture that a tool ok value carries, or undefined when it carries none. */
-export function readToolResultImage(value: unknown): ToolResultImage | undefined {
-    if (typeof value !== "object" || value === null) return undefined;
-    const image = (value as { [toolResultImageKey]?: unknown })[toolResultImageKey];
-    if (typeof image !== "object" || image === null) return undefined;
-    const { base64, mediaType } = image as Partial<ToolResultImage>;
-    if (typeof base64 !== "string" || typeof mediaType !== "string") return undefined;
-    return { base64, mediaType };
+/**
+ * Attach an ordered list of pictures to a tool ok value. The order is the order
+ * that the model reads, and the loop keeps it on the wire. A tool that slices a
+ * page attaches the slices in document order.
+ */
+export function withToolResultImages<T extends object>(value: T, images: readonly ToolResultImage[]): WithToolResultImage<T> {
+    return { ...value, [toolResultImageKey]: images };
+}
+
+/** Does one entry under the reserved key carry the picture shape? */
+function isToolResultImage(entry: unknown): entry is ToolResultImage {
+    if (typeof entry !== "object" || entry === null) return false;
+    const { base64, mediaType } = entry as Partial<ToolResultImage>;
+    return typeof base64 === "string" && typeof mediaType === "string";
+}
+
+/**
+ * Read the pictures that a tool ok value carries, in order. A value with none
+ * gives the empty list. The one-picture shape reads as a list of one, thus a
+ * tool that attaches one picture and a tool that attaches a list meet the loop
+ * in the same shape.
+ */
+export function readToolResultImages(value: unknown): ToolResultImage[] {
+    if (typeof value !== "object" || value === null) return [];
+    const carried = (value as { [toolResultImageKey]?: unknown })[toolResultImageKey];
+    const entries = Array.isArray(carried) ? carried : [carried];
+    return entries.filter(isToolResultImage);
 }
 
 /**
