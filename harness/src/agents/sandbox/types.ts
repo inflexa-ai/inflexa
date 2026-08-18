@@ -17,6 +17,8 @@ export type SandboxToolName =
     // Sandbox-environment introspection.
     | "listAvailablePackages"
     | "listAvailableRefs"
+    // Deterministic input-tree observation (the data profile's orientation pass).
+    | "scanInputs"
     // Context7 library docs.
     | "resolveLibraryId"
     | "queryDocs"

@@ -55,6 +55,14 @@ export type ActivityWrite = (part: unknown) => Promise<void>;
 export interface ProfileActivityEmitter {
     /** Reported before the sandbox is created — the longest wait in a profile, and the one that precedes the agent entirely. */
     sandboxInit(): Promise<void>;
+    /**
+     * Reported before the deterministic input scan, which runs between a ready sandbox
+     * and the agent's first turn. On a large tree it is the second-longest operation in
+     * a profile, and left unreported it would read as `Running data-profiler` for
+     * minutes before the agent had begun — the misreport `sandbox-init` exists to
+     * prevent.
+     */
+    scanning(): Promise<void>;
     /** Reported once the sandbox is ready, covering the gap before the agent's first tool call. */
     agentStarting(): Promise<void>;
     /**
@@ -120,6 +128,7 @@ export function createProfileActivityEmitter(write: ActivityWrite, frame: Profil
 
     return {
         sandboxInit: () => emit("sandbox-init", "Starting sandbox"),
+        scanning: () => emit("executing", "Scanning input files"),
         agentStarting: () => emit("executing", "Running data-profiler"),
         forTool: (name, input, resolveDetail) => emit("executing", activityForTool(name, input, resolveDetail)),
         indexing: () => emit("indexing", "Indexing input descriptions for search"),

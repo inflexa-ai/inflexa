@@ -41,19 +41,22 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
     return defineTool({
         id: "workspace_search",
         description:
-            "Semantic search over the analysis workspace. Returns ranked file paths " +
-            "with descriptions and metadata; read a file separately to see its " +
-            "contents. Indexed entries are exactly four types, and `type` restricts " +
-            'results to one of them: "input" (staged input data files — their ' +
-            'descriptions come from the data profiler), "output" (files a step ' +
-            'produced), "summary" (a step\'s summary), "synthesis" (a run\'s ' +
-            "literature-grounded synthesis).",
+            "Semantic search over the analysis workspace. Returns ranked entries with descriptions " +
+            "and metadata; read a file separately to see its contents. Indexed entries are exactly " +
+            'five types, and `type` restricts results to one of them: "input-kind" (a KIND of input ' +
+            "data — a repeating set the data profiler named, carrying its count and a pathPattern " +
+            'matching its members), "input" (one entity the dataset is about — a subject, sample, or ' +
+            'other axis value — with the kinds of file it carries), "output" (files a step produced), ' +
+            '"summary" (a step\'s summary), "synthesis" (a run\'s literature-grounded synthesis). ' +
+            "For output/summary/synthesis the entry id IS the workspace path; for the two input types " +
+            "it is not, because a kind and an entity each span many files — search input-kind for a " +
+            "set's pathPattern, then list the tree for its members.",
         inputSchema: z.object({
             query: z.string().min(1).describe("What to search for, in natural language"),
             type: z
-                .enum(["input", "output", "summary", "synthesis"])
+                .enum(["input-kind", "input", "output", "summary", "synthesis"])
                 .optional()
-                .describe('Restrict results to one entry type: "input", "output", "summary", or "synthesis"'),
+                .describe('Restrict results to one entry type: "input-kind", "input", "output", "summary", or "synthesis"'),
             limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
         }),
         describeCall: ({ query, type }) => (type === undefined ? query : `${query} (${type})`),

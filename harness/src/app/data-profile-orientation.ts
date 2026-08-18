@@ -23,6 +23,11 @@ export const DATA_PROFILE_ORIENTATION_MAX_CHARS = 1200;
 /** Files listed before the tail is elided (the count still reports the total). */
 const MAX_FILES = 8;
 
+/** Kinds listed before the tail is elided. A dataset with more is described by its first few. */
+const MAX_KINDS = 6;
+
+const MAX_KIND_DESCRIPTION_CHARS = 90;
+
 /** Quality concerns listed — the profiler orders them, so these are the top ones. */
 const MAX_CONCERNS = 3;
 
@@ -116,9 +121,37 @@ export function buildDataProfileOrientation(result: DataProfileResult, maxChars:
         lines.push(`Concerns: ${shown.join("; ")}${more}`);
     }
 
+    // Kinds come first because they are what the dataset IS at this budget: four lines
+    // describing 3513 files, where the per-file list could only show the first eight of
+    // them and imply the rest away.
+    const kinds = result.kinds ?? [];
+    if (kinds.length > 0) {
+        const shown = kinds.slice(0, MAX_KINDS);
+        const datasetFiles = kinds.reduce((sum, kind) => sum + kind.count, 0);
+        const header =
+            shown.length < kinds.length
+                ? `Kinds (${shown.length} of ${kinds.length}, ${datasetFiles} files):`
+                : `Kinds (${kinds.length}, ${datasetFiles} files):`;
+        lines.push(header);
+        for (const kind of shown) {
+            const facts = [`${kind.count}x`, present(kind.format)].filter((f): f is string => f !== undefined).join(", ");
+            lines.push(`- ${kind.name} (${facts}) — ${clip(kind.memberRepresents, MAX_KIND_DESCRIPTION_CHARS)}`);
+        }
+        const axes = result.axes ?? [];
+        if (axes.length > 0) {
+            lines.push(`Axes: ${axes.map((axis) => `${axis.label} (${axis.cardinality})`).join(", ")}`);
+        }
+        if (result.coverage && result.coverage.unmatched > 0) {
+            lines.push(`Coverage: ${result.coverage.matched} of ${result.coverage.total} files match a kind`);
+        }
+    }
+
     if (result.files.length > 0) {
         const shown = result.files.slice(0, MAX_FILES);
-        const header = shown.length < result.files.length ? `Files (${shown.length} of ${result.files.length}):` : `Files (${result.files.length}):`;
+        // With kinds present these are the individually notable files — the metadata
+        // sheet, the README, the outlier — not a sample of the dataset.
+        const label = kinds.length > 0 ? "Notable files" : "Files";
+        const header = shown.length < result.files.length ? `${label} (${shown.length} of ${result.files.length}):` : `${label} (${result.files.length}):`;
         lines.push(header);
         for (const file of shown) {
             lines.push(`- ${file.path} — ${clip(file.description, MAX_FILE_DESCRIPTION_CHARS)}${formatFileFacts(file)}`);

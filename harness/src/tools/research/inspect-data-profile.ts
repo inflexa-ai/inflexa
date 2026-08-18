@@ -63,8 +63,35 @@ interface OverviewOutput extends ProfileEnvelope {
     readonly experimentalDesign?: string;
     readonly qualityAssessment?: DataProfileResult["qualityAssessment"];
     readonly accessions?: string[];
-    /** How many per-file records `scope:"files"` would page through. */
-    readonly fileCount: number;
+    /** How many per-file records `scope:"files"` would page through — NOT the dataset's size. */
+    readonly describedFileCount: number;
+    /**
+     * How many files the dataset holds, or `null` when the snapshot cannot say (one
+     * written before kinds and coverage existed). Reported separately from
+     * `describedFileCount` because a profile describing eight files of several thousand
+     * is correct under this capability, and a single count would read as a dataset of
+     * eight files.
+     */
+    readonly datasetFileCount: number | null;
+    /** How many kinds `scope:"kinds"` would return; `null` on a pre-kinds snapshot. */
+    readonly kindCount: number | null;
+    /** Present when the two counts differ — says where the rest of the dataset is described. */
+    readonly structureNote?: string;
+    readonly coverage?: DataProfileResult["coverage"];
+}
+
+/**
+ * The dataset's structure. A snapshot predating kinds reports `available: false`
+ * rather than an empty list: "this profile predates the structure" and "this dataset
+ * has no structure" are different facts, and only one of them is true.
+ */
+interface KindsOutput extends ProfileEnvelope {
+    readonly scope: "kinds";
+    readonly available: boolean;
+    readonly kinds?: DataProfileResult["kinds"];
+    readonly axes?: DataProfileResult["axes"];
+    readonly coverage?: DataProfileResult["coverage"];
+    readonly message?: string;
 }
 
 interface FilesOutput extends ProfileEnvelope {
@@ -123,7 +150,20 @@ interface FailedOutput {
     readonly message: string;
 }
 
-export type InspectDataProfileOutput = OverviewOutput | FilesOutput | AbsentOutput | PendingOutput | FailedOutput;
+export type InspectDataProfileOutput = OverviewOutput | KindsOutput | FilesOutput | AbsentOutput | PendingOutput | FailedOutput;
+
+/**
+ * How many files the dataset holds, as far as the snapshot can establish it.
+ *
+ * Coverage counts the scanned tree, so it is the authority where present. Summed kind
+ * counts are the fallback. A snapshot with neither returns `null` rather than the
+ * described-file count, which would be a dataset size the row cannot support.
+ */
+function datasetFileCount(result: DataProfileResult): number | null {
+    if (result.coverage) return result.coverage.total;
+    if (result.kinds && result.kinds.length > 0) return result.kinds.reduce((sum, kind) => sum + kind.count, 0);
+    return null;
+}
 
 /**
  * Name every reason the served profile may not describe the current inputs.
@@ -138,7 +178,7 @@ export type InspectDataProfileOutput = OverviewOutput | FilesOutput | AbsentOutp
  */
 function stalenessReasons(status: DataProfileStatus, result: DataProfileResult): string[] {
     const reasons: string[] = [];
-    if (isDataProfileStale(status.seedInputFileIds ?? [], result.inputFileIds)) {
+    if (isDataProfileStale({ fileIds: status.seedInputFileIds ?? [] }, result)) {
         reasons.push("the analysis's input file set changed after this profile was taken");
     }
     if (status.status === "running" || status.status === "pending") {
@@ -167,14 +207,20 @@ export function createInspectDataProfileTool(pool: Pool) {
         description:
             "Read this analysis's data profile — the AUTHORITATIVE record of what the input dataset is: " +
             "organism and taxon id, scientific domain and subtype, tissue, cell type, condition, experimental design, " +
-            "dataset-wide quality concerns and strengths, public accessions, and per-file data type, format, " +
-            "row/column dimensions, tags, warnings, and profiling metrics. " +
+            "dataset-wide quality concerns and strengths, public accessions, the KINDS of file the dataset is made of " +
+            "and what varies across them, and per-file data type, format, row/column dimensions, tags and warnings for " +
+            "the files described individually. " +
             "There is NO data-profile file in the workspace — this tool is the only way to read it. Do not search for one, " +
             "and do not rediscover these facts by listing or reading the raw input files. " +
             "Call it before you reason about the data (planning, writing analysis code, interpreting results). " +
-            "scope:'overview' (the default) returns the dataset-level orientation plus the number of profiled files. " +
-            "scope:'files' returns the per-file records, paged: page (1-based, default 1) and pageSize (default 20, max 100), " +
+            "scope:'overview' (the default) returns the dataset-level orientation, how many files are described individually, " +
+            "and how many files the dataset holds — those two differ on purpose, because a large dataset is described by its " +
+            "kinds rather than file by file. " +
+            "scope:'kinds' returns those kinds with their counts, path patterns, and axes — this is where a dataset of thousands " +
+            "of files is described. A profile taken before kinds existed reports the scope unavailable. " +
+            "scope:'files' returns the individually described files, paged: page (1-based, default 1) and pageSize (default 20, max 100), " +
             "always with the true total and hasMore, so you can see exactly what you have not read yet. " +
+            "For the paths of files no record describes, list the workspace tree. " +
             "The state field says what you got: 'ready'; 'stale' (a profile is returned but may not describe the current " +
             "inputs — staleReason says why); 'pending' (profiling is still running); 'failed'; or 'absent' (never profiled, " +
             "or the analysis has no input files). " +
@@ -184,9 +230,13 @@ export function createInspectDataProfileTool(pool: Pool) {
             "needs re-running rather than diagnosing the data itself.",
         inputSchema: z.object({
             scope: z
-                .enum(["overview", "files"])
+                .enum(["overview", "kinds", "files"])
                 .optional()
-                .describe("'overview' (default): dataset-level facts + file count. 'files': paged per-file records."),
+                .describe(
+                    "'overview' (default): dataset-level facts, described-file count, and dataset file count. " +
+                        "'kinds': the sets the dataset is made of and what varies across them. " +
+                        "'files': paged records for the individually described files.",
+                ),
             page: z.number().int().min(1).optional().describe("1-based page of per-file records. Only used when scope is 'files'. Default 1."),
             pageSize: z
                 .number()
@@ -199,7 +249,7 @@ export function createInspectDataProfileTool(pool: Pool) {
         // `execute` defaults both fields internally, and the hook applies the same
         // defaults. Without them the ordinary call, which names no field at all,
         // gives no detail. `page` acts only on the `files` scope, as in `execute`.
-        describeCall: ({ scope, page }) => ((scope ?? "overview") === "files" ? `files (page ${page ?? 1})` : "overview"),
+        describeCall: ({ scope, page }) => ((scope ?? "overview") === "files" ? `files (page ${page ?? 1})` : (scope ?? "overview")),
         execute: async (input, ctx): Promise<Result<InspectDataProfileOutput, ToolError>> => {
             const resourceId = scopeResource(ctx.session.scope).resourceId;
             const status = unwrapOrThrow(await loadDataProfileStatus(pool, resourceId));
@@ -248,7 +298,19 @@ export function createInspectDataProfileTool(pool: Pool) {
                     ? { state: "stale", staleReason: reasons.join("; "), profiledAt: result.profiledAt }
                     : { state: "ready", profiledAt: result.profiledAt };
 
-            if ((input.scope ?? "overview") === "overview") {
+            const scope = input.scope ?? "overview";
+
+            if (scope === "overview") {
+                const dataset = datasetFileCount(result);
+                const described = result.files.length;
+                const structureNote =
+                    dataset === null
+                        ? "This profile predates the dataset-structure record, so only the individually described files are known; " +
+                          "list the workspace tree for the rest."
+                        : dataset !== described
+                          ? `${described} of ${dataset} files are described individually. Call scope:'kinds' for what the rest are, ` +
+                            "and list the workspace tree for their paths."
+                          : undefined;
                 return ok({
                     ...envelope,
                     scope: "overview",
@@ -262,7 +324,33 @@ export function createInspectDataProfileTool(pool: Pool) {
                     experimentalDesign: result.experimentalDesign,
                     qualityAssessment: result.qualityAssessment,
                     accessions: result.accessions,
-                    fileCount: result.files.length,
+                    describedFileCount: described,
+                    datasetFileCount: dataset,
+                    kindCount: result.kinds ? result.kinds.length : null,
+                    ...(structureNote ? { structureNote } : {}),
+                    ...(result.coverage ? { coverage: result.coverage } : {}),
+                });
+            }
+
+            if (scope === "kinds") {
+                if (!result.kinds) {
+                    return ok({
+                        ...envelope,
+                        scope: "kinds",
+                        available: false,
+                        message:
+                            "This profile was taken before the dataset-structure record existed, so it carries no kinds. " +
+                            "That is a fact about the profile, not about the dataset: use scope:'files' and the workspace " +
+                            "listing tools, or re-profile the analysis.",
+                    });
+                }
+                return ok({
+                    ...envelope,
+                    scope: "kinds",
+                    available: true,
+                    kinds: result.kinds,
+                    ...(result.axes ? { axes: result.axes } : {}),
+                    ...(result.coverage ? { coverage: result.coverage } : {}),
                 });
             }
 

@@ -71,6 +71,12 @@ export type StatResult =
     | { readonly kind: "not_found" }
     | { readonly kind: "out_of_scope" };
 
+/** A bounded prefix of a file's raw bytes. `bytes` may be shorter than requested. */
+export type ReadBytesResult =
+    | { readonly kind: "ok"; readonly bytes: Buffer }
+    | { readonly kind: "not_found" }
+    | { readonly kind: "out_of_scope" };
+
 // ── Seam interface ────────────────────────────────────────────────────────
 
 export interface WorkspaceFilesystem {
@@ -92,6 +98,24 @@ export interface WorkspaceFilesystem {
         /** Absolute host base for relative paths. Defaults to the analysis root. */
         readonly workingDir?: string;
     }): ResultAsync<ReadFileResult, FsError>;
+    /**
+     * Read the first `length` bytes of a file, raw.
+     *
+     * Distinct from `readFile` because that surface is line- and text-oriented — it
+     * decodes to UTF-8 for its line windows and its byte cap is an outer bound on a
+     * whole-file read, not a prefix request. Magic-byte format detection needs an
+     * exact, small prefix of the raw bytes and nothing else.
+     *
+     * Local files only: a prefix of a presigned object would mean fetching the whole
+     * object to read its first 512 bytes, which defeats the bound. An absent local
+     * file is `not_found`.
+     */
+    readBytes(args: {
+        readonly session: AgentSession;
+        readonly path: string;
+        readonly length: number;
+        readonly workingDir?: string;
+    }): ResultAsync<ReadBytesResult, FsError>;
     list(args: { readonly session: AgentSession; readonly path: string; readonly workingDir?: string }): ResultAsync<ListResult, FsError>;
     stat(args: { readonly session: AgentSession; readonly path: string; readonly workingDir?: string }): ResultAsync<StatResult, FsError>;
 }
@@ -193,6 +217,34 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
                     }
 
                     return okAsync<ReadFileResult>({ kind: "not_found" });
+                });
+            });
+        },
+
+        readBytes({ session, path, length, workingDir }) {
+            return confinedResolve(session, path, workingDir).andThen((resolved): ResultAsync<ReadBytesResult, FsError> => {
+                if (resolved.kind === "out_of_scope") return okAsync<ReadBytesResult>({ kind: "out_of_scope" });
+                const absolute = resolved.absolute;
+                return safeStat(absolute).andThen((localStat): ResultAsync<ReadBytesResult, FsError> => {
+                    if (!localStat?.isFile()) return okAsync<ReadBytesResult>({ kind: "not_found" });
+                    return openReadNoFollow(absolute).andThen((opened): ResultAsync<ReadBytesResult, FsError> => {
+                        if (opened.kind === "out_of_scope") return okAsync<ReadBytesResult>({ kind: "out_of_scope" });
+                        const fh = opened.fh;
+                        return tryFs<ReadBytesResult>(
+                            "workspace.readBytes",
+                            async () => {
+                                try {
+                                    const want = Math.max(0, Math.min(length, localStat.size));
+                                    const buf = Buffer.alloc(want);
+                                    const { bytesRead } = want > 0 ? await fh.read(buf, 0, want, 0) : { bytesRead: 0 };
+                                    return { kind: "ok", bytes: buf.subarray(0, bytesRead) };
+                                } finally {
+                                    await fh.close();
+                                }
+                            },
+                            { path: absolute },
+                        );
+                    });
                 });
             });
         },
