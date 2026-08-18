@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { env } from "./env.ts";
@@ -64,9 +64,12 @@ export const LIB_STORE_RECLAIM_LOCK_KEY = "lib-store-reclaim";
  */
 export const LIB_STORE_METADATA_LOCK_KEY = "lib-store-metadata";
 
+/** The extension of every lock file, which is what turns a file name of the lock directory back into a key. */
+const LOCK_SUFFIX = ".lock";
+
 /** Absolute path of a lock file for `key`. Exported for the unit test, which seeds and inspects it directly. */
 export function instanceLockPath(key: string): string {
-    return join(env.locksDir, `${key}.lock`);
+    return join(env.locksDir, `${key}${LOCK_SUFFIX}`);
 }
 
 /** Read the holding pid from a lock file, or null if it is missing or its contents aren't a finite integer (a truncated/corrupt write counts as no live holder, so it gets reclaimed). */
@@ -163,6 +166,49 @@ export function acquireInstanceLock(key: string): LockOutcome {
 export function instanceLockHolder(key: string): number | null {
     const pid = readHolderPid(instanceLockPath(key));
     return pid !== null && isPidAlive(pid) ? pid : null;
+}
+
+/** One live hold of an instance lock: the key, and the process that holds it. */
+export type InstanceLockHold = { readonly key: string; readonly pid: number };
+
+/**
+ * Each LIVE hold of a lock key that starts with `prefix`, with a sweep of each record a dead process
+ * left behind.
+ *
+ * {@link instanceLockHolder} answers one key that its caller already names. This answers a FAMILY of
+ * keys, for a reader that must wait for whatever holds them right now: the reclamation of the package
+ * store waits for each live farm composition, and a composition mints its key from an analysis id that
+ * the reclamation never learns.
+ *
+ * The sweep is what makes the liveness of the holder the signal, rather than the record. A hard kill
+ * (SIGKILL) leaves the lock file, thus a reader that counted files would wait for a process that is
+ * gone. The sweep runs through {@link acquireInstanceLock} and {@link releaseInstanceLock}, and never
+ * through a bare delete: acquire is the one writer that reclaims a dead lock, and it re-creates the file
+ * exclusively, thus a contender that reclaimed the same file one moment earlier keeps it. A bare delete
+ * would remove the lock of that live contender.
+ */
+export function liveInstanceLockHolds(prefix: string): readonly InstanceLockHold[] {
+    let names: string[];
+    try {
+        names = readdirSync(env.locksDir);
+    } catch {
+        return []; // No lock directory (or none readable) means that nothing holds a lock.
+    }
+
+    const live: InstanceLockHold[] = [];
+    for (const name of names.sort()) {
+        if (!name.startsWith(prefix) || !name.endsWith(LOCK_SUFFIX)) continue;
+        const key = name.slice(0, name.length - LOCK_SUFFIX.length);
+        const pid = readHolderPid(instanceLockPath(key));
+        if (pid !== null && isPidAlive(pid)) {
+            live.push({ key, pid });
+            continue;
+        }
+        // A dead or corrupt holder is debris. The acquire reclaims it, and the release then removes the
+        // file, because this process owns it at that point.
+        if (acquireInstanceLock(key).acquired) releaseInstanceLock(key);
+    }
+    return live;
 }
 
 /**

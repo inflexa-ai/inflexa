@@ -1,9 +1,9 @@
 import { beforeEach, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { acquireInstanceLock, instanceLockPath, releaseInstanceLock, releaseHeldInstanceLocks } from "./lock.ts";
+import { acquireInstanceLock, instanceLockPath, liveInstanceLockHolds, releaseInstanceLock, releaseHeldInstanceLocks } from "./lock.ts";
 import { env } from "./env.ts";
 import { assertTestSandbox } from "../test_support/sandbox.ts";
 
@@ -85,6 +85,29 @@ test("release leaves a lock we don't own untouched", async () => {
     expect(existsSync(instanceLockPath(key))).toBe(true); // not ours → not deleted
     proc.kill();
     await proc.exited;
+});
+
+test("the live holds of a key family are reported, and a record of a dead process is swept", async () => {
+    // The reclamation of the package store reads a family this way: it waits for each live farm
+    // composition, and it cannot name the analysis ids itself.
+    const prefix = "lock-test-family-";
+    const live = Bun.spawn(["sleep", "60"]);
+    const dead = Bun.spawn(["sleep", "60"]);
+    const deadPid = dead.pid;
+    dead.kill();
+    await dead.exited; // awaited so the child is reaped and process.kill(pid,0) yields ESRCH
+    seedForeignLock(`${prefix}live`, live.pid);
+    seedForeignLock(`${prefix}dead`, deadPid);
+
+    try {
+        expect(liveInstanceLockHolds(prefix)).toEqual([{ key: `${prefix}live`, pid: live.pid }]);
+        expect(existsSync(instanceLockPath(`${prefix}dead`))).toBe(false); // the sweep removed it
+        expect(existsSync(instanceLockPath(`${prefix}live`))).toBe(true);
+    } finally {
+        live.kill();
+        await live.exited;
+        rmSync(instanceLockPath(`${prefix}live`), { force: true });
+    }
 });
 
 test("releaseHeldInstanceLocks drops every lock this process holds", () => {

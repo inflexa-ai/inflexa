@@ -7,8 +7,12 @@
  * subscribes to the flight that is already live and it reports the progress of that flight as its own.
  *
  * A subscription belongs to an analysis. A cancel removes ONE subscription, and the flight stops when
- * none remains. A subscription with no analysis is the plain `inflexa store add` in a terminal: it keeps
- * the flight alive, and it has no farm to extend.
+ * none remains. A subscription with no analysis is `inflexa store add` with no `--analysis`: it keeps the
+ * flight alive, and it has no farm to extend.
+ *
+ * A flight extends NO farm. Each caller extends its own farm when its own call resolves, which `store.ts`
+ * does. An owner that died between the acquisition and the extension would otherwise leave a subscriber
+ * short, and the row that named the subscribers is gone by then. Each caller knows its own analysis.
  *
  * Flights for different keys run at the same time, under a small concurrency cap. The cap is real work
  * protection and not politeness: an R source compile can exhaust the memory of a small machine.
@@ -41,6 +45,7 @@ import {
     subscribeLibStoreFlight,
     unsubscribeLibStoreFlight,
 } from "../../db/primary_mutation.ts";
+import { canonicalDistributionName } from "./composition.ts";
 
 /** The package ecosystems a flight can acquire. The store carries the two tracks, and the key separates them. */
 export type LibStoreEcosystem = "python" | "r";
@@ -126,21 +131,6 @@ export type LibStoreFlightWork<T, E> = (context: {
     readonly onProgress: (line: string) => void;
 }) => Promise<Result<T, E>>;
 
-/**
- * Extend the farm of each subscribing analysis with the closure that a flight acquired.
- *
- * A SEAM and not an import, deliberately. The work belongs to the composition module, and the flight owns
- * the lifecycle only. Thus this module stays about one question — who runs the acquisition, and who waits
- * for it — and a caller that has no farm to extend supplies nothing. `store.ts` supplies the realization
- * at its call site (`extendFarmsForFlight`).
- */
-export type ExtendSubscriberFarms = (params: {
-    /** The spec the flight acquired. */
-    readonly spec: LibStoreFlightSpec;
-    /** The analyses that were subscribed when the flight succeeded. A cancelled subscriber is not here. */
-    readonly analysisIds: readonly string[];
-}) => Promise<void>;
-
 /** The seams a caller can replace. Production passes none; a test shortens the waits and pins the cap. */
 export type LibStoreFlightDeps = {
     /** How many flights run at one time. Default: the configured cap, else {@link DEFAULT_FLIGHT_CONCURRENCY}. */
@@ -181,17 +171,6 @@ const SPECIFIER_START = /^[[<>=!~@;(]/;
 const REQUIREMENT_NAME = /^([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)/;
 
 /**
- * The PEP 503 canonical form of a distribution name: each run of `-`, `_`, and `.` becomes one `-`, and
- * the result is lower case.
- *
- * The provisioner holds the same rule (`emit_deps.py`, `canon`). The two copies must agree, because the
- * flight key and the graph node name describe one distribution.
- */
-export function canonicalDistributionName(name: string): string {
-    return name.replace(/[-_.]+/g, "-").toLowerCase();
-}
-
-/**
  * Read one request from the user as the normalized spec that keys a flight.
  *
  * The name is canonical, thus two spellings of one distribution meet at one flight. Everything after the
@@ -221,11 +200,14 @@ export function parseLibStoreFlightSpec(raw: string, ecosystem: LibStoreEcosyste
 }
 
 /**
- * The key of a flight. The three parts are joined with a character that no part can carry, thus two
- * different specs can never collide on one key.
+ * The key of a flight: the ecosystem, the canonical name, and the specifier, joined with `::`.
+ *
+ * Neither ecosystem permits a colon in a package name, thus the first two occurrences are always the
+ * separators. The key holds no control character. A source file that carries one reads as binary to
+ * `grep` and to `file`. A search on that file then returns nothing, and it gives no warning.
  */
 export function libStoreFlightKey(spec: LibStoreFlightSpec): string {
-    return `${spec.ecosystem} ${spec.name} ${spec.specifier}`;
+    return `${spec.ecosystem}::${spec.name}::${spec.specifier}`;
 }
 
 /** The spec as a user reads it, for a report line: the ecosystem, then the requirement. */
@@ -297,11 +279,6 @@ export async function withLibStoreFlight<T, E>(
          * the same progress as the owner. The owner reports through the work context instead.
          */
         readonly onProgress?: (line: string) => void;
-        /**
-         * Extend the farm of each subscriber on a success. Absent until the composition module lands —
-         * refer to {@link ExtendSubscriberFarms}.
-         */
-        readonly extendSubscriberFarms?: ExtendSubscriberFarms;
     },
     work: LibStoreFlightWork<T, E>,
     deps: LibStoreFlightDeps = {},
@@ -354,14 +331,6 @@ export async function withLibStoreFlight<T, E>(
             // The abort wins over the result of the work, because a container that the abort killed
             // reports a non-zero exit that describes the cancel and not a fault of the acquisition.
             if (controller.signal.aborted) return ok({ type: "canceled", spec: params.spec });
-            // The commit of a successful flight. The subscribers are read BEFORE the row goes away, and a
-            // subscriber that cancelled while the work ran is already out of that set.
-            if (result.isOk() && params.extendSubscriberFarms !== undefined) {
-                const subscribed = listLibStoreFlights()
-                    .unwrapOr([])
-                    .find((entry) => entry.flight.id === id);
-                await params.extendSubscriberFarms({ spec: params.spec, analysisIds: subscribed?.analysisIds ?? [] });
-            }
             return result.map((value) => ({ type: "flew", spec: params.spec, value }) as const);
         } finally {
             clearInterval(watch);

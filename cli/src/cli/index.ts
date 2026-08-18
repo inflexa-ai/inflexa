@@ -831,19 +831,54 @@ export function buildProgram(): Command {
     // The store is bind-mounted read-only at /mnt/libs in every sandbox. There is NO active farm at the
     // store level: each sandbox mounts the farm of its analysis, and composition makes that farm. `add`,
     // `reclaim`, and `remove-farm` mutate the store through the provisioner container, so each is
-    // approval-gated like `sandbox pull`; `ls` only reads the store on the host, so it stays auto.
+    // approval-gated like `sandbox pull`; `ls` only reads the store on the host, so it stays auto, and
+    // `link` only writes symlinks from that pool on the host, so it stays auto too.
     const store = cli.command("store").description("Manage the host package store mounted read-only in sandboxes at /mnt/libs");
 
     // Stays `approval` (not `auto`): `add` starts the network-enabled provisioner container and writes to disk.
+    // `--analysis` rides the same policy: `add` already writes, and the flag only names the farm that the
+    // acquisition extends, so it changes no effect class. A reference that names no analysis is refused
+    // before any container starts.
     registerAction(
         store
             .command("add")
             .description("Acquire Python packages into the store pool. It does no farm work — composition links a farm from the pool")
-            .argument("<packages...>", "Python package specs to add (for example scanpy or 'numpy==1.26.4')"),
+            .argument("<packages...>", "Python package specs to add (for example scanpy or 'numpy==1.26.4')")
+            .option("--analysis <id|name>", "Extend the farm of this analysis with what the acquisition brings"),
         { kind: "approval" },
-        async (packages: string[]) => {
+        async (packages: string[], options: { analysis?: string }) => {
             const { runStoreAdd } = await import("../modules/libs/store.ts");
-            await runStoreAdd(packages);
+            await runStoreAdd(packages, { analysis: options.analysis ?? null });
+        },
+    );
+
+    // `auto` (not `approval`): `link` acquires nothing. It starts no container, it opens no network
+    // connection, and it asks the user for nothing — it reads the dependency graph and writes symbolic
+    // links into the farm of one analysis, from a pool the host already staged under the consent `add`
+    // took. A prompt here would stop a run for work the user already approved, and a step that meets a
+    // missing import would pay that prompt on every retry. `link` is a subcommand and not a flag on `add`
+    // for exactly this reason: an option must never change the effect class of a command.
+    //
+    // `--analysis` is in `safeFlags`, and it is REQUIRED: every invocation sets it, so a policy that left
+    // it out would escalate every call and classify nothing. Each value it can carry names the one farm
+    // that gains the links; no value can make the command acquire, start a container, or open a network
+    // connection. A reference that names no analysis is refused before one link is written.
+    //
+    // The requirement is enforced in the action and NOT by `.requiredOption`. The root declares
+    // `--analysis` too, so commander binds the value to the root and this command's own option stays
+    // undefined until `hydrateFromAncestors` fills it (see cli/agent_policy.ts) — which runs in a
+    // `preAction` hook, after commander has already checked its mandatory options. A `requiredOption`
+    // here could therefore never be satisfied, not even by `inflexa store link polars --analysis x`.
+    registerAction(
+        store
+            .command("link")
+            .description("Link packages the store pool already holds into the farm of an analysis. It acquires nothing — `store add` is the acquisition")
+            .argument("<packages...>", "Package names, each with an optional exact version (for example polars or 'polars==1.2')")
+            .option("--analysis <id|name>", "The analysis whose farm gains the links. It is required, because a link with no farm has no meaning"),
+        { kind: "auto", safeFlags: ["analysis"] },
+        async (packages: string[], options: { analysis?: string }) => {
+            const { runStoreLink } = await import("../modules/libs/store.ts");
+            await runStoreLink(packages, { analysis: options.analysis ?? null });
         },
     );
 

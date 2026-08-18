@@ -12,10 +12,10 @@ import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { env } from "../../lib/env.ts";
 import { LIB_STORE_RECLAIM_LOCK_KEY, instanceLockPath, releaseInstanceLock } from "../../lib/lock.ts";
 import { asStr256 } from "../../lib/types.ts";
+import { canonicalDistributionName } from "./composition.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import {
     cancelLibStoreFlight,
-    canonicalDistributionName,
     libStoreFlightKey,
     parseLibStoreFlightSpec,
     readLibStoreFlights,
@@ -98,6 +98,15 @@ describe("the flight key — the normalized spec", () => {
 
     test("the space of a request is not part of the key", () => {
         expect(libStoreFlightKey(spec("numpy == 1.26.4"))).toBe(libStoreFlightKey(spec("numpy==1.26.4")));
+    });
+
+    // Task 9.5. The three parts join with `::`, and the key holds no control character.
+    test("the three parts join with `::`, and no part of the key is a control character", () => {
+        expect(libStoreFlightKey(spec("numpy==1.26.4"))).toBe("python::numpy::==1.26.4");
+        expect(libStoreFlightKey(spec("scanpy"))).toBe("python::scanpy::");
+        // A control character in the key puts one in the source file that writes it, and `grep` then
+        // reads that file as binary and reports nothing.
+        expect([...libStoreFlightKey(spec("scanpy[leiden]"))].every((character) => character.charCodeAt(0) >= 32)).toBe(true);
     });
 
     test("the ecosystem separates two tracks that carry one name", () => {

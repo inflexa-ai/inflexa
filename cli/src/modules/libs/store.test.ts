@@ -23,7 +23,7 @@ import {
 } from "../../db/primary_mutation.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { asStr256 } from "../../lib/types.ts";
-import { composeFarm, readDepsGraph } from "./composition.ts";
+import { extendFarm, readDepsGraph } from "./composition.ts";
 import { libStoreDownloadPaths } from "./store_download.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import {
@@ -32,10 +32,12 @@ import {
     reclaimPreview,
     reclaimStore,
     removeFarm,
-    extendFarmsForFlight,
+    extendFarmForFlight,
     removeStaleActiveFarmPointer,
+    runStoreAdd,
     runStoreCancel,
     runStoreDownload,
+    runStoreLink,
     runStoreLs,
     type ProvisionerInvocation,
     type ProvisionerRunner,
@@ -124,6 +126,23 @@ function seedAnalysis(name: string): Analysis {
         projectId: null,
     };
     return insertAnalysis(analysis)._unsafeUnwrap();
+}
+
+/**
+ * Give a store root the fixture pool, its graph, and a catalog template farm.
+ *
+ * Composition reads the template for the architecture of the store and for the warm caches, thus a root
+ * with no template composes nothing. The pool itself is the golden fixture of the parity test.
+ */
+function seedComposablePool(root: string): void {
+    cpSync(join(import.meta.dir, "test-fixtures", "farm-parity"), root, { recursive: true });
+    const template = join(root, "farms", "catalog");
+    mkdirSync(join(template, "python", "site-packages"), { recursive: true });
+    writeFileSync(
+        join(template, "lock.json"),
+        JSON.stringify({ requested: ["beta"], resolved: ["beta==0.4.1"], store_dirs: ["alpha-1.2.0-000000000000aaaa", "beta-0.4.1-000000000000bbbb"] }),
+    );
+    writeFileSync(join(template, "meta.json"), JSON.stringify({ version: "catalog", arch: "linux-arm64", tracks: ["python"] }));
 }
 
 describe("provisionPackages — the acquisition path", () => {
@@ -606,6 +625,82 @@ describe("reclaim is exclusive against the live flights", () => {
     });
 });
 
+// --- reclaim against the live farm compositions -------------------------------
+//
+// A composition walks the graph and links what the pool holds, thus a reclaim between the walk and the
+// link would free a store directory that the farm is about to reference. The per-farm lock is the
+// liveness record of a composition, and the reclaim waits for each live holder of that key family.
+
+describe("reclaim is exclusive against the live compositions", () => {
+    /** A live foreign holder of one per-farm key, which is what a composition of another process leaves. */
+    function liveComposition(): { readonly key: string; readonly pid: number; readonly stop: () => Promise<void> } {
+        const holder = Bun.spawn(["sleep", "60"]);
+        const key = `farm-${randomUUIDv7()}`;
+        mkdirSync(dirname(instanceLockPath(key)), { recursive: true });
+        writeFileSync(instanceLockPath(key), String(holder.pid));
+        return {
+            key,
+            pid: holder.pid,
+            stop: async () => {
+                holder.kill();
+                await holder.exited; // awaited so the child is reaped and the pid probe reports it dead
+                rmSync(instanceLockPath(key), { force: true });
+            },
+        };
+    }
+
+    test("a reclaim waits for a live composition, and it deletes only after that composition finishes", async () => {
+        const root = tempStore();
+        mkdirSync(join(root, "store", "orphan-1.0-aaa"), { recursive: true });
+        const composition = liveComposition();
+
+        const { runner, calls } = spyRunner(SUCCESS);
+        const reclaiming = reclaimStore({ storeRoot: root }, { run: runner, ensureImage: async () => ok(undefined), flightWaitMs: 5_000, flightPollMs: 5 });
+        await Promise.sleep(50);
+        // Nothing ran, thus the reclaim freed nothing the composition was about to link.
+        expect(calls).toEqual([]);
+        expect(existsSync(join(root, "store", "orphan-1.0-aaa"))).toBe(true);
+
+        await composition.stop();
+
+        expect((await reclaiming)._unsafeUnwrap().reclaimed).toEqual(["orphan-1.0-aaa"]);
+    });
+
+    test("a live composition holds the reclaim, and it refuses with the pid when the wait runs out", async () => {
+        const root = tempStore();
+        mkdirSync(join(root, "store", "orphan-1.0-aaa"), { recursive: true });
+        const composition = liveComposition();
+
+        try {
+            const { runner, calls } = spyRunner(SUCCESS);
+            const refused = await reclaimStore({ storeRoot: root }, { run: runner, ensureImage: async () => ok(undefined), flightWaitMs: 20, flightPollMs: 5 });
+
+            const error = refused._unsafeUnwrapErr();
+            expect(error.type).toBe("composition_in_flight");
+            expect(error.message).toContain(String(composition.pid));
+            expect(calls).toEqual([]);
+            expect(existsSync(join(root, "store", "orphan-1.0-aaa"))).toBe(true);
+        } finally {
+            await composition.stop();
+        }
+    });
+
+    test("a composition record whose process is gone blocks nothing, and the reclaim sweeps it", async () => {
+        const root = tempStore();
+        mkdirSync(join(root, "store", "orphan-1.0-aaa"), { recursive: true });
+        const composition = liveComposition();
+        await composition.stop();
+        // The record alone, with no live process behind it.
+        writeFileSync(instanceLockPath(composition.key), String(composition.pid));
+
+        const { runner } = spyRunner(SUCCESS);
+        const done = await reclaimStore({ storeRoot: root }, { run: runner, ensureImage: async () => ok(undefined), flightWaitMs: 20, flightPollMs: 5 });
+
+        expect(done._unsafeUnwrap().reclaimed).toEqual(["orphan-1.0-aaa"]);
+        expect(existsSync(instanceLockPath(composition.key))).toBe(false);
+    });
+});
+
 // --- the live-download refusal and the download readout ----------------------
 //
 // A download merges its staged tree into the store root one child at a time, so a provisioning run that
@@ -627,64 +722,86 @@ function seedDownloadLock(pid: number): void {
     writeFileSync(instanceLockPath(LIB_STORE_DOWNLOAD_LOCK_KEY), String(pid));
 }
 
-// --- the farm extension at the flight commit (tasks 4.7, 4.10) ---------------
+// --- the farm extension at the end of a flight (tasks 4.7, 4.10, 9.7) --------
 //
-// `store add` acquires into the pool and does no farm work in the container. The farms change at the
-// COMMIT of the flight: each analysis that subscribed gets the acquired closure linked into its farm. Two
-// identical adds share one flight, thus one acquisition extends both farms.
+// `store add` acquires into the pool and does no farm work in the container. Each CALLER then extends its
+// own farm and no other farm, when its own call resolves. Two identical adds share one flight, thus one
+// acquisition serves both callers, and each of the two extends the farm that it named.
 
-describe("a successful flight extends the farm of each subscriber", () => {
+describe("each caller of a flight extends its own farm", () => {
     const OMEGA = "omega-9.9-0000000000009999";
+    const BETA = "beta-0.4.1-000000000000bbbb";
 
     /** A store root that carries the fixture pool, its graph, and a catalog template farm. */
     function composableStore(): string {
         const root = tempStore();
-        cpSync(join(import.meta.dir, "test-fixtures", "farm-parity"), root, { recursive: true });
-        const template = join(root, "farms", "catalog");
-        mkdirSync(join(template, "python", "site-packages"), { recursive: true });
-        writeFileSync(
-            join(template, "lock.json"),
-            JSON.stringify({ requested: ["beta"], resolved: ["beta==0.4.1"], store_dirs: ["alpha-1.2.0-000000000000aaaa", "beta-0.4.1-000000000000bbbb"] }),
-        );
-        writeFileSync(join(template, "meta.json"), JSON.stringify({ version: "catalog", arch: "linux-arm64", tracks: ["python"] }));
+        seedComposablePool(root);
         return root;
     }
 
-    test("two identical adds share one flight, and both farms hold the acquired package", async () => {
+    /** Give an analysis the farm that its creation makes, so an extension has a farm to reach. */
+    async function seedFarm(root: string, analysisId: string): Promise<void> {
+        expect((await extendFarm({ storeRoot: root, analysisId, roots: [BETA] })).isOk()).toBe(true);
+    }
+
+    /**
+     * Report whether the farm of an analysis links one top-level name.
+     *
+     * `lstat` and not `existsSync`, because a farm link points at `/mnt/libs`, which is the path INSIDE
+     * the sandbox. Each link is thus dangling on the host, and a test that follows one reads every farm
+     * as empty.
+     */
+    function farmLinks(root: string, analysisId: string, name: string): boolean {
+        try {
+            return lstatSync(join(root, "farms", analysisId, "python", "site-packages", name)).isSymbolicLink();
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Drive one caller of `store add`, in the shape `acquireOneSpec` has: read the baseline, fly the
+     * spec, then extend the farm of THIS caller and of no other.
+     */
+    async function addOneSpec(params: {
+        readonly root: string;
+        readonly raw: string;
+        readonly analysisId: string | null;
+        readonly runner: ProvisionerRunner;
+        readonly hold?: Promise<void>;
+    }): Promise<void> {
+        const spec = parseLibStoreFlightSpec(params.raw, "python")._unsafeUnwrap();
+        const baseline = new Set(readDepsGraph(params.root)._unsafeUnwrap().nodes.keys());
+        const outcome = await withLibStoreFlight(
+            { spec, analysisId: params.analysisId },
+            async () => {
+                await params.hold;
+                return provisionPackages({ storeRoot: params.root, specs: [spec.name] }, { run: params.runner, ensureImage: async () => ok(undefined) });
+            },
+            { pollMs: 5 },
+        );
+        expect(outcome.isOk()).toBe(true);
+        if (params.analysisId !== null && outcome.isOk() && outcome.value.type !== "canceled") {
+            await extendFarmForFlight({ storeRoot: params.root, spec, analysisId: params.analysisId, baseline });
+        }
+    }
+
+    test("two identical adds share one flight, and each caller extends the farm that it named", async () => {
         assertTestSandbox(env.locksDir);
         const root = composableStore();
         const first = seedAnalysis("first");
         const second = seedAnalysis("second");
-        // Both analyses ran a sandbox already, thus both own a farm that an extension can reach.
-        for (const analysis of [first, second]) expect((await composeFarm({ storeRoot: root, analysisId: analysis.id })).isOk()).toBe(true);
-        for (const analysis of [first, second]) {
-            expect(existsSync(join(root, "farms", analysis.id, "python", "site-packages", "omega"))).toBe(false);
-        }
+        for (const analysis of [first, second]) await seedFarm(root, analysis.id);
+        for (const analysis of [first, second]) expect(farmLinks(root, analysis.id, "omega")).toBe(false);
 
-        const spec = parseLibStoreFlightSpec("omega", "python")._unsafeUnwrap();
-        const baseline = new Set(readDepsGraph(root)._unsafeUnwrap().nodes.keys());
         const held = Promise.withResolvers<void>();
         const { runner, calls } = spyRunner(SUCCESS);
-        // One flight for each analysis, over one spec. The owner runs the work, and the second call
-        // subscribes to it — thus one provisioner container runs and both farms extend.
-        const flights = [first, second].map((analysis) =>
-            withLibStoreFlight(
-                {
-                    spec,
-                    analysisId: analysis.id,
-                    extendSubscriberFarms: ({ spec: acquired, analysisIds }) =>
-                        extendFarmsForFlight({ storeRoot: root, spec: acquired, analysisIds, baseline }),
-                },
-                async () => {
-                    await held.promise;
-                    return provisionPackages({ storeRoot: root, specs: [spec.name] }, { run: runner, ensureImage: async () => ok(undefined) });
-                },
-                { pollMs: 5 },
-            ),
-        );
+        // One call for each analysis, over one spec. The owner runs the work and the second call
+        // subscribes to it, thus one provisioner container runs. Each call then extends its OWN farm.
+        const adds = [first, second].map((analysis) => addOneSpec({ root, raw: "omega", analysisId: analysis.id, runner, hold: held.promise }));
         await Promise.sleep(40);
         held.resolve();
-        for (const flight of await Promise.all(flights)) expect(flight.isOk()).toBe(true);
+        await Promise.all(adds);
 
         expect(calls).toHaveLength(1);
         expect(calls[0]!.args).toEqual(["omega"]);
@@ -692,25 +809,247 @@ describe("a successful flight extends the farm of each subscriber", () => {
             const link = join(root, "farms", analysis.id, "python", "site-packages", "omega");
             expect(lstatSync(link).isSymbolicLink()).toBe(true);
             expect(readlinkSync(link)).toBe(`/mnt/libs/store/${OMEGA}/omega`);
-            // The extension is additive: the closure of the template is still there.
+            // The extension is additive: what the farm already held is still there.
             expect(lstatSync(join(root, "farms", analysis.id, "python", "site-packages", "beta")).isSymbolicLink()).toBe(true);
         }
     });
 
-    test("a subscriber with no farm gets none, because composition is lazy", async () => {
+    // Task 9.7. The named analysis is the one whose farm grows, and an add that names none grows nothing.
+    test("an add that names an analysis extends that farm, and an add that names none extends no farm", async () => {
         assertTestSandbox(env.locksDir);
         const root = composableStore();
-        const analysis = seedAnalysis("chat only");
+        const named = seedAnalysis("named");
+        const other = seedAnalysis("other");
+        for (const analysis of [named, other]) await seedFarm(root, analysis.id);
+        const { runner } = spyRunner(SUCCESS);
 
-        await extendFarmsForFlight({
+        await addOneSpec({ root, raw: "omega", analysisId: named.id, runner });
+        expect(farmLinks(root, named.id, "omega")).toBe(true);
+        // The farm of the other analysis is untouched: a caller extends its own farm and no other.
+        expect(farmLinks(root, other.id, "omega")).toBe(false);
+
+        await addOneSpec({ root, raw: "gamma", analysisId: null, runner });
+        // The acquisition belongs to no analysis, thus no farm on the machine gained the package.
+        for (const analysis of [named, other]) expect(farmLinks(root, analysis.id, "gamma")).toBe(false);
+    });
+
+    test("an analysis whose farm is absent is skipped, and the extension makes no farm", async () => {
+        assertTestSandbox(env.locksDir);
+        const root = composableStore();
+        const analysis = seedAnalysis("no farm");
+
+        await extendFarmForFlight({
             storeRoot: root,
             spec: parseLibStoreFlightSpec("omega", "python")._unsafeUnwrap(),
-            analysisIds: [analysis.id],
+            analysisId: analysis.id,
             baseline: new Set(),
         });
 
-        // An analysis that started no sandbox owns no farm, and an extension must not make one.
+        // The farm of an analysis is made with the analysis, thus this path links into one and makes none.
         expect(existsSync(join(root, "farms", analysis.id))).toBe(false);
+    });
+
+    // Task 9.4. A `--analysis` that resolves to nothing is a named refusal, before any container starts.
+    test("an `--analysis` that names no analysis is refused, and no flight starts", async () => {
+        assertTestSandbox(env.locksDir);
+        const reported: string[] = [];
+        const originalError = console.error;
+        const originalExitCode = process.exitCode;
+        console.error = (...args: unknown[]): void => void reported.push(args.map(String).join(" "));
+        try {
+            await runStoreAdd(["scanpy"], { analysis: "no-analysis-by-this-name" });
+        } finally {
+            console.error = originalError;
+            // `reportError` marks the process failed, which must not outlive the test that asked for it.
+            process.exitCode = originalExitCode;
+        }
+
+        expect(reported.join("\n")).toContain('No analysis matches "no-analysis-by-this-name"');
+        expect(readLibStoreFlights()).toEqual([]);
+    });
+});
+
+// --- `store link` (tasks 9.1, 9.2, 9.3, 9.6) ---------------------------------
+//
+// `link` is the other half of `add`, and it is a command of its own. It links what the pool already holds
+// into the farm of one analysis: it starts no container, it opens no network connection, and it asks for
+// no consent. The `auto` policy of the command rests on exactly those three facts, thus this block proves
+// each one. The policy itself is pinned in `cli/agent_policy_tree.test.ts`.
+
+describe("store link — it links from the pool, and it acquires nothing", () => {
+    const ALPHA_NEW = "alpha-2.0.0-00000000000a2222";
+    const ALPHA_OLD = "alpha-1.2.0-000000000000aaaa";
+
+    beforeEach(() => {
+        assertTestSandbox(env.libStoreDir);
+        rmSync(env.libStoreDir, { recursive: true, force: true });
+        seedComposablePool(env.libStoreDir);
+    });
+    afterEach(() => {
+        assertTestSandbox(env.libStoreDir);
+        rmSync(env.libStoreDir, { recursive: true, force: true });
+    });
+
+    /**
+     * Run an action with both spawn calls counted.
+     *
+     * A container start goes through `Bun.spawn` (`lib/container.ts`), and so does the detached download.
+     * A count of zero is thus the proof that the action started no provisioner, no engine, and no other
+     * child — and with no child there is no network connection either, because the store opens one only
+     * inside the provisioner container.
+     */
+    async function countSpawns(run: () => Promise<void>): Promise<number> {
+        const spawn = Bun.spawn;
+        const spawnSync = Bun.spawnSync;
+        let spawns = 0;
+        // The two casts keep the overload set of each original, which a plain wrapper signature would
+        // drop. They are sound because each wrapper forwards its arguments to the original unchanged.
+        Bun.spawn = ((...args: Parameters<typeof spawn>) => {
+            spawns += 1;
+            return spawn(...args);
+        }) as typeof spawn;
+        Bun.spawnSync = ((...args: Parameters<typeof spawnSync>) => {
+            spawns += 1;
+            return spawnSync(...args);
+        }) as typeof spawnSync;
+        try {
+            await run();
+        } finally {
+            Bun.spawn = spawn;
+            Bun.spawnSync = spawnSync;
+        }
+        return spawns;
+    }
+
+    /** Run a command action with both streams captured, so the report is assertable and the suite stays quiet. */
+    async function report(run: () => Promise<void>): Promise<string> {
+        const lines: string[] = [];
+        const log = console.log;
+        const error = console.error;
+        const exitCode = process.exitCode;
+        console.log = (...args: unknown[]): void => void lines.push(args.map(String).join(" "));
+        console.error = (...args: unknown[]): void => void lines.push(args.map(String).join(" "));
+        try {
+            await run();
+        } finally {
+            console.log = log;
+            console.error = error;
+            // `reportError` marks the process failed, which must not outlive the test that asked for it.
+            process.exitCode = exitCode;
+        }
+        return lines.join("\n");
+    }
+
+    /** The target of one top-level link of a farm, or `null` when the farm holds no such link. */
+    function linkTarget(analysisId: string, name: string): string | null {
+        try {
+            return readlinkSync(join(env.libStoreDir, "farms", analysisId, "python", "site-packages", name));
+        } catch {
+            return null;
+        }
+    }
+
+    test("a package the pool holds links into the named farm, and no container, no network, and no prompt is reached", async () => {
+        const analysis = seedAnalysis("link target");
+        let output = "";
+        const spawns = await countSpawns(async () => {
+            output = await report(() => runStoreLink(["omega"], { analysis: analysis.id }));
+        });
+
+        expect(linkTarget(analysis.id, "omega")).toBe("/mnt/libs/store/omega-9.9-0000000000009999/omega");
+        expect(output).toContain("Linked omega==9.9");
+        expect(output).toContain('the farm of "link target"');
+        // No child process ran, thus no provisioner container started and nothing reached the network.
+        expect(spawns).toBe(0);
+        // An acquisition is the only path of this module that opens the network, and it takes a flight.
+        expect(readLibStoreFlights()).toEqual([]);
+    });
+
+    test("the closure of the package links too, thus the farm resolves what the package imports", async () => {
+        const analysis = seedAnalysis("link closure");
+        await report(() => runStoreLink(["beta"], { analysis: analysis.id }));
+        // `beta` names `alpha-1.2.0` as an edge, thus the walk links the dependency and not the head of
+        // the `alpha` ordering.
+        expect(linkTarget(analysis.id, "beta")).toBe("/mnt/libs/store/beta-0.4.1-000000000000bbbb/beta");
+        expect(linkTarget(analysis.id, "alpha")).toBe(`/mnt/libs/store/${ALPHA_OLD}/alpha`);
+    });
+
+    // Task 9.2. The emitter settles the order of the versions, thus a request with no version takes the
+    // head of that list and the host compares no two version strings.
+    test("a request with no version takes the head of the ordering, and `==` takes the exact version", async () => {
+        const newest = seedAnalysis("newest");
+        const pinned = seedAnalysis("pinned");
+        await report(() => runStoreLink(["alpha"], { analysis: newest.id }));
+        expect(linkTarget(newest.id, "alpha")).toBe(`/mnt/libs/store/${ALPHA_NEW}/alpha`);
+
+        const output = await report(() => runStoreLink(["alpha==1.2.0"], { analysis: pinned.id }));
+        expect(linkTarget(pinned.id, "alpha")).toBe(`/mnt/libs/store/${ALPHA_OLD}/alpha`);
+        expect(output).toContain("Linked alpha==1.2.0");
+    });
+
+    // Task 9.3. A package the pool does not hold is a refusal that names the package and the remedy.
+    test("a package the pool does not hold refuses, names it, and names the acquisition command", async () => {
+        const analysis = seedAnalysis("absent package");
+        const output = await report(() => runStoreLink(["polars"], { analysis: analysis.id }));
+
+        expect(output).toContain('holds nothing named "polars"');
+        expect(output).toContain("inflexa store add polars");
+        // The whole call resolves before one link is written, thus the farm was never made.
+        expect(existsSync(join(env.libStoreDir, "farms", analysis.id))).toBe(false);
+    });
+
+    // Task 9.3. An R package carries a reason of its own, because this store acquires none at all. A
+    // generic "not found" would send a person, or an agent, around the same loop for ever.
+    test("an R package the pool does not hold says that no retry succeeds", async () => {
+        const analysis = seedAnalysis("absent r package");
+        const output = await report(() => runStoreLink(["rpkga==9.9"], { analysis: analysis.id }));
+
+        expect(output).toContain('R package "rpkga"');
+        expect(output).toContain("no retry");
+        // It still names what the pool does hold, so the reader can link that version instead.
+        expect(output).toContain("1.0");
+        expect(existsSync(join(env.libStoreDir, "farms", analysis.id))).toBe(false);
+    });
+
+    // Task 9.2 and 9.3. A version the pool does not hold names the versions that it does hold, and a
+    // Python package carries no R reason, because a retry of it can succeed.
+    test("a version the pool does not hold names the versions that it holds", async () => {
+        const analysis = seedAnalysis("absent version");
+        const output = await report(() => runStoreLink(["alpha==9.9"], { analysis: analysis.id }));
+
+        expect(output).toContain("no version 9.9");
+        expect(output).toContain("2.0.0");
+        expect(output).toContain("1.2.0");
+        expect(output).toContain("inflexa store add alpha==9.9");
+        expect(output).not.toContain("no retry");
+    });
+
+    test("one package the pool does not hold refuses the whole call, thus the farm keeps exactly what it had", async () => {
+        const analysis = seedAnalysis("mixed call");
+        await report(() => runStoreLink(["omega"], { analysis: analysis.id }));
+        const output = await report(() => runStoreLink(["alpha", "polars"], { analysis: analysis.id }));
+
+        expect(output).toContain("polars");
+        expect(linkTarget(analysis.id, "alpha")).toBeNull();
+        expect(linkTarget(analysis.id, "omega")).toBe("/mnt/libs/store/omega-9.9-0000000000009999/omega");
+    });
+
+    // Task 9.1. A link with no farm has no meaning, thus a call that names no analysis refuses. The root
+    // command declares `--analysis` too, so commander cannot make the flag mandatory here — refer to the
+    // registration in `cli/index.ts` — and the action itself is what refuses.
+    test("a call that names no analysis refuses, and it links nothing", async () => {
+        const spawns = await countSpawns(async () => {
+            const output = await report(() => runStoreLink(["omega"], { analysis: null }));
+            expect(output).toContain("--analysis <id|name>");
+        });
+        expect(spawns).toBe(0);
+        expect(readdirSync(join(env.libStoreDir, "farms"))).toEqual(["catalog"]);
+    });
+
+    test("an `--analysis` that names no analysis refuses before the pool is read", async () => {
+        const output = await report(() => runStoreLink(["omega"], { analysis: "no-analysis-by-this-name" }));
+        expect(output).toContain('No analysis matches "no-analysis-by-this-name"');
+        expect(readdirSync(join(env.libStoreDir, "farms"))).toEqual(["catalog"]);
     });
 });
 

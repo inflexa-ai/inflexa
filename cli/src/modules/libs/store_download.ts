@@ -16,9 +16,9 @@
  * run repairs it.
  *
  * The catalog farm arrives as a TEMPLATE and never as an active environment. No pointer selects a farm
- * at the store level, because each sandbox mounts the farm of its own analysis. Composition reads the
- * lock of the template for the default closure, and it links the warm caches of the template into each
- * analysis farm.
+ * at the store level, because each sandbox mounts the farm of its own analysis. The template holds the
+ * one prepared cache of the store, and composition links that cache into each analysis farm. A farm takes
+ * its packages from what a caller names, and never from the template.
  *
  * The activation MERGES the staged tree into the store root, and it removes nothing. The root is shared
  * with `inflexa store add`, which acquires into the same `store/` pool, and with composition, which
