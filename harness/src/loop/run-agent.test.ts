@@ -8,7 +8,7 @@ import { isInterruptedMessage, isSyntheticUserMessage } from "../memory/ai-sdk-m
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatResponse } from "../providers/types.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
-import { defineTool, withToolResultImage, type Tool } from "../tools/define-tool.js";
+import { defineTool, withToolResultImage, withToolResultImages, type Tool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, thinkingBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { runAgent, type RunAgentOptions } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
@@ -445,6 +445,23 @@ function eyesTool(): Tool {
     });
 }
 
+/** An `eyes` tool that returns two slices beside its JSON faults, in document order. */
+function slicingEyesTool(): Tool {
+    return defineTool({
+        id: "eyes",
+        description: "Look at a tall page and give its slices in document order.",
+        inputSchema: z.object({}),
+        describeCall: "none",
+        execute: async () =>
+            ok(
+                withToolResultImages({ faults: ["boom"] }, [
+                    { base64: "TILE-ONE", mediaType: "image/png" },
+                    { base64: "TILE-TWO", mediaType: "image/png" },
+                ]),
+            ),
+    });
+}
+
 describe("runAgent — a picture on a tool result", () => {
     it("splits a picture-bearing result into a JSON text part and an image part when the wire carries a picture", async () => {
         const provider = imagingProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
@@ -464,6 +481,22 @@ describe("runAgent — a picture on a tool result", () => {
         expect(filePart.data).toEqual({ type: "data", data: "PNGBYTES" });
     });
 
+    it("carries every slice of a multi-picture result on the tool result, in document order", async () => {
+        const provider = imagingProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages } = await runAgent(agentDef([slicingEyesTool()]), GO, makeSession(), opts(provider));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.output).toEqual({
+            type: "content",
+            value: [
+                { type: "text", text: JSON.stringify({ faults: ["boom"] }) },
+                { type: "file", mediaType: "image/png", data: { type: "data", data: "TILE-ONE" } },
+                { type: "file", mediaType: "image/png", data: { type: "data", data: "TILE-TWO" } },
+            ],
+        });
+    });
+
     it("drops the picture and keeps the JSON text when the wire carries none, and records the drop", async () => {
         const logger = createCapturingLogger();
         // The default scripted provider states no picture capability, thus the wire carries none.
@@ -480,6 +513,22 @@ describe("runAgent — a picture on a tool result", () => {
         expect(messages.filter((m) => m.role === "user")).toEqual([...GO]);
         // The drop rides the log, thus an operator sees that the picture did not reach the model.
         expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("carries no picture"))).toBe(true);
+    });
+
+    it("drops every slice of a multi-picture result with one warn that carries the count", async () => {
+        const logger = createCapturingLogger();
+        // The default scripted provider states no picture capability, thus the wire carries none.
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages } = await runAgent(agentDef([slicingEyesTool()]), GO, makeSession(), opts(provider, { logger }));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.output).toEqual({ type: "json", value: { faults: ["boom"] } });
+        expect(JSON.stringify(messages)).not.toContain("TILE-ONE");
+        // One warn accounts for the whole result, and the count says how many pictures the model lost.
+        const warns = logger.records.filter((r) => r.level === "warn" && r.msg.includes("carries no picture"));
+        expect(warns).toHaveLength(1);
+        expect(warns[0]!.fields["imageCount"]).toBe(2);
     });
 
     it("encodes a payload-free result as a plain JSON part, byte-identical to today", async () => {
@@ -543,6 +592,24 @@ describe("runAgent — a picture on a user message", () => {
         expect(userParts(messages[3])).toEqual([
             { type: "text", text: "The picture of the tool result tu-1 of eyes." },
             { type: "file", mediaType: "image/png", data: { type: "data", data: "PNGBYTES" } },
+        ]);
+    });
+
+    it("carries every slice of a multi-picture result in the fallback message, with a numbered label on each", async () => {
+        const provider = fallbackImagingProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages } = await runAgent(agentDef([slicingEyesTool()]), GO, makeSession(), opts(provider));
+
+        // [user, assistant(tool-call), tool(result), user(2 pictures), assistant(text)]
+        expect(messages).toHaveLength(5);
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.output).toEqual({ type: "json", value: { faults: ["boom"] } });
+        // The labels number the slices, thus the model reads which slice each picture is.
+        expect(userParts(messages[3])).toEqual([
+            { type: "text", text: "The picture 1 of 2 of the tool result tu-1 of eyes." },
+            { type: "file", mediaType: "image/png", data: { type: "data", data: "TILE-ONE" } },
+            { type: "text", text: "The picture 2 of 2 of the tool result tu-1 of eyes." },
+            { type: "file", mediaType: "image/png", data: { type: "data", data: "TILE-TWO" } },
         ]);
     });
 

@@ -27,7 +27,7 @@ import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/p
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
-import { isToolError, readToolResultImage, type Tool, type ToolContext, type ToolResultImage } from "../tools/define-tool.js";
+import { isToolError, readToolResultImages, type Tool, type ToolContext, type ToolResultImage } from "../tools/define-tool.js";
 import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
@@ -631,18 +631,18 @@ function imagePlacementFor(capabilities: ProviderCapabilities): ImagePlacement {
     return "drop";
 }
 
-/** A picture that a tool result cannot carry, with the tool call that produced it. */
-interface DeferredImage {
+/** The pictures that a tool result cannot carry, with the tool call that produced them. */
+interface DeferredImages {
     readonly toolCallId: string;
     readonly toolName: string;
-    readonly image: ToolResultImage;
+    readonly images: readonly ToolResultImage[];
 }
 
 /**
  * How a completed tool result is encoded onto the provider message. `placement`
- * says where the picture of a tool result goes, and `log` is the diagnostic sink
+ * says where the pictures of a tool result go, and `log` is the diagnostic sink
  * of one dispatch: the record of a dropped picture, and the record of a result
- * description that failed. `deferredImages` collects the picture of each tool
+ * description that failed. `deferredImages` collects the pictures of each tool
  * result of the round under the user-message placement, and the round assembly
  * empties it.
  *
@@ -659,7 +659,18 @@ interface DeferredImage {
 interface ResultEncoding {
     readonly placement: ImagePlacement;
     readonly log: Logger;
-    readonly deferredImages: DeferredImage[];
+    readonly deferredImages: DeferredImages[];
+}
+
+/**
+ * The text part that names one deferred picture. The wire holds no structural
+ * link between a user message and a tool call, thus the line names the call. A
+ * result with several pictures numbers each one, thus the model reads which
+ * slice it looks at.
+ */
+function deferredImageLabel(deferred: DeferredImages, index: number): string {
+    const call = `the tool result ${deferred.toolCallId} of ${deferred.toolName}`;
+    return deferred.images.length === 1 ? `The picture of ${call}.` : `The picture ${index + 1} of ${deferred.images.length} of ${call}.`;
 }
 
 /**
@@ -669,24 +680,27 @@ interface ResultEncoding {
  * The tool message must come directly after the assistant message with the
  * tool calls. Thus a picture rides a separate message after the whole tool
  * message, and one message batches the round. The parts obey the order of
- * `results`, which is the order of the tool calls. Each deferred picture has a
- * result of this round, because the collector fills during the dispatch and it
- * empties here. A text part names the tool call of each picture, because the wire
- * holds no structural link between a user message and a tool call.
+ * `results`, which is the order of the tool calls, and the pictures of one
+ * result keep the order that the tool gave. Each deferred picture has a result
+ * of this round, because the collector fills during the dispatch and it empties
+ * here. A text part names the tool call of each picture, because the wire holds
+ * no structural link between a user message and a tool call.
  *
  * The message carries the synthetic marker, because a `user` message opens a
  * conversation turn. An unmarked one is loop machinery that reads as a turn
  * boundary, and it splits one stored turn in two.
  */
-function appendDeferredImages(messages: LoopMessage[], results: readonly ToolResultPart[], deferredImages: DeferredImage[]): void {
+function appendDeferredImages(messages: LoopMessage[], results: readonly ToolResultPart[], deferredImages: DeferredImages[]): void {
     if (deferredImages.length === 0) return;
     const byToolCallId = new Map(deferredImages.map((deferred) => [deferred.toolCallId, deferred]));
     const content: (TextPart | FilePart)[] = [];
     for (const result of results) {
         const deferred = byToolCallId.get(result.toolCallId);
         if (deferred === undefined) continue;
-        content.push({ type: "text", text: `The picture of the tool result ${deferred.toolCallId} of ${deferred.toolName}.` });
-        content.push({ type: "file", mediaType: deferred.image.mediaType, data: { type: "data", data: deferred.image.base64 } });
+        for (const [index, image] of deferred.images.entries()) {
+            content.push({ type: "text", text: deferredImageLabel(deferred, index) });
+            content.push({ type: "file", mediaType: image.mediaType, data: { type: "data", data: image.base64 } });
+        }
     }
     messages.push(syntheticUserMessage(content));
     deferredImages.length = 0;
@@ -859,15 +873,16 @@ function jsonValue(value: unknown) {
  * Encode a tool ok value onto a tool-result message. A value with no picture
  * stays a plain JSON result, byte-identical to a value that never carried one.
  *
- * A value that carries a picture splits: the JSON data goes to a text part, and
- * the bytes ride as an image content block. Thus the model sees the picture, and
- * the JSON text holds no bytes. When the wire carries no picture, the block drops
- * and the text stays, because base64 text floods the context and the model cannot
- * see it. The drop rides the log, thus an operator sees that the picture did not
- * reach the model.
+ * A value that carries pictures splits: the JSON data goes to a text part, and
+ * the bytes ride as image content blocks after it, in the order that the tool
+ * gave. Thus the model sees each picture, and the JSON text holds no bytes. When
+ * the wire carries no picture, the blocks drop and the text stays, because
+ * base64 text floods the context and the model cannot see it. One warn with the
+ * count rides the log, thus an operator sees how many pictures did not reach the
+ * model.
  *
  * A wire that renders a picture on a user message only gets the fallback: the
- * result keeps its JSON text, and the picture goes to the collector of the round.
+ * result keeps its JSON text, and the pictures go to the collector of the round.
  * The round then sends the bytes after the tool message.
  */
 function successResult(toolCall: ToolCallPart, value: unknown, encoding: ResultEncoding): ToolResultPart {
@@ -878,14 +893,17 @@ function successResult(toolCall: ToolCallPart, value: unknown, encoding: ResultE
         toolName: toolCall.toolName,
         output: { type: "json", value: jsonData },
     };
-    const image = readToolResultImage(value);
-    if (image === undefined) return jsonOnly;
+    const images = readToolResultImages(value);
+    if (images.length === 0) return jsonOnly;
     if (encoding.placement === "drop") {
-        encoding.log.warn("the wired provider carries no picture in a tool result, thus the picture is dropped", { toolName: toolCall.toolName });
+        encoding.log.warn("the wired provider carries no picture in a tool result, thus the pictures are dropped", {
+            toolName: toolCall.toolName,
+            imageCount: images.length,
+        });
         return jsonOnly;
     }
     if (encoding.placement === "user-message") {
-        encoding.deferredImages.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, image });
+        encoding.deferredImages.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, images });
         return jsonOnly;
     }
     return {
@@ -896,7 +914,7 @@ function successResult(toolCall: ToolCallPart, value: unknown, encoding: ResultE
             type: "content",
             value: [
                 { type: "text", text: JSON.stringify(jsonData) },
-                { type: "file", mediaType: image.mediaType, data: { type: "data", data: image.base64 } },
+                ...images.map((image) => ({ type: "file" as const, mediaType: image.mediaType, data: { type: "data" as const, data: image.base64 } })),
             ],
         },
     };
