@@ -55,10 +55,18 @@ directories there. A cache key holds the container path of the source, and every
 farm resolves one distribution at one container path. Thus one preparation serves
 each farm that links the package.
 
-An acquisition run MUST warm into that home, and not into the farm that it bound
-for the run. The import path sets the cache key, and the cache path sets where an
-entry lands. Thus the run binds a farm that holds the new package, and it points
-the cache at the home.
+An acquisition MUST prepare no cache. A cache entry of numba keys on the type
+signature of a CALL, and an import supplies no signature. Thus a package that
+nobody wrote a workload for has nothing to run: an import prepares each kernel
+that the package declares with a signature, and no other. A person wrote the
+workload of the catalog, and it calls the entry points that an analysis reaches.
+No such script exists for an arbitrary package.
+
+Only the farm that holds the shared cache home MUST be prepared. The entries land
+in that home, and the record of the run lands in the lock of the farm that the run
+prepared. The two coincide for that one farm alone. A run against another farm
+MUST refuse, and it MUST name both farms. A record beside another farm would
+describe a cache that the farm does not carry.
 
 Cache preparation MUST run against the same container path that the sandbox
 imports from, because a cache key holds the source path. Preparation MUST execute
@@ -66,10 +74,6 @@ a workload, and it MUST NOT import modules only, because a call starts a
 compilation and an import does not. The provisioner MUST record the workload that
 it executed. The effectiveness check MUST replay exactly that recording, because
 another workload exercises an unprepared call signature.
-
-An acquisition run MUST prepare what it acquired. A distribution that reaches the
-pool after the catalog build would otherwise carry no prepared entry. Thus its
-compiled kernels build again at each first call, on each machine.
 
 The run MUST also record the cache entries that it prepared. A kernel whose
 signature holds a type that cannot pickle never matches its index again. Thus it
@@ -99,11 +103,17 @@ not a cache that is one entry short.
 - **WHEN** each mounts its own farm and runs the prepared workload
 - **THEN** both load the entries of that store directory, and neither prepares them again
 
-#### Scenario: An acquisition prepares what it acquired
+#### Scenario: An acquisition prepares no cache
 
 - **GIVEN** an acquisition run that adds a distribution to the pool
 - **WHEN** the run completes
-- **THEN** the shared cache home holds the prepared entries of that distribution
+- **THEN** it starts no workload, and it writes no cache entry
+
+#### Scenario: A preparation of another farm refuses
+
+- **GIVEN** a preparation run against a farm that does not hold the shared cache home
+- **WHEN** the run starts
+- **THEN** it refuses, it names both farms, and it runs no workload
 
 #### Scenario: A kernel that cannot cache does not fail the check
 

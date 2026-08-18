@@ -35,10 +35,10 @@ and the companion CLI change specifies exactly that. The two disagree today.
   later sandbox. An extension of the farm of an analysis reaches the live
   sandbox of that analysis, and the next import resolves it. The refusal that
   stays is the one that was always true: a step installs nothing itself.
-- An **acquisition warms what it acquires**, into the one cache home that every
-  farm already links. A numba key holds the container path, and every farm
-  resolves one package at that same path. Thus one preparation serves each farm
-  that links the package, and no cache moves.
+- An **acquisition prepares no cache**. A numba entry keys on the type signature
+  of a call, and an import supplies none. Thus a package that nobody wrote a
+  workload for has nothing to run. Only the farm that holds the shared cache home
+  can be prepared, and a run against another farm refuses.
 - The **dependency graph records a version ordering**. The emitter runs where
   `packaging` and R already are, thus it records the store directories of one
   canonical name newest-first. A caller that names no version takes the head. A

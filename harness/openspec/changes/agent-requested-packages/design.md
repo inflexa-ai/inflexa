@@ -83,27 +83,49 @@ A request that names a version takes the form of a requirement, for example
 `polars==1.2`. One parser reads it, thus the tool, the flight key, and the
 command share one grammar.
 
-### D4 — One warm serves every farm, through the home that already exists
+### D4 — An acquisition prepares no cache, because it has no workload
 
 Every analysis farm links its cache directories into the catalog template farm
 (`composition.ts:911`). Thus one shared home already exists, and nothing moves.
 
-An acquisition warms into that home. Two independent values make this work: the
-import path sets the cache key, and the cache path sets where an entry lands. So
-a preparation run binds a farm that holds the new package at `/mnt/libs/current`,
-and it points `NUMBA_CACHE_DIR` at the shared home.
+An acquisition adds nothing to that home. A numba entry is not "the compiled
+package". It is one function, compiled for one concrete argument type set, and the
+type set comes from a CALL. An import builds a `Dispatcher` and stops.
 
-Fact 3 of the Context is why one entry serves every farm. A farm resolves one
-distribution at one container path, thus the key is the same everywhere. The
-entrypoint then copies the home to a writable path, because numba selects a cache
+Measured in `sandbox-python`, with two functions that differ only in the
+signature: after decoration alone, the cache holds 2 files, and both belong to the
+function that declares `"float64(float64)"`. One call of the undeclared function
+adds 2 more. A second call of it at `int64` adds 1 more, because a second type is
+a second entry.
+
+Thus a warm of an arbitrary package prepares each kernel that the package declares
+with a signature, and no other. `images/lib-store-warm.py` is what a real warm
+takes: 200 lines that a person wrote, which build a float32 CSR matrix and call
+the entry points that a first analysis reaches. Its own comment records the trap —
+"a float64 matrix prepares an entry that no analysis loads". No such script exists
+for a package that nobody saw before.
+
+Fact 3 of the Context still holds for the catalog: a farm resolves one
+distribution at one container path, thus one prepared entry serves every farm. The
+entrypoint copies the home to a writable path, because numba selects a cache
 directory by a write probe and skips a read-only one.
 
-Alternative — a cache for each farm: rejected. Ten analyses that add one package
-would each compile it, and each cache would die with its analysis.
+Only the farm that holds the shared home can be prepared. The entries land in the
+home, and the record lands in the lock of the prepared farm. The two coincide for
+that farm alone, thus a run against another farm refuses and names both.
+
+Alternative — warm at acquisition with the import names of the graph: rejected. It
+costs a container start and a scratch farm, and it prepares nothing for a lazily
+compiled kernel, which is the case that matters.
 
 Alternative — a cache keyed by the store directory, beside the pool: rejected. It
 relocates every cache to solve a problem that the existing shared home already
 solves.
+
+A cache that grows from a real run is the only warm that can ever be complete,
+because the workload is then the analysis itself. That is its own change, and it
+turns on where the harvested entries can land: a sandbox runs agent-generated
+code, and a `.nbc` file is machine code that a later sandbox executes.
 
 ### D5 — The version ordering ships in the graph
 

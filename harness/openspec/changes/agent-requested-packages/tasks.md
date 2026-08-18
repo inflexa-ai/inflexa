@@ -9,13 +9,14 @@
 - [x] 1.5 Raise the schema version of the graph, and refuse a graph whose version this reader does not know
 - [x] 1.6 Do a test: three versions of one name order newest-first, and 1.10.3 comes before 1.9.0
 
-## 2. The warm of an acquisition
+## 2. The one home of a prepared cache
 
 - [x] 2.1 Point the cache of a preparation run at the shared home, and not at the farm that the run bound
-- [x] 2.2 Make an acquisition run warm what it acquired, with a farm that holds the new package bound at the container path
+- [x] 2.2 Remove the warm of an acquisition. A numba entry keys on the type signature of a call, and an import gives none
 - [x] 2.3 Keep the refusal of a run that builds a farm and warms it together, because a publish supersedes the bound directory
-- [x] 2.4 Do a test: the warm of an acquisition writes into the shared home, and not into the farm that it bound
-- [x] 2.5 Do a test: a package acquired after the catalog build loads its prepared entries in a second farm
+- [x] 2.4 Refuse a preparation run of a farm that does not hold the shared cache home, and name both farms
+- [x] 2.5 Do a test: an acquisition starts no workload, and a preparation of another farm refuses
+- [ ] 2.6 Do a pass over `images/lib-store-warm.py`: make sure that each call is idiomatic, and that it reaches the kernels a first analysis compiles. It is the one workload of the store, thus its coverage is the whole prepared cache
 
 ## 3. The farm-extension seam
 
@@ -42,6 +43,7 @@
 - [x] 5.2 State in the planner prompt that it names the packages of each step, and that it names no location
 - [x] 5.3 Make `validate_plan` refuse a package name that is not a requirement
 - [x] 5.4 Do a test: a plan carries the packages of each step, and a malformed name is refused
+- [x] 5.5 Make `execute_analysis` link the packages of the plan before the launch, and refuse a launch that the pool cannot answer
 
 ## 6. The effectiveness check through the entrypoint
 
@@ -54,7 +56,5 @@
 
 - [ ] 7.1 Correct the `lib-store` claim that a store change reaches only a later sandbox, and keep the refusal of an in-sandbox install
 - [ ] 7.2 Make sure that the `per-analysis-farm-mount` deltas still hold beside these deltas, and adjust where they disagree
-- [ ] 7.4 Decide where a preparation run writes its record, and guard it. The entries land in
-      `cache_home()`, the record lands in the lock of the prepared farm, and the two coincide only
-      when that farm is the catalog. A preparation of another farm splits them, and nothing refuses it.
+- [x] 7.4 Guard where a preparation run writes its record. Only the farm that holds the shared cache home can be prepared
 - [ ] 7.3 Run `openspec validate agent-requested-packages --strict` and resolve each finding

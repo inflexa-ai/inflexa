@@ -79,11 +79,12 @@ The graph gives no edge for a requirement under an extra, because the emitter ev
 - **WHEN** the CLI reads the plan
 - **THEN** it links that package and its closure into the farm, and it asks the user for nothing
 
-#### Scenario: A planned package that the pool lacks asks the user
+#### Scenario: A planned package that the pool lacks refuses the run
 
 - **GIVEN** a plan that names a package which the pool does not hold
 - **WHEN** the CLI reads the plan
-- **THEN** it asks the user to install it, and the run waits on that answer
+- **THEN** the run does not start, and the refusal names each missing package and the remedy `inflexa store add`
+- **AND** a run of the same plan starts clean after the acquisition, because the refusal reserved nothing
 
 #### Scenario: A step reaches what the plan missed
 
@@ -120,7 +121,7 @@ A version collision MUST refuse with names. When a new link and an existing link
 
 Composition MUST link the prepared cache directories of the catalog template farm — the numba cache and the matplotlib configuration — into each analysis farm. It MUST NOT copy them. A cache entry that does not match the package version of a farm misses and recompiles, which is safe.
 
-The template farm is thus the one home of a prepared cache. An acquisition MUST warm into that same home, thus one warm serves each farm that links the package. A cache for each farm would compile one package again for each analysis that adds it.
+The template farm is thus the one home of a prepared cache, and one prepared entry serves each farm that links the package. An acquisition MUST prepare no cache: a numba entry keys on the type signature of a call, and an import supplies none.
 
 #### Scenario: The caches are shared by link
 

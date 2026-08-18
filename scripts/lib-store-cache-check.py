@@ -17,7 +17,7 @@ the cache never matches that entry again. No workload prevents such a write, and
 list of names stays true across a package update. The record answers both: an entry
 that no run reuses never enters it, thus a write outside the record fails nothing.
 
-The invoker gives three mounts, and the entrypoint of the image does the rest:
+The invoker gives three mounts:
 
   - the store root, read-only at /mnt/libs, because a farm link is an absolute path
     into /mnt/libs/store
@@ -27,11 +27,12 @@ The invoker gives three mounts, and the entrypoint of the image does the rest:
 
 The store is read-only, and numba skips a cache directory that it cannot write to,
 for a read as much as for a write. Thus the caches move to a writable path before a
-workload starts, and `seed_caches` in the entrypoint of the image is the only code
-that does it. This program copies no cache, because a check that seeds the caches
-with its own commands proves nothing about that code. The entrypoint reads
-SANDBOX_ENTRYPOINT_COMMAND, which puts this program in the place of sandbox-server,
-thus the seed runs first and it names NUMBA_CACHE_DIR.
+workload starts, and `seed_caches` is the only code that does it. It lives in the
+image file `/usr/local/bin/inflexa-seed-caches`, which the entrypoint sources before
+it starts the server. This program copies no cache, because a check that seeds the
+caches with its own commands proves nothing about that code. The invoker overrides
+the entrypoint, sources that same file, calls `seed_caches`, and then starts this
+program. Thus the seed runs first, and it names NUMBA_CACHE_DIR.
 
 A composed farm carries its cache directories as links into the catalog farm, which
 is the one home of every prepared cache. It also carries a lock of its own, and that
@@ -44,8 +45,8 @@ Usage, with `sandbox-base` as the image and this file bound into it:
         -v <store root>:/mnt/libs:ro \\
         -v <composed farm>:/mnt/libs/current:ro \\
         -v <this file>:/opt/lib-store-cache-check.py:ro \\
-        -e SANDBOX_ENTRYPOINT_COMMAND='python3 /opt/lib-store-cache-check.py' \\
-        <sandbox image>
+        --entrypoint /bin/sh <sandbox image> -c \\
+        '. /usr/local/bin/inflexa-seed-caches; seed_caches; python3 /opt/lib-store-cache-check.py'
 
 The exit code is the gate:
 

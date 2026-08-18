@@ -11,10 +11,16 @@ runtime user, against the read-only store. It MUST load every cache entry that
 the preparation run recorded. A run that writes a new cache entry for a prepared
 code path MUST fail the check.
 
-The check MUST start the entrypoint of the image, and it MUST NOT copy the caches
-itself. The entrypoint is the only code that a sandbox runs for this step. A
-check that seeds the caches by its own commands proves nothing about that code.
-It stays green while a real sandbox compiles from cold.
+The check MUST source the seed file of the image, and it MUST NOT copy the caches
+itself. The seed file, `inflexa-seed-caches`, holds the one seed code that a
+sandbox runs: the entrypoint of the image sources the same file before it starts
+the server. A check that seeds the caches by its own commands proves nothing about
+that code. It stays green while a real sandbox compiles from cold.
+
+The entrypoint holds one workload, and it is not the check. Thus the check
+overrides the entrypoint, sources the seed file from the image, and then runs its
+own program. An image without the seed file MUST fail the check at the source, with
+the missing path named.
 
 The check MUST read a composed farm, and not the catalog farm alone. A composed
 farm holds its cache directories as links into the prepared entries. The catalog
@@ -52,15 +58,15 @@ catalog artifact, because that artifact is the publish which reaches a user.
 - **WHEN** the verification workload runs
 - **THEN** the check observes a load for each recorded entry, and it passes
 
-#### Scenario: The entrypoint of the image does the seeding
+#### Scenario: The seed file of the image does the seeding
 
 - **GIVEN** the runtime image and a farm that carries prepared caches
 - **WHEN** the check runs
-- **THEN** it starts the image through its own entrypoint, and it copies no cache itself
+- **THEN** it sources the seed file from the image, and it copies no cache itself
 
-#### Scenario: A broken entrypoint seed fails the build
+#### Scenario: A broken seed fails the build
 
-- **GIVEN** an entrypoint that copies no cache to a writable path
+- **GIVEN** a seed file that copies no cache to a writable path
 - **WHEN** the check runs
 - **THEN** the check observes cache writes at run time and fails
 
