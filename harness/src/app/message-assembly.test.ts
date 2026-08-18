@@ -16,14 +16,7 @@ function stubHistory(window: MessageParam[]): ThreadHistory {
     return {
         appendTurn: () => okAsync(undefined),
         loadRecent: () => okAsync(window),
-        loadPage: () =>
-            okAsync({
-                messages: [],
-                total: 0,
-                page: 0,
-                perPage: 40,
-                hasMore: false,
-            }),
+        loadAll: () => okAsync([]),
     };
 }
 

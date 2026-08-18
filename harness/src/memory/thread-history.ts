@@ -55,7 +55,7 @@ interface MessageRow {
     readonly tokens: number;
 }
 
-/** One stored message, as returned by the display read (`loadPage`). */
+/** One stored message, as returned by the display read (`loadAll`). */
 export interface StoredMessage {
     readonly seq: number;
     readonly envelope: StoredMessageEnvelope;
@@ -135,19 +135,6 @@ export function conversationRecordTurn(text: string): ConversationTurn {
 }
 
 /**
- * A page of stored messages plus pagination metadata. Pagination is
- * turn-based: `total` is the thread's turn count and `page`/`perPage` index
- * turns, while `messages` is the flattened rows of the page's turns.
- */
-export interface MessagePage {
-    readonly messages: StoredMessage[];
-    readonly total: number;
-    readonly page: number;
-    readonly perPage: number;
-    readonly hasMore: boolean;
-}
-
-/**
  * The result of `retractLastTurn`. `retracted` carries `messages` — the number
  * of rows removed — so a caller can assert exactly what came off the tail. The
  * other two variants delete nothing and are distinct on purpose: `empty-thread`
@@ -202,30 +189,21 @@ export interface ThreadHistory {
      */
     loadRecent(threadId: string, tokenBudget: number, options?: LoadRecentOptions): ResultAsync<ModelMessage[], DbError>;
     /**
-     * Return one page of a thread's messages oldest-first for UI display —
-     * NOT token-windowed (that is `loadRecent`'s job for the agent loop). No
-     * eviction. Paginated by whole turns: `page`, `perPage`, and `total` count
-     * turns, not rows, so a multi-row turn always reloads intact. `messages`
-     * holds the flattened rows of the selected turns.
-     */
-    loadPage(threadId: string, page: number, perPage: number): ResultAsync<MessagePage, DbError>;
-    /**
-     * Return a thread's ENTIRE transcript oldest-first, grouped into turns — the
-     * unwindowed form of `loadPage`, and not token-windowed (that is
-     * `loadRecent`'s job for the agent loop).
+     * Return a thread's messages oldest-first for UI display, grouped into turns.
+     * NOT token-windowed — that is `loadRecent`'s job for the agent loop — and no
+     * eviction.
+     *
+     * There is no paginated form, because a page could never cost less: the read
+     * selects and parses every row of the thread and would slice only afterwards,
+     * so a page saves no query and no parse. It would only truncate the answer,
+     * which is a way to lose turns and not a way to save work. A reader wanting a
+     * window takes one here, where it knows what it is bounding.
      *
      * Grouped rather than flat because the grouping is what the read computes and
-     * what a turn-count means, and `.flat()` recovers the rows in `seq` order for
+     * what a turn count means, and `.flat()` recovers the rows in `seq` order for
      * a display replay. The reverse does not hold: a flat return would make a
      * caller that wants the tail turn, or the newest N turns, re-find boundaries
      * this read already found.
-     *
-     * Prefer this over `loadPage` whenever the caller wants the whole thread.
-     * The read costs the same either way: `loadPage` selects every row of the
-     * thread and slices AFTER parsing and grouping, so a page saves no query
-     * and no parse — only serialization. Paging a whole thread therefore pays
-     * the full read once per page, and a caller that stops early silently
-     * drops the tail, `perPage` being clamped to 200.
      */
     loadAll(threadId: string): ResultAsync<StoredMessage[][], DbError>;
     /**
@@ -349,7 +327,7 @@ function serializeEnvelope(message: ModelMessage): string {
 /**
  * Group rows (oldest-first) into turns at genuine-user-start boundaries.
  * Generic over the row shape so the token-windowed read (`loadRecent`) and
- * the display read (`loadPage`) share it, each supplying its own start
+ * the display read (`loadAll`) share it, each supplying its own start
  * predicate.
  */
 function groupTurns<T>(rows: readonly T[], isStart: (row: T) => boolean): T[][] {
@@ -640,7 +618,6 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
     // report card/text out of the page the UI fetches. Read the thread and group
     // into turns, so a turn always reloads intact. Threads are conversation-scoped
     // and bounded, so reading every row here matches `loadRecent`'s existing
-    // whole-thread read — which is why `loadAll` costs `loadPage` nothing extra.
     async function readTurns(threadId: string): Promise<StoredMessage[][]> {
         const { rows } = await pool.query<{
             seq: string;
@@ -686,26 +663,6 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         );
 
         return groupTurns(stored, (row) => isGenuineUserStart(row.message));
-    }
-
-    function loadPage(threadId: string, page: number, perPage: number): ResultAsync<MessagePage, DbError> {
-        const safePerPage = Math.min(Math.max(perPage, 1), 200);
-        const safePage = Math.max(page, 0);
-
-        return tryQuery("thread-history.loadPage", async () => {
-            const turns = await readTurns(threadId);
-            const total = turns.length;
-            const offset = safePage * safePerPage;
-            const pageTurns = turns.slice(offset, offset + safePerPage);
-
-            return {
-                messages: pageTurns.flat(),
-                total,
-                page: safePage,
-                perPage: safePerPage,
-                hasMore: offset + pageTurns.length < total,
-            };
-        });
     }
 
     function loadAll(threadId: string): ResultAsync<StoredMessage[][], DbError> {
@@ -807,5 +764,5 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         ).map(({ rows }) => Number(rows[0]!.turns));
     }
 
-    return { appendTurn, loadRecent, loadPage, loadAll, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };
+    return { appendTurn, loadRecent, loadAll, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };
 }

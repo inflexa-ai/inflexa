@@ -316,7 +316,6 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         const history: ThreadHistory = {
             appendTurn: () => okAsync(undefined),
             loadRecent: () => okAsync([]),
-            loadPage: () => okAsync({ messages: [], total: 0, page: 1, perPage: 200, hasMore: false }),
             loadAll: () => okAsync([]),
         } as unknown as ThreadHistory;
 

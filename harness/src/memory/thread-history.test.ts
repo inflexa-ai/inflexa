@@ -697,9 +697,9 @@ describe("retractLastTurn", () => {
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: 4 });
 
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.total).toBe(1);
-        expect(page.messages.map((m) => m.message)).toEqual(turn1);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.length).toBe(1);
+        expect(page.flat().map((m) => m.message)).toEqual(turn1);
     });
 
     it("reports empty-thread and deletes nothing when the thread has no rows", async () => {
@@ -805,7 +805,7 @@ describe("retractLastTurn", () => {
 
     it("groups a loop-synthesized nudge into its turn rather than opening a new one", async () => {
         // The same predicate on the read side: the nudge must not split one turn into two, or the
-        // token window can evict half a turn and `loadPage`'s turn count is wrong.
+        // token window can evict half a turn and `loadAll`'s turn grouping is wrong.
         const turn = [
             userText("a question whose answer runs long"),
             assistantText("a reply cut off at the output-token limit"),
@@ -814,9 +814,9 @@ describe("retractLastTurn", () => {
         ];
         (await append(THREAD, turn))._unsafeUnwrap();
 
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.total).toBe(1);
-        expect(page.messages.map((m) => m.message)).toEqual(turn);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.length).toBe(1);
+        expect(page.flat().map((m) => m.message)).toEqual(turn);
     });
 
     it("appends a whole valid turn after retracting first on an empty thread", async () => {
@@ -917,9 +917,9 @@ describe("host-appended synthetic records", () => {
         (await append(THREAD, [runNotice()]))._unsafeUnwrap();
 
         // One turn, not two: the record rides the exchange it followed.
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.total).toBe(1);
-        expect(page.messages.length).toBe(3);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.length).toBe(1);
+        expect(page.flat().length).toBe(3);
     });
 
     it("is present in the window the next turn is assembled from", async () => {
@@ -984,9 +984,9 @@ describe("dual model/display turn persistence", () => {
         (await history.appendTurn(THREAD, { modelMessages, displayMessages }))._unsafeUnwrap();
 
         expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(modelMessages);
-        const page = (await history.loadPage(THREAD, 0, 10))._unsafeUnwrap();
-        expect(page.messages[0]!.displayEnvelope?.messages).toEqual(displayMessages);
-        expect(page.messages[1]!.displayEnvelope).toBeUndefined();
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat()[0]!.displayEnvelope?.messages).toEqual(displayMessages);
+        expect(page.flat()[1]!.displayEnvelope).toBeUndefined();
 
         const { rows } = await pool.query<{ tokens: number; display_envelope: unknown }>(
             "SELECT tokens, display_envelope FROM messages WHERE thread_id = $1 ORDER BY seq",
@@ -1033,7 +1033,7 @@ describe("appendTurn turn usage rollup", () => {
 
     /**
      * Every row's stored rollup, oldest-first. Asserted at the column rather than
-     * through `loadPage`, because "on this row and on NO other" is a storage fact:
+     * through `loadAll`, because "on this row and on NO other" is a storage fact:
      * a read that folded the figure onto a neighbour would satisfy a display-level
      * assertion while the write was placing it wrong.
      */
@@ -1123,21 +1123,21 @@ describe("appendTurn turn usage rollup", () => {
             JSON.stringify(envelopeMessage(userText("written before rollups existed"))),
         ]);
 
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.messages[0]!.usage).toBeUndefined();
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat()[0]!.usage).toBeUndefined();
         // Absent, not present-and-undefined: a consumer spreading the row must not
         // acquire a `usage` key that overwrites one.
-        expect("usage" in page.messages[0]!).toBe(false);
+        expect("usage" in page.flat()[0]!).toBe(false);
     });
 
     it("surfaces the stored rollup on the display read", async () => {
         const turn = [userText("question one"), assistantText("answer one")];
         (await append(THREAD, turn, ROLLUP))._unsafeUnwrap();
 
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.messages.map((m) => m.usage)).toEqual([undefined, ROLLUP]);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat().map((m) => m.usage)).toEqual([undefined, ROLLUP]);
         // Nothing else about the display read changes — same rows, same order.
-        expect(page.messages.map((m) => m.message)).toEqual(turn);
+        expect(page.flat().map((m) => m.message)).toEqual(turn);
     });
 });
 
@@ -1149,7 +1149,7 @@ describe("appendTurn turn duration", () => {
 
     /**
      * Every row's stored duration, oldest-first, as the column holds it. Asserted
-     * at the column rather than through `loadPage`, because "on this row and on NO
+     * at the column rather than through `loadAll`, because "on this row and on NO
      * other" is a storage fact: a read that folded the figure onto a neighbour
      * would satisfy a display-level assertion while the write placed it wrong.
      */
@@ -1173,10 +1173,10 @@ describe("appendTurn turn duration", () => {
 
         expect(await storedDurations()).toEqual([null, null, null, String(DURATION_MS)]);
 
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.messages.map((m) => m.durationMs)).toEqual([undefined, undefined, undefined, DURATION_MS]);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat().map((m) => m.durationMs)).toEqual([undefined, undefined, undefined, DURATION_MS]);
         // The two figures ride one row, thus a reloaded header carries both of them.
-        expect(page.messages.at(-1)!.usage).toEqual(ROLLUP);
+        expect(page.flat().at(-1)!.usage).toEqual(ROLLUP);
     });
 
     it("keeps the duration of a turn that reported no quantity", async () => {
@@ -1192,20 +1192,20 @@ describe("appendTurn turn duration", () => {
             })
         )._unsafeUnwrap();
 
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.messages[1]!.durationMs).toBe(DURATION_MS);
-        expect(page.messages[1]!.usage).toBeUndefined();
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat()[1]!.durationMs).toBe(DURATION_MS);
+        expect(page.flat()[1]!.usage).toBeUndefined();
     });
 
     it("stores no duration when the caller supplies none", async () => {
         (await append(THREAD, [userText("question one"), assistantText("answer one")], ROLLUP))._unsafeUnwrap();
 
         expect(await storedDurations()).toEqual([null, null]);
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.messages[1]!.durationMs).toBeUndefined();
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat()[1]!.durationMs).toBeUndefined();
         // Absent, not present-and-undefined: a consumer that spreads the row must
         // not acquire a `durationMs` key that overwrites one.
-        expect("durationMs" in page.messages[1]!).toBe(false);
+        expect("durationMs" in page.flat()[1]!).toBe(false);
     });
 
     it("reads a row written before the column existed back as absent", async () => {
@@ -1217,9 +1217,9 @@ describe("appendTurn turn duration", () => {
             JSON.stringify(envelopeMessage(userText("written before durations existed"))),
         ]);
 
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.messages[0]!.durationMs).toBeUndefined();
-        expect("durationMs" in page.messages[0]!).toBe(false);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat()[0]!.durationMs).toBeUndefined();
+        expect("durationMs" in page.flat()[0]!).toBe(false);
     });
 
     it("takes the duration with it when the tail turn is retracted", async () => {
@@ -1247,9 +1247,9 @@ describe("appendTurn turn duration", () => {
         (await history.retractLastTurn(THREAD))._unsafeUnwrap();
 
         expect(await storedDurations()).toEqual([null, String(DURATION_MS)]);
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(page.messages.map((m) => m.durationMs)).toEqual([undefined, DURATION_MS]);
-        expect(page.messages.map((m) => m.usage)).toEqual([undefined, ROLLUP]);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat().map((m) => m.durationMs)).toEqual([undefined, DURATION_MS]);
+        expect(page.flat().map((m) => m.usage)).toEqual([undefined, ROLLUP]);
     });
 });
 
@@ -1350,7 +1350,7 @@ describe("loadRecent ignores the stored rollup", () => {
 // --- loadAll / latestTurnAt --------------------------------------------------
 
 describe("loadAll", () => {
-    it("returns every turn, including past the 200-turn ceiling loadPage clamps to", async () => {
+    it("returns every turn of a thread far past any page size", async () => {
         const TURNS = 205;
         for (let i = 0; i < TURNS; i++) {
             (await append(THREAD, [userText(`ask ${i}`), assistantText(`answer ${i}`)]))._unsafeUnwrap();
@@ -1360,24 +1360,25 @@ describe("loadAll", () => {
         expect(turns).toHaveLength(TURNS);
         expect(turns.flat()).toHaveLength(TURNS * 2);
         expect(turns.at(-1)!.map((m) => m.message)).toEqual([userText(`ask ${TURNS - 1}`), assistantText(`answer ${TURNS - 1}`)]);
-
-        // The single page loadPage can serve stops short, which is the whole
-        // reason loadAll exists.
-        const page = (await history.loadPage(THREAD, 0, 1000))._unsafeUnwrap();
-        expect(page.total).toBe(TURNS);
-        expect(page.messages).toHaveLength(200 * 2);
-        expect(page.hasMore).toBe(true);
+        // Past 200 deliberately: the read that this replaced clamped there and dropped the rest.
+        expect(turns[200]!.map((m) => m.message)).toEqual([userText("ask 200"), assistantText("answer 200")]);
     });
 
-    it("agrees with loadPage row-for-row when one page covers the thread", async () => {
+    it("flattens back to the thread's rows in seq order", async () => {
         for (let i = 0; i < 3; i++) {
             (await append(THREAD, [userText(`ask ${i}`), assistantText(`answer ${i}`)]))._unsafeUnwrap();
         }
 
         const turns = (await history.loadAll(THREAD))._unsafeUnwrap();
-        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
-        expect(turns).toHaveLength(page.total);
-        expect(turns.flat().map((m) => m.message)).toEqual(page.messages.map((m) => m.message));
+        expect(turns.flat().map((m) => m.seq)).toEqual([0, 1, 2, 3, 4, 5]);
+        expect(turns.flat().map((m) => m.message)).toEqual([
+            userText("ask 0"),
+            assistantText("answer 0"),
+            userText("ask 1"),
+            assistantText("answer 1"),
+            userText("ask 2"),
+            assistantText("answer 2"),
+        ]);
     });
 
     it("reads an empty thread as no turns rather than an error", async () => {
