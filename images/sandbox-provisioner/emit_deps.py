@@ -62,7 +62,10 @@ GRAPH_NAME = "deps.json"
 
 # The schema version of the graph. A reader that does not know this version refuses
 # the graph, because a field of another shape gives a wrong answer in silence.
-GRAPH_VERSION = 2
+# A new field keeps this version, because a reader that does not know the field
+# ignores it. Only a change to a field that a reader already reads makes a new
+# version necessary.
+GRAPH_VERSION = 1
 
 # The packages that the image owns, recorded beside the emitter.
 BASE_PACKAGES_FILE = Path(__file__).with_name("base-packages.json")

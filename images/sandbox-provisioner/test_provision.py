@@ -933,12 +933,12 @@ class ProvisionRunTests(StoreTestCase):
         """
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
-        farm = provision.FARMS / "demo"
-        self.assertEqual(self._run("demo", ["foo"]), 0)
+        farm = provision.FARMS / provision.CATALOG_FARM
+        self.assertEqual(self._run(provision.CATALOG_FARM, ["foo"]), 0)
 
         # The invoker supplies the bind of the target farm for the warm run.
         (provision.LIBS / "current").symlink_to(farm)
-        self.assertEqual(self._run("demo", warm="foo"), 0)
+        self.assertEqual(self._run(provision.CATALOG_FARM, warm="foo"), 0)
 
         # One child prepares the module, and one records what a later run reuses.
         self.assertEqual(len(self.warm_paths), 2)
@@ -963,11 +963,11 @@ class ProvisionRunTests(StoreTestCase):
         """
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
-        farm = provision.FARMS / "demo"
-        self.assertEqual(self._run("demo", ["foo"]), 0)
+        farm = provision.FARMS / provision.CATALOG_FARM
+        self.assertEqual(self._run(provision.CATALOG_FARM, ["foo"]), 0)
 
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
-            provision._provision(self._args("demo", warm="foo"))
+            provision._provision(self._args(provision.CATALOG_FARM, warm="foo"))
 
         message = str(cm.exception)
         self.assertIn("cannot resolve the farm", message)
@@ -990,14 +990,14 @@ class ProvisionRunTests(StoreTestCase):
         """
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
-        farm = provision.FARMS / "demo"
-        self.assertEqual(self._run("demo", ["foo"]), 0)
+        farm = provision.FARMS / provision.CATALOG_FARM
+        self.assertEqual(self._run(provision.CATALOG_FARM, ["foo"]), 0)
         (provision.LIBS / "current").symlink_to(farm)
 
         self.warm_failures = {"nosuch": "ModuleNotFoundError: No module named 'nosuch'"}
         self.calls.clear()
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
-            provision._provision(self._args("demo", warm="foo,nosuch,later"))
+            provision._provision(self._args(provision.CATALOG_FARM, warm="foo,nosuch,later"))
 
         message = str(cm.exception)
         self.assertIn("nosuch", message)                    # the module that failed
@@ -1012,8 +1012,8 @@ class ProvisionRunTests(StoreTestCase):
         failure names the script."""
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
-        farm = provision.FARMS / "demo"
-        self.assertEqual(self._run("demo", ["foo"]), 0)
+        farm = provision.FARMS / provision.CATALOG_FARM
+        self.assertEqual(self._run(provision.CATALOG_FARM, ["foo"]), 0)
         (provision.LIBS / "current").symlink_to(farm)
 
         script = provision.STORE / "warmup.py"
@@ -1021,7 +1021,7 @@ class ProvisionRunTests(StoreTestCase):
         self.warm_failures = {str(script): "RuntimeError: the workload did not finish"}
 
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
-            provision._provision(self._args("demo", warm_script=str(script)))
+            provision._provision(self._args(provision.CATALOG_FARM, warm_script=str(script)))
 
         message = str(cm.exception)
         self.assertIn(str(script), message)
@@ -1071,10 +1071,10 @@ class ProvisionRunTests(StoreTestCase):
         hash of the script — so an effectiveness check can replay exactly what ran."""
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
-        farm = provision.FARMS / "demo"
+        farm = provision.FARMS / provision.CATALOG_FARM
         # One run builds the farm, and the next one prepares its caches. The invoker
         # binds the target farm for the second run.
-        self.assertEqual(self._run("demo", ["foo"]), 0)
+        self.assertEqual(self._run(provision.CATALOG_FARM, ["foo"]), 0)
         (provision.LIBS / "current").symlink_to(farm)
 
         script = provision.STORE / "warmup.py"
@@ -1082,7 +1082,7 @@ class ProvisionRunTests(StoreTestCase):
         script.write_bytes(script_bytes)
 
         self.assertEqual(
-            self._run("demo", warm="foo,bar", warm_script=str(script)), 0)
+            self._run(provision.CATALOG_FARM, warm="foo,bar", warm_script=str(script)), 0)
 
         lock = json.loads((farm / "lock.json").read_text())
         workload = lock["warm_workload"]
@@ -1106,8 +1106,8 @@ class ProvisionRunTests(StoreTestCase):
         """
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
-        farm = provision.FARMS / "demo"
-        self.assertEqual(self._run("demo", ["foo"]), 0)
+        farm = provision.FARMS / provision.CATALOG_FARM
+        self.assertEqual(self._run(provision.CATALOG_FARM, ["foo"]), 0)
         (provision.LIBS / "current").symlink_to(farm)
 
         script = provision.STORE / "warmup.py"
@@ -1124,7 +1124,7 @@ class ProvisionRunTests(StoreTestCase):
         }
 
         self.assertEqual(
-            self._run("demo", warm="foo", warm_script=str(script)), 0)
+            self._run(provision.CATALOG_FARM, warm="foo", warm_script=str(script)), 0)
 
         entries = json.loads((farm / "lock.json").read_text())["warm_workload"]["cache_entries"]
         # Relative to the cache root, and sorted. The sandbox copies the cache to a
@@ -1152,201 +1152,26 @@ class ProvisionRunTests(StoreTestCase):
         self.assertIn(str(provision.LIBS / "current"), message)
         self.assertEqual(self.calls, [])            # nothing resolved, nothing installed
 
+    def test_a_preparation_of_another_farm_refuses_and_names_both(self):
+        """§7.4: the record and the entries must land beside each other.
 
-class AcquisitionWarmTests(StoreTestCase):
-    """The warm of an acquisition run, and the one home of a prepared cache.
-
-    An acquisition run that names a workload prepares what it acquired. It links the
-    closure into the farm that the bind resolves, then it warms through that bind.
-    Each prepared entry lands in the shared home, which is the catalog farm, thus a
-    second farm that links the same store directory loads the entry.
-
-    A unit test stands a symlink in for the bind, because a bind mount needs a
-    privilege that a host test does not hold. Both put a farm at the one path that a
-    sandbox imports from.
-    """
-
-    FOO_1 = "foo==1.0 \\\n    --hash=sha256:aaa\n"
-    FOO_1_TREE = {"foo/__init__.py": "x = 1\n",
-                  "foo-1.0.dist-info/RECORD": "foo/__init__.py,,\n"}
-    BAR_2 = "bar==2.0 \\\n    --hash=sha256:bbb\n"
-    BAR_2_TREE = {"bar/__init__.py": "y = 2\n",
-                  "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
-
-    def setUp(self):
-        super().setUp()
-        # The environment of each warm-up child. The fake of the base class records
-        # the PYTHONPATH only, and the two cache destinations are what these tests
-        # judge. The wrapper also writes each cache file that the child reports,
-        # because numba writes an entry file into NUMBA_CACHE_DIR and the record of
-        # a later run reads it back.
-        self.warm_env: list[dict[str, str]] = []
-        inner = provision.subprocess.run
-
-        def spy(cmd, *rest, **kwargs):
-            argv = list(cmd)
-            if argv[:1] == [provision.PYTHON]:
-                self.warm_env.append(dict(kwargs.get("env") or {}))
-                target = argv[-1].split()[-1] if argv[1:2] == ["-c"] else argv[-1]
-                for _event, path in self.cache_events.get(target, []):
-                    Path(path).parent.mkdir(parents=True, exist_ok=True)
-                    Path(path).write_text("entry\n")
-            return inner(cmd, *rest, **kwargs)
-
-        provision.subprocess.run = spy
-
-    def _main(self, argv: list[str]) -> int:
-        """Drive the whole entry point, thus the routing of the arguments is under test."""
-        original = sys.argv
-        sys.argv = ["provision", *argv]
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                return provision.main()
-        finally:
-            sys.argv = original
-
-    def _run(self, farm: str, specs: list[str] | None = None, **over) -> int:
-        with contextlib.redirect_stdout(io.StringIO()):
-            return provision._provision(self._args(farm, specs, **over))
-
-    @staticmethod
-    def _bind(farm: Path) -> None:
-        """Put `farm` at the path that a sandbox imports from, as the invoker does."""
-        current = provision.LIBS / "current"
-        if current.is_symlink():
-            current.unlink()
-        current.symlink_to(farm)
-
-    def _entries(self, cache: Path) -> list[str]:
-        return sorted(str(p.relative_to(cache)) for p in cache.rglob("*") if p.is_file())
-
-    def test_an_acquisition_warms_into_the_shared_home_and_not_the_bound_farm(self):
-        """§2.4: the cache of an acquisition run lands in the shared home.
-
-        The import path sets the key of an entry, and the cache path sets where the
-        entry lands. The run binds a farm that holds the new package, thus the key is
-        the key that each sandbox produces. It points the cache at the home, thus one
-        preparation serves each farm that links the package.
+        A preparation writes the entries into `cache_home()`, and it writes the record
+        into the lock of the farm that it prepared. The two coincide for the catalog
+        farm alone. A run against another farm would leave the record where no reader
+        of the entries looks, thus the run refuses and it names the two farms.
         """
-        self.compile_text = self.FOO_1
-        self.install_tree = dict(self.FOO_1_TREE)
-        scratch = provision.FARMS / "an1"
-        scratch.mkdir()
-        self._bind(scratch)
+        farm = provision.FARMS / "demo"
+        farm.mkdir(parents=True)
+        (farm / "lock.json").write_text("{}\n")
 
-        self.assertEqual(self._main(["foo", "--warm", "foo"]), 0)
-
-        # The run linked what it acquired into the bound farm, thus the workload
-        # imports the new package through the path that a sandbox resolves.
-        self.assertTrue((scratch / "python" / "site-packages" / "foo").is_symlink())
-        self.assertEqual(len(self.warm_paths), 2)   # one pass prepares, one records
-        for given, resolved in self.warm_paths:
-            self.assertEqual(given, str(provision.LIBS / "current" / "python" / "site-packages"))
-            self.assertEqual(resolved, os.path.realpath(scratch / "python" / "site-packages"))
-
-        home = provision.cache_home()
-        self.assertEqual(home, provision.FARMS / "catalog")
-        for env in self.warm_env:
-            self.assertEqual(env["NUMBA_CACHE_DIR"], str(home / "numba-cache"))
-            self.assertEqual(env["MPLCONFIGDIR"], str(home / "matplotlib_config"))
-        self.assertTrue((home / "numba-cache").is_dir())
-        self.assertTrue((home / "matplotlib_config").is_dir())
-        # The farm that the run bound carries no cache of its own. A cache in that
-        # farm would die with the farm, and each other farm would compile again.
-        self.assertFalse((scratch / "numba-cache").exists())
-        self.assertFalse((scratch / "matplotlib_config").exists())
-        # The acquisition published no farm: the bind still holds the same directory.
-        self.assertFalse((provision.FARMS / ".staging-an1").exists())
-        self.assertEqual(os.path.realpath(provision.LIBS / "current"),
-                         os.path.realpath(scratch))
-
-    def test_a_package_acquired_after_the_catalog_build_loads_in_a_second_farm(self):
-        """§2.5: a distribution that reaches the pool after the catalog build carries
-        prepared entries, and a second farm loads them.
-
-        The catalog build prepares the packages of the catalog. An acquisition adds
-        one distribution and prepares it into the same home. A farm that links that
-        store directory then resolves it at the same container path, thus the key of
-        each entry matches and the farm loads what the acquisition prepared.
-        """
-        home_cache = provision.cache_home() / "numba-cache"
-
-        # The catalog build, and the preparation run that follows it.
-        self.compile_text = self.FOO_1
-        self.install_tree = dict(self.FOO_1_TREE)
-        self.assertEqual(self._run("catalog", ["foo"]), 0)
-        self._bind(provision.cache_home())
-        self.cache_events = {"foo": [("loaded from", f"{home_cache}/foo_a1/foo.k-1.py311.1.nbc")]}
-        self.assertEqual(self._run("catalog", warm="foo"), 0)
-        self.assertEqual(self._entries(home_cache), ["foo_a1/foo.k-1.py311.1.nbc"])
-
-        # The acquisition of a distribution that the catalog build never saw.
-        self.compile_text = self.BAR_2
-        self.install_tree = dict(self.BAR_2_TREE)
-        self.cache_events = {"bar": [("loaded from", f"{home_cache}/bar_b2/bar.k-1.py311.1.nbc")]}
-        scratch = provision.FARMS / "an1"
-        scratch.mkdir()
-        self._bind(scratch)
-        self.assertEqual(self._main(["bar", "--warm", "bar"]), 0)
-
-        prepared = self._entries(home_cache)
-        self.assertEqual(prepared, ["bar_b2/bar.k-1.py311.1.nbc", "foo_a1/foo.k-1.py311.1.nbc"])
-        self.assertFalse((scratch / "numba-cache").exists())
-
-        # A second farm links the same store directory of bar.
-        second = provision.FARMS / "an2"
-        self.assertEqual(self._run("an2", ["bar"]), 0)
-        self.assertEqual(os.readlink(second / "python" / "site-packages" / "bar"),
-                         os.readlink(scratch / "python" / "site-packages" / "bar"))
-
-        self._bind(second)
-        self.warm_env.clear()
-        self.assertEqual(self._run("an2", warm="bar"), 0)
-
-        # The second farm read the entries of the acquisition: one cache root, one
-        # import path, thus one key for one distribution.
-        for env in self.warm_env:
-            self.assertEqual(env["NUMBA_CACHE_DIR"], str(home_cache))
-        for given, _resolved in self.warm_paths[-2:]:
-            self.assertEqual(given, str(provision.LIBS / "current" / "python" / "site-packages"))
-        recorded = json.loads((second / "lock.json").read_text())["warm_workload"]["cache_entries"]
-        self.assertEqual(recorded, ["bar_b2/bar.k-1.py311.1.nbc"])
-        # It prepared nothing again, and it carries no cache of its own.
-        self.assertEqual(self._entries(home_cache), prepared)
-        self.assertFalse((second / "numba-cache").exists())
-
-    def test_an_acquisition_warm_without_a_bound_farm_fails_and_names_the_mount(self):
-        """The bind is the job of the invoker, for an acquisition run as well.
-
-        A cache that the run writes through another path never loads. Thus a run that
-        resolves no farm at that path fails, and it names the mount that it wants.
-        """
-        self.compile_text = self.FOO_1
-        self.install_tree = dict(self.FOO_1_TREE)
-        bind = provision.LIBS / "current"
-
-        # No bind at all: the run cannot even write its probe.
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
-            self._main(["foo", "--warm", "foo"])
-        self.assertIn(str(bind), str(cm.exception))
-        self.assertIn("read-write", str(cm.exception))
+            provision._provision(self._args("demo", warm="foo"))
 
-        # The runtime makes the mount point when the invoker names no source. Such a
-        # directory is no farm, thus the run stops there too.
-        bind.mkdir()
-        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
-            self._main(["foo", "--warm", "foo"])
-        self.assertIn("resolves no farm", str(cm.exception))
-        self.assertIn(str(provision.FARMS), str(cm.exception))
-
-        # The acquisition itself completed, thus a run again reuses the store
-        # directory and the graph holds the node.
-        self.assertEqual(len(list(provision.STORE.glob("foo-1.0-*"))), 1)
-        self.assertTrue((provision.LIBS / "deps.json").is_file())
-        # The failed warm wrote no cache and left no probe behind.
-        self.assertFalse((provision.cache_home() / "numba-cache").exists())
-        self.assertEqual(sorted(p.name for p in bind.iterdir()), [])
-        self.assertEqual(self.warm_env, [])
+        message = str(cm.exception)
+        self.assertIn(provision.CATALOG_FARM, message)
+        self.assertIn("demo", message)
+        # The refusal comes before the workload, thus no child ran and no entry landed.
+        self.assertEqual(self.warm_paths, [])
 
 
 class TrackPreservationTests(StoreTestCase):
@@ -2472,16 +2297,16 @@ class DependencyGraphTests(StoreTestCase):
         """1.5: the emitter reads one schema version. A graph of another version
         stops the run, and the run writes nothing over it."""
         graph_path = provision.LIBS / "deps.json"
-        older = json.dumps({"version": emit_deps.GRAPH_VERSION - 1, "nodes": {}}) + "\n"
-        graph_path.write_text(older)
+        other = json.dumps({"version": emit_deps.GRAPH_VERSION + 1, "nodes": {}}) + "\n"
+        graph_path.write_text(other)
         alpha = self._python_store_dir("alpha", "1.0", [])
 
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
             emit_deps.append_store_dirs(provision.LIBS, [alpha])
 
-        self.assertIn(str(emit_deps.GRAPH_VERSION - 1), str(cm.exception))
+        self.assertIn(str(emit_deps.GRAPH_VERSION + 1), str(cm.exception))
         self.assertIn(str(emit_deps.GRAPH_VERSION), str(cm.exception))
-        self.assertEqual(graph_path.read_text(), older)
+        self.assertEqual(graph_path.read_text(), other)
 
 
 # --- The image-owned package list ---------------------------------------------

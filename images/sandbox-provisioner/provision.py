@@ -513,34 +513,6 @@ def build_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
     return collisions
 
 
-def extend_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
-    """Add the links of `store_dirs` to the Python track of a farm that a bind holds.
-
-    An acquisition run that warms needs the acquired package at the path that the
-    sandbox imports from. Only the bind of the invoker puts a farm at that path, and
-    this same run installs the package. Thus the run links the closure into the bound
-    farm, and the farm then holds the new package.
-
-    The step adds links, and it publishes nothing. A publish replaces the farm
-    directory, and the bind of the container holds the directory that the publish
-    superseded. An added link changes no directory, thus the bind stays on the farm
-    that this step extended.
-
-    It writes the links of the closure only. It hoists no console script, because the
-    run imports the packages and it starts no command of a package.
-    """
-    site = farm / "python" / "site-packages"
-    site.mkdir(parents=True, exist_ok=True)
-    collisions: list[str] = []
-    for store_dir in store_dirs:
-        link_tree(site, str(store_dir), collisions)
-    log(f"extended the bound farm '{farm.name}': {len(store_dirs)} store dir(s), "
-        f"{len(collisions)} collision(s)")
-    for c in collisions:
-        log(f"  collision {c}")
-    return collisions
-
-
 def _renameat2_exchange(old: Path, new: Path) -> None:
     """Atomically exchange two existing paths with renameat2(RENAME_EXCHANGE).
 
@@ -1008,43 +980,6 @@ def cache_entry_key(path: str, root: Path) -> str:
     return path if rel.startswith("..") else rel
 
 
-def bound_farm() -> Path:
-    """The farm that the bind at /mnt/libs/current resolves.
-
-    An acquisition run that warms must extend the bound farm, and it receives no
-    name for that farm. The store carries no pointer, thus the run reads the bind
-    itself.
-
-    A bind mount is not a symlink, thus no comparison of two paths names the farm
-    behind the bind. The run writes one probe through the bind, then it reads each
-    farm. The farm that holds the probe is the farm of the bind. The name of the
-    probe is new, thus no cache of the engine holds a miss for it.
-    """
-    bind = LIBS / "current"
-    want = (f"The invoker must bind the farm of this run at {bind}, read-write, "
-            f"nested inside the store-root bind. A numba cache key holds the source "
-            f"path that the sandbox imports from, thus a cache that this run writes "
-            f"through another path never loads.")
-    probe = bind / f".inflexa-bind-probe-{uuid.uuid4().hex}"
-    try:
-        probe.write_text("probe\n")
-    except OSError as exc:
-        raise SystemExit(
-            f"[provision] the run cannot write a probe at {bind} ({exc}). {want}") from exc
-    try:
-        for candidate in sorted(FARMS.iterdir()) if FARMS.is_dir() else []:
-            # A dot-directory is a staging or a superseded farm of an interrupted
-            # swap, and no invoker binds one.
-            if candidate.name.startswith(".") or not candidate.is_dir():
-                continue
-            if (candidate / probe.name).is_file():
-                return candidate
-    finally:
-        probe.unlink(missing_ok=True)
-    raise SystemExit(
-        f"[provision] the bind at {bind} resolves no farm under {FARMS}. {want}")
-
-
 def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, object]:
     """Pre-build numba JIT and matplotlib font caches into the store.
 
@@ -1198,7 +1133,19 @@ def prepare_caches(farm: Path, args) -> int:
     The lock of the farm carries the record. It holds the workload, which is the
     module list and the hash of the script, and it holds the entries that the
     workload prepared. The effectiveness check reads exactly that record.
+
+    Only the catalog farm can be prepared. The entries land in `cache_home()` and the
+    record lands in the lock of the farm that the run prepared. The two coincide for
+    the catalog alone. A run against another farm would put the record where no
+    reader of the entries looks, and the check would then read a lock that describes
+    a cache it does not hold.
     """
+    if farm != cache_home():
+        raise SystemExit(
+            f"[provision] a preparation run prepares the farm {cache_home().name}, and not "
+            f"{farm.name}. The prepared entries land in {cache_home()}, thus a record beside "
+            f"another farm would name a cache that the farm does not carry.")
+
     lock_path = farm / "lock.json"
     if not lock_path.is_file():
         raise SystemExit(
@@ -1527,11 +1474,12 @@ def _acquire(args) -> int:
     resolved edges to the dependency graph. The farm of an analysis changes only
     through composition, which the host does with no container.
 
-    A run that names a workload also prepares what it acquired. A distribution that
-    reaches the pool after the catalog build carries no prepared entry, thus its
-    compiled kernels build again at each first call, on each machine. The run links
-    the closure into the bound farm, and it warms into the shared cache home. Refer
-    to extend_farm and to cache_home.
+    An acquisition prepares no cache. A cache entry of numba keys on the type
+    signature of a CALL, and an import supplies no signature. Thus a warm of an
+    arbitrary package has no workload to run: the workload of the catalog is a
+    script that a person wrote, which calls the entry points that an analysis
+    reaches. A run that imports the package alone prepares each kernel that the
+    package declares with a signature, and no other, which is not worth a container.
 
     The graph append is the whole commit of the run, thus it is the only step under
     the commit mutex. The pool writes before it are private to this run: a store
@@ -1560,20 +1508,6 @@ def _acquire(args) -> int:
 
     with commit_lock():
         emit_deps.append_store_dirs(LIBS, store_dirs)
-
-    # The preparation comes after the commit, because the pool and the graph are the
-    # acquisition itself. The run keeps each acquired distribution when a workload
-    # fails, thus a later run reuses the store directories of this one.
-    modules = [m for m in args.warm.split(",") if m]
-    if modules or args.warm_script:
-        farm = bound_farm()
-        extend_farm(farm, store_dirs)
-        results = warm(farm, modules, args.warm_script)
-        # The prepared cache gets the mode that the sandbox reads it with. The links
-        # of the farm need none, because the mode of a symlink governs nothing.
-        subprocess.run(["chmod", "-R", "a+rX", str(cache_home())], check=True)
-        prepared = results["cache_entries"]
-        log(f"prepared {len(prepared)} cache entry(s) into {cache_home()}")
 
     log(f"acquired {len(resolved)} distribution(s) into the pool; no farm was published")
     return 0
@@ -1771,10 +1705,9 @@ def main() -> int:
             "the publish superseded. Thus one run builds the farm, and the next one\n"
             "prepares it.\n"
             "\n"
-            "An acquisition run with a workload prepares what it acquired. It links\n"
-            "the closure into the bound farm, and it publishes nothing. Each prepared\n"
-            "cache lands in the catalog farm, which is the one home that every farm\n"
-            "links."))
+            "An acquisition prepares no cache. numba keys an entry on the type\n"
+            "signature of a call, thus an import supplies no signature and a package\n"
+            "that nobody wrote a workload for has nothing to run."))
     ap.add_argument("--farm", help="analysis name (farm directory); with --add-lease, "
                                    "the farm that the sandbox of the lease reads; omit it "
                                    "to acquire the specs into the pool and publish no farm")
@@ -1794,10 +1727,9 @@ def main() -> int:
     ap.add_argument("--remove-farm", default=None, metavar="NAME",
                     help="remove a farm's symlinks (store dirs stay until --reclaim), and exit")
     ap.add_argument("--warm", default="",
-                    help="comma-separated modules to import during warm-up; with --farm the run "
-                         "prepares that published farm and passes no spec, and with specs and no "
-                         "--farm it prepares what it acquired; the invoker must bind the farm of "
-                         "the run at /mnt/libs/current")
+                    help="comma-separated modules to import during warm-up; it takes --farm and "
+                         "no spec, because a run prepares a farm that an earlier run published; "
+                         "the invoker must bind that farm at /mnt/libs/current")
     ap.add_argument("--warm-script", default=None,
                     help="path (inside the store) to a script that exercises jitted code paths; "
                          "it takes the two shapes of --warm, and the invoker must bind the farm "
