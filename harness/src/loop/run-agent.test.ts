@@ -870,6 +870,7 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
         const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider, { logger }));
 
         expect(finish.reason).toBe("content-filter");
+        expect(finish.rawFinishReason).toBe("refusal");
         expect(wasExecuted()).toBe(false);
         expect(toolCallIdsOf(messages)).toEqual([]);
         const last = messages.at(-1)!;
@@ -949,6 +950,7 @@ describe("runAgent — finish signal", () => {
 
         expect(finish).toEqual({
             reason: "stop",
+            rawFinishReason: "end_turn",
             cappedOut: false,
             truncationRecoveries: 0,
         });

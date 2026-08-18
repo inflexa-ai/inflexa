@@ -35,6 +35,11 @@ import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from 
 
 export interface AgentFinish {
     readonly reason: FinishReason | "aborted" | "max_iterations" | "denied";
+    /**
+     * The endpoint's own word for the stop, when the provider captured one —
+     * `reason` normalizes it (an Anthropic `refusal` becomes `content-filter`).
+     */
+    readonly rawFinishReason?: string;
     readonly cappedOut: boolean;
     readonly truncationRecoveries: number;
     /**
@@ -460,7 +465,16 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             await emit({ type: "iteration", source, index: i, final: true });
             recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
             logFinish("info", reply.finishReason, false);
-            return { messages, finish: { reason: reply.finishReason, cappedOut: false, truncationRecoveries, ...finishUsage() } };
+            return {
+                messages,
+                finish: {
+                    reason: reply.finishReason,
+                    ...(reply.rawFinishReason === undefined ? {} : { rawFinishReason: reply.rawFinishReason }),
+                    cappedOut: false,
+                    truncationRecoveries,
+                    ...finishUsage(),
+                },
+            };
         }
 
         await emit({ type: "iteration", source, index: i, final: false });
