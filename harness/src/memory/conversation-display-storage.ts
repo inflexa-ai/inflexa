@@ -15,10 +15,18 @@
  * reconstruction.
  */
 
-import { validateUIMessages, type DataUIPart, type UIMessage, type UIMessagePart } from "ai";
+import { validateUIMessages, type DataUIPart, type UIMessage } from "ai";
 import { z } from "zod";
 
-import type { AskPart, ChildSessionStartedPart, FileReferencePart, PlanPart, PresentationPart, ReportRenderedPart, RunCardPart } from "../contracts/chat-parts.js";
+import type {
+    AskPart,
+    ChildSessionStartedPart,
+    FileReferencePart,
+    PlanPart,
+    PresentationPart,
+    ReportRenderedPart,
+    RunCardPart,
+} from "../contracts/chat-parts.js";
 import {
     AskPartSchema,
     ChildSessionStartedPartSchema,
@@ -31,6 +39,7 @@ import {
 import { ToolCallOutcomeSchema } from "../contracts/schemas/chat-events.js";
 import type { ToolCallOutcome } from "../contracts/chat-events.js";
 import type { CortexMessage, CortexPart, ToolCallPart } from "../contracts/message.js";
+import type { Logger } from "../lib/logger.js";
 
 export const SUPPORTED_DISPLAY_SCHEMA_VERSION = 1;
 
@@ -81,24 +90,36 @@ const DisplayEnvelopeHeaderSchema = z.object({
  * lifecycle field beside an optional outcome instead would put the meaning of the
  * combination in each reader's head, and readers would disagree.
  */
-const ToolCallDisplaySchema = z
-    .object({
-        toolCallId: z.string(),
-        toolName: z.string(),
-        outcome: ToolCallOutcomeSchema,
-        detail: z.string().optional(),
-    })
-    .strict();
+const ToolCallDisplaySchema = z.object({
+    toolCallId: z.string(),
+    toolName: z.string(),
+    outcome: ToolCallOutcomeSchema,
+    detail: z.string().optional(),
+});
 
+/**
+ * The schema behind each stored part key.
+ *
+ * Deliberately NOT `.strict()`. These validate rows this package wrote itself,
+ * months earlier, in another process — so the only thing an unknown key can mean
+ * is that the part shed a field since. Rejecting the row for it would make
+ * dropping an optional field, otherwise the safest change available, a
+ * read-breaking one. Zod strips the stale key instead, which is what a reader
+ * would do with it anyway.
+ *
+ * A key stays here as long as rows written under it must still render: the
+ * vocabulary is append-mostly, and retiring an entry is what
+ * {@link parseStoredDisplayEnvelope}'s filter then has to paper over.
+ */
 const dataSchemas = {
     "tool-call": ToolCallDisplaySchema,
-    presentation: PresentationPartSchema.omit({ type: true }).strict(),
-    plan: PlanPartSchema.omit({ type: true }).strict(),
-    "run-card": RunCardPartSchema.omit({ type: true }).strict(),
-    "file-reference": FileReferencePartSchema.omit({ type: true }).strict(),
-    ask: AskPartSchema.omit({ type: true }).strict(),
-    "child-session-started": ChildSessionStartedPartSchema.omit({ type: true }).strict(),
-    "report-rendered": ReportRenderedPartSchema.omit({ type: true }).strict(),
+    presentation: PresentationPartSchema.omit({ type: true }),
+    plan: PlanPartSchema.omit({ type: true }),
+    "run-card": RunCardPartSchema.omit({ type: true }),
+    "file-reference": FileReferencePartSchema.omit({ type: true }),
+    ask: AskPartSchema.omit({ type: true }),
+    "child-session-started": ChildSessionStartedPartSchema.omit({ type: true }),
+    "report-rendered": ReportRenderedPartSchema.omit({ type: true }),
 };
 
 export interface StoredDisplayEnvelope {
@@ -118,7 +139,63 @@ export function envelopeDisplayMessages(messages: readonly ConversationUIMessage
     };
 }
 
-export async function parseStoredDisplayEnvelope(value: unknown, identity: string): Promise<StoredDisplayEnvelope> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Strip every `data-*` part the current vocabulary cannot render.
+ *
+ * `validateUIMessages` rejects a whole envelope when one part's key is absent
+ * from `dataSchemas`, and exposes no lenient mode, so the filter has to run
+ * ahead of it. Two things go: a part whose key was retired, and a part whose
+ * payload no longer satisfies the schema still standing behind its key — the
+ * second reachable only by making a field required after rows were written,
+ * since the schemas strip rather than reject what they don't know.
+ *
+ * Both are schema evolution, and a transcript missing one card reads better than
+ * a thread that will not load at all. That is the whole line: a part this
+ * package can identify but no longer understands is dropped; anything it cannot
+ * identify AS a part — a non-array `messages`, a part with no `type` — is
+ * corruption, passes through untouched, and still fails the validator. There is
+ * no partial recovery available for a shape you cannot walk.
+ */
+function dropUnrenderableDataParts(messages: readonly unknown[], identity: string, logger?: Logger): unknown[] {
+    const unknownKey: string[] = [];
+    const schemaMismatch: string[] = [];
+
+    const filtered = messages.map((message) => {
+        if (!isRecord(message) || !Array.isArray(message.parts)) return message;
+        const parts = message.parts.filter((part) => {
+            if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("data-")) return true;
+            const key = part.type.slice("data-".length);
+            // `Object.hasOwn` before the index: a part typed `data-constructor`
+            // would otherwise resolve up the prototype chain to something that is
+            // not a schema at all, and throw where it should have been dropped.
+            if (!Object.hasOwn(dataSchemas, key)) {
+                unknownKey.push(part.type);
+                return false;
+            }
+            if (!(dataSchemas as Record<string, z.ZodType>)[key]!.safeParse(part.data).success) {
+                schemaMismatch.push(part.type);
+                return false;
+            }
+            return true;
+        });
+        return parts.length === message.parts.length ? message : { ...message, parts };
+    });
+
+    if (unknownKey.length > 0 || schemaMismatch.length > 0) {
+        logger?.warn("dropped unrenderable stored display parts", {
+            identity,
+            ...(unknownKey.length > 0 ? { unknownKey: [...new Set(unknownKey)] } : {}),
+            ...(schemaMismatch.length > 0 ? { schemaMismatch: [...new Set(schemaMismatch)] } : {}),
+        });
+    }
+    return filtered;
+}
+
+export async function parseStoredDisplayEnvelope(value: unknown, identity: string, logger?: Logger): Promise<StoredDisplayEnvelope> {
     const header = DisplayEnvelopeHeaderSchema.safeParse(value);
     if (!header.success) {
         throw new Error(`Invalid stored conversation display envelope at ${identity}: ${header.error.message}`);
@@ -126,7 +203,7 @@ export async function parseStoredDisplayEnvelope(value: unknown, identity: strin
 
     try {
         const messages = await validateUIMessages<ConversationUIMessage>({
-            messages: header.data.messages,
+            messages: dropUnrenderableDataParts(header.data.messages, identity, logger),
             dataSchemas,
             metadataSchema: z.object({ interrupted: z.boolean().optional() }).optional(),
         });
@@ -162,28 +239,6 @@ export function conversationDisplayPart(part: Exclude<CortexPart, { type: "text"
     const { type: _type, ...rest } = part;
     const data = part.type === "tool-call" ? { ...rest, outcome: part.outcome ?? "incomplete" } : rest;
     return { type: displayPartType(part), id: displayPartId(part), data } as DataUIPart<ConversationUIData>;
-}
-
-/**
- * Project Cortex display messages into the durable representation.
- *
- * The startup backfill's only path into storage: it renders a legacy turn from
- * the model transcript and freezes the result. The live recorder builds the same
- * shape directly from the event stream instead of round-tripping through
- * `CortexMessage`.
- */
-export function cortexMessagesToConversationUI(messages: readonly CortexMessage[]): ConversationUIMessage[] {
-    return messages.map((message) => {
-        const parts: UIMessagePart<ConversationUIData, Record<string, never>>[] = message.parts.map((part) =>
-            part.type === "text" ? { type: "text", text: part.text, state: "done" } : conversationDisplayPart(part),
-        );
-        return {
-            id: message.id,
-            role: message.role,
-            ...(message.interrupted ? { metadata: { interrupted: true } } : {}),
-            parts,
-        };
-    });
 }
 
 /**

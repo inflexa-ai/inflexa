@@ -21,13 +21,14 @@
 - [x] 3.4 Return the stored display envelope and the stored rollup from `loadPage`, and ensure tail retraction removes both with their rows.
 - [x] 3.5 Update thread-history tests for round trips, rollback atomicity, pagination, retraction, and soft-deleted thread behavior.
 
-## 4. Startup Migration
+## 4. Startup Migration (ran, then removed — see design D8)
 
 - [x] 4.1 Implement an idempotent bounded startup migration that groups legacy rows by turn and writes only null envelopes.
 - [x] 4.2 Recover each legacy call's outcome from its paired `tool-result` block — reporting `incomplete` when there is none — and its detail from the persisted input, using the assembled conversation roster.
 - [x] 4.3 Move the migration after `assembleCoreRuntime` in the boot sequence and document why it is still before any traffic.
 - [x] 4.4 Treat missing mutable resources as a migrated cardless projection, while making database faults and invalid stored envelopes block startup with thread/turn identity.
 - [x] 4.5 Add migration tests for reconstructable cards, recovered failures, missing resources, partial batches, retry idempotency, and failure diagnostics.
+- [x] 4.6 Delete the migration, its renderer, and the card resolver once every environment had converted, and drop the boot step and its stored-envelope sweep with them.
 
 ## 5. Runtime Read
 
@@ -36,6 +37,7 @@
 - [x] 5.3 Remove the migration renderer, the card resolver, and the call-detail resolver from the embedder-facing barrel.
 - [x] 5.4 Verify conversation run cards still reference independently replayed DBOS run streams, and that no DBOS table, stream event, or workflow path is migrated.
 - [ ] 5.5 Update the `cli` consumer in its own subsystem change: the turn value at its `appendTurn` call site, `conversationRecordTurn` for run-outcome records, the transcript read, and rendering an `incomplete` call.
+- [x] 5.6 Drop a part whose key the vocabulary has retired, or whose payload no longer satisfies the schema behind its key, warning with the row identity; keep structural corruption fatal, and make the part schemas non-strict so a shed field cannot fail a row.
 
 ## 6. Verification
 

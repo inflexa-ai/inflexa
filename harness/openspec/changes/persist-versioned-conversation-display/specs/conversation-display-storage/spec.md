@@ -83,36 +83,49 @@ The recorder SHALL record each call's outcome and detail as the live surface rec
 - **WHEN** a turn is interrupted while a call is in flight
 - **THEN** the stored part reports the call `incomplete`, in the one field that carries its terminal state
 
-### Requirement: Startup backfills legacy turns before runtime reads
+### Requirement: A retired part key does not fail the read that meets it
 
-Harness startup SHALL run an idempotent, bounded backfill for turns lacking a display envelope before serving conversation reads, so the runtime read path never meets a row without a projection. The backfill SHALL use the migration renderer to persist display envelopes, recovering each legacy call's outcome from its paired tool-result block and its detail from the persisted input. Recovering the detail requires the assembled conversation roster — embedder-contributed tools included — so the backfill SHALL run after runtime assembly and before any traffic, assembly itself starting none. Missing mutable resources SHALL produce a valid cardless display projection and mark the turn migrated; database faults or invalid stored envelopes SHALL fail startup with the turn identity.
+A stored part whose key the current vocabulary no longer carries SHALL be dropped from the message it appears in, and the surrounding envelope SHALL be returned. The same SHALL apply to a part whose payload no longer satisfies the schema still standing behind its key. Each drop SHALL be reported through the logging seam with the row identity and the part key, so a deploy that retires a key is observable rather than silent.
 
-#### Scenario: A reconstructable legacy card is frozen
+A part key SHALL be retained in the vocabulary for as long as rows written under it must still render. The drop is a failsafe for the deploy that forgets, not a licence to retire a key that live rows depend on.
 
-- **WHEN** startup encounters a legacy tool-calling turn whose current resolver can reconstruct a card
-- **THEN** it persists that card inside a version-1 UI display envelope before runtime starts
+The reader SHALL NOT extend the same tolerance to a value it cannot identify as a part at all — a non-array message list, a part with no type, an unsupported envelope kind or version. Those are corruption or a format this version does not implement, not vocabulary drift, and there is no partial recovery available for a shape that cannot be walked.
 
-#### Scenario: A missing historical resource does not retry forever
+Failing the whole read is the wrong response to a key one deploy older than the reader. It denies a user every message in the thread over one card, and when the read runs at startup it denies every user every thread. The blast radius must match the defect: one part.
 
-- **WHEN** a legacy turn references a plan, run, preview, or workspace resource that no longer resolves
-- **THEN** startup persists the remaining model-derived UI projection without that card and treats the turn as migrated
+#### Scenario: A retired key costs its own part and nothing else
 
-#### Scenario: Backfill database failure blocks startup
+- **GIVEN** a stored turn holding one part whose key the current vocabulary has retired, beside parts it still carries
+- **WHEN** the transcript is loaded
+- **THEN** the retired part is absent, every other part of the turn is returned, and the read succeeds
 
-- **WHEN** the backfill cannot read or persist a turn because of a database fault
-- **THEN** startup fails with the thread and turn identity and retries on the next launch
+#### Scenario: A payload that no longer satisfies its schema is dropped, not raised
 
-#### Scenario: Re-running startup is idempotent
+- **GIVEN** a stored part whose key still exists but whose payload predates a field the schema now requires
+- **WHEN** the transcript is loaded
+- **THEN** that part is dropped and the rest of the turn is returned
 
-- **GIVEN** some or all legacy turns already carry valid display envelopes
-- **WHEN** startup runs the backfill again
-- **THEN** it leaves those envelopes unchanged and processes only unmigrated turns
+#### Scenario: A stale field does not fail a part
 
-### Requirement: Reconstruction has no runtime caller
+- **GIVEN** a stored payload carrying a field the schema has since dropped
+- **WHEN** the transcript is loaded
+- **THEN** the part is returned, the stale field having been ignored rather than rejected
 
-Display reconstruction — the card resolver, the outcome recovery from paired tool-result blocks, and the call-detail resolver — SHALL be reachable only from the startup migration. It SHALL NOT be offered as a runtime fallback for a turn whose display envelope is absent, and SHALL NOT be re-exported as part of the embedder-facing surface, so no host can wire it back into a transcript read.
+#### Scenario: Every drop is reported
 
-A fallback is what makes reconstruction permanent. With one in place, a row that fails to migrate reads as though it had migrated, the divergence between what was shown and what is replayed becomes invisible, and every future change to a tool or a card silently rewrites history. Skipping an unmigrated row instead makes the gap observable and keeps the runtime read total in what it consults: the stored projection, and nothing else.
+- **WHEN** the reader drops a part
+- **THEN** it emits a warning naming the row identity, the part key, and whether the key or the payload was the cause
+
+#### Scenario: Corruption still fails
+
+- **WHEN** a stored envelope carries an unsupported kind or version, or a value that is not a UI message
+- **THEN** the read rejects it rather than returning a partial projection
+
+### Requirement: A transcript read reconstructs nothing
+
+The transcript read SHALL consult only stored display projections. It SHALL NOT rebuild a display from the model transcript — not for a row whose projection is absent, and not for one whose projection it could not fully render. A row with no projection SHALL contribute no message. No card resolver or call-detail reconstruction SHALL be reachable from a read path or exposed on the embedder-facing surface.
+
+Rebuilding a display from a transcript that never carried one infers what a user saw from what the model did. With that path available, a row reads as though it had always had a projection, the divergence between what was shown and what is replayed becomes invisible, and every later change to a tool or a card silently rewrites history. Skipping the row keeps the gap observable and the read total in what it consults.
 
 #### Scenario: A stored projection is read without any resolver
 
@@ -120,16 +133,28 @@ A fallback is what makes reconstruction permanent. With one in place, a row that
 - **WHEN** the transcript is loaded
 - **THEN** the stored parts are returned and no resolver is constructed or invoked
 
-#### Scenario: An unmigrated row is skipped rather than reconstructed
+#### Scenario: A row with no projection is skipped rather than reconstructed
 
 - **GIVEN** a row that reaches a transcript read with no display projection
 - **WHEN** the transcript is loaded
 - **THEN** the row contributes no message and no reconstruction is attempted
 
-#### Scenario: The reconstruction surface is not embedder-facing
+#### Scenario: The reconstruction surface does not exist
 
 - **WHEN** an embedder resolves the package's public surface
-- **THEN** the card resolver and the call-detail resolver are absent from it
+- **THEN** no card resolver and no transcript-to-display renderer is reachable from it
+
+### Requirement: Boot does not read stored conversation display
+
+The boot sequence SHALL NOT validate, rewrite, or otherwise traverse stored display envelopes. Tolerating an envelope this version cannot fully render is the reader's responsibility, discharged per row at the read that meets it.
+
+A boot-time sweep couples every stored row to process startup: one row the current vocabulary cannot parse takes down the process for every tenant, and the failure arrives at the moment least able to absorb it, with no request to fail and no user to inform.
+
+#### Scenario: A row the vocabulary cannot fully render does not affect startup
+
+- **GIVEN** stored rows holding parts whose keys the current vocabulary has retired
+- **WHEN** the harness boots
+- **THEN** boot completes, and each affected part is dropped later, by the read that reaches its row
 
 ### Requirement: Conversation display migration does not alter DBOS streams
 

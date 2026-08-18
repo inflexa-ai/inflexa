@@ -20,17 +20,16 @@
  *      misconfigured pool fails loudly at boot, not under load.
  *   5. `assembleCoreRuntime(core)` — registers the durable-workflow cohort and
  *      builds the conversation agent (register-before-launch invariant).
- *   6. `backfillConversationDisplayEnvelopes(...)` — validates every stored
- *      display envelope and freezes one for each legacy turn that has none, so
- *      the runtime read path never meets a row without a display projection.
- *      Runs AFTER assembly because migrating a legacy call's one-line detail
- *      needs the assembled conversation roster, embedder-contributed tools
- *      included; assembly starts no traffic, so this is still before any read.
- *   7. `beforeLaunch()` — embedder hook for host-specific pre-launch work that
+ *   6. `beforeLaunch()` — embedder hook for host-specific pre-launch work that
  *      must attach before DBOS launch re-emits events (scheduled sweeps, an
  *      legacy-workflow reap, an agent-switch install). Runs after registration
  *      so it may close over the registered callables.
- *   8. `launchDbos(...)` — the last registration-dependent step.
+ *   7. `launchDbos(...)` — the last registration-dependent step.
+ *
+ * No step reads or rewrites stored conversation display. A boot that validated
+ * every `messages` row is what let a single retired part key fail startup for a
+ * whole deployment; the read tolerates such a row by itself now
+ * (`parseStoredDisplayEnvelope`), which is where a per-row concern belongs.
  *
  * Boot-step errors PROPAGATE (the embedder's composition root catches them and
  * releases whatever it acquired). Only `shutdown` swallows per-step failures —
@@ -40,11 +39,9 @@
 import type { Pool } from "pg";
 
 import type { Logger } from "../lib/logger.js";
-import { unwrapOrThrow } from "../lib/result.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
 import { initCortexState } from "../state/init.js";
-import { backfillConversationDisplayEnvelopes } from "../memory/conversation-display-backfill.js";
 import { assembleCoreRuntime, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
 import { assertConnectionBudget, type ConnectionBudgetConfig } from "./connection-budget.js";
 import { launchDbos, shutdownDbos, type DbosConfig } from "./dbos.js";
@@ -105,17 +102,6 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
     await assertConnectionBudget({ pool, logger, config: deps.connectionBudget });
 
     const runtime = assembleCoreRuntime(core);
-
-    // Assembly registers `conversation` unconditionally, so this resolution can
-    // never refuse; `unwrapOrThrow` turns the impossible error branch into a
-    // boot-propagating throw rather than threading a Result through the boot
-    // sequence, whose steps already fail by propagation.
-    const conversationAgent = unwrapOrThrow(runtime.agents.forThread("conversation"));
-
-    await backfillConversationDisplayEnvelopes({
-        pool,
-        tools: conversationAgent.tools,
-    });
 
     await deps.beforeLaunch?.();
 

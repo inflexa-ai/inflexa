@@ -1327,11 +1327,11 @@ describe("a reloaded turn keeps the figures the live header showed", () => {
 });
 
 // The whole live/reload contract as ONE harness: the same turn fed through the live adapter (`send` →
-// `applyEmitEvent`) and through the reload path (`cortexToUiMessage` over the rows the harness would
-// reconstruct, in stored order) must yield the SAME part-type sequence. `content-to-cortex` preserves
-// row order, so a turn whose first event is a tool/card must render that part first LIVE too — the
-// emission-order invariant these findings restore. The pre-fix bug inverted the tool-first shapes live
-// while reload kept row order; here both paths are asserted to agree.
+// `applyEmitEvent`) and through the reload path (`cortexToUiMessage` over the stored parts, in stored
+// order) must yield the SAME part-type sequence. The stored projection keeps emission order, so a turn
+// whose first event is a tool/card must render that part first LIVE too — the emission-order invariant
+// these findings restore. The pre-fix bug inverted the tool-first shapes live while reload kept stored
+// order; here both paths are asserted to agree.
 describe("live emission order matches transcript reload order", () => {
     type Shape = {
         readonly name: string;

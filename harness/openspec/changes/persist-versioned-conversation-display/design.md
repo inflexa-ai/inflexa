@@ -94,6 +94,14 @@ Migration is idempotent and processed in bounded batches. Database faults and in
 
 **There is no runtime fallback.** A row reaching a transcript read with no projection is skipped. This is the point of the change, not an oversight: a fallback makes reconstruction permanent, because a row that failed to migrate then reads as though it had, and the divergence between what was shown and what is replayed becomes invisible. Skipping makes the gap observable. The resolvers also leave the embedder-facing barrel, so no host can wire them back into a read; the deep import paths remain, since the barrel is a curated front door and not a wall.
 
+### D8 — The migration ran, then came out; tolerance moved to the read
+
+The migration shipped and converted every legacy turn. Once it had, the only thing it still did each boot was re-validate rows it had already written — and that sweep is what made one part key fatal to a whole deployment. The first release to retire a key met a stored envelope still carrying it, refused the row, and crash-looped the process for every tenant: no request to fail, no user to tell, nothing serving. The defect was one part, in one turn, in one thread.
+
+So the tolerance moved to where the blast radius matches the defect. `parseStoredDisplayEnvelope` drops a part whose key the vocabulary has retired, or whose payload no longer satisfies the schema behind its key, warns with the row identity, and returns the rest of the turn. That is what the sweep was really guarding against, handled per row, at the read that meets it, by the code that already has to understand the envelope. The part schemas also stop being `.strict()`: they validate rows this package wrote itself, so an unknown field can only mean the part shed one, and rejecting a row over that would make dropping an optional field a read-breaking change.
+
+With nothing left for it to do, the migration and the renderer behind it are deleted. A row that still carries no projection is skipped, exactly as before. D7's actual holding — no reconstruction on a read path — survives and is now unconditional, there being no renderer left to reach for.
+
 ### D9 — The terminal state is one field, not a lifecycle plus an optional outcome
 
 The stored payload carries a single required `outcome` of `ok | error | denied | incomplete`. It does NOT carry a `status: "started" | "finished"` beside an optional outcome, which is what an earlier draft of this design stored.
