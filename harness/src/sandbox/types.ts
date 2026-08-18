@@ -223,8 +223,8 @@ export interface CreateSandboxMeta {
     /** The first `execId` that will fire against this sandbox; nullable for
      *  early-create flows where the workflow mints the first execId later. */
     execId?: string | null;
-    /** Owning DBOS child workflow id (`"${parentRunId}-${N}"`). Stamped onto the
-     *  sandbox machine as the `cortex/owner-workflow-id` label so the reaper can
+    /** Owning DBOS child workflow id (`"${parentRunId}-${N}"`). Recorded verbatim
+     *  on the sandbox machine under `cortex/owner-workflow-id` so the reaper can
      *  map a cluster-side machine back to its workflow and check liveness. */
     childWorkflowId: string;
     /** Backend-specific extras carried through to the per-backend impl. */
@@ -266,13 +266,19 @@ export interface SandboxIdentity {
 /**
  * A sandbox machine the backend is running that Cortex *manages*
  * (`app.kubernetes.io/managed-by=cortex`), enumerated by the reaper for the
- * cluster→registry sweep (see the harness-sandbox-exec spec). The `ownerWorkflowId` comes from the
- * `cortex/owner-workflow-id` label and may be null for legacy/label-less
- * machines, which are only reaped past a creation-time grace.
+ * cluster→registry sweep (see the harness-sandbox-exec spec). `ownerWorkflowId`
+ * is null for machines that record no owner at all, which are only reaped past
+ * a creation-time grace and only when observably dead.
  */
 export interface ManagedSandbox {
     sandboxId: string;
     ownerWorkflowId: string | null;
+    /**
+     * Whether `ownerWorkflowId` is the id as minted, and so usable as a DBOS
+     * lookup key. False when it was recovered from a lossy encoding — a K8s
+     * label written by a prior release — where a failed lookup proves nothing.
+     */
+    ownerIsVerbatim: boolean;
     createdAtMs: number | null;
 }
 

@@ -14,7 +14,17 @@
 
 import { relative as relativePath, sep } from "node:path";
 
-import { BatchV1Api, CoreV1Api, KubeConfig, type V1Job, type V1PodSpec, type V1Toleration, type V1Volume, type V1VolumeMount } from "@kubernetes/client-node";
+import {
+    BatchV1Api,
+    CoreV1Api,
+    KubeConfig,
+    type V1Job,
+    type V1ObjectMeta,
+    type V1PodSpec,
+    type V1Toleration,
+    type V1Volume,
+    type V1VolumeMount,
+} from "@kubernetes/client-node";
 import { ResultAsync, err, ok } from "neverthrow";
 
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -39,7 +49,14 @@ const POD_POLL_INTERVAL_MS = 1_000;
 
 const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
 const MANAGED_BY_VALUE = "cortex";
-const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
+/**
+ * Key of the owning DBOS workflow id. Written as an **annotation**, whose value
+ * has neither a length cap nor a charset restriction, so the id round-trips
+ * verbatim and can be handed back to `DBOS.getWorkflowStatus`. Also written as
+ * a label under the same key for one release, so a replica still running the
+ * previous version can attribute this Job mid-rollout; nothing selects on it.
+ */
+const OWNER_WORKFLOW_KEY = "cortex/owner-workflow-id";
 const RUN_ID_LABEL = "cortex/run-id";
 const STEP_ID_LABEL = "cortex/step-id";
 const ANALYSIS_ID_LABEL = "cortex/analysis-id";
@@ -47,11 +64,11 @@ const ANALYSIS_ID_LABEL = "cortex/analysis-id";
 /**
  * Coerce an arbitrary identifier into a valid K8s label value:
  * ≤63 chars, `[A-Za-z0-9._-]` only, starting and ending alphanumeric.
- * Workflow ids legitimately contain `:` (exec-id routing packs
- * `workflowId:stepId:fnId`), which is illegal in a label — without this an
- * otherwise-valid Job is rejected with a 422 at admission. Sanitization is a
- * no-op for already-valid ids, so DBOS-keyed lookups (adoption, reaper) match
- * unchanged; only the synthetic, non-DBOS data-profile id is rewritten.
+ * Without it one malformed value gets the whole Job rejected at admission.
+ *
+ * Lossy by construction: `:` becomes `-` and anything past 63 chars is dropped,
+ * neither of which is recoverable. No label value may therefore be used as a
+ * lookup key — see {@link OWNER_WORKFLOW_KEY}.
  */
 export function sanitizeLabelValue(value: string): string {
     return value
@@ -59,6 +76,18 @@ export function sanitizeLabelValue(value: string): string {
         .replace(/^[^A-Za-z0-9]+/, "")
         .slice(0, 63)
         .replace(/[^A-Za-z0-9]+$/, "");
+}
+
+/**
+ * The owner workflow id recorded on a Job. `verbatim` distinguishes the
+ * annotation (exact) from the legacy label mirror (sanitized), which decides
+ * what an equality check may compare against.
+ */
+function readOwnerWorkflowId(metadata: V1ObjectMeta | undefined): { value: string; verbatim: boolean } | null {
+    const annotated = metadata?.annotations?.[OWNER_WORKFLOW_KEY];
+    if (annotated !== undefined) return { value: annotated, verbatim: true };
+    const labelled = metadata?.labels?.[OWNER_WORKFLOW_KEY];
+    return labelled === undefined ? null : { value: labelled, verbatim: false };
 }
 
 export interface K8sClientConfig {
@@ -293,11 +322,14 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
         metadata: {
             name: sandboxId,
             namespace: config.namespace,
+            annotations: {
+                [OWNER_WORKFLOW_KEY]: meta.childWorkflowId,
+            },
             labels: {
                 [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
                 role: "sandbox",
                 "cortex/sandbox-id": sandboxId,
-                [OWNER_WORKFLOW_LABEL]: sanitizeLabelValue(meta.childWorkflowId),
+                [OWNER_WORKFLOW_KEY]: sanitizeLabelValue(meta.childWorkflowId),
                 [STEP_ID_LABEL]: sanitizeLabelValue(meta.stepId),
                 ...attributionLabels,
             },
@@ -429,8 +461,8 @@ function waitForJobGone(batchApi: BatchV1Api, namespace: string, name: string): 
  * dead prior attempt under the same checkpointed name: delete it, wait for the
  * name to free, and recreate fresh.
  *
- * Adoption (and deletion) is **owner-guarded**: the existing Job's
- * `cortex/owner-workflow-id` label must match this step's `ownerWorkflowId`.
+ * Adoption (and deletion) is **owner-guarded**: the existing Job's recorded
+ * owner workflow id must match this step's `ownerWorkflowId`.
  * Only a recovery re-run carries the same checkpointed identity, so a mismatch
  * means an (astronomically rare) name collision with a *different* step —
  * adopting its pod would HMAC-fail every callback, and deleting its Job would
@@ -459,13 +491,16 @@ function createOrAdoptJob(
 
             const existingRead = await trySandbox(() => batchApi.readNamespacedJob({ namespace, name: sandboxId }), createFailed);
             if (existingRead.isErr()) return err(existingRead.error);
-            const owner = existingRead.value.metadata?.labels?.[OWNER_WORKFLOW_LABEL];
-            if (owner !== ownerWorkflowId) {
+            // A Job from the previous release carries only the sanitized label, so the
+            // comparison has to meet it in the same lossy space it was written in.
+            const owner = readOwnerWorkflowId(existingRead.value.metadata);
+            const expected = owner?.verbatim === false ? sanitizeLabelValue(ownerWorkflowId) : ownerWorkflowId;
+            if (owner === null || owner.value !== expected) {
                 return err({
                     type: "name_conflict",
                     op: "k8s.createSandbox",
                     sandboxId,
-                    owner: owner ?? null,
+                    owner: owner?.value ?? null,
                 });
             }
 
@@ -489,6 +524,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
     teardown(ref: SandboxRef): ResultAsync<void, SandboxError>;
     teardownById(sandboxId: string): ResultAsync<void, SandboxError>;
     isAlive(ref: SandboxRef): ResultAsync<SandboxLiveness, SandboxError>;
+    isAliveById(sandboxId: string): ResultAsync<SandboxLiveness, SandboxError>;
     listManagedSandboxes(): ResultAsync<ManagedSandbox[], SandboxError>;
 } {
     const { batchApi, coreApi } = config.batchApi && config.coreApi ? { batchApi: config.batchApi, coreApi: config.coreApi } : buildKubeApi();
@@ -500,7 +536,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                     const { sandboxId } = identity;
                     const job = buildJobSpec(meta, config, identity);
 
-                    const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, sanitizeLabelValue(meta.childWorkflowId), job);
+                    const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, meta.childWorkflowId, job);
                     if (adopted.isErr()) return err(adopted.error);
 
                     // A Job whose pod never schedules (quota rejection, no nodes, spot
@@ -566,9 +602,11 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                     .map((j) => {
                         const labels = j.metadata?.labels ?? {};
                         const ts = j.metadata?.creationTimestamp;
+                        const owner = readOwnerWorkflowId(j.metadata);
                         return {
                             sandboxId: labels["cortex/sandbox-id"] ?? j.metadata?.name ?? "",
-                            ownerWorkflowId: labels[OWNER_WORKFLOW_LABEL] ?? null,
+                            ownerWorkflowId: owner?.value ?? null,
+                            ownerIsVerbatim: owner?.verbatim ?? false,
                             createdAtMs: ts ? new Date(ts).getTime() : null,
                         };
                     })
@@ -577,40 +615,46 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
         },
 
         isAlive(ref) {
-            return trySandbox(
-                () =>
-                    coreApi.listNamespacedPod({
-                        namespace: config.namespace,
-                        labelSelector: `cortex/sandbox-id=${ref.sandboxId}`,
-                    }),
-                (status, cause) => ({
-                    type: "liveness_failed",
-                    op: "k8s.isAlive",
-                    sandboxId: ref.sandboxId,
-                    status,
-                    cause,
-                }),
-            )
-                .map((pods) => {
-                    const pod = pods.items[0];
-                    if (!pod) return { alive: false, oomKilled: false };
-                    const phase = pod.status?.phase;
-                    // `Pending` and `Running` are alive; `Succeeded`, `Failed`,
-                    // `Unknown` are dead. `Pending` covers startup.
-                    const alive = phase === "Pending" || phase === "Running";
-                    const oomKilled =
-                        !alive &&
-                        (pod.status?.containerStatuses ?? []).some(
-                            (cs) => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled",
-                        );
-                    return { alive, oomKilled };
-                })
-                .orElse((e) =>
-                    // A 404 means the pod is gone — observably dead.
-                    statusOf(e) === 404 ? ok({ alive: false, oomKilled: false }) : err(e),
-                );
+            return isAliveById(ref.sandboxId);
         },
+
+        isAliveById,
     };
+
+    function isAliveById(sandboxId: string): ResultAsync<SandboxLiveness, SandboxError> {
+        return trySandbox(
+            () =>
+                coreApi.listNamespacedPod({
+                    namespace: config.namespace,
+                    labelSelector: `cortex/sandbox-id=${sandboxId}`,
+                }),
+            (status, cause) => ({
+                type: "liveness_failed",
+                op: "k8s.isAlive",
+                sandboxId,
+                status,
+                cause,
+            }),
+        )
+            .map((pods) => {
+                const pod = pods.items[0];
+                if (!pod) return { alive: false, oomKilled: false };
+                const phase = pod.status?.phase;
+                // `Pending` and `Running` are alive; `Succeeded`, `Failed`,
+                // `Unknown` are dead. `Pending` covers startup.
+                const alive = phase === "Pending" || phase === "Running";
+                const oomKilled =
+                    !alive &&
+                    (pod.status?.containerStatuses ?? []).some(
+                        (cs) => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled",
+                    );
+                return { alive, oomKilled };
+            })
+            .orElse((e) =>
+                // A 404 means the pod is gone — observably dead.
+                statusOf(e) === 404 ? ok({ alive: false, oomKilled: false }) : err(e),
+            );
+    }
 }
 
 /**

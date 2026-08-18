@@ -67,14 +67,19 @@ export function feedExecFrame(args: FeedExecFrameArgs): void {
     const code = exitCode ?? -1;
     const duration = durationMs ?? 0;
 
-    if (!provenance || provenance.disabled) {
-        collector.recordCommandExecution(cmd, [...cmdArgs], code, duration, [], undefined, []);
-        return;
-    }
-
     // Resolved once so the read loop logs unconditionally instead of threading
     // `?.` through every diagnostic.
     const logger = (args.logger ?? createNoopLogger()).named("exec-frame");
+
+    if (!provenance || provenance.disabled) {
+        // The sandbox failed to start its tracker, so this command's file
+        // operations were never captured. The record below is empty rather than
+        // complete, and downstream nothing distinguishes the two — say so here or
+        // the gap ships looking like a command that touched no files.
+        if (provenance?.disabled) logger.warn("sandbox reported provenance disabled — no file operations captured for this command", { command: cmd });
+        collector.recordCommandExecution(cmd, [...cmdArgs], code, duration, [], undefined, []);
+        return;
+    }
 
     const commandReads: InputRef[] = [];
     for (const read of provenance.reads) {

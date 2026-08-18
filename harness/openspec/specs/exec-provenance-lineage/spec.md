@@ -62,7 +62,10 @@ the mount root prepended: reconcile drops both a foreign path and a missing in-t
 verbatim name says which of the two happened, and the drop record is the only account a reader gets of a
 hook-filter leak. Read hashes SHALL be left unset at track time and filled from disk by
 `reconcileManifestWithDisk` before registration. When the frame is absent or `disabled`, `feedExecFrame`
-SHALL record the command with no inputs and no writes rather than throw.
+SHALL record the command with no inputs and no writes rather than throw. A `disabled` frame SHALL
+additionally be logged: it means the sandbox tracker never started, so the record is empty rather than
+complete, and nothing downstream distinguishes the two. Left unlogged, a total capture failure is
+indistinguishable from a command that touched no files.
 
 #### Scenario: Command reading an input and writing an output produces a lineage edge
 
@@ -105,6 +108,13 @@ SHALL record the command with no inputs and no writes rather than throw.
 - **GIVEN** an `ExecResult` whose `provenance` is absent or has `disabled: true`
 - **WHEN** the tool feeds it via `feedExecFrame`
 - **THEN** the command is recorded with an empty `inputs` array and no error is thrown
+
+#### Scenario: A disabled frame is reported, not silently emptied
+
+- **GIVEN** an `ExecResult` whose `provenance` has `disabled: true`
+- **WHEN** the tool feeds it via `feedExecFrame`
+- **THEN** a warning naming the command SHALL be logged, so a total capture failure is
+  distinguishable from a command that genuinely touched no files
 
 ### Requirement: Post-step registration consumes runtime-derived lineage
 

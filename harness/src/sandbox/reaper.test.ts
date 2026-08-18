@@ -1,24 +1,28 @@
 /**
  * Reaper pure-logic tests. Covers:
- *  - classifyManaged: in-flight workflow → leave; terminal/missing → reap;
- *    creation-time grace for label-less / status-less machines
+ *  - classifyManaged: in-flight workflow → leave; terminal → reap; unresolvable
+ *    owner → grace-gated deferral to a liveness probe
  *  - terminalStepStatus mapping
  *  - reapOnce: tears down + reconciles reapable machines, leaves in-flight
- *    ones, and survives a teardown failure on one machine
+ *    ones, never tears down a machine that is still alive, and survives a
+ *    teardown failure on one machine
  */
 
 import { describe, expect, test } from "bun:test";
 import type { Pool } from "pg";
 
 import { classifyManaged, reapOnce, terminalStepStatus } from "./reaper.js";
-import type { ManagedSandbox } from "./types.js";
+import type { ManagedSandbox, SandboxLiveness } from "./types.js";
 
 const GRACE = 10 * 60_000;
 const NOW = 1_000_000_000;
 
 function managed(sandboxId: string, ownerWorkflowId: string | null, createdAtMs: number | null = NOW): ManagedSandbox {
-    return { sandboxId, ownerWorkflowId, createdAtMs };
+    return { sandboxId, ownerWorkflowId, ownerIsVerbatim: ownerWorkflowId !== null, createdAtMs };
 }
+
+const DEAD: SandboxLiveness = { alive: false, oomKilled: false };
+const ALIVE: SandboxLiveness = { alive: true, oomKilled: false };
 
 describe("classifyManaged", () => {
     test("leaves a machine whose workflow is still in flight", () => {
@@ -35,15 +39,21 @@ describe("classifyManaged", () => {
         }
     });
 
-    test("status-less (gone workflow / no label): grace-gated", () => {
+    test("status-less (gone workflow / no owner): grace-gated, then liveness-gated", () => {
         // Fresh → within grace → leave (guards the create race).
         expect(classifyManaged(managed("s", null, NOW - 1000), null, NOW, GRACE)).toBe("leave");
-        // Old → past grace → reap.
-        expect(classifyManaged(managed("s", null, NOW - GRACE - 1), null, NOW, GRACE)).toBe("reap");
+        // Old → past grace → still not reaped on age alone.
+        expect(classifyManaged(managed("s", null, NOW - GRACE - 1), null, NOW, GRACE)).toBe("reap-if-dead");
     });
 
-    test("unknown creation time is treated as past grace (reap)", () => {
-        expect(classifyManaged(managed("s", null, null), null, NOW, GRACE)).toBe("reap");
+    test("a recorded owner that does not resolve never reaps on age alone", () => {
+        // The prod failure this guards: an owner id that cannot be looked up is not
+        // evidence the machine is finished, however old the machine is.
+        expect(classifyManaged(managed("s", "wf-unresolvable", NOW - GRACE * 10), null, NOW, GRACE)).toBe("reap-if-dead");
+    });
+
+    test("unknown creation time is past grace, but still liveness-gated", () => {
+        expect(classifyManaged(managed("s", null, null), null, NOW, GRACE)).toBe("reap-if-dead");
     });
 });
 
@@ -92,6 +102,7 @@ describe("reapOnce", () => {
             pool,
             sandboxClient: {
                 listManagedSandboxes: async () => managedList,
+                isAliveById: async () => DEAD,
                 teardownById: async (id) => {
                     tornDown.push(id);
                 },
@@ -108,7 +119,61 @@ describe("reapOnce", () => {
             reapedCount: 2,
             rowsReconciled: 2,
             leftCount: 2,
+            liveUnattributed: 0,
         });
+    });
+
+    test("never tears down a machine that is still alive, however old and unattributable", async () => {
+        // The prod incident in one case: a live data-profile sandbox whose owner id
+        // did not round-trip through its K8s label, reaped purely for being past the
+        // grace while its workflow was mid-run.
+        const tornDown: string[] = [];
+        const { pool, reconciled } = fakePool();
+
+        const summary = await reapOnce({
+            pool,
+            sandboxClient: {
+                listManagedSandboxes: async () => [managed("sbx-live-orphan", "wf-unresolvable", NOW - GRACE * 10)],
+                isAliveById: async () => ALIVE,
+                teardownById: async (id) => {
+                    tornDown.push(id);
+                },
+            },
+            getStatus: async () => null,
+            graceMs: GRACE,
+            nowMs: () => NOW,
+        });
+
+        expect(tornDown).toEqual([]);
+        expect(reconciled).toEqual([]);
+        expect(summary.reapedCount).toBe(0);
+        expect(summary.leftCount).toBe(1);
+        expect(summary.liveUnattributed).toBe(1);
+    });
+
+    test("a liveness probe that throws leaves the machine for the next sweep", async () => {
+        const tornDown: string[] = [];
+        const { pool } = fakePool();
+
+        const summary = await reapOnce({
+            pool,
+            sandboxClient: {
+                listManagedSandboxes: async () => [managed("sbx-unknown", null, NOW - GRACE - 1)],
+                isAliveById: async () => {
+                    throw new Error("API server unreachable");
+                },
+                teardownById: async (id) => {
+                    tornDown.push(id);
+                },
+            },
+            getStatus: async () => null,
+            graceMs: GRACE,
+            nowMs: () => NOW,
+        });
+
+        expect(tornDown).toEqual([]);
+        expect(summary.reapedCount).toBe(0);
+        expect(summary.leftCount).toBe(1);
     });
 
     test("a teardown failure on one machine does not abort the sweep", async () => {
@@ -120,6 +185,7 @@ describe("reapOnce", () => {
             pool,
             sandboxClient: {
                 listManagedSandboxes: async () => managedList,
+                isAliveById: async () => DEAD,
                 teardownById: async (id) => {
                     if (id === "sbx-a") throw new Error("delete failed");
                     tornDown.push(id);
