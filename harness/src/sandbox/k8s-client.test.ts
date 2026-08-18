@@ -15,7 +15,7 @@ import { mintSandboxIdentity } from "./identity.js";
 const SESSION_PVC_ROOT = "/sessions";
 const resolveWorkspaceRoot = (analysisId: string) => `${SESSION_PVC_ROOT}/${analysisId}`;
 
-function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: number; existingOwner?: string } = {}) {
+function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: number; existingOwner?: string; existingOwnerAsLegacyLabel?: boolean } = {}) {
     const createdJobs: V1Job[] = [];
     const deletedJobs: string[] = [];
     let podIdx = 0;
@@ -43,19 +43,25 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
             deletedJobs.push(name);
         },
         // Used by the spawn step's owner-guard (returns the pre-existing Job with
-        // its owner label) and then by `waitForJobGone` after a delete (404).
+        // its recorded owner) and then by `waitForJobGone` after a delete (404).
+        // `existingOwnerAsLegacyLabel` models a Job written by the release before
+        // the owner id moved to an annotation: label only, and sanitized.
+        listNamespacedJob: async (_args: { namespace: string; labelSelector?: string }) => ({ items: createdJobs }),
         readNamespacedJob: async ({ name }: { namespace: string; name: string }) => {
             if (existingDeleted) {
                 const err = new Error("not found") as Error & { code: number };
                 err.code = 404;
                 throw err;
             }
-            return {
-                metadata: {
-                    name,
-                    labels: { "cortex/owner-workflow-id": existingOwner },
-                },
-            };
+            return opts.existingOwnerAsLegacyLabel
+                ? { metadata: { name, labels: { "cortex/owner-workflow-id": sanitizeLabelValue(existingOwner) } } }
+                : {
+                      metadata: {
+                          name,
+                          annotations: { "cortex/owner-workflow-id": existingOwner },
+                          labels: { "cortex/owner-workflow-id": sanitizeLabelValue(existingOwner) },
+                      },
+                  };
         },
     } as unknown as BatchV1Api;
 
@@ -697,14 +703,21 @@ describe("k8s job ownership labels", () => {
             )
         )._unsafeUnwrap();
 
-        const labels = stub.createdJobs[0]!.metadata!.labels!;
-        expect(labels["app.kubernetes.io/managed-by"]).toBe("cortex");
-        expect(labels["cortex/owner-workflow-id"]).toBe("run-1-0");
-        expect(labels["cortex/run-id"]).toBe("run-1");
-        expect(labels["cortex/step-id"]).toBe("step-a");
+        const meta = stub.createdJobs[0]!.metadata!;
+        expect(meta.labels!["app.kubernetes.io/managed-by"]).toBe("cortex");
+        expect(meta.annotations!["cortex/owner-workflow-id"]).toBe("run-1-0");
+        expect(meta.labels!["cortex/run-id"]).toBe("run-1");
+        expect(meta.labels!["cortex/step-id"]).toBe("step-a");
     });
 
-    test("sanitizes a colon-bearing workflow id into a valid label value", async () => {
+    test("an owner id that no label could hold round-trips through listManagedSandboxes", async () => {
+        // The production data-profile id: `dataprofile:{analysisUUID}:{nonceUUID}`,
+        // 85 bytes with colons — over the 63-byte label cap and outside the label
+        // charset twice over. It is a real DBOS workflow id, so what comes back out
+        // has to be usable as a `getWorkflowStatus` key, byte for byte.
+        const childWorkflowId = "dataprofile:01a01372-a1bd-73d6-8dd2-9dc7cb84aa2e:0f3c1d2e-4b5a-6c7d-8e9f-a0b1c2d3e4f5";
+        expect(childWorkflowId.length).toBeGreaterThan(63);
+
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }]);
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
@@ -720,21 +733,75 @@ describe("k8s job ownership labels", () => {
 
         (
             await ops.createSandbox(
-                {
-                    runId: "data-profile",
-                    stepId: "profile",
-                    analysisId: "an-1",
-                    childWorkflowId: "data-profile:data-profiler-g3u48je4",
-                    resources: { cpu: 2, memoryGb: 4 },
-                },
+                { runId: "data-profile", stepId: "profile", analysisId: "an-1", childWorkflowId, resources: { cpu: 2, memoryGb: 4 } },
                 mintSandboxIdentity("data-profile"),
             )
         )._unsafeUnwrap();
 
-        const owner = stub.createdJobs[0]!.metadata!.labels!["cortex/owner-workflow-id"]!;
-        expect(owner).toBe("data-profile-data-profiler-g3u48je4");
-        expect(owner).toMatch(/^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$/);
-        expect(owner.length).toBeLessThanOrEqual(63);
+        const managed = (await ops.listManagedSandboxes())._unsafeUnwrap();
+        expect(managed[0]!.ownerWorkflowId).toBe(childWorkflowId);
+        expect(managed[0]!.ownerIsVerbatim).toBe(true);
+
+        // The label mirror still has to be admissible, or the API server rejects the
+        // whole Job — it just is not what anyone looks the workflow up by.
+        const label = stub.createdJobs[0]!.metadata!.labels!["cortex/owner-workflow-id"]!;
+        expect(label).toMatch(/^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$/);
+        expect(label.length).toBeLessThanOrEqual(63);
+    });
+
+    test("a Job carrying only the legacy label is still attributable, and marked non-verbatim", async () => {
+        // Written by the previous release, still standing mid-rollout. The id it
+        // records is the lossy one, so a failed lookup against it proves nothing —
+        // which is what `ownerIsVerbatim: false` tells the reaper.
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }]);
+        stub.createdJobs.push({
+            metadata: {
+                name: "sbx-legacy",
+                labels: { "cortex/sandbox-id": "sbx-legacy", "cortex/owner-workflow-id": "run-9-0" },
+                creationTimestamp: new Date(1_700_000_000_000),
+            },
+        } as V1Job);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        const managed = (await ops.listManagedSandboxes())._unsafeUnwrap();
+        expect(managed).toEqual([{ sandboxId: "sbx-legacy", ownerWorkflowId: "run-9-0", ownerIsVerbatim: false, createdAtMs: 1_700_000_000_000 }]);
+    });
+
+    test("adoption accepts a Job that records its owner only in the legacy label", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }], {
+            create409Times: 1,
+            existingOwner: "run-1-0",
+            existingOwnerAsLegacyLabel: true,
+        });
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(
+            { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+            mintSandboxIdentity("run-1"),
+        );
+
+        expect(result.isOk()).toBe(true);
     });
 });
 

@@ -270,11 +270,27 @@ returning each one's `sandboxId`, `ownerWorkflowId`, and creation time, so the
 scheduled reaper (`registerSandboxReaper`) can map a machine back to its owning
 workflow and tear down orphans.
 
+`ownerWorkflowId` is a DBOS lookup key, so every backend SHALL record it verbatim
+and SHALL report whether the value it returns is verbatim (`ownerIsVerbatim`).
+Docker label values are unconstrained, so this backend stores and returns the id
+as given. A backend whose metadata namespace cannot hold the id unaltered — see
+the K8s label cap in the harness-sandbox-exec spec — SHALL record it somewhere
+that can, and SHALL NOT report a rewritten value as verbatim: a lookup that fails
+against a lossy id proves nothing about the owning workflow.
+
 #### Scenario: Managed containers are enumerable for the reaper
 
 - **GIVEN** two running sandbox containers labeled `app.kubernetes.io/managed-by=cortex`
 - **WHEN** `listManagedSandboxes()` is called
 - **THEN** it returns both, each carrying its `sandboxId` and `ownerWorkflowId` label values
+
+#### Scenario: An owner id no label namespace could hold still round-trips
+
+- **GIVEN** a sandbox created with a `childWorkflowId` that exceeds the K8s label
+  value cap and carries characters illegal in one
+- **WHEN** `listManagedSandboxes()` is called
+- **THEN** the reported `ownerWorkflowId` SHALL equal the `childWorkflowId` byte for byte
+- **AND** `ownerIsVerbatim` SHALL be true
 
 #### Scenario: Reaper tears down an orphaned machine
 

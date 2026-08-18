@@ -151,6 +151,31 @@ describe("feedExecFrame", () => {
         });
         expect(collector.getDataInputs()).toHaveLength(0);
     });
+
+    test("a disabled frame is reported, not silently emptied", () => {
+        // The record it produces is indistinguishable from a command that touched
+        // nothing, so the log line is the only account of a total capture failure.
+        const collector = new ProvenanceCollector({ stepId: "s", runId: "r" });
+        const { logger, warnings } = recordingLogger();
+        feedExecFrame({
+            collector,
+            mountRoot: "/a1",
+            command: ["python3", "scripts/x.py"],
+            exitCode: 0,
+            durationMs: 10,
+            provenance: { disabled: true, reads: [], writes: [], deletes: [] },
+            logger,
+        });
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.fields).toMatchObject({ command: "python3" });
+    });
+
+    test("an absent frame is not reported — nothing claims to have captured anything", () => {
+        const collector = new ProvenanceCollector({ stepId: "s", runId: "r" });
+        const { logger, warnings } = recordingLogger();
+        feedExecFrame({ collector, mountRoot: "/a1", command: ["ls"], exitCode: 0, durationMs: 1, logger });
+        expect(warnings).toHaveLength(0);
+    });
 });
 
 /** Captures the refusal records so the drop can be asserted as observable. */

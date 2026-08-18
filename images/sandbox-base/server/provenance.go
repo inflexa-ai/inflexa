@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -51,6 +52,9 @@ type ProvenanceEntry struct {
 // ProvenanceTracker collects file-read provenance from interpreter hooks,
 // LD_PRELOAD, and inotify during a single command execution.
 type ProvenanceTracker struct {
+	// Retained only to correlate the hashed socket filename back to the exec
+	// it belongs to in the logs.
+	id         string
 	socketPath string
 	rlogPath   string
 	watchDirs  []string
@@ -75,9 +79,19 @@ type ProvenanceTracker struct {
 // ── Constructor / lifecycle ────────────────────────────────────
 
 // NewProvenanceTracker creates a tracker with a unique socket path.
+//
+// The path is derived from a hash of id rather than id itself, so it is a fixed
+// 31 bytes whatever the caller passes. A pathname AF_UNIX socket is capped at
+// 107 bytes by sun_path (`struct sockaddr_un`; Go rejects an over-long name
+// client-side, before the bind syscall, as a bare EINVAL), and id embeds a DBOS
+// workflow id whose length nothing on this side can see or bound. Nothing reads
+// the filename — children receive the path only through PROVENANCE_SOCKET — so
+// making it opaque costs nothing.
 func NewProvenanceTracker(id string, watchDirs []string) *ProvenanceTracker {
-	socketPath := fmt.Sprintf("/tmp/prov-%s.sock", id)
+	sum := sha256.Sum256([]byte(id))
+	socketPath := fmt.Sprintf("/tmp/prov-%x.sock", sum[:8])
 	pt := &ProvenanceTracker{
+		id:         id,
 		socketPath: socketPath,
 		rlogPath:   socketPath + ".rlog",
 		watchDirs:  watchDirs,
@@ -105,6 +119,7 @@ func (pt *ProvenanceTracker) Start() error {
 		return fmt.Errorf("provenance socket: %w", err)
 	}
 	pt.listener = conn
+	log.Printf("[provenance] tracker started: socket=%s id=%s", pt.socketPath, pt.id)
 
 	// Start socket reader goroutine
 	pt.wg.Add(1)

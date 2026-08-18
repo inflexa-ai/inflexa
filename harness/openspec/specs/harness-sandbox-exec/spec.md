@@ -642,6 +642,8 @@ be idempotent: "already gone" is a successful teardown and SHALL NOT throw.
 `teardownById(sandboxId)` SHALL delete a machine by id alone — the reaper path,
 which holds a `sandboxId` but no full `SandboxRef` — and SHALL NOT touch the
 registry (the reaper reconciles the row itself). It too SHALL be idempotent.
+`isAliveById(sandboxId)` SHALL answer liveness on the same id-only terms, with
+the semantics and throwing contract of `isAlive`, which SHALL delegate to it.
 
 #### Scenario: Teardown removes the machine and clears the row
 
@@ -767,10 +769,19 @@ orphaned sandbox machines and stale registry rows. One sweep SHALL run as a
 single DBOS step: `listManagedSandboxes`, then for each machine read its
 owner-workflow status. A machine whose owner is in `{PENDING, ENQUEUED, RUNNING}`
 SHALL be left alone; one whose owner is terminal (`SUCCESS`/`ERROR`/`CANCELLED`)
-or missing SHALL be reaped via `teardownById`, and the stuck step row SHALL be
-reconciled to the workflow's terminal status. A label-less/legacy machine SHALL
-be reaped only past a creation-time grace (~10 minutes) so a partially-created
-in-flight machine is never caught.
+SHALL be reaped via `teardownById`, and the stuck step row SHALL be reconciled to
+the workflow's terminal status.
+
+A machine whose owner does **not** resolve to a workflow at all — it records no
+owner, or the id it records names no `dbos.workflow_status` row — SHALL NOT be
+reaped on age alone. Age cannot distinguish a genuine orphan from a live machine
+whose owner id failed to resolve, and DBOS records the owner's status at enqueue,
+*before* the machine exists, so a missing status is never evidence that the work
+has finished. Past a creation-time grace (~10 minutes) the sweep SHALL instead
+probe `isAliveById` and reap only an observably dead machine. A machine still
+alive SHALL be left standing and counted in the sweep summary, so an
+unattributable machine is a reported leak rather than a silent teardown of live
+work. A probe that throws SHALL leave the machine for the next sweep.
 
 #### Scenario: Terminal-owner machine is reaped and its row reconciled
 
@@ -785,11 +796,24 @@ in-flight machine is never caught.
 - **WHEN** the reaper sweep runs
 - **THEN** the machine SHALL NOT be torn down
 
-#### Scenario: Label-less machine reaped only past the grace
+#### Scenario: Unresolvable-owner machine is left alone within the grace
 
-- **GIVEN** a managed machine with no owner-workflow label
+- **GIVEN** a managed machine whose owner does not resolve to a workflow
 - **WHEN** the reaper sweep runs before the creation-time grace elapses
-- **THEN** the machine SHALL be left alone
+- **THEN** the machine SHALL be left alone, and SHALL NOT be probed
+
+#### Scenario: Unresolvable-owner machine past the grace is reaped only when dead
+
+- **GIVEN** a managed machine past the grace whose owner does not resolve to a workflow
+- **WHEN** the reaper sweep runs and `isAliveById` reports the machine dead
+- **THEN** `teardownById` SHALL delete the machine
+
+#### Scenario: A live machine is never reaped for being unattributable
+
+- **GIVEN** a managed machine past the grace whose owner does not resolve to a workflow
+- **WHEN** the reaper sweep runs and `isAliveById` reports the machine alive
+- **THEN** the machine SHALL NOT be torn down
+- **AND** the sweep summary SHALL count it as live-unattributed
 
 ### Requirement: Notification-cleanup sweep clears unconsumed DBOS sends
 

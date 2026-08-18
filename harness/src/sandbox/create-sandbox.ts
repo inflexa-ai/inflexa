@@ -268,6 +268,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         submitExec: async (ref, body) => submitExec(ref, body, config.submitDeps),
         awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, composeAwaitOptions(config.awaitOptions, transport, isAlive)),
         isAlive,
+        isAliveById: async (sandboxId) => unwrapOrThrow(await ops.isAliveById(sandboxId)),
         teardown,
         teardownById: async (sandboxId) => unwrapOrThrow(await ops.teardownById(sandboxId)),
         listManagedSandboxes: async () => unwrapOrThrow(await ops.listManagedSandboxes()),

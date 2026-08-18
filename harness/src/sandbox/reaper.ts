@@ -5,9 +5,10 @@
  * Distinct from the liveness watchdog (`sandbox/watchdog.ts`): the watchdog
  * sweeps registry→cluster and unblocks stuck recvs; the reaper sweeps
  * cluster→registry and garbage-collects. It lists every Cortex-managed sandbox
- * machine in the configured namespace, reads each machine's owner-workflow-id
- * label, and reaps any whose owning workflow is terminal/missing — tearing the
- * machine down and reconciling its step row.
+ * machine in the configured namespace, resolves each machine's recorded owner
+ * workflow, and reaps the ones whose owner is terminal — tearing the machine
+ * down and reconciling its step row. A machine whose owner does not resolve at
+ * all is torn down only once a liveness probe says it is dead.
  *
  * Why a sweep and not teardown-on-cancel: DBOS forbids running a step in a
  * cancelled workflow, so the body cannot tear down on the cancel path; and only
@@ -41,21 +42,24 @@ const DEFAULT_GRACE_MS = 10 * 60_000;
  */
 const ACTIVE_WORKFLOW_STATUSES = new Set(["PENDING", "ENQUEUED", "RUNNING"]);
 
-export type ReapDecision = "leave" | "reap";
+export type ReapDecision = "leave" | "reap" | "reap-if-dead";
 
 /**
- * Decide whether a managed machine is reapable. The owning workflow's status
- * is authoritative — DBOS writes it at enqueue, *before* the machine exists, so
- * a just-spawned machine is always observably in-flight and never mistaken for
- * an orphan. Only the no-status case (no owner label, or the workflow is gone)
- * falls back to a creation-time grace, the one window the status signal can't
- * cover.
+ * Decide whether a managed machine is reapable. A resolved owner status is
+ * authoritative in both directions — DBOS records it at enqueue, *before* the
+ * machine exists, so an in-flight workflow's machine is always observably
+ * in-flight and a terminal one's is always reapable.
+ *
+ * A missing status is authoritative for neither. It means the machine records
+ * no owner, or the id it records did not resolve, or DBOS pruned the row —
+ * and age cannot separate those from a genuine orphan. So the decision defers
+ * to a liveness probe: only an observably dead machine is torn down. Reaping a
+ * live machine on age alone is what this branch exists to prevent.
  */
 export function classifyManaged(sb: ManagedSandbox, status: { status: string } | null, nowMs: number, graceMs: number): ReapDecision {
-    if (status && ACTIVE_WORKFLOW_STATUSES.has(status.status)) return "leave";
-    if (status) return "reap";
+    if (status) return ACTIVE_WORKFLOW_STATUSES.has(status.status) ? "leave" : "reap";
     const ageMs = sb.createdAtMs == null ? Number.POSITIVE_INFINITY : nowMs - sb.createdAtMs;
-    return ageMs >= graceMs ? "reap" : "leave";
+    return ageMs >= graceMs ? "reap-if-dead" : "leave";
 }
 
 /** Map the owning workflow's terminal status to the step row's terminal status. */
@@ -73,9 +77,9 @@ export function terminalStepStatus(workflowStatus: string | null): "canceled" | 
 
 export interface ReaperDeps {
     pool: Pool;
-    sandboxClient: Pick<SandboxClient, "listManagedSandboxes" | "teardownById">;
+    sandboxClient: Pick<SandboxClient, "listManagedSandboxes" | "teardownById" | "isAliveById">;
     getStatus: (workflowId: string) => Promise<{ status: string } | null>;
-    /** Creation-time grace for label-less / orphaned machines. */
+    /** Creation-time grace before an unattributable machine is even probed. */
     graceMs?: number;
     /** Wall-clock ms; injected for tests. */
     nowMs?: () => number;
@@ -87,6 +91,12 @@ export interface ReapSummary {
     reapedCount: number;
     rowsReconciled: number;
     leftCount: number;
+    /**
+     * Machines past the grace whose owner did not resolve but which are still
+     * alive, so they were left standing. A non-zero value is a standing leak
+     * *and* a bug signal — it means owner ids are not round-tripping.
+     */
+    liveUnattributed: number;
 }
 
 /**
@@ -103,13 +113,45 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
     let reapedCount = 0;
     let rowsReconciled = 0;
     let leftCount = 0;
+    let liveUnattributed = 0;
 
     for (const sb of managed) {
         const status = sb.ownerWorkflowId ? await deps.getStatus(sb.ownerWorkflowId) : null;
+        const decision = classifyManaged(sb, status, nowMs, graceMs);
 
-        if (classifyManaged(sb, status, nowMs, graceMs) === "leave") {
+        if (decision === "leave") {
             leftCount++;
             continue;
+        }
+
+        if (decision === "reap-if-dead") {
+            // A verbatim id that resolves to nothing is an anomaly worth naming: either
+            // DBOS pruned the row or the id never reached the machine intact.
+            if (sb.ownerWorkflowId && sb.ownerIsVerbatim) {
+                logger.warn("owner workflow id resolved to no workflow", { sandboxId: sb.sandboxId, ownerWorkflowId: sb.ownerWorkflowId });
+            }
+
+            let liveness;
+            try {
+                liveness = await deps.sandboxClient.isAliveById(sb.sandboxId);
+            } catch (err) {
+                // A probe that cannot answer is not a dead machine. Leave it; the next
+                // sweep re-probes.
+                logger.warn("liveness probe threw — leaving this machine", { sandboxId: sb.sandboxId, ...logger.errorFields(err) });
+                leftCount++;
+                continue;
+            }
+
+            if (liveness.alive) {
+                logger.warn("machine has no resolvable owner but is still alive — left standing", {
+                    sandboxId: sb.sandboxId,
+                    ownerWorkflowId: sb.ownerWorkflowId,
+                    ownerIsVerbatim: sb.ownerIsVerbatim,
+                });
+                leftCount++;
+                liveUnattributed++;
+                continue;
+            }
         }
 
         try {
@@ -130,6 +172,7 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
         reapedCount,
         rowsReconciled,
         leftCount,
+        liveUnattributed,
     };
     // Spread: an interface has no implicit index signature, so it needs widening to `LogFields`.
     logger.info("sweep completed", { ...summary });
@@ -138,7 +181,7 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
 
 export interface RegisterReaperDeps {
     pool: Pool;
-    sandboxClient: Pick<SandboxClient, "listManagedSandboxes" | "teardownById">;
+    sandboxClient: Pick<SandboxClient, "listManagedSandboxes" | "teardownById" | "isAliveById">;
     graceMs?: number;
     logger?: Logger;
 }

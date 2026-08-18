@@ -261,6 +261,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
     teardown(ref: SandboxRef): ResultAsync<void, SandboxError>;
     teardownById(sandboxId: string): ResultAsync<void, SandboxError>;
     isAlive(ref: SandboxRef): ResultAsync<SandboxLiveness, SandboxError>;
+    isAliveById(sandboxId: string): ResultAsync<SandboxLiveness, SandboxError>;
     listManagedSandboxes(): ResultAsync<ManagedSandbox[], SandboxError>;
 } {
     // The injected test instance wins; otherwise a configured socket dials that
@@ -443,6 +444,8 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         return {
                             sandboxId: labels["cortex/sandbox-id"] ?? "",
                             ownerWorkflowId: labels[OWNER_WORKFLOW_LABEL] ?? null,
+                            // Docker label values are unconstrained, so the id is stored verbatim.
+                            ownerIsVerbatim: true,
                             // Docker reports `Created` as unix seconds.
                             createdAtMs: typeof c.Created === "number" ? c.Created * 1000 : null,
                         };
@@ -452,25 +455,31 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
         },
 
         isAlive(ref) {
-            return trySandbox(
-                async () => {
-                    const info = await docker.getContainer(ref.sandboxId).inspect();
-                    const oomKilled = info.State.OOMKilled === true;
-                    // A running container is a reachable sandbox: the host dials its
-                    // published loopback port directly.
-                    return { alive: info.State.Running === true, oomKilled };
-                },
-                (status, cause) => ({
-                    type: "liveness_failed",
-                    op: "docker.isAlive",
-                    sandboxId: ref.sandboxId,
-                    status,
-                    cause,
-                }),
-            ).orElse((e) =>
-                // dockerode throws 404 for a missing container — observably dead.
-                statusOf(e) === 404 ? ok({ alive: false, oomKilled: false }) : err(e),
-            );
+            return isAliveById(ref.sandboxId);
         },
+
+        isAliveById,
     };
+
+    function isAliveById(sandboxId: string): ResultAsync<SandboxLiveness, SandboxError> {
+        return trySandbox(
+            async () => {
+                const info = await docker.getContainer(sandboxId).inspect();
+                const oomKilled = info.State.OOMKilled === true;
+                // A running container is a reachable sandbox: the host dials its
+                // published loopback port directly.
+                return { alive: info.State.Running === true, oomKilled };
+            },
+            (status, cause) => ({
+                type: "liveness_failed",
+                op: "docker.isAlive",
+                sandboxId,
+                status,
+                cause,
+            }),
+        ).orElse((e) =>
+            // dockerode throws 404 for a missing container — observably dead.
+            statusOf(e) === 404 ? ok({ alive: false, oomKilled: false }) : err(e),
+        );
+    }
 }

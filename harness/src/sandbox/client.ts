@@ -86,6 +86,14 @@ export interface SandboxClient {
     isAlive(ref: SandboxRef): Promise<SandboxLiveness>;
 
     /**
+     * Liveness by id alone — the reaper path (see the harness-sandbox-exec spec),
+     * which holds a `sandboxId` from the cluster sweep but no full `SandboxRef`.
+     * Same semantics and the same throwing contract as {@link SandboxClient.isAlive},
+     * which delegates to it.
+     */
+    isAliveById(sandboxId: string): Promise<SandboxLiveness>;
+
+    /**
      * DBOS step (`sandbox.teardown`). Deletes the K8s Job / removes the
      * Docker container, clears the active-sandbox registry. Idempotent —
      * "already gone" is a successful teardown.

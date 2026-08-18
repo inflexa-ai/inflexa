@@ -171,7 +171,7 @@ describe("createSandboxClient — engine connection threading", () => {
 
             const managed = await client.listManagedSandboxes();
 
-            expect(managed).toEqual([{ sandboxId: "sentinel-sbx", ownerWorkflowId: "wf-x", createdAtMs: 1700000 }]);
+            expect(managed).toEqual([{ sandboxId: "sentinel-sbx", ownerWorkflowId: "wf-x", ownerIsVerbatim: true, createdAtMs: 1700000 }]);
         } finally {
             await new Promise<void>((resolve) => server.close(() => resolve()));
             await rm(dir, { recursive: true, force: true });

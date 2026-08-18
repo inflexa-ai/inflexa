@@ -275,6 +275,15 @@ The sandbox-server SHALL create a fresh Unix domain socket (`SOCK_DGRAM`) at a u
 
 The server SHALL read all pending datagrams from the socket after the child process exits, with a configurable drain timeout (default 100ms) to allow for late-arriving messages.
 
+The path SHALL be of a fixed length that fits `sun_path`, which caps a pathname `AF_UNIX` address at 107 bytes (`struct sockaddr_un`; Go rejects an over-long name client-side as a bare `EINVAL`, so the bind never reaches the kernel and the error never names its cause). The path SHALL therefore derive from a hash of the execution id rather than embedding it: that id carries a DBOS workflow id and a plan-authored step slug, neither of which sandbox-server can bound or even see the bound of. Nothing parses the filename — it reaches children only through the environment variable — so it need carry no identifying content; the tracker SHALL instead log the execution id beside the hashed path once at start, so the two remain correlatable.
+
+#### Scenario: An execution id too long to embed still binds
+
+- **GIVEN** an execution id whose literal embedding would exceed the `sun_path` cap
+- **WHEN** the tracker is constructed and started
+- **THEN** the socket path SHALL be within the cap and the socket SHALL bind
+- **AND** distinct execution ids SHALL still yield distinct socket paths
+
 #### Scenario: Socket created before command and cleaned up after
 
 - **WHEN** `POST /exec` is called with a command

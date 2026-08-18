@@ -40,6 +40,9 @@ export function makeFakeSandboxClient(): SandboxClient {
         async isAlive() {
             return { alive: true, oomKilled: false };
         },
+        async isAliveById() {
+            return { alive: true, oomKilled: false };
+        },
         async teardown() {},
         async teardownById() {},
         async listManagedSandboxes() {
