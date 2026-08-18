@@ -293,7 +293,7 @@ export { createThreadStore } from "./memory/thread-store.js";
 // without the variants it can return beside `DbError`.
 export type { ThreadStore, Thread, ThreadType, ThreadInputError, CreateThreadInput, ListThreadsInput, ThreadPage } from "./memory/thread-store.js";
 export { createThreadHistory, conversationRecordTurn } from "./memory/thread-history.js";
-export type { ThreadHistory, StoredMessage, MessagePage, RetractOutcome, ConversationTurn } from "./memory/thread-history.js";
+export type { ThreadHistory, StoredMessage, MessagePage, ThreadTranscript, RetractOutcome, ConversationTurn } from "./memory/thread-history.js";
 // The synthetic-message primitives. A host appends a record of out-of-band work (an analysis run's
 // outcome) into a thread through `appendTurn`, and needs a message the model reads but that is not
 // user input — which is exactly what the marker denotes. The constructor is exported rather than

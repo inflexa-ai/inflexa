@@ -1346,3 +1346,63 @@ describe("loadRecent ignores the stored rollup", () => {
         expect(windowCost(withRollups)).toBeLessThanOrEqual(budget);
     });
 });
+
+// --- loadAll / latestTurnAt --------------------------------------------------
+
+describe("loadAll", () => {
+    it("returns every turn, including past the 200-turn ceiling loadPage clamps to", async () => {
+        const TURNS = 205;
+        for (let i = 0; i < TURNS; i++) {
+            (await append(THREAD, [userText(`ask ${i}`), assistantText(`answer ${i}`)]))._unsafeUnwrap();
+        }
+
+        const all = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(all.total).toBe(TURNS);
+        expect(all.messages).toHaveLength(TURNS * 2);
+        expect(all.messages.at(-1)!.message).toEqual(assistantText(`answer ${TURNS - 1}`));
+
+        // The single page loadPage can serve stops short, which is the whole
+        // reason loadAll exists.
+        const page = (await history.loadPage(THREAD, 0, 1000))._unsafeUnwrap();
+        expect(page.total).toBe(TURNS);
+        expect(page.messages).toHaveLength(200 * 2);
+        expect(page.hasMore).toBe(true);
+    });
+
+    it("agrees with loadPage row-for-row when one page covers the thread", async () => {
+        for (let i = 0; i < 3; i++) {
+            (await append(THREAD, [userText(`ask ${i}`), assistantText(`answer ${i}`)]))._unsafeUnwrap();
+        }
+
+        const all = (await history.loadAll(THREAD))._unsafeUnwrap();
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(all.total).toBe(page.total);
+        expect(all.messages.map((m) => m.message)).toEqual(page.messages.map((m) => m.message));
+    });
+
+    it("reads an empty thread as no turns rather than an error", async () => {
+        const all = (await history.loadAll("thread-with-no-rows"))._unsafeUnwrap();
+        expect(all).toEqual({ messages: [], total: 0 });
+    });
+});
+
+describe("latestTurnAt", () => {
+    it("is null for a thread with no rows", async () => {
+        expect((await history.latestTurnAt(THREAD))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("moves forward as turns land", async () => {
+        (await append(THREAD, [userText("one"), assistantText("first")]))._unsafeUnwrap();
+        const first = (await history.latestTurnAt(THREAD))._unsafeUnwrap();
+        expect(first).not.toBeNull();
+
+        (await append(THREAD, [userText("two"), assistantText("second")]))._unsafeUnwrap();
+        const second = (await history.latestTurnAt(THREAD))._unsafeUnwrap();
+        expect(second!.getTime()).toBeGreaterThanOrEqual(first!.getTime());
+    });
+
+    it("is scoped to its own thread", async () => {
+        (await append(THREAD, [userText("mine"), assistantText("ok")]))._unsafeUnwrap();
+        expect((await history.latestTurnAt("some-other-thread"))._unsafeUnwrap()).toBeNull();
+    });
+});

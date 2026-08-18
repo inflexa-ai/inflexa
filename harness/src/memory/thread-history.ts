@@ -147,6 +147,13 @@ export interface MessagePage {
     readonly hasMore: boolean;
 }
 
+/** A thread's whole transcript, as returned by `loadAll`. `total` counts TURNS;
+ *  `messages` holds their flattened rows. No window, so no `hasMore`. */
+export interface ThreadTranscript {
+    readonly messages: StoredMessage[];
+    readonly total: number;
+}
+
 /**
  * The result of `retractLastTurn`. `retracted` carries `messages` — the number
  * of rows removed — so a caller can assert exactly what came off the tail. The
@@ -210,6 +217,19 @@ export interface ThreadHistory {
      */
     loadPage(threadId: string, page: number, perPage: number): ResultAsync<MessagePage, DbError>;
     /**
+     * Return a thread's ENTIRE transcript oldest-first for UI display — the
+     * unwindowed form of `loadPage`, and not token-windowed (that is
+     * `loadRecent`'s job for the agent loop).
+     *
+     * Prefer this over `loadPage` whenever the caller wants the whole thread.
+     * The read costs the same either way: `loadPage` selects every row of the
+     * thread and slices AFTER parsing and grouping, so a page saves no query
+     * and no parse — only serialization. Paging a whole thread therefore pays
+     * the full read once per page, and a caller that stops early silently
+     * drops the tail, `perPage` being clamped to 200.
+     */
+    loadAll(threadId: string): ResultAsync<ThreadTranscript, DbError>;
+    /**
      * Remove the thread's most recent turn — every row from the last
      * genuine-user-start `seq` onward — in a single transaction.
      *
@@ -241,6 +261,13 @@ export interface ThreadHistory {
      * no guarantee, because the tail can move one append later without it.
      */
     latestSeq(threadId: string): ResultAsync<number | null, DbError>;
+    /**
+     * When the thread last moved — `MAX(messages.created_at)`, or `null` for a
+     * thread with no rows. The thread's ACTIVITY clock, and deliberately not
+     * `cortex_analysis_threads.updated_at`: a title rename bumps that column
+     * too, so it cannot answer "has a turn settled since <time>".
+     */
+    latestTurnAt(threadId: string): ResultAsync<Date | null, DbError>;
     /**
      * The count of the thread turns that a person opened past `seq`. A caller
      * reads it as the new work of the thread past an anchor.
@@ -608,62 +635,66 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         });
     }
 
+    // Display reads are turn-bounded, not row-bounded. A serial-tool assistant
+    // turn is persisted as one row per step (plus its tool_result `user` rows),
+    // so a row-windowed page could split a turn — truncating the trailing
+    // report card/text out of the page the UI fetches. Read the thread and group
+    // into turns, so a turn always reloads intact. Threads are conversation-scoped
+    // and bounded, so reading every row here matches `loadRecent`'s existing
+    // whole-thread read — which is why `loadAll` costs `loadPage` nothing extra.
+    async function readTurns(threadId: string): Promise<StoredMessage[][]> {
+        const { rows } = await pool.query<{
+            seq: string;
+            message_envelope: unknown;
+            display_envelope: unknown;
+            // pg parses a `jsonb` column into a JS value. The cast on the way out is
+            // sound because this column has exactly one writer — `appendTurn` above,
+            // from a `TokenUsageRollup` — and null is preserved as null by the
+            // spread below rather than read as a rollup.
+            reported_usage: TokenUsageRollup | null;
+            // The driver hands a bigint back as text, and the `::text` cast below
+            // says so. `Number` makes the crossing in one place — the way every
+            // other read of a bigint column in this module does.
+            turn_duration_ms: string | null;
+        }>(
+            // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
+            // `seq::text AS seq` output alias (Postgres resolves an unqualified
+            // ORDER BY name to the output column), sorting the bigint as text:
+            // "10" before "2". The qualified name forces the bigint column.
+            `SELECT seq::text AS seq, message_envelope, display_envelope, reported_usage, turn_duration_ms::text AS turn_duration_ms
+         FROM messages WHERE thread_id = $1
+         ORDER BY messages.seq ASC`,
+            [threadId],
+        );
+
+        // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
+        // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
+        // The duration obeys the same rule, and it reads from its own column.
+        const stored: StoredMessage[] = await Promise.all(
+            rows.map(async (r) => {
+                const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
+                const displayEnvelope =
+                    r.display_envelope == null ? undefined : await parseStoredDisplayEnvelope(r.display_envelope, `${threadId}/${r.seq}/display`);
+                return {
+                    seq: Number(r.seq),
+                    envelope,
+                    message: envelope.message,
+                    ...(displayEnvelope ? { displayEnvelope } : {}),
+                    ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
+                    ...(r.turn_duration_ms === null ? {} : { durationMs: Number(r.turn_duration_ms) }),
+                };
+            }),
+        );
+
+        return groupTurns(stored, (row) => isGenuineUserStart(row.message));
+    }
+
     function loadPage(threadId: string, page: number, perPage: number): ResultAsync<MessagePage, DbError> {
         const safePerPage = Math.min(Math.max(perPage, 1), 200);
         const safePage = Math.max(page, 0);
 
         return tryQuery("thread-history.loadPage", async () => {
-            // Display pages are turn-bounded, not row-bounded. A serial-tool assistant
-            // turn is persisted as one row per step (plus its tool_result `user` rows),
-            // so a row-windowed page could split a turn — truncating the trailing
-            // report card/text out of the page the UI fetches. Read the thread, group
-            // into turns, and slice whole turns so a turn always reloads intact.
-            // Threads are conversation-scoped and bounded, so reading every row here
-            // matches `loadRecent`'s existing whole-thread read.
-            const { rows } = await pool.query<{
-                seq: string;
-                message_envelope: unknown;
-                display_envelope: unknown;
-                // pg parses a `jsonb` column into a JS value. The cast on the way out is
-                // sound because this column has exactly one writer — `appendTurn` above,
-                // from a `TokenUsageRollup` — and null is preserved as null by the
-                // spread below rather than read as a rollup.
-                reported_usage: TokenUsageRollup | null;
-                // The driver hands a bigint back as text, and the `::text` cast below
-                // says so. `Number` makes the crossing in one place — the way every
-                // other read of a bigint column in this module does.
-                turn_duration_ms: string | null;
-            }>(
-                // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
-                // `seq::text AS seq` output alias (Postgres resolves an unqualified
-                // ORDER BY name to the output column), sorting the bigint as text:
-                // "10" before "2". The qualified name forces the bigint column.
-                `SELECT seq::text AS seq, message_envelope, display_envelope, reported_usage, turn_duration_ms::text AS turn_duration_ms
-         FROM messages WHERE thread_id = $1
-         ORDER BY messages.seq ASC`,
-                [threadId],
-            );
-
-            // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
-            // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
-            // The duration obeys the same rule, and it reads from its own column.
-            const stored: StoredMessage[] = await Promise.all(
-                rows.map(async (r) => {
-                    const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
-                    const displayEnvelope =
-                        r.display_envelope == null ? undefined : await parseStoredDisplayEnvelope(r.display_envelope, `${threadId}/${r.seq}/display`);
-                    return {
-                        seq: Number(r.seq),
-                        envelope,
-                        message: envelope.message,
-                        ...(displayEnvelope ? { displayEnvelope } : {}),
-                        ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
-                        ...(r.turn_duration_ms === null ? {} : { durationMs: Number(r.turn_duration_ms) }),
-                    };
-                }),
-            );
-
-            const turns = groupTurns(stored, (row) => isGenuineUserStart(row.message));
+            const turns = await readTurns(threadId);
             const total = turns.length;
             const offset = safePage * safePerPage;
             const pageTurns = turns.slice(offset, offset + safePerPage);
@@ -675,6 +706,13 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                 perPage: safePerPage,
                 hasMore: offset + pageTurns.length < total,
             };
+        });
+    }
+
+    function loadAll(threadId: string): ResultAsync<ThreadTranscript, DbError> {
+        return tryQuery("thread-history.loadAll", async () => {
+            const turns = await readTurns(threadId);
+            return { messages: turns.flat(), total: turns.length };
         });
     }
 
@@ -741,6 +779,16 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         });
     }
 
+    function latestTurnAt(threadId: string): ResultAsync<Date | null, DbError> {
+        // `MAX(created_at)` over no rows is SQL NULL, so a thread with no messages
+        // reads as `null` rather than as a time. This is the thread's ACTIVITY
+        // clock — distinct from `cortex_analysis_threads.updated_at`, which a
+        // rename also bumps, and so cannot answer "did a turn settle after X".
+        return tryQuery("thread-history.latestTurnAt", () =>
+            pool.query<{ latest_at: Date | null }>("SELECT MAX(created_at) AS latest_at FROM messages WHERE thread_id = $1", [threadId]),
+        ).map(({ rows }) => rows[0]?.latest_at ?? null);
+    }
+
     function countUserTurnsAfter(threadId: string, seq: number): ResultAsync<number, DbError> {
         // `GENUINE_USER_START_SQL` is the stored-envelope twin of
         // `isGenuineUserStart`, and the tail retraction cuts on the same text.
@@ -763,5 +811,5 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         ).map(({ rows }) => Number(rows[0]!.turns));
     }
 
-    return { appendTurn, loadRecent, loadPage, retractLastTurn, latestSeq, countUserTurnsAfter };
+    return { appendTurn, loadRecent, loadPage, loadAll, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };
 }
