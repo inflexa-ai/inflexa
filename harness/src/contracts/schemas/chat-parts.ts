@@ -326,12 +326,15 @@ export const RunFailedPartSchema = z.object({
     reason: z.string().optional(),
 });
 
-// ── Report Session Started ─────────────────────────────────────────
+// ── Child Session Started ──────────────────────────────────────────
 
-export const ReportSessionStartedPartSchema = z.object({
-    type: z.literal("data-report-session-started"),
+export const ChildSessionStartedPartSchema = z.object({
+    type: z.literal("data-child-session-started"),
     threadId: z.string(),
     parentThreadId: z.string(),
+    // A plain string, deliberately not an enum: a future session type must
+    // not fail validation in an older consumer.
+    threadType: z.string(),
 });
 
 // ── Report Rendered ────────────────────────────────────────────────
@@ -363,6 +366,6 @@ export const CortexChatPartSchema = z.discriminatedUnion("type", [
     SynthesisProgressPartSchema,
     RunCompletedPartSchema,
     RunFailedPartSchema,
-    ReportSessionStartedPartSchema,
+    ChildSessionStartedPartSchema,
     ReportRenderedPartSchema,
 ]);

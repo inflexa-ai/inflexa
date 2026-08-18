@@ -3,7 +3,7 @@
  * and the public API for everything the chat path exchanges.
  *
  * No AI SDK types appear here or anywhere else in the package. The
- * discriminant is `type`, so `switch (part.type) { case "data-report-session-started": ... }`
+ * discriminant is `type`, so `switch (part.type) { case "data-child-session-started": ... }`
  * narrows the union member without any `as` cast.
  */
 

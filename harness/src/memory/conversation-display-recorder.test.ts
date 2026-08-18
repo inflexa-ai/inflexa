@@ -60,10 +60,10 @@ describe("conversation display recorder", () => {
         expect(recorder.finish()[1]!.parts.map((part) => ("id" in part ? part.id : part.type))).toEqual(["a", "b", "from-b", "from-a"]);
     });
 
-    it("records a report-session-started part in the position of its emission", async () => {
+    it("records a child-session-started part in the position of its emission", async () => {
         const { recorder } = harness();
         await recorder.emit({ type: "text-delta", text: "starting" });
-        await recorder.emit({ type: "data-report-session-started", source: TOP, data: { threadId: "r1", parentThreadId: "p1" } });
+        await recorder.emit({ type: "data-child-session-started", source: TOP, data: { threadId: "r1", parentThreadId: "p1", threadType: "report" } });
         await recorder.emit({ type: "text-delta", text: "done" });
 
         // The part is durable conversation display, thus the recorder keeps it
@@ -71,7 +71,7 @@ describe("conversation display recorder", () => {
         const display = recorder.finish();
         expect(display[1]!.parts).toEqual([
             { type: "text", text: "starting", state: "done" },
-            { type: "data-report-session-started", data: { threadId: "r1", parentThreadId: "p1" } },
+            { type: "data-child-session-started", data: { threadId: "r1", parentThreadId: "p1", threadType: "report" } },
             { type: "text", text: "done", state: "done" },
         ]);
     });

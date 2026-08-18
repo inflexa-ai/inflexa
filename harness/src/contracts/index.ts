@@ -33,7 +33,7 @@ export type {
     RunCompletedFinding,
     RunCompletedPart,
     RunFailedPart,
-    ReportSessionStartedPart,
+    ChildSessionStartedPart,
     ReportRenderedPart,
     CortexChatPart,
 } from "./chat-parts.js";

@@ -247,8 +247,8 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
                 // names a session that an earlier turn announced, thus a second
                 // part would put a second entry into the transcript.
                 await ctx.emit({
-                    type: "data-report-session-started",
-                    data: { threadId: child.threadId, parentThreadId },
+                    type: "data-child-session-started",
+                    data: { threadId: child.threadId, parentThreadId, threadType: "report" },
                 });
                 return ok({ outcome: "started", threadId: child.threadId, title: child.title });
             }

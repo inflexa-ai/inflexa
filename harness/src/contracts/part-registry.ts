@@ -34,7 +34,7 @@ export const PART_REGISTRY: Record<CortexChatPartType, PartDescriptor> = {
     "data-synthesis-progress": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: true },
     "data-run-completed": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-run-failed": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
-    "data-report-session-started": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
+    "data-child-session-started": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-report-rendered": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
 };
 
