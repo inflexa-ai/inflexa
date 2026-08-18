@@ -85,6 +85,7 @@ import { planReportTool, createReportSubmitTool, type SubmitReportDeps } from ".
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
+import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import { createResolveCitationTool } from "../tools/research/resolve-citation.js";
 
 /** Canonical agent id — the single source of truth. */
@@ -143,6 +144,15 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      * workflows through it so the durability engine stays out of the tools.
      */
     readonly runLauncher: RunLauncher;
+    /**
+     * Farm-extension seam — `execute_analysis` links the packages that the plan
+     * names into the farm of the analysis before it launches the run. The same
+     * realization serves the `link_packages` tool of a sandbox agent.
+     *
+     * Optional, and absence is a normal state: an embedder that binds none has no
+     * such capability, and a launch proceeds against the farm it composed.
+     */
+    readonly extendAnalysisFarm?: ExtendAnalysisFarm;
     /**
      * Preview-publishing seam factory for `submit_report` — injected, not
      * constructed here. The managed root closes its platform deps over this; the
@@ -266,6 +276,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             resourcePolicy,
             utilityProvider,
             utilityModel,
+            ...(deps.extendAnalysisFarm ? { extendAnalysisFarm: deps.extendAnalysisFarm } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         // Report authoring: the always-on `plan_report` trigger delivers the

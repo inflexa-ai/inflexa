@@ -15,9 +15,10 @@ import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import type { ChatProvider } from "../providers/types.js";
+import type { ExtendAnalysisFarm, PackageRequest, PackageRequestOutcome } from "../sandbox/types.js";
 import type { ExecuteAnalysisInput } from "../workflows/execute-analysis.js";
 import type { ToolContext } from "./define-tool.js";
-import { PlanNotFoundError, PlanValidationError, createExecuteAnalysisTool } from "./execute-analysis.js";
+import { PlanNotFoundError, PlanPackagesUnavailableError, PlanValidationError, createExecuteAnalysisTool } from "./execute-analysis.js";
 
 /** Records launches; never reaches the durability engine. */
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
@@ -446,6 +447,213 @@ describe("createExecuteAnalysisTool plan mode", () => {
 
         expect(revokes).toContain("workflow-start-failed");
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed"))).toBe(true);
+    });
+});
+
+/** Records what the tool asked the pool for, and answers each request the same way. */
+function fakeFarm(answer: (request: PackageRequest) => PackageRequestOutcome): {
+    seam: ExtendAnalysisFarm;
+    calls: PackageRequest[][];
+} {
+    const calls: PackageRequest[][] = [];
+    const seam: ExtendAnalysisFarm = async (_analysisId, requests) => {
+        calls.push([...requests]);
+        return requests.map(answer);
+    };
+    return { seam, calls };
+}
+
+const packagedPlan = {
+    ...validPlan,
+    steps: [
+        { ...makeStep("step-a"), packages: ["scanpy", "polars==1.2"] },
+        { ...makeStep("step-b", ["step-a"]), packages: ["scanpy"] },
+    ],
+};
+
+describe("createExecuteAnalysisTool plan packages", () => {
+    it("asks the pool for each named package once, then launches", async () => {
+        setEnv();
+        const { pool } = fakePool({ "SELECT plan FROM cortex_plans": [{ plan: packagedPlan }] });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const { seam, calls } = fakeFarm((request) => ({
+            kind: "linked",
+            requested: request.kind === "distribution" ? request.requirement : request.module,
+            name: "scanpy",
+            version: "1.10.0",
+        }));
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: seam,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("the tool launches via the seam, never calls directly");
+            },
+        });
+
+        await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toEqual([
+            { kind: "distribution", requirement: "scanpy" },
+            { kind: "distribution", requirement: "polars==1.2" },
+        ]);
+        expect(launches).toHaveLength(1);
+    });
+
+    it("treats a package already in the farm as a success", async () => {
+        setEnv();
+        const { pool } = fakePool({ "SELECT plan FROM cortex_plans": [{ plan: packagedPlan }] });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const { seam } = fakeFarm(() => ({ kind: "present", requested: "scanpy", name: "scanpy", version: "1.10.0" }));
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: seam,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
+
+        expect(launches).toHaveLength(1);
+    });
+
+    it("refuses a package the pool does not hold, and reserves nothing", async () => {
+        setEnv();
+        const { pool, queries } = fakePool({ "SELECT plan FROM cortex_plans": [{ plan: packagedPlan }] });
+        const { launcher, launches } = fakeLauncher();
+        // The remedy rides in the reason of the embedder, because only the embedder holds
+        // the pool and only it knows the command that acquires one.
+        const { seam } = fakeFarm((request) => ({
+            kind: "absent",
+            requested: request.kind === "distribution" ? request.requirement : request.module,
+            reason: 'the store holds no package named "scanpy" — run `some-host-command` to acquire it',
+            acquisitionPossible: true,
+        }));
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            // Never reached: the refusal lands before the run is authorized.
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: seam,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        const failure = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()).then(
+            () => null,
+            (error: unknown) => error,
+        );
+
+        expect(failure).toBeInstanceOf(PlanPackagesUnavailableError);
+        const message = (failure as Error).message;
+        expect(message).toContain('"scanpy"');
+        expect(message).toContain('"polars==1.2"');
+        expect(message).toContain("run `some-host-command` to acquire it");
+        // The harness names no remedy of its own: a managed deployment runs this same code
+        // and holds no `inflexa` binary.
+        expect(message).not.toContain("inflexa");
+        expect(message).not.toContain("never acquire");
+        expect(launches).toHaveLength(0);
+        expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
+    });
+
+    it("marks a request that no acquisition can ever answer, and relays the reason of the embedder", async () => {
+        setEnv();
+        const { pool } = fakePool({ "SELECT plan FROM cortex_plans": [{ plan: packagedPlan }] });
+        const { seam } = fakeFarm((request) => ({
+            kind: "absent",
+            requested: request.kind === "distribution" ? request.requirement : request.module,
+            reason: 'the store holds "DESeq2" at 1.38.0, and not at 1.40',
+            acquisitionPossible: false,
+        }));
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: fakeLauncher().launcher,
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: seam,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        const failure = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()).then(
+            () => null,
+            (error: unknown) => error,
+        );
+
+        const message = (failure as Error).message;
+        // The mark is the harness rule, and it names no ecosystem: `acquisitionPossible`
+        // is false for each request that no acquisition answers, and an R package is only
+        // one such case. The ecosystem rides in the reason of the embedder.
+        expect(message).toContain("this store can never acquire");
+        expect(message).toContain('the store holds "DESeq2" at 1.38.0, and not at 1.40');
+    });
+
+    it("refuses a version collision, and names both store directories", async () => {
+        setEnv();
+        const { pool } = fakePool({ "SELECT plan FROM cortex_plans": [{ plan: packagedPlan }] });
+        const { launcher, launches } = fakeLauncher();
+        const { seam } = fakeFarm((request) => ({
+            kind: "collision",
+            requested: request.kind === "distribution" ? request.requirement : request.module,
+            name: "polars",
+            linkedDirectory: "/store/pkgs/polars-1.9.0-aaaa",
+            requestedDirectory: "/store/pkgs/polars-1.2.0-bbbb",
+        }));
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: seam,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        const failure = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()).then(
+            () => null,
+            (error: unknown) => error,
+        );
+
+        expect(failure).toBeInstanceOf(PlanPackagesUnavailableError);
+        const message = (failure as Error).message;
+        expect(message).toContain("/store/pkgs/polars-1.9.0-aaaa");
+        expect(message).toContain("/store/pkgs/polars-1.2.0-bbbb");
+        expect(message).toContain("A farm holds one version of one name");
+        expect(launches).toHaveLength(0);
+    });
+
+    it("launches unchanged when the embedder binds no seam", async () => {
+        setEnv();
+        const { pool } = fakePool({ "SELECT plan FROM cortex_plans": [{ plan: packagedPlan }] });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
+
+        expect(launches).toHaveLength(1);
     });
 });
 

@@ -18,6 +18,7 @@ import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { buildRunCardData } from "../memory/card-builders.js";
 import type { ChatProvider } from "../providers/types.js";
+import type { ExtendAnalysisFarm, PackageRequest, PackageRequestOutcome } from "../sandbox/types.js";
 import { AnalysisPlanSchema, type AnalysisPlan } from "../schemas/workflow-state.js";
 import { validatePlan } from "../schemas/validate-plan.js";
 import { RunDedupCollisionError, insertRun, loadPlan, queryActiveRun, reserveRunById, updateRunStatus, upsertPlan } from "../state/index.js";
@@ -52,6 +53,17 @@ export interface ExecuteAnalysisToolDeps {
     readonly resourcePolicy?: ResourcePolicy;
     readonly utilityProvider: ChatProvider;
     readonly utilityModel: string;
+    /**
+     * The farm-extension seam. The planner names the packages of each step, and
+     * this tool links that set into the farm of the analysis before it launches.
+     * Thus a step starts with what its plan named, on the chat path and on the
+     * replay path alike.
+     *
+     * Optional, and absence is a normal state. An embedder that binds none has no
+     * such capability, and the launch proceeds against the farm it composed. No
+     * code branches on which realization is bound.
+     */
+    readonly extendAnalysisFarm?: ExtendAnalysisFarm;
     readonly logger?: Logger;
 }
 
@@ -77,6 +89,96 @@ export class PlanValidationError extends Error {
         super(`Plan ${planId} failed validation: ${errors.length} error(s)`);
         this.name = "PlanValidationError";
     }
+}
+
+/** The two outcome states that stop a launch. `linked` and `present` are a success. */
+type PackageRefusal = Extract<PackageRequestOutcome, { kind: "absent" | "collision" }>;
+
+/**
+ * The mark that separates a wait from a dead end.
+ *
+ * The harness names no remedy of its own. An acquisition is a host action, and the
+ * command that takes it belongs to the host: a managed deployment has no `inflexa`
+ * binary, thus a remedy in this text would name a command that a user there cannot
+ * run. The embedder writes the remedy into the `reason` of each outcome, because
+ * only the embedder holds the pool.
+ */
+const NO_ACQUISITION_NOTE = "One request names a package that this store can never acquire, thus no retry and no later attempt succeeds.";
+
+/** A farm holds one version of one top-level name. */
+const COLLISION_NOTE = "A farm holds one version of one name, thus no retry succeeds. Report both store directories.";
+
+/** One refusal, as a line that names the package and the reason of the pool. */
+function describeRefusal(refusal: PackageRefusal): string {
+    if (refusal.kind === "collision") {
+        return (
+            `"${refusal.requested}": the farm already links a different version of "${refusal.name}". ` +
+            `It links ${refusal.linkedDirectory}, and the plan asks for ${refusal.requestedDirectory}.`
+        );
+    }
+    // The seam gives a lowercase fragment, because only the embedder holds the pool
+    // and only the embedder knows the reason.
+    return `"${refusal.requested}": ${refusal.reason}.`;
+}
+
+/**
+ * The refusal that a person reads. A bare "not found" sends a caller around the same
+ * loop for ever. Thus each line carries the reason of the embedder, and this text adds
+ * only the rules that the harness itself holds.
+ */
+function describePackageRefusals(planId: string, refusals: readonly PackageRefusal[]): string {
+    const absent = refusals.filter((refusal): refusal is Extract<PackageRefusal, { kind: "absent" }> => refusal.kind === "absent");
+    return [
+        `The packages of plan ${planId} did not all reach the farm of this analysis, thus the run did not start.`,
+        ...refusals.map((refusal) => `  - ${describeRefusal(refusal)}`),
+        ...(absent.some((refusal) => !refusal.acquisitionPossible) ? [NO_ACQUISITION_NOTE] : []),
+        ...(refusals.some((refusal) => refusal.kind === "collision") ? [COLLISION_NOTE] : []),
+    ].join("\n\n");
+}
+
+/**
+ * The packages that a plan names, and that the pool did not give.
+ *
+ * The conversation agent reads the message and relays it to the user. Thus the
+ * message carries each refusal, and not a count of them.
+ */
+export class PlanPackagesUnavailableError extends Error {
+    constructor(
+        planId: string,
+        readonly refusals: readonly PackageRefusal[],
+    ) {
+        super(describePackageRefusals(planId, refusals));
+        this.name = "PlanPackagesUnavailableError";
+    }
+}
+
+/**
+ * Link the packages that the plan names into the farm of the analysis, before the
+ * run takes a reservation.
+ *
+ * The planner names the packages of each step, and this pass is the one place
+ * where that set meets the pool on the chat path. The seam links from the pool and
+ * it acquires nothing, thus the call starts no container and it opens no network
+ * connection.
+ *
+ * The set is not a promise of completeness. A step that meets a package which the
+ * plan did not name reaches it through `link_packages`. Thus one package that a
+ * plan missed does not stop a run.
+ */
+async function linkPlanPackages(deps: ExecuteAnalysisToolDeps, args: { analysisId: string; planId: string; plan: AnalysisPlan }): Promise<void> {
+    if (!deps.extendAnalysisFarm) return;
+    // A farm is one tree for the whole analysis, thus one request answers each step
+    // that names the same package.
+    const requested = [...new Set(args.plan.steps.flatMap((step) => step.packages ?? []))];
+    if (requested.length === 0) return;
+    const outcomes = await deps.extendAnalysisFarm(
+        args.analysisId,
+        // `distribution` because the planner writes requirement form, and
+        // `validatePlan` refused each entry that is not one.
+        requested.map((requirement): PackageRequest => ({ kind: "distribution", requirement })),
+    );
+    const refusals = outcomes.filter((outcome): outcome is PackageRefusal => outcome.kind === "absent" || outcome.kind === "collision");
+    if (refusals.length > 0) throw new PlanPackagesUnavailableError(args.planId, refusals);
 }
 
 function isDedupCollision(err: unknown): boolean {
@@ -230,6 +332,12 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
             } else {
                 plan = await persistedAdHocPlan(deps, { analysisId, request: input.request!, ctx, planId });
             }
+
+            // The packages of the plan reach the farm here. The plan is valid, and
+            // the run holds no reservation, no mandate, and no ledger row yet. Thus a
+            // refusal costs nothing to release, and the same plan starts clean after
+            // the user acquires what the pool lacks.
+            await linkPlanPackages(deps, { analysisId, planId, plan });
 
             const runId = input.mode === "plan" ? randomUUID() : adHocRunId(analysisId, ctx.invocationId);
             if (input.mode === "plan") {
