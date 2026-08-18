@@ -125,9 +125,9 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
         }
 
         if (decision === "reap-if-dead") {
-            // A verbatim id that resolves to nothing is an anomaly worth naming: either
+            // A recorded id that resolves to nothing is an anomaly worth naming: either
             // DBOS pruned the row or the id never reached the machine intact.
-            if (sb.ownerWorkflowId && sb.ownerIsVerbatim) {
+            if (sb.ownerWorkflowId) {
                 logger.warn("owner workflow id resolved to no workflow", { sandboxId: sb.sandboxId, ownerWorkflowId: sb.ownerWorkflowId });
             }
 
@@ -146,7 +146,6 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
                 logger.warn("machine has no resolvable owner but is still alive — left standing", {
                     sandboxId: sb.sandboxId,
                     ownerWorkflowId: sb.ownerWorkflowId,
-                    ownerIsVerbatim: sb.ownerIsVerbatim,
                 });
                 leftCount++;
                 liveUnattributed++;

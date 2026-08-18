@@ -443,9 +443,8 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         const labels = c.Labels ?? {};
                         return {
                             sandboxId: labels["cortex/sandbox-id"] ?? "",
-                            ownerWorkflowId: labels[OWNER_WORKFLOW_LABEL] ?? null,
                             // Docker label values are unconstrained, so the id is stored verbatim.
-                            ownerIsVerbatim: true,
+                            ownerWorkflowId: labels[OWNER_WORKFLOW_LABEL] ?? null,
                             // Docker reports `Created` as unix seconds.
                             createdAtMs: typeof c.Created === "number" ? c.Created * 1000 : null,
                         };

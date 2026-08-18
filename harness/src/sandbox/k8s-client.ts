@@ -50,13 +50,12 @@ const POD_POLL_INTERVAL_MS = 1_000;
 const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
 const MANAGED_BY_VALUE = "cortex";
 /**
- * Key of the owning DBOS workflow id. Written as an **annotation**, whose value
- * has neither a length cap nor a charset restriction, so the id round-trips
- * verbatim and can be handed back to `DBOS.getWorkflowStatus`. Also written as
- * a label under the same key for one release, so a replica still running the
- * previous version can attribute this Job mid-rollout; nothing selects on it.
+ * Annotation key of the owning DBOS workflow id. An annotation value has neither
+ * a length cap nor a charset restriction, so the id round-trips verbatim and can
+ * be handed back to `DBOS.getWorkflowStatus`. Deliberately not a label: nothing
+ * selects on it, and a label value could not hold it (see {@link sanitizeLabelValue}).
  */
-const OWNER_WORKFLOW_KEY = "cortex/owner-workflow-id";
+const OWNER_WORKFLOW_ANNOTATION = "cortex/owner-workflow-id";
 const RUN_ID_LABEL = "cortex/run-id";
 const STEP_ID_LABEL = "cortex/step-id";
 const ANALYSIS_ID_LABEL = "cortex/analysis-id";
@@ -68,7 +67,7 @@ const ANALYSIS_ID_LABEL = "cortex/analysis-id";
  *
  * Lossy by construction: `:` becomes `-` and anything past 63 chars is dropped,
  * neither of which is recoverable. No label value may therefore be used as a
- * lookup key — see {@link OWNER_WORKFLOW_KEY}.
+ * lookup key — see {@link OWNER_WORKFLOW_ANNOTATION}.
  */
 export function sanitizeLabelValue(value: string): string {
     return value
@@ -78,16 +77,9 @@ export function sanitizeLabelValue(value: string): string {
         .replace(/[^A-Za-z0-9]+$/, "");
 }
 
-/**
- * The owner workflow id recorded on a Job. `verbatim` distinguishes the
- * annotation (exact) from the legacy label mirror (sanitized), which decides
- * what an equality check may compare against.
- */
-function readOwnerWorkflowId(metadata: V1ObjectMeta | undefined): { value: string; verbatim: boolean } | null {
-    const annotated = metadata?.annotations?.[OWNER_WORKFLOW_KEY];
-    if (annotated !== undefined) return { value: annotated, verbatim: true };
-    const labelled = metadata?.labels?.[OWNER_WORKFLOW_KEY];
-    return labelled === undefined ? null : { value: labelled, verbatim: false };
+/** The owner workflow id recorded on a Job, or null if it records none. */
+function readOwnerWorkflowId(metadata: V1ObjectMeta | undefined): string | null {
+    return metadata?.annotations?.[OWNER_WORKFLOW_ANNOTATION] ?? null;
 }
 
 export interface K8sClientConfig {
@@ -323,13 +315,12 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
             name: sandboxId,
             namespace: config.namespace,
             annotations: {
-                [OWNER_WORKFLOW_KEY]: meta.childWorkflowId,
+                [OWNER_WORKFLOW_ANNOTATION]: meta.childWorkflowId,
             },
             labels: {
                 [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
                 role: "sandbox",
                 "cortex/sandbox-id": sandboxId,
-                [OWNER_WORKFLOW_KEY]: sanitizeLabelValue(meta.childWorkflowId),
                 [STEP_ID_LABEL]: sanitizeLabelValue(meta.stepId),
                 ...attributionLabels,
             },
@@ -491,16 +482,13 @@ function createOrAdoptJob(
 
             const existingRead = await trySandbox(() => batchApi.readNamespacedJob({ namespace, name: sandboxId }), createFailed);
             if (existingRead.isErr()) return err(existingRead.error);
-            // A Job from the previous release carries only the sanitized label, so the
-            // comparison has to meet it in the same lossy space it was written in.
             const owner = readOwnerWorkflowId(existingRead.value.metadata);
-            const expected = owner?.verbatim === false ? sanitizeLabelValue(ownerWorkflowId) : ownerWorkflowId;
-            if (owner === null || owner.value !== expected) {
+            if (owner !== ownerWorkflowId) {
                 return err({
                     type: "name_conflict",
                     op: "k8s.createSandbox",
                     sandboxId,
-                    owner: owner?.value ?? null,
+                    owner,
                 });
             }
 
@@ -602,11 +590,9 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                     .map((j) => {
                         const labels = j.metadata?.labels ?? {};
                         const ts = j.metadata?.creationTimestamp;
-                        const owner = readOwnerWorkflowId(j.metadata);
                         return {
                             sandboxId: labels["cortex/sandbox-id"] ?? j.metadata?.name ?? "",
-                            ownerWorkflowId: owner?.value ?? null,
-                            ownerIsVerbatim: owner?.verbatim ?? false,
+                            ownerWorkflowId: readOwnerWorkflowId(j.metadata),
                             createdAtMs: ts ? new Date(ts).getTime() : null,
                         };
                     })
