@@ -4,31 +4,33 @@
 
 ## 2. Input scan — host side
 
-- [ ] 2.1 Define the manifest types: per-file entry (path, size, extension chain, format, wrapper), `kind`, `axis`, entity key sets, unmatched bucket, coverage counts
+- [ ] 2.1 Define the manifest types using scan vocabulary only — per-file entry (path, size, extension chain, format, wrapper), `shape`, `variablePosition` (distinct-value count + bounded value sample), cross-shape value overlap, no-shared-structure aggregate. No field named `kinds` or `axes`.
 - [ ] 2.2 Add a bounded raw-byte read to the `WorkspaceFilesystem` seam; `readFile` is line/text-oriented and magic-byte detection needs raw bytes
 - [ ] 2.3 Implement the recursive walk over `WorkspaceFilesystem.list`/`stat`
 - [ ] 2.4 Implement magic-byte format detection covering the spec's format floor, reporting compression wrappers alongside the inner format, and `unknown` with the extension chain preserved otherwise
-- [ ] 2.5 Implement filename tokenisation → varying positions → kinds and axes, emitting cardinality plus a bounded sample of distinct values per axis
-- [ ] 2.6 Implement cross-kind entity key-set overlap reporting; never merge non-corresponding key sets
-- [ ] 2.7 Implement the unmatched bucket (count + bounded path sample) and coverage counts
-- [ ] 2.8 Unit-test the pure grouping logic with no container: repeating set → one kind; nested positions → per-axis cardinalities; `tumor`/`normal` value shape distinguishable from ids; 3000 unpatterned files → one bucket, not 3000 kinds; overlap gaps named; unknown format still groups
+- [ ] 2.5 Implement filename tokenisation → shapes and their variable positions, emitting distinct-value counts, bounded value samples, and co-occurrence across positions
+- [ ] 2.6 Implement cross-shape value-set overlap reporting with its gaps; never present overlapping shapes as sharing an axis
+- [ ] 2.7 Implement the no-shared-structure aggregate (count + bounded path sample)
+- [ ] 2.8 Unit-test the pure observation logic with no container: repeating structure → one shape with its value sample; nested positions → per-position counts, not a flat total; `tumor`/`normal` reported as values, not just a count of 2; 3000 unstructured files → one aggregate, not 3000 shapes; overlap gaps named; unknown format still joins a shape
+- [ ] 2.9 Assert the manifest type contains no field named `kinds` or `axes`, and that no manifest field is directly assignable to the profiler output
 
 ## 3. Input scan — sandbox enrichment
 
-- [ ] 3.1 Implement per-kind header readout through the existing `runSandboxExec` path — no new binary, nothing added to `sandbox-base`
+- [ ] 3.1 Implement per-shape header readout through the existing `runSandboxExec` path — no new binary, nothing added to `sandbox-base`
 - [ ] 3.2 Cover the decodes the format floor implies (gzip/bgzip member, VCF `##`/`#CHROM` sample columns, delimited-text header + delimiter sniff, HDF5/h5ad root keys, document page count)
-- [ ] 3.3 Bound enrichment to a fixed number of members per kind; assert decode count scales with kinds, not files
+- [ ] 3.3 Bound enrichment to a fixed number of files per shape; assert decode count scales with shapes, not files
 - [ ] 3.4 Expose `scan_inputs` (accepts a path) as a `defineTool` on the data-profiler roster, running the host walk directly and reaching into the sandbox only for enrichment
 
 ## 4. Output schema and persisted record
 
-- [ ] 4.1 Add `KindSchema` and `AxisSchema` to `schemas/data-profile-schemas.ts`; add `kinds`/`axes` to `ProfilerOutputSchema` with `.max()` caps and cap `files`
+- [ ] 4.1 Add `KindSchema` (including the required "what one member represents" field, distinct from the description) and `AxisSchema` (required agent-supplied label) to `schemas/data-profile-schemas.ts`; add `kinds`/`axes` to `ProfilerOutputSchema` with `.max()` caps and cap `files`
 - [ ] 4.2 Remove `tiTvRatio`/`gcContent` from the `metrics` field description so the schema stops advertising per-file quality measures
 - [ ] 4.3 Widen `DataProfileResult` in `state/data-profile.ts`: add optional `kinds`, `axes`, `inputSignature`, `coverage`; move `inputFileIds` required → optional; fix the compile errors that surfaces
 - [ ] 4.4 Update `buildDataProfileResult` to project kinds/axes and emit `inputSignature`; stop emitting the full `inputFileIds`/`inputFiles` arrays
 - [ ] 4.5 Implement the order-independent input signature (canonical ordering, digest over identity + size + mtime) with a unit test for order independence
 - [ ] 4.6 Update `isDataProfileStale` to prefer `inputSignature`, falling back to `inputFileIds` for legacy rows, and treating a snapshot with neither as drift
 - [ ] 4.7 Test legacy compatibility: a row carrying only `summary`/`files`/`inputFileIds`/`profiledAt` renders and compares correctly
+- [ ] 4.8 Compute coverage deterministically by matching submitted kind patterns against the scanned file set; assert it is not derived from the scan's own shapes
 
 ## 5. Readers
 
@@ -56,7 +58,7 @@
 - [ ] 8.1 Add the purpose statement (orientation record; QC belongs to analysis steps)
 - [ ] 8.2 Replace the orientation section: consume the injected manifest; `scan_inputs`/`list_files` for exploration beyond it
 - [ ] 8.3 Keep Stage 1 identity work; add that detected axes and their cardinalities are design evidence
-- [ ] 8.4 Add the stage for naming kinds and labelling axes, stating the manifest is a proposal the agent may split, merge, or relabel
+- [ ] 8.4 Add the grouping stage: the manifest reports observations and the agent decides the kinds. State that kinds need not match observed shapes, require naming what one member represents, and require labelling each axis
 - [ ] 8.5 Add the notable-singletons stage and the dataset-level concerns stage (including scan-derived completeness)
 - [ ] 8.6 Add the explicit Do-NOT section (no per-file profiling, no member enumeration, no full-file decode, and the named excluded quality measures)
 - [ ] 8.7 Delete the per-format QC checklists, folding surviving identity signals into the kinds stage
@@ -66,8 +68,9 @@
 
 - [ ] 9.1 `openspec validate data-profile-orientation --strict`
 - [ ] 9.2 Harness typecheck, lint, and unit tests
-- [ ] 9.3 End-to-end profile against a synthetic large tree (thousands of files, ≥2 kinds, ≥1 axis): assert kind count, entity count, index entry counts, coverage, and that wall time is independent of file count
+- [ ] 9.3 End-to-end profile against a synthetic large tree (thousands of files, ≥2 shapes, ≥1 variable position): assert kind count, entity count, index entry counts, coverage, and that wall time is independent of file count
 - [ ] 9.4 End-to-end profile against a small tree (2 files, no axis): assert it degenerates to kinds of count 1 with no special-casing
+- [ ] 9.5 Adversarial grouping case: a tree whose observed shape merges two analytically distinct sets (e.g. a `tumor`/`normal` variable position) — assert the agent splits it rather than ratifying the shape
 
 ## 10. Follow-ups (not this change)
 
