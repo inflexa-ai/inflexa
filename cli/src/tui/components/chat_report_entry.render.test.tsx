@@ -16,7 +16,7 @@ import type { Analysis } from "../../types/analysis.ts";
 // assertion proves that a mapping ran, not that the entry landed where the reader expects it. Thus this
 // drives the real `Chat` over the real stores, and reads the order off one frame.
 //
-// The position comes from the persisted `data-report-session-started` part inside the turn that
+// The position comes from the persisted `data-child-session-started` part inside the turn that
 // spawned the session. The listing stays the authority for the row: the title and the activity stamp
 // come from it, and a part whose row the listing does not hold paints nothing. A child that no mounted
 // part claims paints at the tail.
@@ -55,7 +55,7 @@ const ws = {
 type FixtureRow = {
     seq: number;
     role: "user" | "assistant";
-    /** The thread ids of the `data-report-session-started` parts that this row carries. */
+    /** The thread ids of the `data-child-session-started` parts that this row carries. */
     spawns?: string[];
 };
 
@@ -88,7 +88,7 @@ function transcriptSeams(rows: FixtureRow[]): LoadSeams {
                 role: r.role,
                 parts: [
                     { type: "text", text: `${r.role} ${r.seq}` },
-                    ...(r.spawns ?? []).map((threadId) => ({ type: "data-report-session-started", threadId, parentThreadId: SID })),
+                    ...(r.spawns ?? []).map((threadId) => ({ type: "data-child-session-started", threadId, parentThreadId: SID, threadType: "report" })),
                 ],
             })) as unknown as CortexMsg[],
     };
