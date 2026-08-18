@@ -406,6 +406,28 @@ export interface ReportSessionStartedPart {
     parentThreadId: string;
 }
 
+// ── Report Rendered (report session preview) ───────────────────────
+
+/**
+ * The record that a report-session preview rendered the page. It rides the
+ * chat stream live, and it persists into the turn at the position of the
+ * render.
+ *
+ * The part is a placement record and a freshness signal only. The version
+ * store and the session-page mint stay the authority for what is viewable:
+ * the part carries no path, no format, and no URL. A consumer that wants the
+ * page reads those surfaces.
+ */
+export interface ReportRenderedPart {
+    type: "data-report-rendered";
+    /** Unique per emission. */
+    id: string;
+    /** The ISO timestamp of the successful render. */
+    renderedAt: string;
+    /** The title of the rendered document. */
+    title?: string;
+}
+
 // ── Union ───────────────────────────────────────────────────────────
 
 export type CortexChatPart =
@@ -426,4 +448,5 @@ export type CortexChatPart =
     | SynthesisProgressPart
     | RunCompletedPart
     | RunFailedPart
-    | ReportSessionStartedPart;
+    | ReportSessionStartedPart
+    | ReportRenderedPart;

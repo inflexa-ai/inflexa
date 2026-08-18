@@ -76,6 +76,26 @@ describe("conversation display recorder", () => {
         ]);
     });
 
+    it("records a report-rendered part in the position of its emission", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "rendering" });
+        await recorder.emit({
+            type: "data-report-rendered",
+            source: TOP,
+            data: { id: "rr1", renderedAt: "2026-08-18T00:00:00.000Z", title: "Report" },
+        });
+        await recorder.emit({ type: "text-delta", text: "done" });
+
+        // The part is durable conversation display, thus the recorder keeps it
+        // between the two text runs and a reload shows it where the render ran.
+        const display = recorder.finish();
+        expect(display[1]!.parts).toEqual([
+            { type: "text", text: "rendering", state: "done" },
+            { type: "data-report-rendered", id: "rr1", data: { id: "rr1", renderedAt: "2026-08-18T00:00:00.000Z", title: "Report" } },
+            { type: "text", text: "done", state: "done" },
+        ]);
+    });
+
     it("records each call's outcome and detail as shown, denial distinct from failure", async () => {
         const { recorder } = harness();
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "r", name: "read_file", input: {}, detail: "scripts/run.py" });

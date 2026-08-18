@@ -28,13 +28,15 @@
  * render problem, a figure that escapes the workspace root, a write failure, and a stamp failure. The tool
  * never throws for one of them. When the page
  * lands, the tool stamps the hash of the rendered draft on the session state, thus the eyes and the record
- * know which draft the page shows. The filesystem speaks the
+ * know which draft the page shows. It then emits one durable `data-report-rendered` part, thus the
+ * transcript places the render and a live client learns that a fresh page exists. The filesystem speaks the
  * throw protocol, and the workspace-root seam signals an unresolvable resource the same way. Thus the
  * write runs through the `tryFs` glue, which turns a genuine fault into the ok-channel outcome and lets a
  * control-flow exception propagate.
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { relative as relativePosix } from "node:path/posix";
@@ -610,6 +612,13 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 logger.warn("the rendered hash did not stamp", { threadId, analysisId, detail });
                 return ok({ outcome: "stamp-failed", pagePath: written.value, detail });
             }
+
+            // The part rides the rendered arm only. Each degraded arm shows no
+            // fresh page, thus it emits nothing.
+            await ctx.emit({
+                type: "data-report-rendered",
+                data: { id: randomUUID(), renderedAt: new Date().toISOString(), title: document.title },
+            });
 
             const access = await mintAccess(deps.makeSessionPages, analysisId, threadId, ctx.session.auth, logger);
             return ok({ outcome: "rendered", pagePath: written.value, ...(access !== undefined ? { access } : {}) });

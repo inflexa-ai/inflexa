@@ -136,11 +136,16 @@ function makeFakeGateway(): FakeGateway {
     };
 }
 
+/** A tool context whose scope names a report thread, beside the events that its emit recorded. */
+function ctxWithEmitted(threadId: string): { ctx: ToolContext; emitted: unknown[] } {
+    const { ctx, emitted } = makeToolContext();
+    const scope: Scope = { kind: "analysis", analysisId: DEFAULT_ANALYSIS_ID, threadId };
+    return { ctx: { ...ctx, session: { ...ctx.session, scope } }, emitted };
+}
+
 /** A tool context whose scope names a report thread. */
 function ctxForThread(threadId: string): ToolContext {
-    const { ctx } = makeToolContext();
-    const scope: Scope = { kind: "analysis", analysisId: DEFAULT_ANALYSIS_ID, threadId };
-    return { ...ctx, session: { ...ctx.session, scope } };
+    return ctxWithEmitted(threadId).ctx;
 }
 
 /** A snapshot with one readable artifact that a metric binds to. */
@@ -283,6 +288,46 @@ describe("the pass path", () => {
         const assetsDir = join(root, "report-sessions", "t1", "assets");
         const staged = await Promise.all(PAGE_ASSETS.map((asset) => readFile(join(assetsDir, asset.file), "utf8")));
         expect(staged).toEqual(PAGE_ASSETS.map(() => "PACKED-ASSET-BYTES"));
+    });
+
+    it("emits one data-report-rendered part when the page lands", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+        const { ctx, emitted } = ctxWithEmitted("t1");
+
+        const result = (await tool.execute({}, ctx))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        expect(emitted).toHaveLength(1);
+        const part = emitted[0] as { type: string; data: { id: string; renderedAt: string; title: string } };
+        expect(part.type).toBe("data-report-rendered");
+        expect(part.data.title).toBe("Report");
+        // The id is one UUID per emission, and the timestamp is a valid ISO instant.
+        expect(part.data.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+        expect(new Date(part.data.renderedAt).toISOString()).toBe(part.data.renderedAt);
+    });
+
+    it("emits nothing on the gap arm", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: { title: "", sections: [] }, snapshot: { artifacts: {} } });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+        const { ctx, emitted } = ctxWithEmitted("t1");
+
+        const result = (await tool.execute({}, ctx))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("gaps");
+        expect(emitted).toEqual([]);
     });
 });
 
