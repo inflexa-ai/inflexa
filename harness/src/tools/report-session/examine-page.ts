@@ -29,9 +29,9 @@
  *
  * On a capture the tool copies the rendered hash onto the seen hash through the gateway. Thus the look
  * counts, and the record tool lets the current draft record. The copy takes the rendered hash and never the
- * current one, thus a later edit makes the look stale and the record refuses. A picture of the window alone
- * is a true picture of the current document, thus it stamps the same and the coverage of the result is what
- * tells the agent what it saw.
+ * current one, thus a later edit makes the look stale and the record refuses. A partial look — the window
+ * alone, or slices that a budget truncated — is a true look at the current document, thus it stamps the same
+ * and the coverage of the result is what tells the agent what it saw.
  *
  * The gateway reports whether a rendered hash existed to copy. When the row holds none, no preview stamped
  * one and the look cannot count. The tool then gives a missed-stamp outcome that directs a new preview,
@@ -56,14 +56,14 @@ import { hasBrowserUrl, type ChromeConfig } from "../../lib/chrome.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { createStaticEyes, type AcquireEyes, type EyesLease, type EyesScope } from "../../lib/eyes.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
-import { capturePage, type CapturePage, type FailedRequest, type PageCapture } from "../../lib/page-capture.js";
+import { capturePage, type CaptureCoverage, type CapturePage, type FailedRequest, type PageCapture } from "../../lib/page-capture.js";
 import { reportSessionDir, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
-import { defineTool, withToolResultImage, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, withToolResultImages, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
-// The capture shapes live beside the chrome connection, because two tools capture the same page. The tool
-// keeps them on its own surface, thus a consumer of the tool imports one module.
-export type { CapturePage, FailedRequest, PageCapture };
+// The capture shapes live beside the chrome connection. The tool keeps them on its own surface, thus a
+// consumer of the tool imports one module.
+export type { CaptureCoverage, CapturePage, FailedRequest, PageCapture };
 
 /**
  * The URL formation of one look. It maps the page of the thread onto the URL that the browser opens.
@@ -78,15 +78,24 @@ const examinePageInput = z.object({});
 
 export type ExaminePageInput = z.infer<typeof examinePageInput>;
 
+/** The document range of one slice of a tiled look, in the order that the pictures ride. */
+export interface ExaminedTile {
+    index: number;
+    fromY: number;
+    toY: number;
+}
+
 /**
  * The typed outcome of the eyes tool. Each arm is ok-channel data, thus the tool never throws for a
- * degraded condition. `examined` carries the coverage of the picture, the console errors, the failed
- * requests, and the page path. The coverage names what the agent saw: the whole document, or the window
- * alone when the browser refused a full-page bitmap. The screenshot does not ride the JSON. It rides the
- * image path of the tool result, thus the model sees the picture and the JSON text holds no bytes.
- * `missed-stamp` means that the row holds no rendered hash, thus no preview stamped one and the agent must
- * run a new preview before the next look. `no-browser` means that the composition gives no browser, thus no
- * look is possible at all and a repeat gives the same answer.
+ * degraded condition. `examined` carries the coverage of the look, the console errors, the failed
+ * requests, and the page path. The coverage names what the agent saw: the whole document in one shot,
+ * consecutive slices with the captured and the total pixels, or the window alone when the browser refused
+ * the bitmap. A tiled look carries `tiles` — the document range of each slice, in the order of the
+ * pictures — thus the model reads which rows each picture holds. The screenshots do not ride the JSON.
+ * They ride the image path of the tool result in document order, thus the model sees the pictures and the
+ * JSON text holds no bytes. `missed-stamp` means that the row holds no rendered hash, thus no preview
+ * stamped one and the agent must run a new preview before the next look. `no-browser` means that the
+ * composition gives no browser, thus no look is possible at all and a repeat gives the same answer.
  */
 export type ExaminePageResult =
     | { outcome: "refused"; refusal: SessionRefusal }
@@ -94,7 +103,14 @@ export type ExaminePageResult =
     | { outcome: "no-page" }
     | { outcome: "missed-stamp" }
     | { outcome: "capture-failed"; detail: string }
-    | { outcome: "examined"; coverage: PageCapture["coverage"]; consoleErrors: string[]; failedRequests: FailedRequest[]; pagePath: string };
+    | {
+          outcome: "examined";
+          coverage: CaptureCoverage;
+          tiles?: ExaminedTile[];
+          consoleErrors: string[];
+          failedRequests: FailedRequest[];
+          pagePath: string;
+      };
 
 /**
  * The construction deps of the eyes tool.
@@ -337,8 +353,9 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
         id: "examine_page",
         description:
             "Open the rendered report page in a real headless browser, and report what you see. " +
-            "Give back a screenshot, the coverage of that screenshot, the console errors, and the failed requests. " +
-            "The coverage says whether the picture holds the whole page, or the top window alone. " +
+            "Give back one or more screenshots, the coverage of the look, the console errors, and the failed requests. " +
+            "A tall page arrives as consecutive top-to-bottom slices in document order, and the tiles list names the rows of each slice. " +
+            "The coverage says whether the pictures hold the whole page, a truncated top portion of it, or the top window alone. " +
             "Run it after the preview to look at the current page, and to confirm that the layout and the charts read clean. " +
             "The report tool records a version only after you look at the current page. " +
             "If the page has no confirmed render, run the preview again first.",
@@ -432,18 +449,24 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 logger.warn("the seen hash did not stamp", { threadId, analysisId, detail });
             }
 
-            // The screenshot rides the image path of the tool result, thus the model sees the picture. The
-            // JSON keeps the faults and the page path only, thus the JSON text holds no bytes.
+            // The screenshots ride the image path of the tool result in document order, thus the model sees
+            // the pictures. The JSON keeps the faults, the tile ranges, and the page path only, thus the
+            // JSON text holds no bytes. The tiles list mirrors the picture order, thus the model reads which
+            // rows each picture holds.
+            const tiles: ExaminedTile[] = captured.screenshots.flatMap((shot, index) =>
+                shot.range === undefined ? [] : [{ index, fromY: shot.range.fromY, toY: shot.range.toY }],
+            );
             return ok(
-                withToolResultImage(
+                withToolResultImages(
                     {
                         outcome: "examined" as const,
                         coverage: captured.coverage,
+                        ...(tiles.length === 0 ? {} : { tiles }),
                         consoleErrors: captured.consoleErrors,
                         failedRequests: captured.failedRequests,
                         pagePath: relativePagePath,
                     },
-                    { base64: captured.screenshotBase64, mediaType: SCREENSHOT_MEDIA_TYPE },
+                    captured.screenshots.map((shot) => ({ base64: shot.base64, mediaType: SCREENSHOT_MEDIA_TYPE })),
                 ),
             );
         },

@@ -34,7 +34,7 @@ import type {
     StampResult,
 } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
-import { readToolResultImage, type ToolContext } from "../define-tool.js";
+import { readToolResultImages, type ToolContext } from "../define-tool.js";
 import { createExaminePageTool, type CapturePage, type ExaminePageResult, type PageCapture } from "./examine-page.js";
 
 const DEFAULT_ANALYSIS_ID = "analysis-001";
@@ -281,7 +281,7 @@ describe("the no-browser outcome", () => {
         await writePage(root, threadId);
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
         const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: { browserUrl: "http://localhost:9222" }, capture });
 
@@ -315,7 +315,7 @@ describe("the missed stamp", () => {
         const gateway = makeFakeGateway();
         // The preview stamped no rendered hash, thus the seen stamp finds none to copy.
         gateway.seed(threadId, null);
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
         const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
 
@@ -337,8 +337,8 @@ describe("the seen-stamp copy", () => {
 
         let capturedUrl: string | undefined;
         const stub: PageCapture = {
-            screenshotBase64: "BASE64PNG",
-            coverage: "full",
+            screenshots: [{ base64: "BASE64PNG" }],
+            coverage: { kind: "full" },
             consoleErrors: ["boom"],
             failedRequests: [{ url: "assets/x.png", reason: "net" }],
         };
@@ -352,13 +352,15 @@ describe("the seen-stamp copy", () => {
 
         expect(result.outcome).toBe("examined");
         if (result.outcome === "examined") {
-            expect(result.coverage).toBe("full");
+            expect(result.coverage).toEqual({ kind: "full" });
+            // One whole-document shot slices nothing, thus no tiles list rides the JSON.
+            expect(result.tiles).toBeUndefined();
             expect(result.consoleErrors).toEqual(["boom"]);
             expect(result.failedRequests).toEqual([{ url: "assets/x.png", reason: "net" }]);
             expect(result.pagePath).toBe(join("report-sessions", threadId, "index.html"));
         }
         // The screenshot rides the image path, thus the model sees the picture.
-        expect(readToolResultImage(result)).toEqual({ base64: "BASE64PNG", mediaType: "image/png" });
+        expect(readToolResultImages(result)).toEqual([{ base64: "BASE64PNG", mediaType: "image/png" }]);
         // The JSON text holds no bytes, thus the picture never reaches the JSON by accident.
         expect(JSON.stringify(result)).not.toContain("BASE64PNG");
         // The tool navigates to the page file through a file URL.
@@ -376,7 +378,7 @@ describe("the seen-stamp copy", () => {
         gateway.seed(threadId, "rendered-hash");
 
         // The browser refused the full-page bitmap, thus the capture gives the window alone.
-        const stub: PageCapture = { screenshotBase64: "VIEWPORTPNG", coverage: "viewport", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshots: [{ base64: "VIEWPORTPNG" }], coverage: { kind: "viewport" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
         const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
 
@@ -385,10 +387,52 @@ describe("the seen-stamp copy", () => {
         expect(result.outcome).toBe("examined");
         if (result.outcome === "examined") {
             // The coverage rides the JSON, thus the agent reads that the picture shows the window alone.
-            expect(result.coverage).toBe("viewport");
+            expect(result.coverage).toEqual({ kind: "viewport" });
         }
-        expect(readToolResultImage(result)).toEqual({ base64: "VIEWPORTPNG", mediaType: "image/png" });
+        expect(readToolResultImages(result)).toEqual([{ base64: "VIEWPORTPNG", mediaType: "image/png" }]);
         // The agent saw the current document, thus the degraded look counts and the record path stays open.
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+
+    it("carries the slices of a tiled look in document order, with the ranges on the JSON and the honest coverage", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+
+        // The page was tall, and the budget covered half of it. The capture reports what it saw.
+        const stub: PageCapture = {
+            screenshots: [
+                { base64: "TILEONE", range: { fromY: 0, toY: 1800 } },
+                { base64: "TILETWO", range: { fromY: 1800, toY: 3600 } },
+            ],
+            coverage: { kind: "tiled", capturedPx: 3600, totalPx: 7200 },
+            consoleErrors: [],
+            failedRequests: [],
+        };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+        if (result.outcome === "examined") {
+            // The coverage carries the captured and the total pixels, thus a truncated look is never silent.
+            expect(result.coverage).toEqual({ kind: "tiled", capturedPx: 3600, totalPx: 7200 });
+            // The tiles list mirrors the picture order, thus the model reads which rows each picture holds.
+            expect(result.tiles).toEqual([
+                { index: 0, fromY: 0, toY: 1800 },
+                { index: 1, fromY: 1800, toY: 3600 },
+            ]);
+        }
+        // The slices ride the image path in document order, and the JSON text holds no bytes.
+        expect(readToolResultImages(result)).toEqual([
+            { base64: "TILEONE", mediaType: "image/png" },
+            { base64: "TILETWO", mediaType: "image/png" },
+        ]);
+        expect(JSON.stringify(result)).not.toContain("TILEONE");
+        // A truncated look is a true look at the current document, thus it stamps the seen hash the same.
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
     });
 });
@@ -411,7 +455,7 @@ describe("the lease of one look", () => {
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
         expect(result.outcome).toBe("examined");
-        expect(readToolResultImage(result)).toEqual({ base64: "LEASEPNG", mediaType: "image/png" });
+        expect(readToolResultImages(result)).toEqual([{ base64: "LEASEPNG", mediaType: "image/png" }]);
         // The scope carries the analysis and the root of this call, thus a realization mounts the same tree.
         expect(eyes.acquired).toEqual([{ analysisId: DEFAULT_ANALYSIS_ID, workspaceRoot: root }]);
         // The capture reached the endpoint of the lease, and not the endpoint of the chrome config.
@@ -457,7 +501,7 @@ describe("the lease of one look", () => {
 
         // The capture already passed, thus the failed release changes no outcome of the look.
         expect(result.outcome).toBe("examined");
-        expect(readToolResultImage(result)).toEqual({ base64: "KEPTPNG", mediaType: "image/png" });
+        expect(readToolResultImages(result)).toEqual([{ base64: "KEPTPNG", mediaType: "image/png" }]);
         expect(eyes.released).toEqual([RELEASE_FAULT_ENDPOINT]);
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
         // The log is the whole record of a failed release, thus the tool names it there.
@@ -535,7 +579,7 @@ describe("the lease of one look", () => {
 
         // The capture already passed, thus the release that never settles changes no outcome of the look.
         expect(result.outcome).toBe("examined");
-        expect(readToolResultImage(result)).toEqual({ base64: "HUNGPNG", mediaType: "image/png" });
+        expect(readToolResultImages(result)).toEqual([{ base64: "HUNGPNG", mediaType: "image/png" }]);
         expect(eyes.released).toEqual([RELEASE_HANG_ENDPOINT]);
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
         // An expired release reads the same as a thrown release, thus the log is its whole record.
@@ -550,7 +594,7 @@ describe("the transport precedence", () => {
         await writePage(root, threadId);
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
         const eyes = makeFakeEyes({ browserUrl: "http://examine-unused.test:9222" });
         const tool = createExaminePageTool({
@@ -585,7 +629,7 @@ describe("the transport precedence", () => {
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
         expect(result.outcome).toBe("examined");
-        expect(readToolResultImage(result)).toEqual({ base64: "STATICPNG", mediaType: "image/png" });
+        expect(readToolResultImages(result)).toEqual([{ base64: "STATICPNG", mediaType: "image/png" }]);
         // The static realization gives the configured endpoint, thus the capture reaches that one.
         expect(connected).toEqual([CONFIGURED_ENDPOINT]);
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
@@ -605,7 +649,7 @@ describe("the result detail", () => {
         await writePage(root, threadId);
         const gateway = makeFakeGateway();
         gateway.seed(threadId, "rendered-hash");
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = () => Promise.resolve(stub);
         const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
 
@@ -652,7 +696,7 @@ describe("the URL seam", () => {
         gateway.seed(threadId, "rendered-hash");
         let capturedUrl: string | undefined;
         let resolvedArgs: { pagePath: string; analysisId: string; threadId: string; auth: AuthContext } | undefined;
-        const stub: PageCapture = { screenshotBase64: "BASE64PNG", coverage: "full", consoleErrors: [], failedRequests: [] };
+        const stub: PageCapture = { screenshots: [{ base64: "BASE64PNG" }], coverage: { kind: "full" }, consoleErrors: [], failedRequests: [] };
         const capture: CapturePage = (url) => {
             capturedUrl = url;
             return Promise.resolve(stub);

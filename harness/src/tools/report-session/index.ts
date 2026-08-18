@@ -16,7 +16,9 @@ export {
 } from "./preview-report.js";
 export {
     createExaminePageTool,
+    type CaptureCoverage,
     type CapturePage,
+    type ExaminedTile,
     type ExaminePageInput,
     type ExaminePageResult,
     type ExaminePageToolDeps,
