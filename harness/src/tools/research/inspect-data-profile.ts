@@ -25,7 +25,6 @@ import { ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
-import { isDataProfileStale } from "../../app/data-profile-policy.js";
 import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { loadDataProfileStatus, type DataProfileFile, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
@@ -168,19 +167,19 @@ function datasetFileCount(result: DataProfileResult): number | null {
 /**
  * Name every reason the served profile may not describe the current inputs.
  *
- * Two independent things make a profile stale, and both are ordinary. The input set can
- * change under a completed profile (`isDataProfileStale` — the same predicate the
- * embedder's re-trigger policy uses; staleness is defined once, in
- * `app/data-profile-policy.ts`, not re-derived here). And the ledger can have moved off
- * `completed` while an older result is still on the row: `tryRerun`/`tryRetry` preserve
+ * Every reason is one the ledger row states outright: the row has moved off `completed`
+ * while an older result is still on it, because `tryRerun`/`tryRetry` preserve
  * `data_profile_result` precisely so a prior profile stays servable while the next
  * attempt runs or after it fails.
+ *
+ * A changed input set is deliberately NOT among them. Re-profiling is invoked by the
+ * embedder that owns the input mutation — it knows the set changed at the moment it
+ * changed — so a row still reading `completed` is a row nothing has superseded. Deriving
+ * a verdict here would mean re-deciding, from one table row, a question already answered
+ * by the party that watched it happen.
  */
-function stalenessReasons(status: DataProfileStatus, result: DataProfileResult): string[] {
+function stalenessReasons(status: DataProfileStatus): string[] {
     const reasons: string[] = [];
-    if (isDataProfileStale({ fileIds: status.seedInputFileIds ?? [] }, result)) {
-        reasons.push("the analysis's input file set changed after this profile was taken");
-    }
     if (status.status === "running" || status.status === "pending") {
         reasons.push("a re-profile is in progress — this is the previous profile");
     }
@@ -292,7 +291,7 @@ export function createInspectDataProfileTool(pool: Pool) {
                 });
             }
 
-            const reasons = stalenessReasons(status, result);
+            const reasons = stalenessReasons(status);
             const envelope: ProfileEnvelope =
                 reasons.length > 0
                     ? { state: "stale", staleReason: reasons.join("; "), profiledAt: result.profiledAt }

@@ -9,7 +9,7 @@ import { freshDb } from "../../test_support/db.ts";
 import { insertAnchor, insertAnalysis, insertAnalysisInput, deleteAnalysisInput } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
-import { stageInputs, enumerateInputSignatures, inputSignature, isInputSetMaterialized, mtimesMatch } from "./staging.ts";
+import { stageInputs, enumerateInputPaths, isInputSetMaterialized, mtimesMatch } from "./staging.ts";
 
 function sha256(content: string): string {
     return createHash("sha256").update(content).digest("hex");
@@ -294,9 +294,9 @@ describe("stageInputs", () => {
         // Delete the source on disk while its DB row stays — the routine DB/filesystem disagreement.
         rmSync(join(anchorDir, "gone.csv"), { force: true });
 
-        // Enumeration skips the gone file (reports drift over the survivor)…
-        const enumSigs = enumerateInputSignatures(analysisId)._unsafeUnwrap();
-        expect(enumSigs.size).toBe(1);
+        // Enumeration skips the gone file…
+        const enumPaths = enumerateInputPaths(analysisId)._unsafeUnwrap();
+        expect(enumPaths.size).toBe(1);
 
         // …and staging COMPLETES over the survivor rather than hard-failing on the dead link.
         const second = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
@@ -304,8 +304,7 @@ describe("stageInputs", () => {
         // The stale staged copy of the now-gone input is reconciled away — no orphan lingers.
         expect(existsSync(join(targetDir, "inputs", "local", "gone.csv"))).toBe(false);
         // Both callers land on the SAME identity space — the divergence the gate structurally closes.
-        const manifestSigs = new Set(second.map((s) => inputSignature(s.fileId, s.size, s.mtimeMs)));
-        expect([...enumSigs].sort()).toEqual([...manifestSigs].sort());
+        expect([...enumPaths].sort()).toEqual([...second.map((st) => st.relativePath)].sort());
     });
 
     test("a directory input whose root vanished is skipped, not a staging failure", async () => {
@@ -321,8 +320,8 @@ describe("stageInputs", () => {
 
         rmSync(dirPath, { recursive: true, force: true });
 
-        const enumSigs = enumerateInputSignatures(analysisId)._unsafeUnwrap();
-        expect(enumSigs.size).toBe(1);
+        const enumPaths = enumerateInputPaths(analysisId)._unsafeUnwrap();
+        expect(enumPaths.size).toBe(1);
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
         expect(staged.map((s) => s.key)).toEqual(["survivor.csv"]);
     });
@@ -407,23 +406,22 @@ describe("stageInputs — the staged tree records what it materialized", () => {
         expect(mtimesMatch(1000, 2000)).toBe(false);
     });
 
-    test("staging by hardlink never touches the source's mtime, so nothing drifts afterwards", async () => {
+    test("staging by hardlink never touches the source's mtime, so the tree reads as materialized", async () => {
         // The constraint the copy branch's `utimesSync` must never cross: a hardlink shares the source's
         // inode, so stamping the staged path would rewrite the USER'S OWN input file — and since
-        // `enumerateInputSignatures` reads that file's mtime, staging would manufacture drift against
-        // the very profile it was staging for.
+        // `isInputSetMaterialized` compares that file's mtime against the staged copy's, staging would
+        // manufacture a permanent mismatch against the tree it had just written.
         const src = join(anchorDir, "untouched.csv");
         writeFileSync(src, "payload");
         utimesSync(src, 1, 2.0005);
         insertAnalysisInput({ path: "untouched.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
 
         const before = statSync(src).mtimeMs;
-        const signaturesBefore = [...enumerateInputSignatures(analysisId)._unsafeUnwrap()];
 
         (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
 
         expect(statSync(src).mtimeMs).toBe(before);
-        expect([...enumerateInputSignatures(analysisId)._unsafeUnwrap()]).toEqual(signaturesBefore);
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
     });
 });
 
@@ -527,8 +525,8 @@ describe("isInputSetMaterialized", () => {
     });
 });
 
-describe("enumerateInputSignatures", () => {
-    test("returns exactly the signature set stageInputs would materialize", async () => {
+describe("enumerateInputPaths", () => {
+    test("returns exactly the path set stageInputs would materialize", async () => {
         // Cover every input shape at once: an anchored single file, an anchorless
         // absolute-path file, and a directory input whose subtree carries nested
         // files plus a dangling symlink both paths must skip identically.
@@ -549,13 +547,12 @@ describe("enumerateInputSignatures", () => {
         insertAnalysisInput({ path: loosePath, isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
         insertAnalysisInput({ path: "dir", isDir: true, analysisId, anchorId })._unsafeUnwrap();
 
-        const enumSigs = enumerateInputSignatures(analysisId)._unsafeUnwrap();
+        const enumPaths = enumerateInputPaths(analysisId)._unsafeUnwrap();
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
-        const manifestSigs = new Set(staged.map((s) => inputSignature(s.fileId, s.size, s.mtimeMs)));
 
         // solo.csv + ext.csv + dir/a.txt + dir/sub/b.txt (broken.txt skipped).
-        expect(enumSigs.size).toBe(4);
-        expect([...enumSigs].sort()).toEqual([...manifestSigs].sort());
+        expect(enumPaths.size).toBe(4);
+        expect([...enumPaths].sort()).toEqual([...staged.map((st) => st.relativePath)].sort());
     });
 
     test("enumerates with no staging target, returns ok, and writes nothing", () => {
@@ -565,7 +562,7 @@ describe("enumerateInputSignatures", () => {
         // A workspace data-dir path staging would use, deliberately never created.
         const absentTree = join(testDir, "absent-data-dir");
 
-        const result = enumerateInputSignatures(analysisId);
+        const result = enumerateInputPaths(analysisId);
         expect(result.isOk()).toBe(true);
         expect(result._unsafeUnwrap().size).toBe(1);
         // Read-only: enumeration neither needs the tree nor stages any file.
@@ -583,49 +580,18 @@ describe("enumerateInputSignatures", () => {
         insertAnchor({ id: orphanAnchorId, createdAt: 1, updatedAt: 1, cachedPath: "/nonexistent/path", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysisInput({ path: "ghost.csv", isDir: false, analysisId, anchorId: orphanAnchorId })._unsafeUnwrap();
 
-        const enumSigs = enumerateInputSignatures(analysisId)._unsafeUnwrap();
+        const enumPaths = enumerateInputPaths(analysisId)._unsafeUnwrap();
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
-        const manifestSigs = new Set(staged.map((s) => inputSignature(s.fileId, s.size, s.mtimeMs)));
 
         expect(staged).toHaveLength(1);
-        expect(enumSigs.size).toBe(1);
-        expect([...enumSigs].sort()).toEqual([...manifestSigs].sort());
-    });
-
-    test("an in-place rewrite changes the signature but not the fileId", () => {
-        const src = join(anchorDir, "counts.csv");
-        writeFileSync(src, "aaa");
-        insertAnalysisInput({ path: "counts.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
-        utimesSync(src, 1, 1);
-
-        const before = [...enumerateInputSignatures(analysisId)._unsafeUnwrap()];
-        expect(before).toHaveLength(1);
-
-        // Rewrite the bytes at the SAME path and to the SAME length, so `size` cannot carry the drift
-        // and only `mtimeMs` can. `deriveFileId` hashes `anchorId|path` and nothing else, so identity
-        // is unchanged — which is precisely why the signature has to notice this edit.
-        writeFileSync(src, "bbb");
-        utimesSync(src, 2, 2);
-
-        const after = [...enumerateInputSignatures(analysisId)._unsafeUnwrap()];
-        expect(after).toHaveLength(1);
-        expect(after[0]).not.toBe(before[0]);
-
-        // The fileId is the signature's first `:`-separated field — unchanged across the edit.
-        expect(after[0]!.split(":")[0]).toBe(before[0]!.split(":")[0]);
-    });
-
-    test("two mtimes differing only below the millisecond yield different signatures", () => {
-        // A same-size rewrite frequently lands inside one millisecond (measured: 193 of 200 back-to-back
-        // rewrites shared a whole-ms mtime), so the sub-ms digits are the only thing separating the two
-        // versions. Rounding mtimeMs to whole milliseconds would silently collapse them into parity.
-        expect(inputSignature("f", 10, 1000.4192)).not.toBe(inputSignature("f", 10, 1000));
-        expect(inputSignature("f", 10, 1000.4192)).toBe("f:10:1000.4192");
+        expect(enumPaths.size).toBe(1);
+        expect([...enumPaths].sort()).toEqual([...staged.map((st) => st.relativePath)].sort());
     });
 
     test("the staged manifest records stat's mtimeMs verbatim", async () => {
-        // The ledger's comparand comes from here; `enumerateInputSignatures` re-stats the same file.
-        // If either side rounds and the other does not, every analysis reads as permanently drifted.
+        // The recorded `inputSignature` audit value comes from here, and `isInputSetMaterialized`
+        // re-stats the same file. If either side rounds and the other does not, every analysis reads
+        // as permanently unmaterialized.
         const src = join(anchorDir, "counts.csv");
         writeFileSync(src, "aaa");
         insertAnalysisInput({ path: "counts.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
@@ -637,9 +603,8 @@ describe("enumerateInputSignatures", () => {
         expect(staged).toHaveLength(1);
         expect(staged[0]!.mtimeMs).toBe(statSync(src).mtimeMs);
 
-        // The manifest and the enumeration must agree, or parity never converges.
-        const enumerated = [...enumerateInputSignatures(analysisId)._unsafeUnwrap()];
-        expect(enumerated).toEqual([inputSignature(staged[0]!.fileId, staged[0]!.size, staged[0]!.mtimeMs)]);
+        // The manifest and a fresh stat must agree, or the tree reads as permanently unmaterialized.
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
     });
 
     test("enumeration reads no file content", () => {
@@ -650,20 +615,20 @@ describe("enumerateInputSignatures", () => {
         chmodSync(p, 0o000);
         insertAnalysisInput({ path: "unreadable.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
         try {
-            expect(enumerateInputSignatures(analysisId)._unsafeUnwrap().size).toBe(1);
+            expect(enumerateInputPaths(analysisId)._unsafeUnwrap().size).toBe(1);
         } finally {
             chmodSync(p, 0o644);
         }
     });
 
     test("a file deleted between the walk and its stat is treated as removed, not an error", () => {
-        // The DB and the filesystem routinely disagree; a gone input is drift, never a hard failure.
+        // The DB and the filesystem routinely disagree; a gone input is a removal, never a hard failure.
         writeFileSync(join(anchorDir, "kept.csv"), "k");
         insertAnalysisInput({ path: "kept.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
         insertAnalysisInput({ path: "vanished.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
 
         // `vanished.csv` was never created, so the walk resolves its path and the stat then misses.
-        const result = enumerateInputSignatures(analysisId);
+        const result = enumerateInputPaths(analysisId);
         expect(result.isOk()).toBe(true);
         expect(result._unsafeUnwrap().size).toBe(1);
     });

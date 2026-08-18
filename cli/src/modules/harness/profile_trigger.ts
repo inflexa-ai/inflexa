@@ -8,7 +8,6 @@ import {
     triggerDataProfile,
     tryRetryDataProfile,
     upsertAnalysis,
-    type DataProfileStatus,
     type DataProfileTriggerParams,
     type DbError,
     type Pool,
@@ -17,18 +16,24 @@ import {
 import { getLogger } from "../../lib/log.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
-import { enumerateInputSignatures, inputSignature, inputSignatureDigest, isInputSetMaterialized, stageInputs, type StagedInput } from "../staging/staging.ts";
+import { enumerateInputPaths, isInputSetMaterialized, stageInputs, type StagedInput } from "../staging/staging.ts";
 import { noteDataProfileState } from "./agent_switch.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 
-// The headless data-profile parity checks. Two entry points, both writing NO terminal/TUI
-// output — the reactive hook (`tui/hooks/profile_parity.ts`) maps their discriminated outcome to a
-// notice: `ensureProfileAtParity` is the managed auto-check the TUI fires when a chat opens on `ready`
-// (and after an analysis swap); `forceReprofile` is the deliberate re-profile the palette/dialog action
-// drives. Both own the DECISION — enumerate → (drift/status branch) → materialize → seed → trigger — and
-// share the materialize → seed core with `inflexa profile` (`seedProfileLedger` below), so the
-// ledger contract stays single-sourced. The cheap `enumerateInputSignatures` runs FIRST so the drift
-// check costs only stat/readdir.
+// The headless data-profile drives. Three entry points, none writing terminal/TUI output — the
+// reactive hook (`tui/hooks/profile_parity.ts`) maps their discriminated outcome to a notice:
+// `ensureProfileAtParity` is the managed check the TUI fires when a chat opens on `ready` (and after an
+// analysis swap); `reprofileForInputChange` is what the input-mutation edge fires; `forceReprofile` is
+// the deliberate re-profile the palette/dialog action drives. All own the DECISION — enumerate →
+// status branch → materialize → seed → trigger — and share the materialize → seed core with `inflexa
+// profile` (`seedProfileLedger` below), so the ledger contract stays single-sourced.
+//
+// Only a real input mutation re-profiles. A chat open never does: re-profiling is invoked by the party
+// that changed the input set, at the moment it changes, and this process is that party for a local
+// tree. A profile is also not a cache refill — the profiler is an LLM agent, so a re-run re-rolls the
+// kind names, axis labels, and summary a user has been reasoning with. Re-deriving "the files look
+// different" from size and mtime would fire that on a `git checkout`, an `rsync` without `-a`, an
+// unzip, or a cloud-sync touch, none of which change a byte.
 //
 // Materialization is NOT conditioned on the profile lifecycle. It used to sit at the bottom of the
 // ladder, so every early return above it (a `failed` row above all) silently withheld the user's files
@@ -118,9 +123,9 @@ export type ProfileParityOutcome =
 export type ProfileParitySeams = {
     /** Reset an orphaned `running` ledger row (best-effort self-heal). */
     readonly reconcile: typeof reconcileOrphanedDataProfile;
-    /** Cheap (stat/readdir) read of the current input signature set — the drift check's left-hand side. */
-    readonly enumerate: typeof enumerateInputSignatures;
-    /** Read the ledger status (lifecycle state + the completed profile's input comparand). */
+    /** Cheap (stat/readdir) read of the analysis's current input paths — the "are there inputs" gate. */
+    readonly enumerate: typeof enumerateInputPaths;
+    /** Read the ledger status (its lifecycle state, and any result preserved on the row). */
     readonly loadStatus: typeof loadDataProfileStatus;
     /** Null the ledger back to "not profiled" when the input set empties (guarded to skip a live run). */
     readonly clear: typeof clearDataProfile;
@@ -142,7 +147,7 @@ export type ProfileParitySeams = {
 
 const realParitySeams: ProfileParitySeams = {
     reconcile: reconcileOrphanedDataProfile,
-    enumerate: enumerateInputSignatures,
+    enumerate: enumerateInputPaths,
     loadStatus: loadDataProfileStatus,
     clear: clearDataProfile,
     dataDir: workspaceDataDir,
@@ -153,52 +158,6 @@ const realParitySeams: ProfileParitySeams = {
     retryClaim: tryRetryDataProfile,
     run: runDataProfile,
 };
-
-/**
- * Order-insensitive equality between the freshly enumerated input signature set and the signatures a
- * completed profile was taken against. Equal sizes plus every profiled signature present in the current
- * set means no drift; a difference in either direction — a file added, removed, or REWRITTEN IN PLACE —
- * is drift. Both sides come from the same dedup'd space (`enumerateInputSignatures` and staging share
- * one walk), so the profiled list carries no duplicates and a size + membership check is exact.
- */
-function inputSetMatches(current: ReadonlySet<string>, profiled: readonly string[]): boolean {
-    if (current.size !== profiled.length) return false;
-    for (const sig of profiled) {
-        if (!current.has(sig)) return false;
-    }
-    return true;
-}
-
-/**
- * Whether a completed ledger row was taken against the input set enumerated just now.
- *
- * Which comparand the row carries depends on when it was written, and both eras answer the same
- * question:
- *
- * - `inputSignature` (current) — `{ count, digest }` over the profiled set's identities, sizes, and
- *   mtimes. Compared by digesting the current enumeration through the harness's OWN function, so the
- *   two sides cannot drift apart in how they define "the same set".
- * - `inputFiles` (legacy) — the per-file triples the signature replaced, compared member-wise.
- *
- * A row carrying neither cannot prove it covered the current bytes — `inputFileIds` answers WHICH
- * files, never WHETHER they changed — so it reads as drift. Re-profiling repairs the contract gap and
- * costs one run, the same self-heal the null-`result` case has always had.
- */
-function isProfiledAtParity(status: DataProfileStatus | null, current: ReadonlySet<string>): boolean {
-    const result = status?.result;
-    if (!result) return false;
-    if (result.inputSignature) {
-        const now = inputSignatureDigest(current);
-        return now.count === result.inputSignature.count && now.digest === result.inputSignature.digest;
-    }
-    if (result.inputFiles) {
-        return inputSetMatches(
-            current,
-            result.inputFiles.map((f) => inputSignature(f.fileId, f.size, f.mtimeMs)),
-        );
-    }
-    return false;
-}
 
 /**
  * The staging target — the analysis workspace's `data/` root — with the resolution fault already phrased
@@ -214,7 +173,7 @@ function resolveDataDir(analysis: Analysis, seams: ProfileParitySeams): Result<s
  * Materialize the analysis's current input set into `dataDir` — the ONE step that writes the workspace
  * tree, and the half of the old stage → seed pair that is now decided on its own. Reached only after the
  * cheap enumerate confirmed a non-empty input set, so it deliberately does NOT re-guard an empty
- * manifest — {@link enumerateInputSignatures} is the gate and staging shares its walk. Returns the
+ * manifest — {@link enumerateInputPaths} is the gate and staging shares its walk. Returns the
  * manifest (the seed's and the trigger's input), or a one-line failure reason.
  */
 async function materializeInputs(analysis: Analysis, dataDir: string, seams: ProfileParitySeams): Promise<Result<StagedInput[], string>> {
@@ -262,9 +221,9 @@ async function seedFromManifest(
  * Resurrect a `failed` ledger row: claim its `failed → running` transition, then start the workflow for
  * the now-claimed row — the recovery `inflexa profile` performs (`runProfile` in profile.ts). The
  * trigger's CAS claims only pending/completed rows, so this is the only route back out of `failed`.
- * Shared by both entry points, which arrive from opposite directions: parity when a `failed` row's input
- * set drifted (the failure is not evidence about the set now on disk), force whenever its trigger reports
- * the row was `failed`. Both have already materialized, hence `materialized: true` throughout.
+ * Shared by both entry points, which arrive from opposite directions: the ladder when an input mutation
+ * re-profiles a `failed` row (the failure is not evidence about the set now on disk), force whenever its
+ * trigger reports the row was `failed`. Both have already materialized, hence `materialized: true`.
  */
 async function retryFailedRow(
     runtime: HarnessRuntime,
@@ -293,41 +252,52 @@ async function retryFailedRow(
 }
 
 /**
- * Auto-trigger the data profile at managed parity for `analysis`, fire-and-forget. The
- * ladder, cheapest gate first:
+ * What asked for this drive — the ONE thing the ladder branches on that is not ledger state.
+ *
+ * `"open"` is a chat opening (or an analysis swap): nobody claims the input set changed, so a
+ * completed profile is left exactly as it is. `"inputs_changed"` is an input mutation this process
+ * just performed and recorded, which is a fact, not an inference — so it re-profiles.
+ */
+export type ProfileDriveCause = "open" | "inputs_changed";
+
+/**
+ * The shared data-profile ladder, fire-and-forget. Cheapest gate first:
  *
  *   0. Reconcile an orphaned `running` ledger row (best-effort) — a prior run that died between the CAS
  *      and its DBOS workflow insert leaves the row wedged at `running` with nothing to resume; boot has
  *      run DBOS recovery, so a still-`running` row with no workflow is genuinely orphaned. Reset it so
- *      the status read below re-triggers instead of reporting `already_running` forever.
- *   1. Enumerate the current input signature set at stat/readdir cost (no hashing) — the drift check's
- *      left-hand side. An enumerate fault is `failed` (parity can't be judged).
- *   2. Read the ledger status — its lifecycle state plus the completed profile's `result.inputFiles`
- *      (the set the profile was taken against). A ledger read fault is `failed`.
+ *      the status read below sees the real state.
+ *   1. Enumerate the analysis's current input paths at stat/readdir cost (no hashing). An enumerate
+ *      fault is `failed` (nothing can be decided without knowing whether inputs exist).
+ *   2. Read the ledger status. A ledger read fault is `failed`.
  *   3. Branch on the input set:
  *      - EMPTY — never profiled (`null`) → `no_inputs`; a live run → `already_running` (never clear a
  *        live run); otherwise the profile now describes files that are gone, so {@link clearDataProfile}
  *        nulls it → `cleared` (or `already_running` if the row raced into `running` — the guard's only
  *        skip; a clear fault is `failed`).
- *      - NON-EMPTY — a live run → `already_running`, the ONLY state that also suppresses
- *        materialization; a `completed` row whose recorded set equals the current one →
- *        `already_profiled` (its set is materialized by construction, so there is nothing to write).
- *   4. Materialize the current input set (content hashing) — for a `failed` row only when the staged
- *      tree says it is not already on disk, since every other state below (re-)profiles and seeding
- *      needs the manifest anyway. A staging fault is `failed` and stops here: no seed, no trigger.
- *   5. Decide the profile: a `failed` row that was already materialized → `skipped_failed` (that is the
- *      set that failed; retrying it is deliberate, via {@link forceReprofile}); a `failed` row whose set
- *      drifted → the retry claim + run, exactly as force does; everything else — a drifted (or
- *      null-`result`) completed row, a `pending` row, a never-profiled `null` → seed → trigger, mapping
- *      the harness result to `triggered` / `already_running` / `failed`.
+ *      - NON-EMPTY — a live run → `already_running`, the ONLY state that also suppresses materialization.
+ *   4. A `completed` row on an `"open"` drive → materialize if the tree is behind, then
+ *      `already_profiled`. The profile is NOT re-run: nothing here claims the input set changed, and the
+ *      party that would know invokes this with `"inputs_changed"` instead. Materialization still runs
+ *      because the workspace tree is what the agent reads, and it is not conditioned on the profile.
+ *   5. Materialize the current input set (content hashing) — for a `failed` row on an `"open"` drive only
+ *      when the staged tree says it is not already on disk, since every other state below (re-)profiles
+ *      and seeding needs the manifest anyway. A staging fault is `failed` and stops here: no seed, no
+ *      trigger.
+ *   6. Decide the profile: a `failed` row already materialized on an `"open"` drive → `skipped_failed`
+ *      (that is the set that failed; retrying it is deliberate, via {@link forceReprofile}); a `failed`
+ *      row otherwise → the retry claim + run, exactly as force does; everything else — a `pending` row, a
+ *      never-profiled `null`, or any row on an `"inputs_changed"` drive → seed → trigger, mapping the
+ *      harness result to `triggered` / `already_running` / `failed`.
  *
- * Chat is never gated on the profile (Cortex parity), so this returns as soon as the trigger is
- * dispatched — it never waits for completion. NO terminal/TUI output: the caller maps the outcome.
+ * Chat is never gated on the profile, so this returns as soon as the trigger is dispatched — it never
+ * waits for completion. NO terminal/TUI output: the caller maps the outcome.
  */
-export async function ensureProfileAtParity(
+async function runProfileLadder(
     runtime: HarnessRuntime,
     analysis: Analysis,
-    seams: ProfileParitySeams = realParitySeams,
+    cause: ProfileDriveCause,
+    seams: ProfileParitySeams,
 ): Promise<ProfileParityOutcome> {
     // Best-effort self-heal of a wedged `running` row (step 0 above); a reconcile hiccup must not abort
     // parity — the status read still runs and the trigger's CAS remains the final arbiter.
@@ -338,13 +308,13 @@ export async function ensureProfileAtParity(
 
     const enumerateResult = seams.enumerate(analysis.id);
     if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})`, materialized: false };
-    const currentSignatures = enumerateResult.value;
+    const currentPaths = enumerateResult.value;
 
     const statusResult = await seams.loadStatus(runtime.pool, analysis.id);
     if (statusResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${statusResult.error.type})`, materialized: false };
     const status = statusResult.value;
 
-    if (currentSignatures.size === 0) {
+    if (currentPaths.size === 0) {
         // An emptied input set: nothing to profile now, and nothing to materialize either. A
         // never-profiled analysis is the ordinary "add inputs" state; a live run must never be cleared
         // (its completion write would resurrect half-cleared state); any settled prior profile now
@@ -370,30 +340,40 @@ export async function ensureProfileAtParity(
         // re-runs the check when the run reaches either terminal state.
         return { kind: "already_running", materialized: false };
     }
-    if (status?.status === "completed") {
-        // A completed profile at parity implies its set is materialized — it is the set that profile was
-        // staged for, unchanged since — so this skips the predicate too and keeps the steady-state chat
-        // open (nothing edited) on the stat/readdir path it has always been on. `materialized` reports that
-        // STATE, not whether this drive performed it: the files are on disk, so it is true even though
-        // nothing was written here. Inferred rather than checked, which is why the deliberate
-        // {@link forceReprofile} / `inflexa profile` stays the repair path for a hand-emptied tree.
-        if (isProfiledAtParity(status, currentSignatures)) return { kind: "already_profiled", materialized: true };
-    }
-
     const dataDirResult = resolveDataDir(analysis, seams);
     if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, materialized: false };
     const dataDir = dataDirResult.value;
+
+    // A completed profile on an "open" drive stands. This is where the ladder used to compare the
+    // enumerated set against the profile's recorded one and re-profile on any difference; it no longer
+    // asks, because the answer it produced was an inference (size and mtime moved, therefore the data
+    // did) standing in for a fact the input-mutation edge already reports.
+    //
+    // The TREE is still brought up to date. Materialization is not conditioned on the profile lifecycle,
+    // and a workspace behind the database withholds the user's files from the agent whatever the ledger
+    // says. `already_profiled` reports the materialization STATE, not whether this drive performed it.
+    if (cause === "open" && status?.status === "completed") {
+        const materializedResult = seams.materialized(analysis.id, dataDir);
+        if (materializedResult.isErr()) {
+            return { kind: "failed", reason: `could not check the staged inputs (${materializedResult.error.type})`, materialized: false };
+        }
+        if (materializedResult.value) return { kind: "already_profiled", materialized: true };
+        const restaged = await materializeInputs(analysis, dataDir, seams);
+        if (restaged.isErr()) return { kind: "failed", reason: restaged.error, materialized: false };
+        return { kind: "already_profiled", materialized: true };
+    }
 
     // A `failed` row is the one state where materialization is conditional rather than implied: every
     // other state below (re-)profiles, and seeding needs the manifest's content hashes, which only
     // staging produces — so consulting the predicate there would cost a walk and change nothing.
     //
-    // Here it doubles as the drift signal. The staged tree is the set the failed attempt ran against, so
-    // a set still materialized IS the set that failed: re-running it unasked is the loop managed parity
-    // refuses, and the deliberate re-profile owns that decision. A set that is NOT materialized is a set
-    // the failure says nothing about — either it changed under a wedged analysis or it never landed —
-    // and it gets both the files and a fresh run.
-    if (status?.status === "failed") {
+    // On an "open" drive it doubles as the "is there anything new to try" signal. The staged tree is the
+    // set the failed attempt ran against, so a set still materialized IS the set that failed: re-running
+    // it unasked would retry an identical attempt on every chat open, and the deliberate re-profile owns
+    // that decision. A set that is NOT materialized is a set the failure says nothing about — either it
+    // changed under a wedged analysis or it never landed — and it gets both the files and a fresh run.
+    // An "inputs_changed" drive skips this entirely: the set demonstrably is not the one that failed.
+    if (cause === "open" && status?.status === "failed") {
         const materializedResult = seams.materialized(analysis.id, dataDir);
         if (materializedResult.isErr()) {
             return { kind: "failed", reason: `could not check the staged inputs (${materializedResult.error.type})`, materialized: false };
@@ -436,17 +416,46 @@ export async function ensureProfileAtParity(
 }
 
 /**
+ * The chat-open / analysis-swap drive: bring the workspace tree up to date and profile an analysis that
+ * has never been profiled, but never RE-profile one that has. Fire-and-forget; `seams` is injected only
+ * by tests.
+ */
+export async function ensureProfileAtParity(
+    runtime: HarnessRuntime,
+    analysis: Analysis,
+    seams: ProfileParitySeams = realParitySeams,
+): Promise<ProfileParityOutcome> {
+    return await runProfileLadder(runtime, analysis, "open", seams);
+}
+
+/**
+ * The input-mutation drive: re-profile because this process just added or removed inputs and recorded
+ * it. That is the whole difference from {@link ensureProfileAtParity} — a completed row is re-run rather
+ * than left alone, and a `failed` row is retried rather than skipped, because the set that failed is not
+ * the set on disk now. Everything else (the orphan reconcile, the emptied-set clear, the live-run defer)
+ * is shared, since an emptied input set is an input mutation too. Fire-and-forget.
+ */
+export async function reprofileForInputChange(
+    runtime: HarnessRuntime,
+    analysis: Analysis,
+    seams: ProfileParitySeams = realParitySeams,
+): Promise<ProfileParityOutcome> {
+    return await runProfileLadder(runtime, analysis, "inputs_changed", seams);
+}
+
+/**
  * Force a re-profile of `analysis`, fire-and-forget — the deliberate action the TUI's command palette /
- * dialog drives. Unlike {@link ensureProfileAtParity}, force is the user's explicit will, so the drift
- * comparison, the `failed`-state gate, and the already-materialized predicate do NOT apply: past a
- * live-run check it ALWAYS materializes → seeds → triggers. Leaving materialization unconditional here
- * is deliberate — it keeps force (and `inflexa profile`) the repair path for a tree the predicate
- * misjudges, and keeps the predicate on the one call path that needed it. The ladder: reconcile
+ * dialog drives. Unlike {@link ensureProfileAtParity}, force is the user's explicit will, so neither the
+ * `failed`-state gate nor the already-materialized predicate applies: past a live-run check it ALWAYS
+ * materializes → seeds → triggers. It is also the ONLY repair for the one thing nothing detects — an
+ * in-place edit of an already-attached file, which changes no path and so raises no input-mutation
+ * event. Leaving materialization unconditional here keeps force (and `inflexa profile`) the repair path
+ * for a hand-emptied tree as well. The ladder: reconcile
  * (best-effort) → enumerate (an empty set is `no_inputs`; the TUI words this as a refusal for the manual
  * action, the headless module stays silent) → ledger read (a live run is `already_running`; a read fault
  * is `failed`) → materialize → seed → trigger. A trigger that returns `failed` — the row was `failed`,
  * which the trigger's pending/completed CAS never claims — takes {@link retryFailedRow}, the same
- * recovery parity reaches when a failed row's input set drifted.
+ * recovery the input-mutation drive reaches for a `failed` row.
  */
 export async function forceReprofile(runtime: HarnessRuntime, analysis: Analysis, seams: ProfileParitySeams = realParitySeams): Promise<ProfileParityOutcome> {
     (await seams.reconcile(runtime.pool, analysis.id)).match(
@@ -461,8 +470,8 @@ export async function forceReprofile(runtime: HarnessRuntime, analysis: Analysis
     const statusResult = await seams.loadStatus(runtime.pool, analysis.id);
     if (statusResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${statusResult.error.type})`, materialized: false };
     // A live run owns the ledger AND is reading the staged tree; forcing over it would double-profile and
-    // reconcile-delete under the sandbox. Every other state is fair game — force skips the drift, the
-    // `failed`-state, and the already-materialized gates parity applies, because the user asked for it.
+    // reconcile-delete under the sandbox. Every other state is fair game — force skips the `failed`-state
+    // and already-materialized gates the open drive applies, because the user asked for it.
     if (statusResult.value?.status === "running") return { kind: "already_running", materialized: false };
 
     const dataDirResult = resolveDataDir(analysis, seams);

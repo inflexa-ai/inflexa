@@ -43,7 +43,6 @@ import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { createReportBlockerToolFor } from "../sandbox/report-blocker.js";
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../../app/data-profile-orientation.js";
-import { isDataProfileStale } from "../../app/data-profile-policy.js";
 import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/resource-limits.js";
 import { plannerPrompt } from "../../prompts/planner.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
@@ -278,10 +277,9 @@ type DataGrounding =
 /**
  * Read the profile ledger row into a grounding variant.
  *
- * Staleness is `isDataProfileStale` — the single definition in
- * `app/data-profile-policy.ts` that the embedder's re-trigger policy and
- * `inspect_data_profile` also use, so the planner and the conversation agent can
- * never disagree about whether a profile still describes the data.
+ * A profile is re-invoked by the embedder when the input set changes, never derived
+ * as stale on read, so the only qualification this can raise is one the ledger row
+ * states outright: an attempt that superseded this result is running, or failed.
  */
 function classifyGrounding(status: DataProfileStatus | null): DataGrounding {
     // `loadDataProfileStatus` collapses "no analysis row" and "profile cleared"
@@ -302,9 +300,6 @@ function classifyGrounding(status: DataProfileStatus | null): DataGrounding {
     // preserve `data_profile_result` on purpose, so a non-`completed` status
     // carrying a result means what is on the row is the PREVIOUS profile.
     const reasons: string[] = [];
-    if (isDataProfileStale({ fileIds: status.seedInputFileIds ?? [] }, result)) {
-        reasons.push("the analysis's input file set changed after this profile was taken");
-    }
     if (status.status === "pending" || status.status === "running") {
         reasons.push("a re-profile is in progress — this is the previous profile");
     }
