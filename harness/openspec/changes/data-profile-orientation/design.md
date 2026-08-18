@@ -223,6 +223,19 @@ check for the capped `files` response follow independently.
 - **Entity attribute join is deferred, not dropped.** Because the index is a pure projection (below),
   adding metadata-sheet attributes later is a second input to the projection and a re-index — no
   migration and no re-profile.
+- **Scan ceiling: 100k files.** The walk and its per-file magic-byte prefix read are the one arm that
+  is still O(files), so it gets a stated ceiling rather than an implicit one. 100k is ~30s of
+  stat-and-prefix work against a 20-minute deadline and two orders of magnitude above the largest tree
+  the platform has seen. Past it the scan stops and reports `truncated`, because a silently sampled
+  manifest would describe a fraction of the tree while reading as a description of all of it.
+- **The persisted record's types live in `contracts/`.** `DataProfileResult` and everything it holds
+  (`kinds`, `axes`, `inputSignature`, `coverage`, the file and organism records) are declared in
+  `contracts/data-profile.ts` beside `DATA_PROFILE_RUN_LITERAL`, and re-exported from `state/`. The
+  row is read by consumers the harness does not contain — a host route serving it, a UI rendering it —
+  and `contracts/` is the one part of the package they can import without inheriting `pg` and the
+  ledger's whole query surface. It also puts the compatibility rule where the readers are: there is no
+  parse at the read boundary, so optionality *is* the versioning, and that is now stated in the file
+  they import.
 
 ## The index is a projection, not an artifact
 
@@ -237,5 +250,4 @@ so none of them need a migration and none of them are decisions this change has 
 
 ## Open Questions
 
-1. **Scan behaviour at very large n.** Header decode is now O(kinds), but the walk is still O(files).
-   The threshold at which the scan reports truncation rather than completing is unspecified.
+None outstanding.

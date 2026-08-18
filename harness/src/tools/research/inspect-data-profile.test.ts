@@ -30,7 +30,7 @@ async function completeWith(result: DataProfileResult): Promise<void> {
     (await completeDataProfile(pool, ANALYSIS, result))._unsafeUnwrap();
 }
 
-async function run(input: { scope?: "overview" | "files"; page?: number; pageSize?: number } = {}): Promise<InspectDataProfileOutput> {
+async function run(input: { scope?: "overview" | "kinds" | "files"; page?: number; pageSize?: number } = {}): Promise<InspectDataProfileOutput> {
     const { ctx } = makeToolContext();
     return (await tool.execute(input, ctx))._unsafeUnwrap();
 }
@@ -214,7 +214,7 @@ describe("lifecycle variants — every one is data, not an error", () => {
         expect(out.state).toBe("stale");
         expect(out).toMatchObject({ staleReason: expect.stringContaining("input file set changed") });
         // Stale is not empty: the content still comes back, because a stale profile beats none.
-        expect(out).toMatchObject({ domain: "transcriptomics", fileCount: 2 });
+        expect(out).toMatchObject({ domain: "transcriptomics", describedFileCount: 2 });
     });
 
     it("stale: a re-profile is in flight over the prior result", async () => {
@@ -240,7 +240,7 @@ describe("lifecycle variants — every one is data, not an error", () => {
         const out = await run();
         expect(out.state).toBe("stale");
         expect(out).toMatchObject({ staleReason: expect.stringContaining("timeout") });
-        expect(out).toMatchObject({ fileCount: 2 });
+        expect(out).toMatchObject({ describedFileCount: 2 });
         // A surviving result is served as `stale`, never as `failed` — which is why
         // the `failed` variant never has an input set to compare against.
         expect(out).not.toHaveProperty("failedAt");
@@ -268,7 +268,7 @@ describe("scope: overview", () => {
             accessions: ["GSE123456"],
             experimentalDesign: "12 UC vs 12 control, paired by batch.",
             qualityAssessment: { concerns: ["batch confounded with group"], strengths: ["balanced groups"] },
-            fileCount: 2,
+            describedFileCount: 2,
         });
         // The overview is an orientation, not a dump: per-file records live behind scope:"files".
         expect(out).not.toHaveProperty("files");
@@ -294,7 +294,7 @@ describe("scope: overview", () => {
         });
 
         const out = await run();
-        expect(out).toMatchObject({ state: "ready", summary: "Three count matrices.", fileCount: 1 });
+        expect(out).toMatchObject({ state: "ready", summary: "Three count matrices.", describedFileCount: 1, datasetFileCount: null, kindCount: null });
         // The widened fields come back undefined and drop out at JSON serialization —
         // the model is told nothing rather than told a default.
         const overview = out as { domain?: string; organism?: unknown; qualityAssessment?: unknown };
@@ -374,5 +374,93 @@ describe("scope: files — paged, with truncation always visible", () => {
         await completeWith(filesResult(3));
 
         expect(await run({ scope: "files" })).toMatchObject({ state: "stale", scope: "files", total: 3 });
+    });
+});
+
+describe("scope: kinds", () => {
+    /** A profile of 3513 files that describes one of them individually. */
+    function structuredResult(): DataProfileResult {
+        return makeResult({
+            files: [{ path: "data/inputs/meta/samplesheet.csv", description: "Clinical annotations for all 1171 subjects." }],
+            kinds: [
+                {
+                    name: "per-patient variant calls",
+                    memberRepresents: "one patient's somatic variant calls",
+                    description: "HaplotypeCaller VCFs.",
+                    count: 1171,
+                    pathPattern: "data/inputs/vcf/*.vcf.gz",
+                    format: "vcf",
+                    axisLabels: ["patient"],
+                },
+                {
+                    name: "variant indexes",
+                    memberRepresents: "the tabix index of one patient's calls",
+                    description: "Tabix indexes.",
+                    count: 1171,
+                    pathPattern: "data/inputs/tbi/*.tbi",
+                    format: "tabix-index",
+                    axisLabels: ["patient"],
+                },
+            ],
+            axes: [{ label: "patient", cardinality: 1171, exampleValues: ["PT0001", "PT0002"] }],
+            coverage: { matched: 3510, unmatched: 3, total: 3513 },
+        });
+    }
+
+    it("returns the dataset's structure with its counts, patterns, and axes", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        await completeWith(structuredResult());
+
+        const out = await run({ scope: "kinds" });
+        expect(out).toMatchObject({
+            state: "ready",
+            scope: "kinds",
+            available: true,
+            axes: [{ label: "patient", cardinality: 1171 }],
+            coverage: { matched: 3510, unmatched: 3, total: 3513 },
+        });
+        expect((out as { kinds: unknown[] }).kinds).toHaveLength(2);
+    });
+
+    it("reports the scope unavailable — not empty — for a pre-kinds snapshot", async () => {
+        await resetLedger();
+        await seedAnalysis(["file-aaa"]);
+        await completeWith({
+            summary: "Three count matrices.",
+            files: [{ path: "data/inputs/f1/counts.csv", description: "Raw counts" }],
+            inputFileIds: ["file-aaa"],
+            profiledAt: "2026-01-02T03:04:05.000Z",
+        });
+
+        const out = await run({ scope: "kinds" });
+        expect(out).toMatchObject({ scope: "kinds", available: false });
+        expect(out).not.toHaveProperty("kinds");
+        expect((out as { message: string }).message).toContain("before the dataset-structure record existed");
+    });
+
+    it("does not let the described-file count masquerade as the dataset size", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        await completeWith(structuredResult());
+
+        const out = await run();
+        expect(out).toMatchObject({ describedFileCount: 1, datasetFileCount: 3513, kindCount: 2 });
+        expect((out as { structureNote: string }).structureNote).toContain("scope:'kinds'");
+    });
+
+    it("states nothing about the dataset size a legacy row cannot support", async () => {
+        await resetLedger();
+        await seedAnalysis(["file-aaa"]);
+        await completeWith({
+            summary: "Legacy.",
+            files: [{ path: "data/inputs/f1/counts.csv", description: "Raw counts" }],
+            inputFileIds: ["file-aaa"],
+            profiledAt: "2026-01-02T03:04:05.000Z",
+        });
+
+        const out = await run();
+        expect(out).toMatchObject({ datasetFileCount: null, kindCount: null });
+        expect((out as { structureNote: string }).structureNote).toContain("predates");
     });
 });

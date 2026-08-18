@@ -41,6 +41,19 @@ export type {
 export type { EventSource, TextDeltaEvent, ToolStartedEvent, ToolFinishedEvent, FinishEvent, ChatErrorEvent, CortexChatEvent } from "./chat-events.js";
 export type { TokenUsageRollup } from "./usage.js";
 export { DATA_PROFILE_RUN_LITERAL } from "./data-profile.js";
+export type {
+    DataProfileAxis,
+    DataProfileCoverage,
+    DataProfileFile,
+    DataProfileInputFile,
+    DataProfileInputSignature,
+    DataProfileKind,
+    DataProfileLifecycleStatus,
+    DataProfileOrganism,
+    DataProfileQualityAssessment,
+    DataProfileResult,
+    DataProfileSubjectSource,
+} from "./data-profile.js";
 export type { TextPart, ToolCallPart, CortexPart, CortexMessage } from "./message.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./part-registry.js";
 export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./part-registry.js";

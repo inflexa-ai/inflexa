@@ -91,6 +91,7 @@ describe("profile activity emitter — the phases and their phrases", () => {
         const { parts, emitter } = recorder();
 
         await emitter.sandboxInit();
+        await emitter.scanning();
         await emitter.agentStarting();
         await emitter.forTool("execute_command", { command: ["Rscript", "profile.R"] }, resolveDetail);
         await emitter.indexing();
@@ -98,6 +99,9 @@ describe("profile activity emitter — the phases and their phrases", () => {
 
         expect(parts.map((p) => [p.phase, p.activity])).toEqual([
             ["sandbox-init", "Starting sandbox"],
+            // The deterministic scan sits between a ready sandbox and the agent's first turn.
+            // Unreported it would read as `Running data-profiler` for minutes before the agent began.
+            ["executing", "Scanning input files"],
             ["executing", "Running data-profiler"],
             ["executing", "execute_command profile.R"],
             ["indexing", "Indexing input descriptions for search"],

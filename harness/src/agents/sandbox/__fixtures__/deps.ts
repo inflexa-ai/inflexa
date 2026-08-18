@@ -56,6 +56,9 @@ export function makeFakeWorkspaceFs(): WorkspaceFilesystem {
         readFile() {
             return okAsync({ kind: "ok", content: Buffer.alloc(0), truncated: false });
         },
+        readBytes() {
+            return okAsync({ kind: "ok", bytes: Buffer.alloc(0) });
+        },
         list() {
             return okAsync({ kind: "ok", entries: [] });
         },

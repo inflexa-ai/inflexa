@@ -59,6 +59,7 @@ import { createNcbiTools, createChemDbTools, type BioToolKeys } from "../../tool
 
 // Workspace read surface.
 import { createFileStatTool, createGrepTool, createListFilesTool, createReadFileTool, createWorkspaceSearchTool } from "../../tools/workspace/index.js";
+import { createScanInputsTool } from "../../tools/workspace/scan-inputs.js";
 
 // Workspace mutate surface.
 import { createEditFileTool, createExecuteCommandTool, createWorkspaceMutator, createWriteFileTool } from "../../tools/workspace/index.js";
@@ -165,6 +166,16 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
     const registry: Record<SandboxToolName, Tool | undefined> = {
         listAvailablePackages: createListAvailablePackagesTool({ ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}) }),
         listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
+        scanInputs: createScanInputsTool({
+            workspaceFs: deps.workspaceFs,
+            analysisId: deps.step.analysisId,
+            sandboxClient: deps.sandboxClient,
+            sandbox: deps.step.sandbox,
+            workflowId: deps.step.workflowId,
+            stepId: deps.step.stepId,
+            nextFunctionId: deps.step.nextFunctionId,
+            deadlineMs: deps.step.deadlineMs,
+        }),
         resolveLibraryId: resolveLibraryIdTool,
         queryDocs: queryDocsTool,
         inspectRun: createInspectRunTool(deps.pool),

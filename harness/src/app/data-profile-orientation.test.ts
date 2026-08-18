@@ -162,3 +162,55 @@ describe("buildDataProfileOrientation", () => {
         expect(buildDataProfileOrientation(RICH).length).toBeLessThan(800);
     });
 });
+
+describe("a dataset described by kinds", () => {
+    const STRUCTURED: DataProfileResult = {
+        ...RICH,
+        files: [{ path: "data/inputs/meta/samplesheet.csv", description: "Clinical annotations for all 1171 subjects", format: "CSV" }],
+        kinds: [
+            {
+                name: "per-patient variant calls",
+                memberRepresents: "one patient's somatic variant calls",
+                description: "HaplotypeCaller VCFs.",
+                count: 1171,
+                pathPattern: "data/inputs/vcf/*.vcf.gz",
+                format: "VCF",
+                axisLabels: ["patient"],
+            },
+            {
+                name: "variant indexes",
+                memberRepresents: "the tabix index of one patient's calls",
+                description: "Tabix indexes.",
+                count: 1168,
+                pathPattern: "data/inputs/tbi/*.tbi",
+                format: "TBI",
+                axisLabels: ["patient"],
+            },
+        ],
+        axes: [{ label: "patient", cardinality: 1171 }],
+        coverage: { matched: 2339, unmatched: 1, total: 2340 },
+        inputSignature: { count: 2340, digest: "abc" },
+    };
+
+    it("renders the kinds before the notable files", () => {
+        const text = buildDataProfileOrientation(STRUCTURED);
+        expect(text).toContain("Kinds (2, 2339 files):");
+        expect(text).toContain("per-patient variant calls (1171x, VCF) — one patient's somatic variant calls");
+        expect(text).toContain("Axes: patient (1171)");
+        expect(text.indexOf("Kinds (")).toBeLessThan(text.indexOf("Notable files"));
+    });
+
+    it("names a coverage shortfall rather than implying the kinds cover everything", () => {
+        expect(buildDataProfileOrientation(STRUCTURED)).toContain("Coverage: 2339 of 2340 files match a kind");
+    });
+
+    it("stays within the character budget on a structured profile", () => {
+        expect(buildDataProfileOrientation(STRUCTURED).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
+    });
+
+    it("falls back to the file list for a snapshot written before kinds existed", () => {
+        const text = buildDataProfileOrientation(RICH);
+        expect(text).not.toContain("Kinds (");
+        expect(text).toContain("Files (2):");
+    });
+});

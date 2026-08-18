@@ -7,104 +7,31 @@
 import type { ResultAsync } from "neverthrow";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
-import type { Organism } from "../schemas/data-profile-schemas.js";
+import type { DataProfileLifecycleStatus, DataProfileResult } from "../contracts/data-profile.js";
 import type { Querier } from "./db.js";
 
 /**
- * One profiled input file's **drift signature**. `fileId` is a path identity the
- * embedder derives (two files at the same path share it regardless of content),
- * so `size` + `mtimeMs` are what let a consumer notice that the bytes behind a
- * path changed. The harness treats all three as opaque labels: it persists them
- * verbatim and never stats a source file or compares signatures itself.
+ * The persisted profile's shape lives in `contracts/` — it is read by consumers outside
+ * this package (a host route, a UI), and they must not import this module, which pulls in
+ * `pg` and the whole ledger query surface, to obtain a type. Re-exported here so ledger
+ * call sites keep one import.
  */
-export interface DataProfileInputFile {
-    fileId: string;
-    size: number;
-    mtimeMs: number;
-}
-
-/**
- * One profiled file's persisted record.
- *
- * `path` + `description` are the original pair every snapshot carries. Everything
- * below them is **optional on read** for the same reason `DataProfileResult.inputFiles`
- * is: a snapshot written before the record was widened carries only the pair, and a
- * reader must render that row rather than reject it. A writer fills in whatever the
- * profiler reported.
- */
-export interface DataProfileFile {
-    path: string;
-    description: string;
-    /** Semantic data type (count-matrix, variants, clinical-metadata, document, …). */
-    dataType?: string;
-    /** File format (CSV, h5ad, VCF, BAM, …). */
-    format?: string;
-    rows?: number | null;
-    cols?: number | null;
-    /** Searchable labels the profiler attached. */
-    tags?: string[];
-    /** Quality issues specific to this file. */
-    warnings?: string[];
-    /** Flat format-specific metrics (sparsity, medianLibrarySize, tiTvRatio, …). */
-    metrics?: Record<string, string | number | boolean>;
-}
-
-/** Dataset-wide quality findings the profiler recorded. */
-export interface DataProfileQualityAssessment {
-    concerns: string[];
-    strengths: string[];
-}
-
-/**
- * The profile snapshot `completeDataProfile` persists and `loadDataProfileStatus` reads back.
- *
- * This row is the **only** durable home of the profile: the profiler's `runs/data-profile/`
- * scratch tree is wiped when profiling completes, so there is no file to fall back on. It
- * therefore carries the profiler's full finding, not a summary of it — anything dropped here
- * is destroyed, and a downstream agent can only recover it by re-reading the raw input files.
- *
- * Every field past `summary` / `files` / `inputFileIds` / `profiledAt` is **optional on read**:
- * a snapshot written before the record was widened carries only those four, and a reader must
- * render it rather than throw. There is no parse at the read boundary (the jsonb column is cast
- * straight to this type), so optionality *is* the compatibility mechanism — exactly as it
- * already is for `inputFiles`.
- */
-export interface DataProfileResult {
-    summary: string;
-    files: DataProfileFile[];
-    /** Which files the profile covered — the audit record. */
-    inputFileIds: string[];
-    /**
-     * Whether the same bytes were covered — the drift comparand. Optional on read:
-     * a snapshot written before this field existed carries only `inputFileIds`, and
-     * a consumer treats the absence as drift (re-profiling repairs it), exactly as
-     * it already treats a wholly absent `result`.
-     */
-    inputFiles?: DataProfileInputFile[];
-    profiledAt: string;
-
-    /** Scientific domain (transcriptomics, cheminformatics, clinical, …). */
-    domain?: string;
-    /** Specific subtype within the domain (bulk-rna-seq, single-cell, LC-MS/MS, …). */
-    subtype?: string;
-    /**
-     * Subject organism with its provenance and confidence. Explicit `null` is a real,
-     * distinct value — the profiler looked and no input identified an organism — as
-     * opposed to absent, which means the snapshot predates this field.
-     */
-    organism?: Organism | null;
-    tissue?: string | null;
-    cellType?: string | null;
-    condition?: string | null;
-    /** Public dataset accessions found in any input (GSE/SRP/PRJNA/E-MTAB/phs/EGAS). */
-    accessions?: string[];
-    /** Conditions, groups, comparisons, replicates, pairing. */
-    experimentalDesign?: string;
-    qualityAssessment?: DataProfileQualityAssessment;
-}
+export type {
+    DataProfileAxis,
+    DataProfileCoverage,
+    DataProfileFile,
+    DataProfileInputFile,
+    DataProfileInputSignature,
+    DataProfileKind,
+    DataProfileOrganism,
+    DataProfileQualityAssessment,
+    DataProfileLifecycleStatus,
+    DataProfileResult,
+    DataProfileSubjectSource,
+} from "../contracts/data-profile.js";
 
 export interface DataProfileStatus {
-    status: "pending" | "running" | "completed" | "failed";
+    status: DataProfileLifecycleStatus;
     error: string | null;
     startedAt: string | null;
     completedAt: string | null;

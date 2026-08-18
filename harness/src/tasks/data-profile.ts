@@ -1,9 +1,10 @@
 /**
- * Data-profile DBOS workflow — profiles the already-staged input files, runs
- * the data-profiler sandbox agent, writes per-file metadata to
- * cortex_artifacts, and indexes descriptions into the pgvector store. Inputs
- * are staged under `data/inputs/` by the embedder before the run (see the data-profile-init spec);
- * the body assumes a populated tree and never downloads.
+ * Data-profile DBOS workflow — scans the already-staged input tree, runs the
+ * data-profiler sandbox agent over the resulting manifest, registers each staged
+ * file in cortex_artifacts, and indexes the profile's kinds and entities into the
+ * pgvector store. Inputs are staged under `data/inputs/` by the embedder before the
+ * run (see the data-profile-init spec); the body assumes a populated tree and never
+ * downloads.
  *
  * Recoverable: a crashed Cortex pod resumes the workflow from the DBOS step
  * cache. The run authorization is minted at the async edge (`triggerDataProfile`)
@@ -40,6 +41,7 @@ import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { renderWorkspace } from "../prompts/briefing.js";
 import type { SandboxClient } from "../sandbox/client.js";
+import type { SandboxRef } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 
@@ -48,6 +50,12 @@ import { generateExecutionId } from "../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { ProfilerOutputSchema, type ProfilerOutput } from "../schemas/data-profile-schemas.js";
+import { computeInputSignature } from "../execution/input-signature.js";
+import { computeCoverage } from "../input-scan/coverage.js";
+import { enrichShapes } from "../input-scan/enrich.js";
+import { renderInputScanManifest, scanInputTree } from "../input-scan/scan.js";
+import type { InputScan } from "../input-scan/types.js";
+import { buildProfileIndexEntries } from "./data-profile-index.js";
 import {
     completeDataProfile,
     failDataProfile,
@@ -57,7 +65,7 @@ import {
     tryRerunDataProfile,
     tryStartDataProfile,
     upsertArtifacts,
-    type DataProfileInputFile,
+    type DataProfileCoverage,
     type DataProfileResult,
 } from "../state/index.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "./data-profile-activity.js";
@@ -69,8 +77,18 @@ import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
 const DATA_PROFILE_STEP_LITERAL = "profile" as const;
 const DATA_PROFILE_AGENT_ID = "data-profiler" as const;
 
-/** Sandbox-server exec budget for the profile run. */
-const DEFAULT_DEADLINE_MS = 300_000;
+/**
+ * Sandbox-server exec budget for the profile run. Twenty minutes: the deterministic
+ * scan bounds the discovery half, and what remains is the agent's own reading of a
+ * bounded number of example files.
+ */
+const DEFAULT_DEADLINE_MS = 1_200_000;
+
+/** Index entries embedded and upserted per round trip. */
+const INDEX_BATCH_SIZE = 256;
+
+/** Where the embedder stages this analysis's inputs (see the data-profile-init spec). */
+const STAGED_INPUT_ROOT = "data/inputs";
 
 /** The body's construction-time deps — closed over at registration. */
 export interface DataProfileDeps extends EnvironmentStorePaths {
@@ -141,34 +159,6 @@ function inputArtifactPath(f: StagedInput): string {
     return `data/${f.relativePath}`;
 }
 
-/** Lowercased extension of a path, or `"unknown"` when none. */
-function fileExtension(p: string): string {
-    const base = p.slice(p.lastIndexOf("/") + 1);
-    const dot = base.lastIndexOf(".");
-    return dot > 0 ? base.slice(dot + 1).toLowerCase() : "unknown";
-}
-
-/**
- * Build the drift-signature comparand a completed profile persists, or `undefined`
- * to omit it. `inputFiles` records whether the profiled files still hold the same
- * bytes; it sits beside the `inputFileIds` audit record (WHICH files) in the stored
- * `DataProfileResult`.
- *
- * A workflow input persisted before `StagedInput.mtimeMs` existed (recovered across
- * the deploy that added it) carries entries with NO `mtimeMs` despite the compile-time
- * type — the same recovered-legacy-input case `ownsMandate` handles. A per-entry
- * `{ …, mtimeMs: undefined }` would JSON.stringify to `{ fileId, size }` and violate
- * `DataProfileInputFile`, so the WHOLE signature is omitted when ANY entry lacks
- * `mtimeMs`: an absent comparand reads back as drift and buys one clean re-profile,
- * exactly as a wholly-absent `result` already does (see `DataProfileResult.inputFiles`).
- * The cast defeats the required-`number` type precisely to observe that legacy gap.
- */
-export function buildDriftSignature(stagedInputs: readonly StagedInput[]): DataProfileInputFile[] | undefined {
-    const mtimeOf = (f: StagedInput): number | undefined => (f as { mtimeMs?: number }).mtimeMs;
-    if (!stagedInputs.every((f) => mtimeOf(f) !== undefined)) return undefined;
-    return stagedInputs.map((f) => ({ fileId: f.fileId, size: f.size, mtimeMs: mtimeOf(f)! }));
-}
-
 /**
  * Project the profiler's structured output plus the staged manifest into the record
  * persisted on `cortex_analysis_state`.
@@ -185,7 +175,12 @@ export function buildDriftSignature(stagedInputs: readonly StagedInput[]): DataP
  * indistinguishable from a legacy snapshot that predates the field, which is exactly
  * the reading a consumer must already tolerate.
  */
-export function buildDataProfileResult(profile: ProfilerOutput, stagedInputs: readonly StagedInput[], profiledAt: string): DataProfileResult {
+export function buildDataProfileResult(
+    profile: ProfilerOutput,
+    stagedInputs: readonly StagedInput[],
+    profiledAt: string,
+    coverage?: DataProfileCoverage,
+): DataProfileResult {
     return {
         summary: profile.analysisSummary,
         files: profile.files.map((f) => ({
@@ -199,8 +194,23 @@ export function buildDataProfileResult(profile: ProfilerOutput, stagedInputs: re
             warnings: f.warnings,
             metrics: f.metrics,
         })),
-        inputFileIds: stagedInputs.map((f) => f.fileId),
-        inputFiles: buildDriftSignature(stagedInputs),
+        kinds: profile.kinds.map((k) => ({
+            name: k.name,
+            memberRepresents: k.memberRepresents,
+            description: k.description,
+            count: k.count,
+            pathPattern: k.pathPattern,
+            format: k.format,
+            axisLabels: k.axisLabels,
+        })),
+        axes: profile.axes?.map((a) => ({
+            label: a.label,
+            cardinality: a.cardinality,
+            exampleValues: a.exampleValues,
+            description: a.description,
+        })),
+        inputSignature: computeInputSignature(stagedInputs),
+        coverage,
         profiledAt,
         domain: profile.domain,
         subtype: profile.subtype,
@@ -212,6 +222,44 @@ export function buildDataProfileResult(profile: ProfilerOutput, stagedInputs: re
         experimentalDesign: profile.experimentalDesign,
         qualityAssessment: profile.qualityAssessment,
     };
+}
+
+/**
+ * Walk the staged tree and enrich its shapes with a header readout.
+ *
+ * The walk and the shape observation run in this process over the workspace read seam;
+ * only the readout reaches into the sandbox, and only once per shape. A readout that
+ * fails is logged and dropped: it is enrichment, and a manifest without it still
+ * carries every structural observation the agent's grouping rests on, so failing the
+ * profile over it would trade the whole capability for a nicety.
+ */
+async function runInputScan(args: {
+    readonly session: RunSession;
+    readonly deps: DataProfileDeps;
+    readonly analysisId: string;
+    readonly sandbox: SandboxRef;
+    readonly execId: string;
+    readonly deadlineMs: number;
+    readonly logger: Logger;
+}): Promise<InputScan> {
+    const { session, deps, analysisId, sandbox, execId, deadlineMs, logger } = args;
+    const scan = await scanInputTree({ session, fs: deps.workspaceFs, root: STAGED_INPUT_ROOT });
+    if (scan.manifest.shapes.length === 0) return scan;
+    try {
+        const shapes = await enrichShapes({
+            shapes: scan.manifest.shapes,
+            sandboxClient: deps.sandboxClient,
+            sandbox,
+            mountRoot: `/${analysisId}`,
+            execId,
+            deadlineMs,
+            emit: async () => {},
+        });
+        return { ...scan, manifest: { ...scan.manifest, shapes } };
+    } catch (err) {
+        logger.warn("input-scan header readout failed (non-fatal)", logger.errorFields(err));
+        return scan;
+    }
 }
 
 /**
@@ -303,35 +351,6 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         const workspaceRoot = deps.resolveWorkspaceRoot(analysisId);
         const profileWritePrefix = `${workspaceRoot}/runs/${DATA_PROFILE_RUN_LITERAL}/${DATA_PROFILE_STEP_LITERAL}`;
 
-        const fileList = stagedInputs.map((f) => inputArtifactPath(f));
-        // The profiler runs outside `executeAnalysis`, so no scheduler composes a
-        // briefing for it — this prompt IS its briefing, and the sandbox system
-        // prompt names no paths (it is static per agent type, for the prompt cache).
-        // Its workspace frame therefore has to be stated here, in the same words the
-        // step briefing uses.
-        const prompt = [
-            `Profile all input data files for this analysis.`,
-            ``,
-            renderWorkspace({
-                analysisRoot: `/${analysisId}`,
-                workingDir: toSandboxPath(workspaceRoot, analysisId, profileWritePrefix),
-            }),
-            ``,
-            `IMPORTANT: You MUST use execute_command to profile files before submitting results. Do NOT submit empty files or placeholder text.`,
-            ``,
-            `CRITICAL: File and directory paths may contain spaces. You MUST always double-quote paths in shell commands (e.g. head "/${analysisId}/data/inputs/My Folder/file.csv"). Unquoted paths with spaces will silently break commands.`,
-            ``,
-            `The following input files are available (paths relative to the analysis root):`,
-            ...fileList.map((f) => `- ${f}`),
-            ``,
-            `Steps:`,
-            `1. For each file, use head and wc to inspect structure (ALWAYS double-quote file paths)`,
-            `2. Write a Python script for detailed profiling — use pathlib or os.path for path handling (handles spaces natively)`,
-            `3. Call the \`submit_profile\` tool with structured metadata for EVERY file listed above`,
-            ``,
-            `All file paths in your response must be relative to the analysis root and must EXACTLY match the paths listed above.`,
-        ].join("\n");
-
         logger.info("starting sandbox", { executionId });
 
         // Reported BEFORE the container exists, deliberately: provisioning is the longest single
@@ -372,6 +391,50 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // which captures its step deadline the same way).
             const deadlineAbs = (await DBOS.now()) + DEFAULT_DEADLINE_MS;
             const nextFunctionId = makeNextFunctionId();
+
+            // The deterministic scan, before the agent's first turn. It is always needed
+            // and its result does not depend on agent judgement, so spending an agent turn
+            // to request it would be waste — and a briefing carrying one line per input
+            // file consumes context that carries no structure (~270 KB of bare paths for
+            // the tree that motivated this, against ~2 KB of shapes).
+            await activity.scanning();
+            const scan = await runInputScan({
+                session: childSession,
+                deps,
+                analysisId,
+                sandbox,
+                execId: `${workflowId}:${DATA_PROFILE_STEP_LITERAL}:${nextFunctionId()}`,
+                deadlineMs: deadlineAbs,
+                logger,
+            });
+            logger.info("input scan complete", {
+                files: scan.manifest.fileCount,
+                shapes: scan.manifest.shapes.length,
+                unstructured: scan.manifest.unstructured.count,
+                truncated: scan.manifest.truncated,
+            });
+
+            // The profiler runs outside `executeAnalysis`, so no scheduler composes a
+            // briefing for it — this prompt IS its briefing, and the sandbox system
+            // prompt names no paths (it is static per agent type, for the prompt cache).
+            // Its workspace frame therefore has to be stated here, in the same words the
+            // step briefing uses.
+            const prompt = [
+                `Profile the input data for this analysis: say what the dataset IS, so planning can proceed.`,
+                ``,
+                renderWorkspace({
+                    analysisRoot: `/${analysisId}`,
+                    workingDir: toSandboxPath(workspaceRoot, analysisId, profileWritePrefix),
+                }),
+                ``,
+                `CRITICAL: File and directory paths may contain spaces. You MUST always double-quote paths in shell commands (e.g. head "/${analysisId}/data/inputs/My Folder/file.csv"). Unquoted paths with spaces will silently break commands.`,
+                ``,
+                renderInputScanManifest(scan.manifest),
+                ``,
+                `Decide the dataset's kinds from these observations — you may split a shape, span several shapes, or`,
+                `label an axis the scan did not observe. Inspect ONE example file per kind where a description needs`,
+                `content the scan did not capture, then call \`submit_profile\` once.`,
+            ].join("\n");
 
             const sandboxAgentDeps: SandboxAgentDeps = {
                 provider: deps.provider,
@@ -451,8 +514,9 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     tools: [submitProfileTool],
                     nudge:
                         "You stopped without calling submit_profile, so no profile was " +
-                        "recorded. Call submit_profile now with structured metadata for " +
-                        "every input file — base it on the profiling you already did.",
+                        "recorded. Call submit_profile now with the kinds this dataset is " +
+                        "made of, the axes that vary across them, and any individually " +
+                        "notable files — base it on the scan and the work you already did.",
                 },
             );
 
@@ -461,79 +525,74 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
             const profilerData = capturedProfile as ProfilerOutput;
 
-            // 4. Index into vector store — real files only, consistent type metadata
+            // 4. Index into vector store — one entry per kind, one per entity, none per file.
             //
             // Reported as `indexing`, not `persisting`: the contract defines `persisting` as step
             // bytes uploading to an artifact store, and a profile uploads nothing — its durable
             // products are this vector index and the ledger row.
             await activity.indexing();
 
-            const profilerByPath = new Map(profilerData.files.map((f) => [f.path, f]));
-            const normPath = (p: string): string =>
-                p
-                    .replace(/\/+/g, "/")
-                    .replace(/^\/|\/$/g, "")
-                    .trim();
-            const profilerByNorm = new Map(profilerData.files.map((f) => [normPath(f.path), f]));
+            const profileRecord = buildDataProfileResult(
+                profilerData,
+                stagedInputs,
+                new Date().toISOString(),
+                // Coverage measures the PROFILE, not the scan: the agent's own patterns are
+                // matched against the scanned tree, so a profile whose kinds leave most of
+                // the tree unmatched is visibly incomplete instead of reading as fresh.
+                computeCoverage(
+                    scan.files.map((f) => f.path),
+                    profilerData.kinds.map((kind) => kind.pathPattern),
+                ),
+            );
+
             await ensureSearchIndex(deps.pool, analysisId, deps.embedding.dimensions);
             const vectorStore = createVectorStore(deps.pool);
-            const embedOne = async (text: string, session: RunSession): Promise<number[]> => {
-                const [vec] = unwrapOrThrow(await deps.embedding.embed([text], session));
-                if (!vec) throw new Error("data-profile: empty embedding response");
-                return vec;
-            };
             const indexName = searchIndexName(analysisId);
-            let indexed = 0;
-            let fallbackCount = 0;
-            for (const matFile of stagedInputs) {
-                const dbPath = inputArtifactPath(matFile);
-                const desc = profilerByPath.get(dbPath) ?? profilerByNorm.get(normPath(dbPath));
+            const entries = buildProfileIndexEntries({
+                analysisId,
+                kinds: profileRecord.kinds ?? [],
+                ...(profileRecord.axes ? { axes: profileRecord.axes } : {}),
+                scan,
+                files: profileRecord.files,
+            });
 
-                // Lossless: a materialized input file the profiler agent omitted
-                // still gets a deterministic, no-LLM description so it stays
-                // discoverable via search. The agent's profile is enrichment, not a
-                // gate on indexing — mirrors the step-output metadata fallback.
-                const searchMeta: Record<string, unknown> = desc
-                    ? {
-                          text: desc.description,
-                          type: "input",
-                          dataType: desc.dataType,
-                          format: desc.format,
-                          ...(desc.tags ? { tags: desc.tags } : {}),
-                      }
-                    : {
-                          text: `${dbPath} — input file (${fileExtension(dbPath)}, ${matFile.size} bytes); automated profile unavailable.`,
-                          type: "input",
-                          dataType: "unknown",
-                          format: fileExtension(dbPath),
-                      };
-                if (!desc) fallbackCount++;
-
-                const embedding = await embedOne(searchMeta.text as string, runSession);
+            // Batched: both interfaces already take arrays, and one round trip per entry is
+            // what made indexing 12 of the 39 minutes the motivating profile took.
+            for (let start = 0; start < entries.length; start += INDEX_BATCH_SIZE) {
+                const batch = entries.slice(start, start + INDEX_BATCH_SIZE);
+                const vectors = unwrapOrThrow(
+                    await deps.embedding.embed(
+                        batch.map((entry) => entry.text),
+                        runSession,
+                    ),
+                );
+                if (vectors.length !== batch.length) throw new Error(`data-profile: embedding returned ${vectors.length} vectors for ${batch.length} entries`);
                 unwrapOrThrow(
                     await vectorStore.upsert({
                         indexName,
-                        vectors: [embedding],
-                        metadata: [searchMeta],
-                        ids: [`/${analysisId}/${dbPath}`],
+                        vectors,
+                        metadata: batch.map((entry) => ({ ...entry.metadata, text: entry.text })),
+                        ids: batch.map((entry) => entry.id),
                     }),
                 );
-                indexed++;
             }
+            logger.info("indexed profile", {
+                entries: entries.length,
+                kinds: profileRecord.kinds?.length ?? 0,
+                stagedCount: stagedInputs.length,
+            });
 
-            if (fallbackCount > 0) {
-                logger.warn("input file(s) used a deterministic fallback description — profiler omitted them", {
-                    fallbackCount,
-                    stagedCount: stagedInputs.length,
+            if (profileRecord.coverage && profileRecord.coverage.unmatched > 0) {
+                logger.warn("profile kinds do not cover the scanned tree", {
+                    matched: profileRecord.coverage.matched,
+                    unmatched: profileRecord.coverage.unmatched,
+                    total: profileRecord.coverage.total,
                 });
             }
-            logger.info("indexed file(s)", { indexed });
 
-            // 5. Complete — store the FULL profiler finding plus the input snapshot for
+            // 5. Complete — store the FULL profiler finding plus the input signature for
             // staleness detection. The scratch tree is gone; this row is all that survives.
-            if (
-                !unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, buildDataProfileResult(profilerData, stagedInputs, new Date().toISOString())))
-            ) {
+            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, profileRecord))) {
                 logTerminalNoop(logger, analysisId, "completion");
             }
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");

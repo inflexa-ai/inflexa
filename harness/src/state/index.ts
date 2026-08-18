@@ -66,7 +66,17 @@ export {
     loadSeedInputFileIds,
     recordDataProfileWorkflowId,
 } from "./data-profile.js";
-export type { DataProfileStatus, DataProfileResult, DataProfileInputFile, DataProfileFile, DataProfileQualityAssessment } from "./data-profile.js";
+export type {
+    DataProfileStatus,
+    DataProfileResult,
+    DataProfileInputFile,
+    DataProfileFile,
+    DataProfileQualityAssessment,
+    DataProfileKind,
+    DataProfileAxis,
+    DataProfileInputSignature,
+    DataProfileCoverage,
+} from "./data-profile.js";
 
 export { queryRunCountsByAnalyses, queryThreadCountsByAnalyses, queryDataProfileStatusByAnalyses } from "./analyses-metrics.js";
 

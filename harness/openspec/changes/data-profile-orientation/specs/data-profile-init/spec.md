@@ -66,6 +66,34 @@ the input-scan-manifest spec); the agent authors kinds.
 - **WHEN** the agent submits its profile
 - **THEN** the submitted output SHALL carry four kinds rather than 3513 file records
 
+### Requirement: The persisted profile's shape is a published contract
+
+The stored `data_profile_result` record's type SHALL be declared in the package's
+contracts surface, alongside the profile's run literal, and SHALL be importable without
+importing the ledger module. It covers the dataset classification, the kinds and axes,
+the notable-file records, the input signature, and the coverage figures.
+
+The row is read by consumers the harness does not contain: a host route serving it to a
+UI, a UI rendering it. Those consumers need the shape to interpret the row, and the
+module that persists it pulls in the database driver and the ledger's whole query
+surface — a dependency a renderer has no use for. Declaring the shape where the run
+literal already lives puts every name a consumer reads back in one importable place.
+
+The contract SHALL state that compatibility is optionality: there is no parse at the read
+boundary, so a field added later is absent from older rows and a consumer SHALL render
+such a row rather than reject it.
+
+#### Scenario: A consumer interprets a stored profile without the ledger
+
+- **WHEN** a consumer imports the persisted profile's type
+- **THEN** it SHALL obtain it from the contracts surface
+- **AND** SHALL NOT need the module that reads or writes the ledger row
+
+#### Scenario: The ledger and the contract do not diverge
+
+- **WHEN** the ledger module names the persisted profile's type
+- **THEN** it SHALL be the same declaration the contracts surface publishes
+
 ## MODIFIED Requirements
 
 ### Requirement: The data-profiler agent delivers results through a terminal submit_profile tool

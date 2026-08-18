@@ -29,7 +29,7 @@ export const ProfilerFileSchema = z.object({
     metrics: z
         .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
         .optional()
-        .describe("Format-specific profiling metrics as flat key-value pairs (e.g. sparsity, medianLibrarySize, tiTvRatio, gcContent, missingRate)"),
+        .describe("Identity-establishing facts as flat key-value pairs (e.g. sparsity, delimiter, normalizationState, missingRate)"),
 });
 
 /**
@@ -60,8 +60,85 @@ export const OrganismSchema = z.object({
 });
 export type Organism = z.infer<typeof OrganismSchema>;
 
+/** Kinds an output may carry. A tree needing more than this is not being grouped. */
+export const MAX_KINDS = 30;
+
+/** Axes an output may carry — an experimental design with more varying dimensions is vanishingly rare. */
+export const MAX_AXES = 8;
+
+/**
+ * Individually described files an output may carry. `files` holds NOTABLE SINGLETONS
+ * — the metadata sheet, the README, the paper, an outlier that fits no kind — not the
+ * dataset's contents.
+ */
+export const MAX_NOTABLE_FILES = 50;
+
+/**
+ * A repeating set of files that are the same sort of thing.
+ *
+ * A kind is a claim about MEANING, so only the agent can author one: the input scan
+ * reports shapes (these filenames differ only here) and cannot establish that the
+ * files are the same sort of thing. Kinds need not correspond one-to-one with observed
+ * shapes — one kind may span several shapes, and one shape may split into several
+ * kinds.
+ *
+ * A singleton is a kind of `count` 1. There is one concept with a count, not two
+ * concepts with a threshold between them, so degenerate datasets need no special case.
+ */
+export const KindSchema = z.object({
+    name: z.string().describe("Short label for this set, e.g. 'per-patient variant calls', 'reference transcriptome'."),
+    memberRepresents: z
+        .string()
+        .describe(
+            "What ONE member of this set represents — 'one patient's somatic variant calls', 'one sequencing lane of one sample'. " +
+                "This is your grouping decision stated outright, and it is NOT the description: it cannot be answered by " +
+                "restating the shape the scan observed.",
+        ),
+    description: z.string().describe("What this set contains and the role it plays in the analysis."),
+    count: z.number().int().describe("How many files are in this set."),
+    pathPattern: z
+        .string()
+        .describe(
+            "Glob matching this set's members, relative to the analysis root (e.g. 'data/inputs/vcf/*.vcf.gz'). " +
+                "Coverage is computed by matching this against the scanned tree, so a pattern that matches nothing reads as an uncovered kind.",
+        ),
+    format: z.string().optional().describe("File format shared by the members (VCF, h5ad, CSV, …)."),
+    axisLabels: z
+        .array(z.string())
+        .max(MAX_AXES)
+        .optional()
+        .describe("Labels of the axes (see `axes`) that vary across this set's members — the design this kind participates in."),
+});
+export type ProfilerKind = z.infer<typeof KindSchema>;
+
+/**
+ * What varies across a kind's members.
+ *
+ * The scan reports that a filename position varies and which values it takes; what the
+ * variation IS — a subject, a timepoint, a treatment arm, a chromosome shard — is not
+ * derivable from the values, so the label is required and agent-supplied. An axis
+ * evident from a metadata sheet but not from filenames belongs here too.
+ */
+export const AxisSchema = z.object({
+    label: z.string().describe("What this dimension is: 'patient', 'timepoint', 'treatment arm', 'chromosome shard', 'replicate'."),
+    cardinality: z.number().int().describe("How many distinct values this dimension takes."),
+    exampleValues: z.array(z.string()).max(20).optional().describe("A few observed values, for orientation."),
+    description: z.string().optional().describe("Anything a downstream planner needs about this dimension (ordering, pairing, imbalance)."),
+});
+export type ProfilerAxis = z.infer<typeof AxisSchema>;
+
 export const ProfilerOutputSchema = z.object({
-    files: z.array(ProfilerFileSchema),
+    /**
+     * Notable singletons only. The workspace filesystem is the authoritative file list
+     * — `list_files`, `grep`, and the vector index all read the live tree — so a record
+     * per input file would store a stale duplicate of something that cannot go wrong.
+     */
+    files: z.array(ProfilerFileSchema).max(MAX_NOTABLE_FILES),
+    kinds: z
+        .array(KindSchema)
+        .max(MAX_KINDS)
+        .describe("The repeating sets this dataset is made of. Group; do not enumerate members — the cap is a hard bound, not a target."),
+    axes: z.array(AxisSchema).max(MAX_AXES).optional().describe("What varies across the kinds' members — the experimental design, as far as it is observable."),
     analysisSummary: z.string().describe("Narrative overview of the dataset — structure, content, analytical potential, and limitations"),
     domain: z
         .string()

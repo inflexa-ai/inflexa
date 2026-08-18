@@ -6,7 +6,8 @@ import { makeLocalAuth } from "../auth/local-auth-context.js";
 import { createLocalRunAuthorizer } from "../auth/local-run-authorizer.js";
 import type { StagedInput } from "../execution/staged-input.js";
 import { loadDataProfileStatus } from "../state/data-profile.js";
-import { buildDriftSignature, triggerDataProfile, type DataProfileTriggerDeps } from "./data-profile.js";
+import { computeInputSignature } from "../execution/input-signature.js";
+import { triggerDataProfile, type DataProfileTriggerDeps } from "./data-profile.js";
 
 /**
  * A minimal, well-formed staged-input manifest entry. The trigger forwards the
@@ -29,7 +30,7 @@ function stagedInput(fileId: string): StagedInput {
 /**
  * A staged input as a pre-`mtimeMs` deploy persisted it: the `mtimeMs` key is
  * absent from the deserialized object despite the required-`number` type. This is
- * the recovered-legacy shape `buildDriftSignature` must detect and omit around.
+ * the recovered-legacy shape the input signature has to digest around.
  */
 function legacyStagedInput(fileId: string): StagedInput {
     const { mtimeMs: _dropped, ...legacy } = stagedInput(fileId);
@@ -268,27 +269,18 @@ describe("triggerDataProfile seed-first guard", () => {
 
 // The workflow body builds the completed profile's drift comparand from the staged
 // manifest. A manifest recovered from before `StagedInput.mtimeMs` existed lacks that
-// field, so the per-entry object would serialize to a shape that violates
-// `DataProfileInputFile`; the signature is omitted whole, collapsing to drift. Pure —
-// no DB, no container.
-describe("buildDriftSignature — drift comparand for recovered legacy manifests", () => {
-    it("builds a full signature when every entry carries mtimeMs", () => {
-        const sig = buildDriftSignature([stagedInput("file-aaa"), stagedInput("file-bbb")]);
-        expect(sig).toEqual([
-            { fileId: "file-aaa", size: 1024, mtimeMs: 1_780_000_000_000 },
-            { fileId: "file-bbb", size: 1024, mtimeMs: 1_780_000_000_000 },
-        ]);
+// field; the signature digests it as absent rather than dropping the comparand, so an
+// added or resized file is still detected. Pure — no DB, no container.
+describe("computeInputSignature over a recovered legacy manifest", () => {
+    it("still produces a comparand when an entry lacks mtimeMs", () => {
+        const sig = computeInputSignature([stagedInput("file-aaa"), legacyStagedInput("file-legacy")]);
+        expect(sig.count).toBe(2);
+        expect(sig.digest).toMatch(/^[0-9a-f]{64}$/);
     });
 
-    it("omits the whole signature when any entry lacks mtimeMs — a pre-deploy recovered input", () => {
-        const sig = buildDriftSignature([stagedInput("file-aaa"), legacyStagedInput("file-legacy")]);
-        expect(sig).toBeUndefined();
-    });
-
-    it("a built signature survives a JSON round-trip as a valid DataProfileInputFile[]", () => {
-        // The value is persisted via JSON.stringify inside the `DataProfileResult`; confirm
-        // no key drops out (the exact failure a legacy `mtimeMs: undefined` entry would cause).
-        const sig = buildDriftSignature([stagedInput("file-aaa")]);
-        expect(JSON.parse(JSON.stringify(sig))).toEqual([{ fileId: "file-aaa", size: 1024, mtimeMs: 1_780_000_000_000 }]);
+    it("differs from the same set with its mtimes intact, so the gap is not silently equal", () => {
+        const legacy = computeInputSignature([stagedInput("file-aaa"), legacyStagedInput("file-bbb")]);
+        const complete = computeInputSignature([stagedInput("file-aaa"), stagedInput("file-bbb")]);
+        expect(legacy.digest).not.toBe(complete.digest);
     });
 });

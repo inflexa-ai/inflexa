@@ -14,10 +14,11 @@ export const meta: AgentMeta = {
     capabilities: ["data profiling", "literature review", "methodology research", "analysis planning", "experimental design analysis"],
     suitableFor: ["bulk-rna-seq", "single-cell", "proteomics", "metabolomics", "genomics", "transcriptomics", "chemical-structures", "compound-screening"],
     skills: [],
-    tools: [...BASE_SANDBOX_TOOLS],
-    // Profiling fans out one programmatic pass per input file (head/wc preview +
-    // a Python script + read-back) before the single submit_profile, so a
-    // many-file analysis needs more headroom than the sandbox default.
+    // `scanInputs` is the profiler's own instrument: the workflow injects one scan into
+    // its briefing, and the tool is how it re-scans a subtree it wants to group
+    // differently. Declared rather than bolted on, so the resolved roster stays
+    // `meta.tools` plus the always-on set.
+    tools: [...BASE_SANDBOX_TOOLS, "scanInputs"],
     defaultMaxSteps: 85,
     plannable: false,
 };

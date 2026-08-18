@@ -302,7 +302,7 @@ function classifyGrounding(status: DataProfileStatus | null): DataGrounding {
     // preserve `data_profile_result` on purpose, so a non-`completed` status
     // carrying a result means what is on the row is the PREVIOUS profile.
     const reasons: string[] = [];
-    if (isDataProfileStale(status.seedInputFileIds ?? [], result.inputFileIds)) {
+    if (isDataProfileStale({ fileIds: status.seedInputFileIds ?? [] }, result)) {
         reasons.push("the analysis's input file set changed after this profile was taken");
     }
     if (status.status === "pending" || status.status === "running") {
