@@ -8,8 +8,13 @@
  * `add`/`remove` acquire the per-analysis instance lock and refuse if a live instance
  * holds it, so a standalone mutation can never write provenance concurrently with an
  * open chat. The lock is released by the process-exit hook (`src/index.ts`). Mutation
- * is register-only — it stages nothing and boots no runtime; the parity engine
- * re-profiles on the next open.
+ * is register-only — it stages nothing and boots no runtime.
+ *
+ * Re-profiling is therefore NOT automatic here, and the commands say so. The in-process
+ * `manage_inputs` tool re-profiles on its own edge because a live chat is already holding
+ * a booted runtime; this surface has none, and a chat opening later is not evidence that
+ * anything changed — that is precisely the inference the profile ladder stopped making.
+ * Naming `inflexa profile` keeps the decision with the person who made the change.
  */
 
 import { existsSync } from "node:fs";
@@ -25,6 +30,9 @@ const EMPTY_HINT = "No analysis here. Run `inflexa` to start or open one, then m
 
 /** The refusal tail for a standalone add/remove blocked by a live instance (see `claimAnalysisOrFail`). */
 const HELD_REMEDY = "Add or remove inputs there, or close it and re-run.";
+
+/** Printed after a successful standalone mutation: the data profile now describes a different set. */
+const REPROFILE_HINT = "  The data profile no longer describes this input set. Run `inflexa profile` to update it.";
 
 /** `inflexa inputs ls` — list the analysis's current registered inputs. Read-only. */
 export function runInputsLs(flags: ContextFlags): void {
@@ -58,6 +66,7 @@ export function runInputsAdd(flags: ContextFlags, paths: string[]): void {
             ? `  Nothing new to add — those paths are already inputs of "${analysis.name}".`
             : `  Added ${added.length} input(s) to "${analysis.name}": ${added.map((i) => i.path).join(", ")}`,
     );
+    if (added.length > 0) console.log(REPROFILE_HINT);
 }
 
 /** `inflexa inputs remove <paths...>` — drop inputs, matching the registered set (no on-disk check). */
@@ -80,4 +89,5 @@ export function runInputsRemove(flags: ContextFlags, paths: string[]): void {
     if (removed.length > 0) console.log(`  Removed from "${analysis.name}": ${removed.join(", ")}`);
     if (notInputs.length > 0) console.log(`  Not current inputs (skipped): ${notInputs.join(", ")}`);
     if (removed.length === 0 && notInputs.length === 0) console.log(`  Nothing to remove.`);
+    if (removed.length > 0) console.log(REPROFILE_HINT);
 }

@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 import { makeLocalAuth, type DataProfileInputFile, type DataProfileStatus, type DataProfileTriggerParams, computeInputSignature } from "@inflexa-ai/harness";
 
-import { ensureProfileAtParity, forceReprofile, seedProfileLedger, type ProfileParitySeams } from "./profile_trigger.ts";
+import { ensureProfileAtParity, forceReprofile, reprofileForInputChange, seedProfileLedger, type ProfileParitySeams } from "./profile_trigger.ts";
 import { __resetGaugeForTest } from "./agent_switch.ts";
 import type { HarnessRuntime } from "./runtime.ts";
-import { inputSignature, type StagedInput } from "../staging/staging.ts";
+import { type StagedInput } from "../staging/staging.ts";
 import type { Analysis } from "../../types/analysis.ts";
 
 // The seed step feeds the agent-switch gauge (marks a data profile busy on dispatch); it mutates
@@ -41,9 +41,9 @@ function file(fileId: string, size = 10, mtimeMs = 1000): DataProfileInputFile {
     return { fileId, size, mtimeMs };
 }
 
-/** The signature set a fresh enumerate would return for `files` — the drift comparand's left-hand side. */
+/** The path set a fresh enumerate would return for `files` — the ladder's "are there inputs" gate. */
 function enumerated(files: DataProfileInputFile[]): ReadonlySet<string> {
-    return new Set(files.map((f) => inputSignature(f.fileId, f.size, f.mtimeMs)));
+    return new Set(files.map((f) => `inputs/local/${f.fileId}`));
 }
 
 /** A `completed` status whose profile was taken against exactly `files` — the drift comparand. */
@@ -67,22 +67,6 @@ function completedWithSignature(files: DataProfileInputFile[]): DataProfileStatu
         startedAt: null,
         completedAt: null,
         result: { summary: "s", files: [], inputSignature: computeInputSignature(files), profiledAt: "2026-01-01T00:00:00Z" },
-        workflowId: null,
-        seedInputFileIds: null,
-    };
-}
-
-/**
- * A `completed` status written before `inputFiles` existed: it names WHICH files it covered but not
- * whether their bytes changed. It cannot prove parity, so the check must treat it as drift.
- */
-function completedLegacy(fileIds: string[]): DataProfileStatus {
-    return {
-        status: "completed",
-        error: null,
-        startedAt: null,
-        completedAt: null,
-        result: { summary: "s", files: [], inputFileIds: fileIds, profiledAt: "2026-01-01T00:00:00Z" },
         workflowId: null,
         seedInputFileIds: null,
     };
@@ -180,121 +164,56 @@ describe("ensureProfileAtParity — empty input set", () => {
     });
 });
 
-describe("ensureProfileAtParity — non-empty drift branch", () => {
-    test("a completed profile covering the current set skips without staging", async () => {
+describe("ensureProfileAtParity — a completed row on a chat open", () => {
+    test("a completed profile is left alone, even when the current input set has moved", async () => {
+        // The ladder used to compare the enumerated set against the profile's recorded one and
+        // re-profile on any difference. It no longer asks: a chat open is not evidence that anything
+        // changed, and the party that would know re-profiles on its own edge.
         const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
+            enumerate: () => ok(enumerated([file("f1"), file("f2"), file("f3")])),
             loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
-        });
-        const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
-        // `materialized` is the materialization STATE, not this drive's action: a profile at parity was taken
-        // over the set now on disk, so the files are there even though nothing was written here.
-        expect(outcome).toEqual({ kind: "already_profiled", materialized: true });
-        expect(ran).toEqual({ stage: false, seed: false, trigger: false });
-    });
-
-    test("the set comparison is order-insensitive (same ids, different order → already_profiled)", async () => {
-        const { seams } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
-            loadStatus: () => okAsync(completedWith([file("f2"), file("f1")])),
-        });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
-    });
-
-    test("a current-harness profile at parity is recognised through its input signature", async () => {
-        // The row carries `inputSignature` and no per-file list. Read as drift, every parity check
-        // would re-profile an unchanged dataset — the loop this comparand exists to prevent.
-        const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
-            loadStatus: () => okAsync(completedWithSignature([file("f1"), file("f2")])),
+            materialized: () => ok(true),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
     });
 
-    test("a signature profile whose bytes changed under one path re-profiles", async () => {
-        const { seams } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1", 11, 5000), file("f2")])),
-            loadStatus: () => okAsync(completedWithSignature([file("f1"), file("f2")])),
-            trigger: async () => "restarted",
-        });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
-    });
-
-    test("a completed profile whose set drifted re-profiles (restarted)", async () => {
-        const { seams, ran } = trackingSeams({
-            enumerate: () => ok(new Set(["f1", "f2", "f3"])),
-            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
-            trigger: async () => "restarted",
-        });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
-        expect(ran.stage).toBe(true);
-    });
-
-    test("a source removed on disk drifts enumerate and re-profiles over the survivors (no staging failure)", async () => {
-        // The staging desync closed end-to-end at the parity layer: the completed profile covered
-        // {f1, f2}, but f2's source was deleted on disk while its input row survived. The shared walk now
-        // skips the gone file, so `enumerate` yields only {f1} (drift), and `stage` COMPLETES over the
-        // survivor instead of hard-failing on the dead link — the ladder converges to a re-trigger rather
-        // than a recurring `failed`/"could not start profiling" toast. Before the fix the fakes could not
-        // model this: staging would have faulted, mapping `stageAndSeed` to a `failed` outcome.
-        const { seams, ran } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1")])),
-            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
-            trigger: async () => "restarted",
-        });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
-        // Staging and seeding both ran (no early failure); the overridden `trigger` seam stands in for
-        // the dispatch, so `ran.trigger` stays false exactly as the sibling drift tests leave it.
-        expect(ran.stage).toBe(true);
-        expect(ran.seed).toBe(true);
-    });
-
-    test("a completed row with a null result is treated as drift (re-profiles)", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set(["f1", "f2"])), loadStatus: () => okAsync(statusOf("completed")) });
-        const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
-        expect(outcome.kind).toBe("triggered");
-        expect(ran.stage).toBe(true);
-    });
-
-    test("an input rewritten in place is drift, even though its fileId is unchanged", async () => {
-        // The defect this comparand exists to close: `deriveFileId` hashes `anchorId|path`, so editing
-        // a file's bytes at the same path leaves the id set identical. Only size/mtime move.
+    test("an in-place rewrite is not re-profiled either — nothing here claims the bytes moved", async () => {
+        // `deriveFileId` hashes `anchorId|path`, so an edit at the same path moves only size and mtime.
+        // Reading that as "the data changed" is what fired a full LLM re-profile on a `git checkout`,
+        // an `rsync` without `-a`, or an unzip. `forceReprofile` remains the repair for a real edit.
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(enumerated([file("f1", 999, 5000), file("f2")])),
-            loadStatus: () => okAsync(completedWith([file("f1", 10, 1000), file("f2")])),
-            trigger: async () => "restarted",
+            loadStatus: () => okAsync(completedWithSignature([file("f1"), file("f2")])),
+            materialized: () => ok(true),
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
-        expect(ran.stage).toBe(true);
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
+        expect(ran).toEqual({ stage: false, seed: false, trigger: false });
     });
 
-    test("a same-size input touched to a new mtime is drift", async () => {
-        const { seams } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1", 10, 9999)])),
-            loadStatus: () => okAsync(completedWith([file("f1", 10, 1000)])),
-            trigger: async () => "restarted",
-        });
-        expect((await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).kind).toBe("triggered");
-    });
-
-    test("a same-mtime input whose size changed is drift", async () => {
-        const { seams } = trackingSeams({
-            enumerate: () => ok(enumerated([file("f1", 4096, 1000)])),
-            loadStatus: () => okAsync(completedWith([file("f1", 10, 1000)])),
-            trigger: async () => "restarted",
-        });
-        expect((await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).kind).toBe("triggered");
-    });
-
-    test("a completed row predating the signature field re-profiles once (never trusted)", async () => {
+    test("a completed row whose tree is behind is re-materialized, still without re-profiling", async () => {
+        // Materialization is not conditioned on the profile lifecycle: a workspace behind the database
+        // withholds the user's files from the agent whatever the ledger says.
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(enumerated([file("f1"), file("f2")])),
-            loadStatus: () => okAsync(completedLegacy(["f1", "f2"])),
-            trigger: async () => "restarted",
+            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
+            materialized: () => ok(false),
         });
-        expect((await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).kind).toBe("triggered");
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
         expect(ran.stage).toBe(true);
+        expect(ran).toMatchObject({ seed: false, trigger: false });
+    });
+
+    test("a completed row with a null result is not re-profiled on open", async () => {
+        // `completed` with no result is the empty-manifest path. It used to read as drift and re-trigger
+        // on every open; there is nothing here to establish that anything has changed since.
+        const { seams, ran } = trackingSeams({
+            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
+            loadStatus: () => okAsync(statusOf("completed")),
+            materialized: () => ok(true),
+        });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
+        expect(ran).toEqual({ stage: false, seed: false, trigger: false });
     });
 
     test("a failed row whose set is still materialized is skipped_failed — reported materialized, nothing written", async () => {
@@ -372,9 +291,10 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
         expect(ran.trigger).toBe(false);
     });
 
-    test("a completed row at parity neither stages nor asks whether it is materialized", async () => {
-        // The steady-state chat open: a completed profile at parity implies its set is on disk, so the
-        // check stays on the stat/readdir path enumeration already paid for — no predicate walk, no hash.
+    test("a completed row asks whether it is materialized, and stops there when it is", async () => {
+        // The steady-state chat open. The predicate is now consulted rather than inferred from parity:
+        // the ladder no longer compares input sets, so "the profile covered this set" can no longer
+        // stand in for "the set is on disk". It stays a stat/readdir walk — no hash, no staging.
         let askedMaterialized = false;
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(enumerated([file("f1"), file("f2")])),
@@ -385,7 +305,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
             },
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
-        expect(askedMaterialized).toBe(false);
+        expect(askedMaterialized).toBe(true);
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
     });
 
@@ -399,6 +319,68 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
         const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set(["f1", "f2"])), loadStatus: () => okAsync(statusOf("running")) });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
         expect(ran.stage).toBe(false);
+    });
+});
+
+describe("reprofileForInputChange", () => {
+    test("re-profiles a completed row — the input mutation IS the evidence", async () => {
+        const { seams, ran } = trackingSeams({
+            enumerate: () => ok(enumerated([file("f1"), file("f2"), file("f3")])),
+            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
+            trigger: async () => "restarted",
+        });
+        expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
+        expect(ran.stage).toBe(true);
+        expect(ran.seed).toBe(true);
+    });
+
+    test("re-profiles a completed row even when the tree is already materialized", async () => {
+        // The materialized predicate answers "is the tree current", never "should this re-profile".
+        // Removing an input the workspace never held would otherwise leave the profile describing it.
+        const { seams } = trackingSeams({
+            enumerate: () => ok(enumerated([file("f1")])),
+            loadStatus: () => okAsync(completedWith([file("f1")])),
+            materialized: () => ok(true),
+            trigger: async () => "restarted",
+        });
+        expect((await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).kind).toBe("triggered");
+    });
+
+    test("retries a failed row instead of skipping it — that set is not the one that failed", async () => {
+        let claimed = false;
+        const { seams, ran } = trackingSeams({
+            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
+            loadStatus: () => okAsync(statusOf("failed")),
+            // Deliberately `true`: the open drive would short-circuit to `skipped_failed` here, and an
+            // input mutation must not, because the set demonstrably moved.
+            materialized: () => ok(true),
+            retryClaim: () => {
+                claimed = true;
+                return okAsync(true);
+            },
+            run: async () => {},
+        });
+        expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
+        expect(claimed).toBe(true);
+        expect(ran.stage).toBe(true);
+    });
+
+    test("an emptied input set clears the profile rather than re-profiling nothing", async () => {
+        const { seams, ran } = trackingSeams({
+            enumerate: () => ok(new Set<string>()),
+            loadStatus: () => okAsync(completedWith([file("f1")])),
+        });
+        expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "cleared", materialized: false });
+        expect(ran).toEqual({ stage: false, seed: false, trigger: false });
+    });
+
+    test("defers to a live run — staging would delete the tree its sandbox is reading", async () => {
+        const { seams, ran } = trackingSeams({
+            enumerate: () => ok(enumerated([file("f1")])),
+            loadStatus: () => okAsync(statusOf("running")),
+        });
+        expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
+        expect(ran).toEqual({ stage: false, seed: false, trigger: false });
     });
 });
 

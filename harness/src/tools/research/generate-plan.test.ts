@@ -328,9 +328,11 @@ describe("generatePlan loop-driving tool", () => {
             expect(persisted.rows).toHaveLength(1);
         });
 
-        it("marks a stale profile PROVISIONAL in the seed, and still serves its facts", async () => {
+        it("does not re-derive a changed input set as stale — a completed row is served as ready", async () => {
             const analysisId = "an-stale";
-            // The analysis's CURRENT inputs are not the ones the profile covered.
+            // The seed names a file the stored profile never covered. That used to read as
+            // drift here; re-profiling is now invoked by the embedder that owns the input
+            // mutation, so a row still reading `completed` is a row nothing has superseded.
             await seedAnalysis(pool, analysisId, {
                 dpStatus: "completed",
                 result: RICH_PROFILE,
@@ -341,9 +343,7 @@ describe("generatePlan loop-driving tool", () => {
             await toolFor(provider).execute(INPUT, toolContext(analysisId));
 
             const context = dataContextBlock(plannerSeed(provider));
-            expect(context).toContain("PROVISIONAL");
-            expect(context).toContain("input file set changed");
-            // Stale beats absent: the facts are still handed over.
+            expect(context).not.toContain("PROVISIONAL");
             expect(context).toContain("Homo sapiens (taxon 9606)");
         });
 

@@ -204,16 +204,17 @@ describe("lifecycle variants — every one is data, not an error", () => {
         expect(out).not.toHaveProperty("staleReason");
     });
 
-    it("stale: the input set changed after the profile was taken — the profile is still served", async () => {
+    it("ready: a changed input set is not re-derived as stale — the embedder owns re-profiling", async () => {
         await resetLedger();
-        // The seed names a third file the stored profile never covered.
+        // The seed names a third file the stored profile never covered. The tool reports
+        // only what the row states, and a row still reading `completed` states that
+        // nothing has superseded this profile.
         await seedAnalysis(["file-aaa", "file-bbb", "file-ccc"]);
         await completeWith(makeResult());
 
         const out = await run();
-        expect(out.state).toBe("stale");
-        expect(out).toMatchObject({ staleReason: expect.stringContaining("input file set changed") });
-        // Stale is not empty: the content still comes back, because a stale profile beats none.
+        expect(out.state).toBe("ready");
+        expect(out).not.toHaveProperty("staleReason");
         expect(out).toMatchObject({ domain: "transcriptomics", describedFileCount: 2 });
     });
 
@@ -370,8 +371,11 @@ describe("scope: files — paged, with truncation always visible", () => {
 
     it("carries the staleness verdict onto the files scope too", async () => {
         await resetLedger();
-        await seedAnalysis(["file-aaa", "file-bbb", "file-ccc"]);
+        await seedAnalysis();
         await completeWith(filesResult(3));
+        // The envelope is scope-independent, so any reason the row states outright will do;
+        // an in-flight re-profile over the preserved prior result is the cheapest one.
+        (await tryRerunDataProfile(pool, ANALYSIS))._unsafeUnwrap();
 
         expect(await run({ scope: "files" })).toMatchObject({ state: "stale", scope: "files", total: 3 });
     });

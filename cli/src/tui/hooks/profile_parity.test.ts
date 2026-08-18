@@ -24,6 +24,7 @@ import {
     type ParityDriverSeams,
     type ParityWatchSeams,
 } from "./profile_parity.ts";
+import type { ProfileDriveCause } from "../../modules/harness/profile_trigger.ts";
 
 // The two drivers' outcome→side-effect mappings are exercised offline: the check/force seam is injected
 // to return each outcome directly (no runtime, no ledger reads), and `refreshSidebar`/`notify` are spies.
@@ -43,6 +44,7 @@ function driverSeams(outcome: ProfileParityOutcome): { seams: ParityDriverSeams;
     const notices: Notice[] = [];
     const seams: ParityDriverSeams = {
         check: async () => outcome,
+        reprofile: async () => outcome,
         refreshSidebar: async (analysisId) => {
             refreshedWith.push(analysisId);
         },
@@ -79,7 +81,7 @@ describe("driveProfileParity — sidebar poke", () => {
     for (const outcome of pokeOutcomes) {
         test(`${outcome.kind} refreshes the sidebar with the analysis id`, async () => {
             const { seams, refreshedWith } = driverSeams(outcome);
-            await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+            await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", seams);
             expect(refreshedWith).toEqual([ANALYSIS.id]);
         });
     }
@@ -96,7 +98,7 @@ describe("driveProfileParity — sidebar poke", () => {
     for (const outcome of silentOutcomes) {
         test(`${outcome.kind} does not refresh the sidebar`, async () => {
             const { seams, refreshedWith } = driverSeams(outcome);
-            await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+            await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", seams);
             expect(refreshedWith).toEqual([]);
         });
     }
@@ -105,25 +107,25 @@ describe("driveProfileParity — sidebar poke", () => {
 describe("driveProfileParity — notices", () => {
     test("triggered (restarted: false) raises the first-time Profiling notice", async () => {
         const { seams, notices } = driverSeams({ kind: "triggered", restarted: false, materialized: true });
-        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", seams);
         expect(notices).toEqual([{ kind: "info", text: `Profiling "${ANALYSIS.name}" data${GLYPHS.ellipsis}` }]);
     });
 
     test("triggered (restarted: true) words it as Re-profiling", async () => {
         const { seams, notices } = driverSeams({ kind: "triggered", restarted: true, materialized: true });
-        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", seams);
         expect(notices).toEqual([{ kind: "info", text: `Re-profiling "${ANALYSIS.name}" data${GLYPHS.ellipsis}` }]);
     });
 
     test("cleared raises an info notice", async () => {
         const { seams, notices } = driverSeams({ kind: "cleared", materialized: false });
-        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", seams);
         expect(notices).toEqual([{ kind: "info", text: `Data profile cleared — "${ANALYSIS.name}" has no inputs` }]);
     });
 
     test("failed raises a warn notice carrying the reason", async () => {
         const { seams, notices } = driverSeams({ kind: "failed", reason: "boom", materialized: false });
-        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", seams);
         expect(notices).toEqual([{ kind: "warn", text: `Could not start profiling "${ANALYSIS.name}": boom` }]);
     });
 
@@ -138,7 +140,7 @@ describe("driveProfileParity — notices", () => {
     for (const outcome of silentOutcomes) {
         test(`${outcome.kind} raises no notice`, async () => {
             const { seams, notices } = driverSeams(outcome);
-            await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+            await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", seams);
             expect(notices).toEqual([]);
         });
     }
@@ -148,14 +150,14 @@ describe("driveProfileParity — mid-check analysis swap guard", () => {
     test("swapped mid-check neither pokes the sidebar nor notifies", async () => {
         const { seams, refreshedWith, notices } = driverSeams({ kind: "triggered", restarted: false, materialized: true });
         // The open analysis moved off the captured one while `check` was in flight.
-        await driveProfileParity(RUNTIME, ANALYSIS, () => "a2", seams);
+        await driveProfileParity(RUNTIME, ANALYSIS, () => "a2", "open", seams);
         expect(refreshedWith).toEqual([]);
         expect(notices).toEqual([]);
     });
 
     test("unswapped pokes the sidebar and notifies", async () => {
         const { seams, refreshedWith, notices } = driverSeams({ kind: "triggered", restarted: false, materialized: true });
-        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", seams);
         expect(refreshedWith).toEqual([ANALYSIS.id]);
         expect(notices).toEqual([{ kind: "info", text: `Profiling "${ANALYSIS.name}" data${GLYPHS.ellipsis}` }]);
     });
@@ -170,11 +172,14 @@ describe("driveProfileParity — mid-check analysis swap guard", () => {
                 checked = true;
                 return { kind: "triggered", restarted: false, materialized: true };
             },
+            reprofile: async () => {
+                throw new Error("an open drive must not reach the input-change producer");
+            },
             refreshSidebar: async () => {},
             notify: () => {},
         };
         // The open analysis already moved off ANALYSIS before this queued drive dequeues.
-        await driveProfileParity(RUNTIME, ANALYSIS, () => "a2", seams);
+        await driveProfileParity(RUNTIME, ANALYSIS, () => "a2", "open", seams);
         expect(checked).toBe(false);
     });
 });
@@ -241,12 +246,22 @@ function wsMut(id: string): Workspace {
 }
 
 /** Record every `drive` call and every armed timer, and expose an injectable cancel counter. */
-function watchHarness(): { seams: ParityWatchSeams; drives: string[]; scheduled: Array<{ fn: () => void; ms: number }>; cancels: () => number } {
+function watchHarness(): {
+    seams: ParityWatchSeams;
+    drives: string[];
+    causes: ProfileDriveCause[];
+    scheduled: Array<{ fn: () => void; ms: number }>;
+    cancels: () => number;
+} {
     const drives: string[] = [];
+    const causes: ProfileDriveCause[] = [];
     const scheduled: Array<{ fn: () => void; ms: number }> = [];
     let cancelCount = 0;
     const seams: ParityWatchSeams = {
-        drive: (_runtime, analysis) => void drives.push(analysis.id),
+        drive: (_runtime, analysis, _currentAnalysisId, cause) => {
+            drives.push(analysis.id);
+            causes.push(cause);
+        },
         schedule: (fn, ms) => {
             scheduled.push({ fn, ms });
             return () => {
@@ -254,7 +269,7 @@ function watchHarness(): { seams: ParityWatchSeams; drives: string[]; scheduled:
             };
         },
     };
-    return { seams, drives, scheduled, cancels: () => cancelCount };
+    return { seams, drives, causes, scheduled, cancels: () => cancelCount };
 }
 
 /** Mount `watchProfileParity` in a disposable reactive root; returns the dispose. */
@@ -311,6 +326,23 @@ describe("watchProfileParity — live input-mutation edge", () => {
 
             h.scheduled[0]?.fn(); // the trailing-edge timer elapses
             expect(h.drives).toEqual(["A"]);
+        } finally {
+            dispose();
+        }
+    });
+
+    test("the input edge drives as an input change; the boot edge drives as a chat open", async () => {
+        // The whole asymmetry in one assertion. Only a recorded input mutation re-profiles; opening a
+        // chat brings the workspace tree up to date and leaves the profile alone.
+        const h = watchHarness();
+        const dispose = mountWatch(wsMut("A"), h.seams);
+        try {
+            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            expect(h.causes).toEqual(["open"]);
+
+            emitInput("prov.input_added", "A");
+            h.scheduled.at(-1)?.fn();
+            expect(h.causes).toEqual(["open", "inputs_changed"]);
         } finally {
             dispose();
         }
@@ -502,6 +534,9 @@ describe("profile drives serialize", () => {
                     trace.push(`exit ${label}`);
                     return { kind: "already_profiled", materialized: true } as ProfileParityOutcome;
                 },
+                reprofile: async () => {
+                    throw new Error("an open drive must not reach the input-change producer");
+                },
                 refreshSidebar: async () => {},
                 notify: () => {},
             },
@@ -514,8 +549,8 @@ describe("profile drives serialize", () => {
         const a = gatedParitySeams("A", trace);
         const b = gatedParitySeams("B", trace);
 
-        const driveA = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, a.seams);
-        const driveB = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, b.seams);
+        const driveA = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", a.seams);
+        const driveB = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", b.seams);
 
         // B is queued behind A: releasing B's gate first must not let B enter.
         b.release();
@@ -547,7 +582,7 @@ describe("profile drives serialize", () => {
             notify: () => {},
         };
 
-        const p = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, parity.seams);
+        const p = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", parity.seams);
         const f = driveForceReprofile(RUNTIME, ANALYSIS, () => ANALYSIS.id, forceSeams);
 
         releaseForce();
@@ -567,13 +602,16 @@ describe("profile drives serialize", () => {
                 trace.push("enter boom");
                 throw new Error("staging exploded");
             },
+            reprofile: async () => {
+                throw new Error("an open drive must not reach the input-change producer");
+            },
             refreshSidebar: async () => {},
             notify: () => {},
         };
         const next = gatedParitySeams("next", trace);
 
-        const failing = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, boom);
-        const queued = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, next.seams);
+        const failing = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", boom);
+        const queued = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", next.seams);
 
         // The caller still observes the failure — the queue swallows it only for the SUCCESSORS.
         await expect(failing).rejects.toThrow("staging exploded");
@@ -587,11 +625,11 @@ describe("profile drives serialize", () => {
         const trace: string[] = [];
         const first = gatedParitySeams("first", trace);
         first.release();
-        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, first.seams);
+        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", first.seams);
 
         const second = gatedParitySeams("second", trace);
         second.release();
-        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, second.seams);
+        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, "open", second.seams);
 
         expect(trace).toEqual(["enter first", "exit first", "enter second", "exit second"]);
     });

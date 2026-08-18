@@ -3,7 +3,13 @@ import type { DataProfileStatus } from "@inflexa-ai/harness";
 
 import { GLYPHS } from "../../lib/design_system.ts";
 import { Bus } from "../../lib/bus.ts";
-import { ensureProfileAtParity, forceReprofile, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
+import {
+    ensureProfileAtParity,
+    forceReprofile,
+    reprofileForInputChange,
+    type ProfileDriveCause,
+    type ProfileParityOutcome,
+} from "../../modules/harness/profile_trigger.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -101,14 +107,14 @@ const DRIFT_DEBOUNCE_MS = 500;
  * without a fake clock. Production callers omit the argument and get the real edges.
  */
 export type ParityWatchSeams = {
-    /** Run the parity driver for a live analysis, fire-and-forget. Real: {@link driveProfileParity}. */
-    readonly drive: (runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null) => void;
+    /** Run the profile driver for a live analysis, fire-and-forget. Real: {@link driveProfileParity}. */
+    readonly drive: (runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null, cause: ProfileDriveCause) => void;
     /** Arm a one-shot trailing-edge timer; returns its cancel. Real: wraps `setTimeout`/`clearTimeout`. */
     readonly schedule: (fn: () => void, ms: number) => () => void;
 };
 
 const realParityWatchSeams: ParityWatchSeams = {
-    drive: (runtime, analysis, currentAnalysisId) => void driveProfileParity(runtime, analysis, currentAnalysisId),
+    drive: (runtime, analysis, currentAnalysisId, cause) => void driveProfileParity(runtime, analysis, currentAnalysisId, cause),
     schedule: (fn, ms) => {
         const handle = setTimeout(fn, ms);
         // A half-elapsed debounce must never keep the process alive (matters for tests + clean shutdown).
@@ -124,9 +130,10 @@ const realParityWatchSeams: ParityWatchSeams = {
  *  1. **boot ready / analysis swap** — fire when boot reaches `ready` with an analysis open, and again
  *     whenever the open analysis changes (an in-place swap). De-duped per analysis id so a repaint or a
  *     boot-phase settle does not re-fire; never fires before `ready` (no runtime to trigger against).
- *  2. **live input mutation** — a `prov.input_added`/`prov.input_removed` for the OPEN analysis can drift
- *     it off its profiled set, but edge 1 only fires on open/swap, so without this an edit mid-session
- *     would never re-check. Debounced (trailing edge) to one check per burst; the timer's fire re-reads
+ *  2. **live input mutation** — a `prov.input_added`/`prov.input_removed` for the OPEN analysis. This is
+ *     the ONLY edge that re-profiles, and it is why the others need not: the mutation happened in this
+ *     process, so the change is a recorded fact rather than something a later reader has to infer from
+ *     file sizes and mtimes. Debounced (trailing edge) to one drive per burst; the timer's fire re-reads
  *     live state so a swap or teardown during the debounce window is a no-op.
  *  3. **profile run reaching a terminal state** — everything a live run deferred (staging included, since
  *     its sandbox was reading the tree) was skipped as `already_running`, so re-check when the run
@@ -151,12 +158,12 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
                 lastTriggeredAnalysisId = analysisId;
                 // Hand the driver a LIVE read of the open analysis (not the captured `analysis`) so it
                 // can detect a mid-check swap when its async work resolves — see `driveProfileParity`.
-                seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null);
+                seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null, "open");
             },
         ),
     );
 
-    // Edge 2 — a live input mutation on the open analysis, debounced to one drift check per burst.
+    // Edge 2 — a live input mutation on the open analysis, debounced to one re-profile per burst.
     let driftCancel: (() => void) | null = null;
     let pendingDriftId: string | null = null;
     const cancelDrift = (): void => {
@@ -167,10 +174,10 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
     };
     const onInputEvent = (e: StampedEvent): void => {
         if (e.type !== "prov.input_added" && e.type !== "prov.input_removed") return;
-        // Only edits to the analysis on screen, and only once booted (no runtime to check against
+        // Only edits to the analysis on screen, and only once booted (no runtime to drive against
         // before then). This deliberately does NOT touch `lastTriggeredAnalysisId`: that guard de-dups
-        // edge 1, but an input edit MUST re-fire for the SAME analysis (its set just changed), and a
-        // no-drift check is cheap by design.
+        // edge 1, but an input edit MUST re-fire for the SAME analysis — its set just changed, and this
+        // is the edge that owns that fact.
         if (bootState().phase !== "ready") return;
         const openId = workspace.analysis?.id ?? null;
         if (openId === null || e.analysisId !== openId) return;
@@ -187,7 +194,7 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
             const runtime = harnessRuntime();
             const analysis = workspace.analysis;
             if (!runtime || !analysis || analysis.id !== targetId) return;
-            seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null);
+            seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null, "inputs_changed");
         }, DRIFT_DEBOUNCE_MS);
     };
     Bus.on("inflexa", onInputEvent);
@@ -219,7 +226,7 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
         const runtime = harnessRuntime();
         const analysis = workspace.analysis;
         if (!runtime || !analysis) return;
-        seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null);
+        seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null, "open");
     });
 
     // Agent-switch gauge — data-profile SETTLE feed. The gauge's START half is
@@ -278,8 +285,10 @@ function couldNotStartNotice(analysis: Analysis, reason: string): Notice {
  * Production callers omit the argument and get the real edges.
  */
 export type ParityDriverSeams = {
-    /** Produce the parity outcome for this analysis. Real: {@link ensureProfileAtParity}. */
+    /** The chat-open drive: materialize, never re-profile. Real: {@link ensureProfileAtParity}. */
     readonly check: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    /** The input-mutation drive: re-profile, because the set demonstrably moved. Real: {@link reprofileForInputChange}. */
+    readonly reprofile: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
     /** Re-read the sidebar's ledger snapshots for an analysis. Real: {@link refreshSidebarData}. */
     readonly refreshSidebar: (analysisId: string) => Promise<void>;
     /** Raise a transient toast. Real: {@link notify}. Injected so the swap-guard test can observe it. */
@@ -288,6 +297,7 @@ export type ParityDriverSeams = {
 
 const realParityDriverSeams: ParityDriverSeams = {
     check: ensureProfileAtParity,
+    reprofile: reprofileForInputChange,
     refreshSidebar: refreshSidebarData,
     notify,
 };
@@ -308,13 +318,24 @@ export function driveProfileParity(
     runtime: HarnessRuntime,
     analysis: Analysis,
     currentAnalysisId: () => string | null,
+    cause: ProfileDriveCause = "open",
     seams: ParityDriverSeams = realParityDriverSeams,
 ): Promise<void> {
-    return serializeProfileWork(() => runParityDrive(runtime, analysis, currentAnalysisId, seams));
+    return serializeProfileWork(() => runParityDrive(runtime, analysis, currentAnalysisId, cause, seams));
 }
 
-/** {@link driveProfileParity}'s body, run under the shared profile-work queue. */
-async function runParityDrive(runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null, seams: ParityDriverSeams): Promise<void> {
+/**
+ * {@link driveProfileParity}'s body, run under the shared profile-work queue. Both causes share this
+ * outcome mapping: what the user should be told about a trigger, a clear, or a fault does not depend on
+ * which edge asked, only on what the ladder did.
+ */
+async function runParityDrive(
+    runtime: HarnessRuntime,
+    analysis: Analysis,
+    currentAnalysisId: () => string | null,
+    cause: ProfileDriveCause,
+    seams: ParityDriverSeams,
+): Promise<void> {
     // Also guard at DEQUEUE time, before `check` stages anything. A drive can sit in the queue while the
     // user swaps analyses, and `openSession` releases this analysis's instance lock the moment it swaps
     // away — so a drive that only began staging A's tree AFTER this process released A's lock would race
@@ -322,7 +343,7 @@ async function runParityDrive(runtime: HarnessRuntime, analysis: Analysis, curre
     // analysis is no longer open closes that cross-process window; the post-`check` guard below remains
     // for a swap that lands mid-check.
     if (currentAnalysisId() !== analysis.id) return;
-    const outcome = await seams.check(runtime, analysis);
+    const outcome = cause === "inputs_changed" ? await seams.reprofile(runtime, analysis) : await seams.check(runtime, analysis);
     // Swapped analyses while `check` staged files? Drop both the poke and the notice (see the doc above).
     if (currentAnalysisId() !== analysis.id) return;
     switch (outcome.kind) {

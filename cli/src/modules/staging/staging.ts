@@ -1,7 +1,6 @@
 import { linkSync, copyFileSync, readdirSync, rmSync, rmdirSync, existsSync, utimesSync, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { ok, err, Result } from "neverthrow";
-import { computeInputSignature, type DataProfileInputSignature } from "@inflexa-ai/harness";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
@@ -35,29 +34,6 @@ export type StagedInput = {
     /** Path relative to the data dir: `inputs/{mountName}/{key}`. */
     readonly relativePath: string;
 };
-
-/**
- * The value a drift check compares: identity PLUS the two cheap facts that change when a
- * file's bytes do. `fileId` alone is a path identity — `deriveFileId` hashes `anchorId|path`
- * and nothing else — so two profiles taken over the same paths with different content compare
- * equal, and an in-place edit is invisible.
- *
- * Deliberately NOT the content hash: `enumerateInputSignatures` runs on every chat open and
- * every input mutation, and reading every input in full (these are genomics files) is the cost
- * it exists to avoid. `stageInputs` pays the SHA-256; parity does not.
- *
- * `mtimeMs` is used at FULL precision, fraction included. Both comparands come from `statSync` on the
- * same source file, and the recorded one round-trips JS → JSON → Postgres `jsonb` → JS exactly, so the
- * fraction is stable on both sides. Rounding it away would be a real loss: a same-size rewrite lands
- * inside one millisecond often enough to matter (measured: 193 of 200 back-to-back rewrites shared a
- * whole-millisecond mtime), and the sub-millisecond digits are the only thing distinguishing them.
- *
- * Accepted miss: an edit preserving byte length AND mtime — a filesystem with coarse (1s) timestamp
- * granularity, or a rewrite that restores the original mtime.
- */
-export function inputSignature(fileId: string, size: number, mtimeMs: number): string {
-    return `${fileId}:${size}:${mtimeMs}`;
-}
 
 /**
  * Deterministic file identity from the input's anchor+path. Uses Bun.hash for
@@ -110,8 +86,9 @@ function stageFile(src: string, dest: string, srcStats: Stats): Result<void, FsE
             //
             // The stamp belongs to THIS branch alone. A hardlinked destination shares the source's
             // inode, so `utimesSync` on it rewrites the user's own input file (measured) — and since
-            // `enumerateInputSignatures` reads that file's mtime, staging would manufacture drift
-            // against the profile it just took. Seconds, not the `Date` fields: `utimesSync` takes an
+            // {@link isInputSetMaterialized} compares that file's mtime against the staged copy's,
+            // staging would manufacture a permanent mismatch against the tree it just wrote.
+            // Seconds, not the `Date` fields: `utimesSync` takes an
             // f64 seconds value, and `mtimeMs / 1000` keeps far more of the sub-millisecond fraction
             // than a `Date` (which truncates to whole ms and misses every fractional mtime). It is still
             // NOT bit-exact — the seconds round-trip drops a few float-ULPs of the tail a nanosecond
@@ -211,11 +188,11 @@ export function walkFiles(dir: string, ignoredDirs: ReadonlySet<string>): Result
  * link/copy it into the target tree, and return its `StagedInput` manifest row.
  * {@link walkInputFiles} has already decided WHICH files exist and their identity
  * (`fileId`/`key`/`relativePath`); this only pays the content-size costs. Split out
- * so {@link enumerateInputSignatures} can share the walk without any of them.
+ * so {@link enumerateInputPaths} can share the walk without any of them.
  */
 async function materializeStagedFile(file: InputFile, targetDir: string): Promise<Result<StagedInput, FsError>> {
-    // One stat yields both drift-signature components, so the manifest's signature is
-    // consistent with the one `enumerateInputSignatures` computes for the same file. Taken BEFORE
+    // One stat yields both size and mtime, so the manifest agrees with what
+    // {@link isInputSetMaterialized} later reads back off the same file. Taken BEFORE
     // placement so the copy fallback's timestamp stamp and the manifest record the same reading —
     // two stats straddling the copy could disagree, and the staged tree would then misreport the set
     // it materialized.
@@ -236,9 +213,10 @@ async function materializeStagedFile(file: InputFile, targetDir: string): Promis
         fileName: basename(file.absPath),
         hash: hashResult.value,
         size: statsResult.value.size,
-        // Verbatim, fraction and all: this is the value the ledger records, and `enumerateInputSignatures`
-        // compares it against a fresh `statSync` of the same file. Rounding here and not there — or the
-        // reverse — would make every analysis read as permanently drifted.
+        // Verbatim, fraction and all: this is the value the ledger records, and
+        // {@link isInputSetMaterialized} compares it against a fresh `statSync` of the same file.
+        // Rounding here and not there — or the reverse — would make every analysis read as
+        // permanently unmaterialized.
         mtimeMs: statsResult.value.mtimeMs,
         relativePath: file.relativePath,
     });
@@ -300,7 +278,7 @@ function reconcileStagedTree(targetDir: string, staged: StagedInput[]): Result<v
 
 /**
  * One file an input yields, its staging identity resolved but no content touched.
- * The unit both {@link stageInputs} and {@link enumerateInputSignatures} consume:
+ * The unit both {@link stageInputs} and {@link enumerateInputPaths} consume:
  * `absPath` is the source to read, `relativePath` its dest under `inputs/local`,
  * and `key`/`fileId` its manifest identity. Only {@link walkInputFiles} mints
  * these, so the two callers cannot disagree about which files an input yields.
@@ -326,7 +304,7 @@ type InputFile = {
  * noise-dir skips and symlink rules; a file input yields itself. Cost is bounded
  * by stat/readdir: no hashing, no tree writes. This is the SINGLE source of
  * "which files an input yields"; {@link stageInputs} adds materialization on top
- * and {@link enumerateInputSignatures} adds nothing, so their identity spaces are
+ * and {@link enumerateInputPaths} adds nothing, so their identity spaces are
  * structurally unable to diverge.
  */
 function walkInputFiles(analysisId: string): Result<InputFile[], DbError | StagingError> {
@@ -432,69 +410,42 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
 }
 
 /**
- * The read-only, hash-free twin of {@link stageInputs}: the {@link inputSignature} set
- * staging would produce for `analysisId`, in the SAME identity space, but without
- * touching content (no `sha256File`), linking, copying, or writing the session
- * tree — which need not even exist. Both funnel through {@link walkInputFiles}, so
- * the id spaces cannot diverge; the dedup by `relativePath` mirrors staging's
- * same-dest collision rule (last write wins) so the set equals the manifest's
- * signatures exactly. Exists so profile-drift checks can run on every chat open /
- * input edit at stat/readdir cost, never content-size cost.
+ * The read-only, hash-free twin of {@link stageInputs}: the set of analysis-relative
+ * paths staging would produce for `analysisId`, without touching content (no
+ * `sha256File`), linking, copying, or writing the session tree — which need not even
+ * exist. Both funnel through {@link walkInputFiles}, so the two cannot disagree about
+ * which files an analysis has; the dedup by `relativePath` mirrors staging's same-dest
+ * collision rule (last write wins) so the set equals the manifest's paths exactly.
+ *
+ * It answers one question — DOES this analysis have inputs on disk right now — which is
+ * what the profile ladder branches on (an emptied set clears the profile; a non-empty one
+ * is materialized). It deliberately carries no size or mtime: a profile is re-invoked on
+ * the input-mutation edge, not derived as stale from a comparison here, so a per-file
+ * drift signature would be gathered for no reader.
  *
  * A file that vanished between the walk and its stat is SKIPPED, not an error: the
  * database and the filesystem routinely disagree (a user may delete an input at any
- * moment), and the honest reading of a gone file is "this input is no longer here" —
- * which surfaces as drift and re-profiles. Failing parity outright would strand the
- * chat on an error the user cannot escape.
+ * moment), and the honest reading of a gone file is "this input is no longer here".
+ * Failing outright would strand the chat on an error the user cannot escape.
  *
- * @param analysisId - The analysis whose input identity space to enumerate.
- * @returns The signatures staging would emit, or a `DbError` (input listing / anchor
- *   resolution) or `StagingError` (a directory-input walk that hit an I/O fault).
+ * @param analysisId - The analysis whose input paths to enumerate.
+ * @returns The analysis-relative paths staging would write, or a `DbError` (input listing /
+ *   anchor resolution) or `StagingError` (a directory-input walk that hit an I/O fault).
  */
-export function enumerateInputSignatures(analysisId: string): Result<ReadonlySet<string>, DbError | StagingError> {
+export function enumerateInputPaths(analysisId: string): Result<ReadonlySet<string>, DbError | StagingError> {
     return walkInputFiles(analysisId).map((files) => {
-        // Overlapping inputs can resolve to the same `relativePath`; staging keeps
-        // the LAST such entry, so collapse identically here before collecting signatures —
-        // otherwise a clash would surface a fileId the manifest dropped.
-        const byPath = new Map<string, string>();
+        // Overlapping inputs can resolve to the same `relativePath`; staging keeps the LAST
+        // such entry, and a Set on that key collapses them identically.
+        const present = new Set<string>();
         for (const file of files) {
-            const stats = statResult(file.absPath, "enumerateInputSignatures:stat");
-            if (stats.isErr()) {
+            if (statResult(file.absPath, "enumerateInputPaths:stat").isErr()) {
                 getLogger("staging").warn({ absPath: file.absPath }, "input file disappeared between the walk and its stat — treating it as removed");
                 continue;
             }
-            byPath.set(file.relativePath, inputSignature(file.fileId, stats.value.size, stats.value.mtimeMs));
+            present.add(file.relativePath);
         }
-        return new Set(byPath.values());
+        return present;
     });
-}
-
-/**
- * Digest an enumerated signature set into the comparand a completed profile carries.
- *
- * The harness records `inputSignature: { count, digest }` on the profile row and drops
- * the per-file list it replaced, so parity against a current profile is a digest
- * comparison, not a set comparison. The digest itself is the harness's — imported, never
- * reimplemented, because two implementations of "the same set" is exactly the
- * disagreement a fixed-width comparand exists to prevent.
- *
- * This lives here because this module owns the signature format: {@link inputSignature}
- * writes `fileId:size:mtimeMs`, so this is the only place entitled to take it apart. The
- * two separators are found from the RIGHT, so a `fileId` containing a colon would still
- * split correctly.
- */
-export function inputSignatureDigest(signatures: ReadonlySet<string>): DataProfileInputSignature {
-    return computeInputSignature(
-        [...signatures].map((signature) => {
-            const mtimeSep = signature.lastIndexOf(":");
-            const sizeSep = signature.lastIndexOf(":", mtimeSep - 1);
-            return {
-                fileId: signature.slice(0, sizeSep),
-                size: Number(signature.slice(sizeSep + 1, mtimeSep)),
-                mtimeMs: Number(signature.slice(mtimeSep + 1)),
-            };
-        }),
-    );
 }
 
 /**
@@ -527,7 +478,7 @@ export function mtimesMatch(a: number, b: number): boolean {
 /**
  * Whether `analysisId`'s current input set already exists under `targetDir` exactly as
  * {@link stageInputs} would leave it — "is there anything to materialize?", answered at stat/readdir
- * cost like {@link enumerateInputSignatures}, never at content cost.
+ * cost like {@link enumerateInputPaths}, never at content cost.
  *
  * The staged tree IS the record of what was materialized, so nothing else has to be kept: a staged
  * file carries its source's size and mtime by construction (a hardlink shares the source's inode; the
