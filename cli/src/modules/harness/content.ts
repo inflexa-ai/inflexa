@@ -1,16 +1,16 @@
-// The first run materializes the skills tree, the templates tree, and the report page assets that the
+// The first run materializes the skills tree and the report page assets that the
 // binary embeds. A release build ships those trees packed inside the executable (see scripts/build.ts +
 // content-pack.ts); on boot this extracts them to the hash-keyed dir under env.contentDir that config.ts
-// already resolves skillsDir/templatesDir to, so the harness — which reads the two trees as plain
-// directory trees off disk — finds them. See the content-assets and harness-runtime specs. The assets
+// already resolves skillsDir to, so the harness — which reads the skills tree as a plain
+// directory tree off disk — finds it. See the content-assets and harness-runtime specs. The assets
 // directory has no entry in config.ts. The boot binds the page-asset lookup over the return value of the
 // extract, thus no other code derives that path.
 //
 // This module is reached ONLY through runtime.ts's release-gated `await import("./content.ts")`. That
 // gate, plus the fact that the embedded-archive import below only resolves when the module actually
 // loads, is what keeps `cli/content.pack` (which exists solely as a build artifact) out of a dev run's
-// module graph — a dev checkout has no such file, and a dev run resolves skills/templates to the repo
-// trees instead. Verified empirically: an UNgated top-level asset import would demand the file on disk
+// module graph — a dev checkout has no such file, and a dev run resolves the skills to the repo
+// tree instead. Verified empirically: an UNgated top-level asset import would demand the file on disk
 // even in dev.
 //
 // This module binds the three inputs of the extract, and it holds nothing else. The algorithm is in
@@ -27,7 +27,7 @@ import { extractContent, type ContentDirs, type ContentError } from "./content_e
 import CONTENT_PACK_PATH from "../../../content.pack" with { type: "file" };
 
 /**
- * Extract the embedded archive to `<contentDir>/<contentHash>/{skills,templates,assets}` and return those dirs.
+ * Extract the embedded archive to `<contentDir>/<contentHash>/{skills,assets}` and return those dirs.
  *
  * Release-only: the sole caller (runtime.ts) gates on `env.isDevelopment`, so a dev run never reaches here.
  * `env` freezes each read of `process.env` at import, thus the two frozen values and the embedded path bind

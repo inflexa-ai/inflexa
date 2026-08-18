@@ -17,7 +17,7 @@ The system MUST give a dedicated command that launches a full `executeAnalysis` 
 The command MUST do these steps in this order:
 
 1. Resolve the analysis reference.
-2. Do the pre-flight prerequisite gates. These are the same actionable gates as the profile launch: the sandbox image, the embedding endpoint, the skills directory, the templates directory, the proxy key, the model, and Postgres. The analysis workspace root must also resolve to a writable location.
+2. Do the pre-flight prerequisite gates. These are the same actionable gates as the profile launch: the sandbox image, the embedding endpoint, the skills directory, the proxy key, the model, and Postgres. The analysis workspace root must also resolve to a writable location.
 3. Validate the plan file. These are the pure parse, schema, and `validatePlan` gates, and they persist nothing.
 4. Boot the embedded runtime.
 5. Stage the analysis's inputs into the analysis workspace (`{workspaceRoot}/data`, with mirror reconciliation). The run engine never downloads.

@@ -10,7 +10,6 @@ import { extractContent } from "./content_extract.ts";
 const FILES: PackEntry[] = [
     { path: "skills/report-html/SKILL.md", bytes: Buffer.from("# Report HTML\n", "utf8") },
     { path: "skills/report-html/references/blocks.md", bytes: Buffer.from("block reference", "utf8") },
-    { path: "templates/report-html/base.html.j2", bytes: Buffer.from("{% block body %}{% endblock %}", "utf8") },
     // A font is binary, thus the asset entry carries bytes that are not text.
     { path: "assets/space-grotesk-latin-wght-normal.woff2", bytes: Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xff]) },
 ];
@@ -40,15 +39,14 @@ function writeArchive(): string {
 }
 
 describe("extractContent", () => {
-    test("a fresh extract writes the three trees with the bytes of the archive", () => {
+    test("a fresh extract writes the two trees with the bytes of the archive", () => {
         const dirs = extractContent({ archivePath: writeArchive(), contentDir: root, contentHash: HASH })._unsafeUnwrap();
 
         expect(dirs).toEqual({
             skillsDir: join(root, HASH, "skills"),
-            templatesDir: join(root, HASH, "templates"),
             assetsDir: join(root, HASH, "assets"),
         });
-        for (const dir of [dirs.skillsDir, dirs.templatesDir, dirs.assetsDir]) {
+        for (const dir of [dirs.skillsDir, dirs.assetsDir]) {
             expect(existsSync(dir)).toBe(true);
         }
         for (const file of FILES) {
@@ -58,10 +56,9 @@ describe("extractContent", () => {
 
     test("a hash directory without the assets tree is not reused, and the extract cannot repair it", () => {
         mkdirSync(join(root, HASH, "skills"), { recursive: true });
-        mkdirSync(join(root, HASH, "templates"), { recursive: true });
 
         // The partial directory fails the completeness gate, thus the cold path runs, and the error proves
-        // that it ran. But `rename` wants a target that is absent or empty, and this target holds two trees.
+        // that it ran. But `rename` wants a target that is absent or empty, and this target holds one tree.
         // As a result the commit of the extract fails with ENOTEMPTY, and the assets tree stays absent.
         const error = extractContent({ archivePath: writeArchive(), contentDir: root, contentHash: HASH })._unsafeUnwrapErr();
 

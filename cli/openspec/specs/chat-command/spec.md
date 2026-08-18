@@ -34,7 +34,7 @@ Before it boots, the command MUST run the same pre-flight prerequisite gates as 
 
 #### Scenario: Failed prerequisite is reported before side effects
 
-- **WHEN** a pre-flight gate fails (the sandbox image, the embedding endpoint, the skills directory, the templates directory, the proxy key, the model, or Postgres)
+- **WHEN** a pre-flight gate fails (the sandbox image, the embedding endpoint, the skills directory, the proxy key, the model, or Postgres)
 - **THEN** the command exits with that gate's actionable message and the runtime was never booted
 
 #### Scenario: Locked analysis is refused before boot

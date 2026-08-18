@@ -382,7 +382,6 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
         runAuthorizer: {} as RunAuthorizer,
         runLauncher: {} as RunLauncher,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        templatesDir: "/templates",
         skillsDir: "/skills",
         chrome,
         citationResolver: unusedCitationResolver,

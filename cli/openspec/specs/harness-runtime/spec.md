@@ -301,9 +301,9 @@ session-tree, bio-key, authorizer, and launcher realizations. It SHALL supply:
   chat agent and its conversation sub-agents;
 - the utility provider/model resolved under the `utility` role for the
   harness-owned ad hoc router;
-- config-overridable skills/templates paths with the existing release/development
-  defaults and pre-flight gates;
-- empty local Chrome config and the unavailable preview publisher;
+- a config-overridable skills path with the existing release/development
+  defaults and pre-flight gate;
+- empty local Chrome config;
 - the `run_inflexa` host tool through the host-tool seam.
 
 The utility role SHALL use the same configured connection and credential
