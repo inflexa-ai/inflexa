@@ -147,34 +147,6 @@ export function readFileReference(data: unknown): FileReferenceReadout {
     return { title, entries, ...(folderPath !== undefined ? { folderPath } : {}) };
 }
 
-/** A single-entry openable readout (a report preview or a failed preview). */
-export type PreviewReadout = { title?: string; entry: OpenableEntry };
-
-/**
- * Read a `data-report-preview` payload (`{ id, previewId, version, title, previewPath, format }`). The
- * preview resolves against `previews/{previewId}/{previewPath}` in the workspace at open time.
- */
-export function readReportPreview(data: unknown): PreviewReadout {
-    const d = (data ?? {}) as Record<string, unknown>;
-    const title = optStr(d.title);
-    const previewId = str(d.previewId);
-    const previewPath = str(d.previewPath);
-    const version = typeof d.version === "number" ? d.version : 0;
-    const name = `${title ?? "Report"} v${version}`;
-    return { title, entry: { name, target: { kind: "workspace-file", path: `previews/${previewId}/${previewPath}` } } };
-}
-
-/**
- * Read a `data-report-preview-failed` payload (`{ id, previewId, version, reason, errorKind? }`) into a
- * degraded card entry: nothing to open, the failure reason shown as the caption.
- */
-export function readReportPreviewFailed(data: unknown): PreviewReadout {
-    const d = (data ?? {}) as Record<string, unknown>;
-    const version = typeof d.version === "number" ? d.version : 0;
-    const reason = str(d.reason) || "unknown reason";
-    return { entry: { name: `Report preview v${version} failed`, caption: reason, target: { kind: "unavailable", reason } } };
-}
-
 // ── open-time resolution + materialization ──────────────────────────────────────────────────────────
 
 /** Why an artifact could not be opened. Every case carries what the notice needs to name the path/reason. */
@@ -187,7 +159,7 @@ export type OpenArtifactError =
 
 /**
  * The workspace-reserved directory `echart`/`svg` presentations materialize into, a sibling of the
- * harness-owned `data/`/`runs/`/`reports/`/`previews/` roots. Living inside the analysis tree keeps a
+ * harness-owned `data/`/`runs/`/`reports/` roots. Living inside the analysis tree keeps a
  * presentation next to the artifacts it renders, so a `dataPath` chart can reference its CSV by a
  * relative URL.
  */

@@ -27,7 +27,7 @@ import { shutdown } from "../../../lib/shutdown.ts";
 import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../../analysis/context.ts";
 import { resolveHarnessConfig } from "../config.ts";
 import { ensureSandboxImage } from "../../libs/pull.ts";
-import { materializeTarget, readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../artifact_open.ts";
+import { materializeTarget, readFileReference, readPresentation } from "../artifact_open.ts";
 import { isSubAgentEvent, readAskPart, readPlanCard, readRunCard, subAgentActivityLabel } from "../chat_printer.ts";
 import { planToDag } from "../plan_dag.ts";
 import { bootHarnessRuntime, describeBootError, type HarnessRuntime } from "../runtime.ts";
@@ -532,16 +532,6 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
             case "data-file-reference": {
                 const view = readFileReference(data);
                 renderOpenables(view.title, view.entries);
-                return;
-            }
-            case "data-report-preview": {
-                const view = readReportPreview(data);
-                renderOpenables(view.title, [view.entry]);
-                return;
-            }
-            case "data-report-preview-failed": {
-                const view = readReportPreviewFailed(data);
-                sink.out(`\n  [report] ${view.entry.name}: ${view.entry.caption ?? "failed"}\n`);
                 return;
             }
             case "data-ask": {

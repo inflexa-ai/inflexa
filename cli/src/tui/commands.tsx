@@ -1266,7 +1266,7 @@ function AnalysesListDialog(): JSX.Element {
 }
 
 /**
- * Reach-back picker over the session's openable artifacts (charts, figures, files, report previews),
+ * Reach-back picker over the session's openable artifacts (charts, figures, files),
  * newest-first. Each row shows the entry name + its resolved path; selecting one opens it externally
  * through the shared opener. Complements the `o` binding (which opens the single most-recent card).
  */

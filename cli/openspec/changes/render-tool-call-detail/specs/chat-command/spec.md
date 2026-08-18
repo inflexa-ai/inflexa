@@ -14,11 +14,10 @@ distinguish the three harness states — done, error, and denied — so a refuse
 as a failure. Text-shaped
 `data-presentation` parts (`markdown`, `code`, `table`) SHALL print inline as text
 (markdown source; code fenced; tables as aligned text). Pixel-shaped parts —
-`echart`/`svg` presentations (materialized through the shared cache),
-`data-file-reference` entries, and `data-report-preview` — SHALL print one line per
+`echart`/`svg` presentations (materialized through the shared cache), and
+`data-file-reference` entries — SHALL print one line per
 entry carrying a kind tag, title, and the resolved path wrapped in an OSC 8 `file://`
-hyperlink with the plain path visible for terminals without hyperlink support;
-`data-report-preview-failed` prints its reason. Events originating from sub-agents
+hyperlink with the plain path visible for terminals without hyperlink support. Events originating from sub-agents
 (call path deeper than the top-level agent) SHALL be dropped. Any other
 conversation-emitted part SHALL print a one-line tagged fallback rather than being
 silently swallowed. The sink SHALL extract what it renders at receipt and SHALL NOT

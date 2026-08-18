@@ -119,7 +119,7 @@ The emit sink of the command MUST render these to stdout:
 
 A text-shaped `data-presentation` part (`markdown`, `code`, `table`) MUST print inline as text. Markdown prints as its source, code prints fenced, and a table prints as aligned text.
 
-A pixel-shaped part MUST print one line for each entry. These parts are an `echart` or `svg` presentation (materialized through the shared cache), a `data-file-reference` entry, and a `data-report-preview`. The line carries a kind tag, a title, and the resolved path inside an OSC 8 `file://` hyperlink. The plain path stays visible, for a terminal with no hyperlink support. A `data-report-preview-failed` part prints its reason.
+A pixel-shaped part MUST print one line for each entry. These parts are an `echart` or `svg` presentation (materialized through the shared cache), and a `data-file-reference` entry. The line carries a kind tag, a title, and the resolved path inside an OSC 8 `file://` hyperlink. The plain path stays visible, for a terminal with no hyperlink support.
 
 A sub-agent event is one whose call path is deeper than the top-level agent. The sink MUST NOT print such an event at the transcript root. If a tool call is open, the sink MUST print the activity label of the event as a subordinate line under that tool call. If no tool call is open, the sink MUST drop the event. Any other conversation-emitted part MUST print a one-line tagged fallback, so the sink observes it rather than swallows it.
 

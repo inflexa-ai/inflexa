@@ -18,7 +18,6 @@ import {
     registerSandboxReaper,
     registerWatchdog,
     sweepEphemeralWorkflows,
-    UnavailablePreviewPublisher,
     type AgentSession,
     type AiSdkProviderConfig,
     type AskGateway,
@@ -649,9 +648,10 @@ async function bootHarnessRuntimeOnce(
         return err({ type: "skills_dir_missing", path: cfg.skillsDir });
     }
     // Templates are the conversation agent's second unconditional prerequisite:
-    // `submit_report` joins `report-html` under this tree. Gated here, beside
-    // skills, so a missing tree fails free before any side effect (mirrors the
-    // skills gate exactly — `cfg.templatesDir` is non-null past this point).
+    // `ConversationAgentDeps.templatesDir` is a required field, but no tool of
+    // the current roster reads the tree. Gated here, beside skills, so a
+    // missing tree fails free before any side effect (mirrors the skills gate
+    // exactly — `cfg.templatesDir` is non-null past this point).
     if (cfg.templatesDir === null || !existsSync(cfg.templatesDir)) {
         return err({ type: "templates_dir_missing", path: cfg.templatesDir });
     }
@@ -1081,8 +1081,8 @@ async function bootHarnessRuntimeOnce(
         // policy). Every non-chat backend is the shared instance; the chat provider +
         // model are the CONVERSATION agent's. `templatesDir` is
         // non-null past the pre-flight gate; `chrome: {}` is the honest local default —
-        // with the unavailable preview publisher, report preview short-circuits before
-        // any Chrome connection.
+        // it names no browser endpoint, thus a report session reports the absent
+        // browser instead of a failed connection.
         const conversation: ConversationAssemblyDeps = {
             // Reaches every conversation tool that takes a logger — `generate_plan` above all,
             // which drives a whole sub-agent loop on `passthroughStep`: no ledger row, no
@@ -1100,10 +1100,8 @@ async function bootHarnessRuntimeOnce(
             resolveWorkspaceRoot,
             runAuthorizer,
             runLauncher,
-            createPreviewPublisher: async () => new UnavailablePreviewPublisher(),
             bioKeys: cfg.bioKeys,
             templatesDir: cfg.templatesDir,
-            // The in-process report-builder gets read-only `report-html` skill tools.
             skillsDir: cfg.skillsDir,
             // Gives the planner reference discovery over the same store the sandbox
             // mounts, so a plan can name what this install actually holds.

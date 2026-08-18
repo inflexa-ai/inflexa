@@ -190,12 +190,6 @@ describe("createChatPrinter", () => {
         expect(out).not.toContain("\x1b]8;;file:///ws/my figures/volcano plot.png");
     });
 
-    test("data-report-preview-failed prints its reason, not a link", () => {
-        const h = harness();
-        h.emit({ type: "data-report-preview-failed", source: TOP, data: { id: "x", previewId: "p", version: 3, reason: "render timed out" } });
-        expect(h.out()).toContain("render timed out");
-    });
-
     test("data-ask prints a one-line approval mention naming the command and status, not the raw tag", () => {
         const h = harness();
         h.emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "Run inflexa refs", command: "inflexa refs list", status: "pending" } });

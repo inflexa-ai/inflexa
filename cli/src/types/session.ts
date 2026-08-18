@@ -160,7 +160,7 @@ export type PresentationPart = {
  * location (the artifact-open spec's open-time-resolution rule). Resolution happens when the user opens:
  * `workspace-file` joins the analysis workspace root; `echart`/`svg` materialize a file under the
  * workspace's `presentations/` directory from the embedded spec/markup; `unavailable` is a card with
- * nothing to open (a failed report preview).
+ * nothing to open.
  */
 export type OpenTarget =
     | { kind: "workspace-file"; path: string }
@@ -183,8 +183,8 @@ export type OpenableEntry = {
 };
 
 /**
- * Pixel-shaped content a terminal cannot paint — `echart`/`svg` presentations, `show_file` galleries,
- * and report previews — rendered as a card whose rows open externally. Carries only the semantic
+ * Pixel-shaped content a terminal cannot paint — `echart`/`svg` presentations and `show_file`
+ * galleries — rendered as a card whose rows open externally. Carries only the semantic
  * reference fields extracted at receipt (copy-on-receive); `analysisId` scopes resolution of every
  * entry's `workspace-file`/`dataPath` reference against the analysis workspace root at open time.
  */
