@@ -203,7 +203,7 @@ export type OpenableCardPart = {
 
 /**
  * The record that a turn started a report session, from the harness
- * `data-report-session-started` part. It carries the thread id alone: the part is a
+ * `data-child-session-started` part (threadType `report`). It carries the thread id alone: the part is a
  * placement record, and the thread store is the authority for the session — its
  * existence, its title, and its archived state. The renderer joins the live
  * report-children listing by this id, and it renders nothing when the row is absent.

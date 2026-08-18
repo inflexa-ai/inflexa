@@ -22,7 +22,7 @@ import {
     isSubAgentEvent,
     readAskPart,
     readPlanCard,
-    readReportSessionStarted,
+    readChildSessionStarted,
     readRunCard,
     subAgentActivityLabel,
 } from "../../modules/harness/chat_printer.ts";
@@ -498,8 +498,9 @@ type EmitEventArg = Parameters<EmitFn>[0];
  *   - `tool-started`/`tool-finished` become one live tool part paired by tool-use id, with a
  *     duration and error outcome on finish;
  *   - `data-plan`/`data-run-card` become card parts via the shared readers;
- *   - `data-report-session-started` becomes a report-session part at its position, and it pokes the
- *     report-children listing so the entry paints inside the turn;
+ *   - `data-child-session-started` with threadType `report` becomes a report-session part at its
+ *     position, and it pokes the report-children listing so the entry paints inside the turn; any
+ *     other threadType renders the tagged mention;
  *   - any other `data-*` part renders a visible tagged mention (observed, not swallowed);
  *   - `iteration`/`done` are dropped.
  *
@@ -615,8 +616,10 @@ function renderDataPart(type: `data-${string}`, data: unknown): void {
         case "data-file-reference":
             appendPart(fileReferencePart(data, currentAnalysisId ?? ""));
             return;
-        case "data-report-session-started": {
-            appendPart({ id: randomUUIDv7(), type: "report-session", threadId: readReportSessionStarted(data).threadId });
+        case "data-child-session-started": {
+            const started = readChildSessionStarted(data);
+            if (started.threadType !== "report") break;
+            appendPart({ id: randomUUIDv7(), type: "report-session", threadId: started.threadId });
             // The spawn wrote its thread row BEFORE it emitted this part, thus a read now finds the
             // row and the entry paints inside the turn. The settle-edge read of `watchReportChildren`
             // stays the authority for the title, which pg seeds after the child's first message.
@@ -1033,8 +1036,8 @@ function replayedToolStatus(outcome: ToolCallOutcome | undefined): ToolCallPart[
 /**
  * Map a reconstructed {@link CortexMsg} to a {@link UIMessage}: text → text part; a replayed
  * tool-call → a finished tool part; recognized cards (`data-plan`/`data-run-card`) → card parts via
- * the SAME readers the live adapter uses; a `data-report-session-started` → a report-session part at
- * its stored position; anything else the harness resolver kept → a visible tagged mention. The harness resolver already dropped what the UI does not render (reasoning, tool
+ * the SAME readers the live adapter uses; a `data-child-session-started` with threadType `report` → a
+ * report-session part at its stored position; anything else the harness resolver kept → a visible tagged mention. The harness resolver already dropped what the UI does not render (reasoning, tool
  * results). Card parts are FLAT on the reconstructed part, and the readers narrow off any object, so
  * the part is passed straight through. A persisted `interrupted` marker re-derives the same live flag
  * so a reloaded transcript renders exactly what the live abort showed.
@@ -1083,9 +1086,15 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
             case "data-file-reference":
                 parts.push(fileReferencePart(part, analysisId));
                 break;
-            case "data-report-session-started":
-                parts.push({ id: randomUUIDv7(), type: "report-session", threadId: readReportSessionStarted(part).threadId });
+            case "data-child-session-started": {
+                const started = readChildSessionStarted(part);
+                if (started.threadType !== "report") {
+                    parts.push({ id: randomUUIDv7(), sessionId, messageId: m.id, type: "text", text: `[part:${part.type}]`, createdAt: 0 });
+                    break;
+                }
+                parts.push({ id: randomUUIDv7(), type: "report-session", threadId: started.threadId });
                 break;
+            }
             default:
                 // Observe a reconstructed part the UI has no first-class renderer for as a one-line tagged
                 // mention — never swallowed. (The recognized display cards are handled in the cases above.)

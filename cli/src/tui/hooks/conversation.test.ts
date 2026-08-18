@@ -1623,15 +1623,15 @@ describe("display-card parts map identically live and on reload", () => {
     });
 
     test("a report-session spawn maps to the same report-session part in both paths", async () => {
-        const data = { threadId: "child-1", parentThreadId: SID };
+        const data = { threadId: "child-1", parentThreadId: SID, threadType: "report" };
         await send(
             { sessionId: SID, analysisId: AID, userText: "?" },
-            fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => void emit({ type: "data-report-session-started", source: TOP, data })),
+            fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => void emit({ type: "data-child-session-started", source: TOP, data })),
         );
         const live = messages[1]?.parts.find((p) => p.type === "report-session");
 
         const reloaded = cortexToUiMessage(
-            { id: "m1", role: "assistant", parts: [{ type: "data-report-session-started", ...data }] } as unknown as CortexMsg,
+            { id: "m1", role: "assistant", parts: [{ type: "data-child-session-started", ...data }] } as unknown as CortexMsg,
             SID,
             AID,
         );

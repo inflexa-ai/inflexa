@@ -138,16 +138,19 @@ export function readRunCard(data: unknown): { runId: string; title: string; step
 }
 
 /**
- * Read a report-session spawn's thread id off the `unknown` `data` payload (the harness's
- * `ReportSessionStartedPart`: `{threadId, parentThreadId}`). Narrows defensively and copies the one
- * field it keeps — no reference to `data` survives the call. The parent thread id is not read: the
+ * Read a child-session spawn's fields off the `unknown` `data` payload (the harness's
+ * `ChildSessionStartedPart`: `{threadId, parentThreadId, threadType}`). Narrows defensively and copies
+ * the fields it keeps — no reference to `data` survives the call. The parent thread id is not read: the
  * part rides the parent's own transcript, thus the position already states the parent. Exported
  * alongside {@link readPlanCard} so the TUI adapter shares the reader.
  */
-export function readReportSessionStarted(data: unknown): { threadId: string } {
-    // `data` is external/loop-owned; cast to a loose record and read-and-coerce the field.
+export function readChildSessionStarted(data: unknown): { threadId: string; threadType: string } {
+    // `data` is external/loop-owned; cast to a loose record and read-and-coerce the fields.
     const d = (data ?? {}) as Record<string, unknown>;
-    return { threadId: typeof d.threadId === "string" ? d.threadId : "" };
+    return {
+        threadId: typeof d.threadId === "string" ? d.threadId : "",
+        threadType: typeof d.threadType === "string" ? d.threadType : "",
+    };
 }
 
 /** The recognized ask statuses, as a runtime set for the reader's narrow. Typed `AskCardStatus[]` so an entry can only be a valid status. */
