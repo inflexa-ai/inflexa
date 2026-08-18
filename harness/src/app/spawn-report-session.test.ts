@@ -202,7 +202,7 @@ describe("the eyes rule", () => {
         expect(
             compositionHasEyes({
                 chrome: {},
-                capture: () => Promise.resolve({ screenshotBase64: "", coverage: "full", consoleErrors: [], failedRequests: [] }),
+                capture: () => Promise.resolve({ screenshots: [], coverage: { kind: "full" as const }, consoleErrors: [], failedRequests: [] }),
             }),
         ).toBe(true);
         // A config that names a browser is the route of a standing sidecar.
@@ -232,7 +232,7 @@ describe("spawnReportSession refusals", () => {
         const seamed = createReportSessionSpawn({
             pool,
             chrome: {},
-            capture: () => Promise.resolve({ screenshotBase64: "", coverage: "full", consoleErrors: [], failedRequests: [] }),
+            capture: () => Promise.resolve({ screenshots: [], coverage: { kind: "full" as const }, consoleErrors: [], failedRequests: [] }),
         });
 
         const child = (await seamed.spawnReportSession("p1", BRIEF))._unsafeUnwrap();

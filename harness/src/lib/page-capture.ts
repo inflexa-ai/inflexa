@@ -2,8 +2,15 @@
  * The one page capture over the Chrome sidecar.
  *
  * A capture navigates to a page URL, collects the console errors and the failed requests, waits for the
- * readiness signal of the page, and gives back a base64 screenshot. Two tools capture a report page: the
- * preview snapshot of the old report path and the eyes tool of a report session. Both read this module.
+ * readiness signal of the page, and gives back base64 screenshots. The eyes tool of a report session reads
+ * this module.
+ *
+ * A short page captures as one full-page shot. A tall page captures as consecutive vertical slices, because
+ * one tall picture dies twice on the provider path: a picture past the hard dimension cap rejects the whole
+ * request, and a legal tall picture downscales to about 1568 pixels on the long side, which compresses the
+ * text past legibility. A slice of about two window heights survives both. The slice budget bounds what one
+ * look costs, and a page past the budget truncates with the captured and the total pixels on the coverage,
+ * thus the truncation is never silent.
  *
  * The readiness contract is the reason for one shared body. The renderer emits the event name and the
  * sentinel name, and `report-render/page.ts` owns both constants together with the two budgets. This module
@@ -29,21 +36,36 @@ export interface FailedRequest {
     reason: string;
 }
 
-/** The picture and the faults of one page capture. */
+/** One picture of a capture: the base64 bytes, and the document rows that a slice holds. */
+export interface CapturedShot {
+    readonly base64: string;
+    /** The vertical document range of a slice, in CSS pixels. Absent on a whole-document or window picture. */
+    readonly range?: { readonly fromY: number; readonly toY: number };
+}
+
+/**
+ * What the pictures hold together. `full` is one shot of the whole document. `tiled` is consecutive vertical
+ * slices in document order; `capturedPx` is the height the slices cover and `totalPx` is the document height,
+ * thus `capturedPx < totalPx` says that the slice budget ran out and the tail of the page is absent. `viewport`
+ * appears when a screenshot threw and the retry at the window passed, thus the one picture shows the top
+ * window alone and a section below the fold is absent from it.
+ */
+export type CaptureCoverage =
+    | { readonly kind: "full" }
+    | { readonly kind: "tiled"; readonly capturedPx: number; readonly totalPx: number }
+    | { readonly kind: "viewport" };
+
+/** The pictures and the faults of one page capture. */
 export interface PageCapture {
-    screenshotBase64: string;
-    /**
-     * What the picture holds. `full` is the whole document, and it is the shape of a capture that passed at
-     * the first attempt. `viewport` appears when the full-page screenshot threw and the retry at the window
-     * passed, thus the picture shows the top window alone and a section below the fold is absent from it.
-     */
-    coverage: "full" | "viewport";
+    /** The pictures in document order: one shot under `full` and `viewport`, the slices under `tiled`. */
+    screenshots: CapturedShot[];
+    coverage: CaptureCoverage;
     consoleErrors: string[];
     failedRequests: FailedRequest[];
 }
 
 /**
- * The capture seam. It navigates to a page URL, and it gives back the screenshot and the faults. The seam
+ * The capture seam. It navigates to a page URL, and it gives back the screenshots and the faults. The seam
  * speaks the throw protocol, because the chrome connection does. A test injects a seam that reads no
  * browser, thus a tool orchestration runs with no chrome sidecar.
  */
@@ -68,6 +90,25 @@ const SELECTOR_TIMEOUT_MS = 5_000;
  */
 const VIEWPORT_WIDTH = 1440;
 const VIEWPORT_HEIGHT = 900;
+
+/**
+ * The height of one capture slice, in CSS pixels, and the bound of a single-shot page.
+ *
+ * The provider downscales every picture to about 1568 pixels on the long side before the model reads it. Two
+ * window heights survive that downscale with readable text, and a taller picture reaches the model compressed
+ * past that. Thus a page at this height or under captures as one full-page shot, and a taller page captures
+ * as slices of this height.
+ */
+const TILE_HEIGHT_PX = VIEWPORT_HEIGHT * 2;
+
+/**
+ * The most slices of one capture.
+ *
+ * Each slice is one picture on the tool result, and the budget bounds what one look costs the context. A page
+ * taller than the budget covers truncates, and the coverage carries the captured and the total pixels, thus
+ * the truncation is never silent.
+ */
+const MAX_TILES = 6;
 
 /**
  * The body of the readiness wait, in the browser context. The sentinel arm resolves a page that dispatched
@@ -98,32 +139,68 @@ function waitForThemeReady(sentinel: string, event: string, timeout: number): Pr
     });
 }
 
-/** The picture of one screenshot call: the base64 bytes, and what the picture holds. */
-type Shot = Pick<PageCapture, "screenshotBase64" | "coverage">;
+/** The pictures of one capture pass: the shots in document order, and what they hold together. */
+type Shots = Pick<PageCapture, "screenshots" | "coverage">;
 
 /** The connection gives base64 text or raw bytes, and a caller of the capture reads base64 text alone. */
 function toBase64(shot: string | Uint8Array): string {
     return typeof shot === "string" ? shot : Buffer.from(shot).toString("base64");
 }
 
+/** The body of the height measure, in the browser context. */
+function measureScrollHeight(): number {
+    return document.documentElement.scrollHeight;
+}
+
 /**
- * Take the picture of one settled page, at the whole document or at the window alone.
- *
- * The compositor can refuse a full-page bitmap of a tall page while the bitmap of the window is fine. A
- * degraded picture beats a dead look, thus a refused full page retries one time at the window. A second throw
- * names a broken browser and not a tall page, thus it propagates to the caller.
+ * Measure the document height, in CSS pixels. A page that refuses the measure reads as a short one, thus the
+ * capture takes the one full-page shot and the refusal costs no look.
  */
-async function captureShot(page: Page): Promise<Shot> {
+async function measureTotalHeight(page: Page): Promise<number> {
+    const measured = await page.evaluate(measureScrollHeight).catch(() => undefined);
+    return typeof measured === "number" && Number.isFinite(measured) ? measured : 0;
+}
+
+/**
+ * Capture the slices of one tall page, in document order. Each slice clips {@link TILE_HEIGHT_PX} rows at the
+ * reader width, and the last slice ends at the document height or at the budget, whichever comes first.
+ */
+async function captureTiles(page: Page, totalPx: number): Promise<Shots> {
+    const tileCount = Math.min(Math.ceil(totalPx / TILE_HEIGHT_PX), MAX_TILES);
+    const screenshots: CapturedShot[] = [];
+    for (let index = 0; index < tileCount; index++) {
+        const fromY = index * TILE_HEIGHT_PX;
+        const toY = Math.min(fromY + TILE_HEIGHT_PX, totalPx);
+        const clip = { x: 0, y: fromY, width: VIEWPORT_WIDTH, height: toY - fromY };
+        screenshots.push({ base64: toBase64(await page.screenshot({ encoding: "base64", clip })), range: { fromY, toY } });
+    }
+    const capturedPx = Math.min(tileCount * TILE_HEIGHT_PX, totalPx);
+    return { screenshots, coverage: { kind: "tiled", capturedPx, totalPx } };
+}
+
+/**
+ * Take the pictures of one settled page.
+ *
+ * A page at the single-shot bound or under gives one full-page shot. A taller page gives consecutive slices,
+ * because the provider path compresses or rejects one tall picture; the module comment carries the account.
+ *
+ * The compositor can refuse a bitmap of either shape while the bitmap of the window is fine. A degraded
+ * picture beats a dead look, thus a refusal retries one time at the window. A second throw names a broken
+ * browser and not a tall page, thus it propagates to the caller.
+ */
+async function captureShots(page: Page): Promise<Shots> {
+    const totalPx = await measureTotalHeight(page);
     try {
-        return { screenshotBase64: toBase64(await page.screenshot({ encoding: "base64", fullPage: true })), coverage: "full" };
-    } catch (refusedFullPage) {
+        if (totalPx > TILE_HEIGHT_PX) return await captureTiles(page, totalPx);
+        return { screenshots: [{ base64: toBase64(await page.screenshot({ encoding: "base64", fullPage: true })) }], coverage: { kind: "full" } };
+    } catch (refused) {
         try {
-            return { screenshotBase64: toBase64(await page.screenshot({ encoding: "base64" })), coverage: "viewport" };
+            return { screenshots: [{ base64: toBase64(await page.screenshot({ encoding: "base64" })) }], coverage: { kind: "viewport" } };
         } catch (refusedViewport) {
             // The two refusals together are the account of a dead look, and the caller reports the second one
             // alone. Thus the first one rides as the cause, and no reader of that report loses half of it.
             if (refusedViewport instanceof Error && refusedViewport.cause === undefined) {
-                refusedViewport.cause = refusedFullPage;
+                refusedViewport.cause = refused;
             }
             throw refusedViewport;
         }
@@ -131,11 +208,12 @@ async function captureShot(page: Page): Promise<Shot> {
 }
 
 /**
- * Capture one page: the screenshot, the console errors, and the failed requests.
+ * Capture one page: the screenshots, the console errors, and the failed requests.
  *
- * The picture holds the whole document, and not the window alone. Thus a caller can judge a section that a
- * reader reaches by a scroll. A refused full-page bitmap degrades to the window, and the coverage of the
- * result names which of the two pictures arrived.
+ * The pictures hold the document, and not the window alone. Thus a caller can judge a section that a reader
+ * reaches by a scroll. A short page arrives as one full-page shot, and a tall page arrives as consecutive
+ * slices in document order. A refused bitmap degrades to the window, and the coverage of the result names
+ * what the pictures hold.
  *
  * The readiness wait is best-effort. A page that never signals still captures at the readiness budget, thus
  * a broken page gives a picture that shows what broke.
@@ -178,12 +256,12 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
             await new Promise((resolve) => setTimeout(resolve, settle));
         }
 
-        // The picture must show the whole document at the layout that a reader gets. Thus a defect below the
+        // The pictures must show the whole document at the layout that a reader gets. Thus a defect below the
         // fold is visible, and a question about content that never appeared has an answer.
-        const shot = await captureShot(page);
+        const shots = await captureShots(page);
         return {
-            screenshotBase64: shot.screenshotBase64,
-            coverage: shot.coverage,
+            screenshots: shots.screenshots,
+            coverage: shots.coverage,
             consoleErrors,
             failedRequests,
         };
