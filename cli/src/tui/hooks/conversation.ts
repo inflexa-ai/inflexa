@@ -18,14 +18,7 @@ import { describeCause, findAuthCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
-import {
-    isSubAgentEvent,
-    readAskPart,
-    readPlanCard,
-    readChildSessionStarted,
-    readRunCard,
-    subAgentActivityLabel,
-} from "../../modules/harness/chat_printer.ts";
+import { isSubAgentEvent, readAskPart, readPlanCard, readChildSessionStarted, readRunCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation } from "../../modules/harness/artifact_open.ts";
 import {
     buildChatSession,
@@ -102,15 +95,14 @@ export type UIMessage = {
     interrupted?: boolean;
 };
 
-// The most-recent turns the UI mounts. Layout cost scales with mounted message count (the scrollbox
-// clips painting, not layout), so we cap what's mounted rather than virtualize — 200 turns ≈ 100
-// exchanges, comfortably more than a screenful. Older turns stay in the pg thread; just not mounted.
+// The most-recent MESSAGES the UI mounts. Layout cost scales with mounted message count (the
+// scrollbox clips painting, not layout), so we cap what's mounted rather than virtualize — 200
+// messages ≈ 100 exchanges, comfortably more than a screenful. Older turns stay in the pg thread;
+// just not mounted.
 //
-// One constant, two units by design: it caps the LIVE store by MESSAGES (`pushUserMessage`/
-// `startAssistantTurn` shift once the store exceeds it) and doubles as `loadPage`'s `perPage`, which
-// counts TURNS. That coupling is load-bearing: `loadPage` clamps `perPage` to 200, so MESSAGE_CAP
-// must never exceed 200 — a larger value would silently drop the turns past the clamp on each page,
-// and `loadMessages` would mount a window missing the thread's tail rather than error.
+// One unit throughout: the live store shifts once it exceeds this (`pushUserMessage` /
+// `startAssistantTurn`), and `loadMessages` slices the replayed transcript to the same count. The
+// store's read imposes no ceiling of its own, so this is free to move.
 const MESSAGE_CAP = 200;
 
 const [messages, setMessages] = createStore<UIMessage[]>([]);
@@ -1134,8 +1126,8 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
 export type LoadSeams = {
     /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
     readonly runtime: () => HarnessRuntime | null;
-    /** One turn-paginated page of the thread. Real: `createThreadHistory(pool).loadPage`. */
-    readonly loadPage: (pool: Pool, threadId: string, page: number, perPage: number) => ReturnType<ThreadHistory["loadPage"]>;
+    /** Every turn of the thread. Real: `createThreadHistory(pool).loadAll`. */
+    readonly loadAll: (pool: Pool, threadId: string) => ReturnType<ThreadHistory["loadAll"]>;
     /**
      * Adapt the harness's stored display projections to the local conversation types.
      *
@@ -1149,7 +1141,7 @@ export type LoadSeams = {
 
 const realLoadSeams: LoadSeams = {
     runtime: harnessRuntime,
-    loadPage: (pool, threadId, page, perPage) => createThreadHistory(pool).loadPage(threadId, page, perPage),
+    loadAll: (pool, threadId) => createThreadHistory(pool).loadAll(threadId),
     toCortex: storedMessagesToCortex,
 };
 
@@ -1179,15 +1171,13 @@ let loadedSessionId: string | null = null;
 
 /**
  * Load a session's transcript from the pg thread history, replacing whatever was mounted.
- * The thread id equals the session id. `loadPage` paginates by whole TURNS; page 0 reveals
- * the turn `total`. When the thread spans more than one page we take the last TWO pages (reusing page
- * 0 when it is one of them, never re-reading it) and concatenate their rows so a thread that has just
- * crossed a page boundary still mounts a full window — fetching only the last page would strand the
- * store on the boundary's remainder (a 201-turn thread would show the single 201st turn). The
- * concatenated rows map to UIMessages, then a trailing {@link MESSAGE_CAP} slice keeps the newest
- * MESSAGES. Note the unit shift: pages window TURNS, the trailing slice caps MESSAGES (the live-append
- * cap's unit). A missing pg thread (legacy session, or the runtime not yet booted) renders empty —
- * correct and expected: the legacy SQLite transcript is frozen and not shown here.
+ * The thread id equals the session id. One `loadAll` read yields every turn; the trailing
+ * {@link MESSAGE_CAP} slice keeps the newest MESSAGES, which is the window the TUI mounts. Reading
+ * the whole thread costs no more than reading part of it — the store selects and parses every row of
+ * a thread either way — so the window is taken here rather than negotiated with the store.
+ *
+ * A missing pg thread (legacy session, or the runtime not yet booted) renders empty — correct and
+ * expected: the legacy SQLite transcript is frozen and not shown here.
  *
  * Concurrency: each call claims a {@link loadGeneration} token at entry and re-checks it after every
  * await; a load superseded by a newer swap silently drops rather than writing a stale transcript.
@@ -1197,52 +1187,25 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
     if (!runtime) return;
     const myLoad = ++loadGeneration;
 
-    const firstRes = await seams.loadPage(runtime.pool, sessionId, 0, MESSAGE_CAP);
-    if (myLoad !== loadGeneration) return; // a newer swap started while this page was in flight — drop it
-    if (firstRes.isErr()) {
-        setErrorMsg(`Failed to load the conversation: ${firstRes.error.type}`);
+    const res = await seams.loadAll(runtime.pool, sessionId);
+    if (myLoad !== loadGeneration) return; // a newer swap started while the read was in flight — drop it
+    if (res.isErr()) {
+        setErrorMsg(`Failed to load the conversation: ${res.error.type}`);
         setChatStatus("error");
         return;
     }
-    const firstPage = firstRes.value;
-
-    // The window is the last one or two TURN pages. `total` counts turns; `MESSAGE_CAP` is the per-page
-    // turn budget (clamped to 200 inside `loadPage`). One page holds the whole thread; past that, pages
-    // [lastPage-1, lastPage] give a full newest window across the boundary. Page 0 is already in hand,
-    // so it is reused (never re-read) when it is one of the two — the only overlap possible, since 0 is
-    // in the window iff lastPage === 1.
-    const lastPage = Math.max(0, Math.ceil(firstPage.total / MESSAGE_CAP) - 1);
-    const windowPages = lastPage === 0 ? [0] : [lastPage - 1, lastPage];
-
-    const rowPages: (typeof firstPage.messages)[] = [];
-    for (const p of windowPages) {
-        if (p === 0) {
-            rowPages.push(firstPage.messages);
-            continue;
-        }
-        const res = await seams.loadPage(runtime.pool, sessionId, p, MESSAGE_CAP);
-        if (myLoad !== loadGeneration) return;
-        if (res.isErr()) {
-            setErrorMsg(`Failed to load the conversation: ${res.error.type}`);
-            setChatStatus("error");
-            return;
-        }
-        rowPages.push(res.value.messages);
-    }
-    const rows = rowPages.flat();
 
     // Re-checked with no await in between, deliberately: this is the invariant the generation token
     // exists for — a superseded load must never reach the store — and stating it at the write itself
     // keeps it true if an await is ever reintroduced above.
     if (myLoad !== loadGeneration) return;
-    // Trailing cap is in MESSAGES (see the unit note in {@link loadMessages}'s doc and on
-    // MESSAGE_CAP): two full turn pages can carry more than MESSAGE_CAP messages, so keep only the
-    // newest MESSAGE_CAP so the mounted window matches the live-append cap. Record the session this
-    // load mounted so `send` knows the history is already on screen and skips its post-turn reload.
+    // The cap is in MESSAGES, matching the unit the live append caps by, and it lands after replay
+    // because replay is what produces messages. Record the session this load mounted so `send` knows
+    // the history is already on screen and skips its post-turn reload.
     //
-    // No error branch: the read cannot fail. It maps stored projections and touches neither the
-    // database nor the filesystem, so the only failure this function still reports is a page read's.
-    const replayed = seams.toCortex(rows);
+    // No error branch: the replay cannot fail. It maps stored projections and touches neither the
+    // database nor the filesystem, so the only failure this function still reports is the read's.
+    const replayed = seams.toCortex(res.value.flat());
     const mounted = replayed.map((m) => cortexToUiMessage(m, sessionId, analysisId)).slice(-MESSAGE_CAP);
     setMessages(mounted);
     loadedSessionId = sessionId;

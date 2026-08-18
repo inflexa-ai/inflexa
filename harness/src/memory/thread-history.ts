@@ -147,13 +147,6 @@ export interface MessagePage {
     readonly hasMore: boolean;
 }
 
-/** A thread's whole transcript, as returned by `loadAll`. `total` counts TURNS;
- *  `messages` holds their flattened rows. No window, so no `hasMore`. */
-export interface ThreadTranscript {
-    readonly messages: StoredMessage[];
-    readonly total: number;
-}
-
 /**
  * The result of `retractLastTurn`. `retracted` carries `messages` — the number
  * of rows removed — so a caller can assert exactly what came off the tail. The
@@ -217,9 +210,15 @@ export interface ThreadHistory {
      */
     loadPage(threadId: string, page: number, perPage: number): ResultAsync<MessagePage, DbError>;
     /**
-     * Return a thread's ENTIRE transcript oldest-first for UI display — the
+     * Return a thread's ENTIRE transcript oldest-first, grouped into turns — the
      * unwindowed form of `loadPage`, and not token-windowed (that is
      * `loadRecent`'s job for the agent loop).
+     *
+     * Grouped rather than flat because the grouping is what the read computes and
+     * what a turn-count means, and `.flat()` recovers the rows in `seq` order for
+     * a display replay. The reverse does not hold: a flat return would make a
+     * caller that wants the tail turn, or the newest N turns, re-find boundaries
+     * this read already found.
      *
      * Prefer this over `loadPage` whenever the caller wants the whole thread.
      * The read costs the same either way: `loadPage` selects every row of the
@@ -228,7 +227,7 @@ export interface ThreadHistory {
      * the full read once per page, and a caller that stops early silently
      * drops the tail, `perPage` being clamped to 200.
      */
-    loadAll(threadId: string): ResultAsync<ThreadTranscript, DbError>;
+    loadAll(threadId: string): ResultAsync<StoredMessage[][], DbError>;
     /**
      * Remove the thread's most recent turn — every row from the last
      * genuine-user-start `seq` onward — in a single transaction.
@@ -709,11 +708,8 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         });
     }
 
-    function loadAll(threadId: string): ResultAsync<ThreadTranscript, DbError> {
-        return tryQuery("thread-history.loadAll", async () => {
-            const turns = await readTurns(threadId);
-            return { messages: turns.flat(), total: turns.length };
-        });
+    function loadAll(threadId: string): ResultAsync<StoredMessage[][], DbError> {
+        return tryQuery("thread-history.loadAll", () => readTurns(threadId));
     }
 
     function retractLastTurn(threadId: string): ResultAsync<RetractOutcome, DbError> {

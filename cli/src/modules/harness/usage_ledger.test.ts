@@ -234,8 +234,10 @@ describe("a chat turn's calls land in the local ledger", () => {
             appendTurn: () => okAsync(undefined),
             loadRecent: () => okAsync([]),
             loadPage: () => okAsync({ messages: [], total: 0, page: 1, perPage: 200, hasMore: false }),
+            loadAll: () => okAsync([]),
             retractLastTurn: () => okAsync({ kind: "empty-thread" }),
             latestSeq: () => okAsync(null),
+            latestTurnAt: () => okAsync(null),
             countUserTurnsAfter: () => okAsync(0),
         };
 

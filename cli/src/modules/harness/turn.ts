@@ -494,18 +494,18 @@ const realHealSeams: HealSeams = { history: createThreadHistory };
  * silently destroying real history to undo something already undone. Re-reading the tail first turns
  * that into a no-op: if the orphan is gone, the tail is an answered turn and the heal declines.
  *
- * Two whole-thread reads (`loadPage` reads every row and slices by turn, so the first call is what
- * yields the turn count the second one indexes with) are affordable precisely because this path is
- * reached only after a database fault, never on a healthy retract.
+ * One whole-thread read. `loadAll` hands back the grouping it already computed, so the tail turn is
+ * the last element rather than a second read indexed by a count the first one yielded. The full read
+ * is affordable precisely because this path is reached only after a database fault, never on a
+ * healthy retract.
  */
 export function healTailOrphan(pool: Pool, threadId: string, seams: HealSeams = realHealSeams): ResultAsync<HealOutcome, DbError> {
     const history = seams.history(pool);
-    return history.loadPage(threadId, 0, 1).andThen((first) => {
-        if (first.total === 0) return okAsync<HealOutcome, DbError>({ kind: "empty-thread" });
-        return history.loadPage(threadId, first.total - 1, 1).andThen((tail) => {
-            const only = tail.messages.length === 1 ? tail.messages[0] : undefined;
-            if (!only || only.message.role !== "user") return okAsync<HealOutcome, DbError>({ kind: "not-orphaned" });
-            return history.retractLastTurn(threadId);
-        });
+    return history.loadAll(threadId).andThen((turns) => {
+        const tail = turns.at(-1);
+        if (!tail) return okAsync<HealOutcome, DbError>({ kind: "empty-thread" });
+        const only = tail.length === 1 ? tail[0] : undefined;
+        if (!only || only.message.role !== "user") return okAsync<HealOutcome, DbError>({ kind: "not-orphaned" });
+        return history.retractLastTurn(threadId);
     });
 }
