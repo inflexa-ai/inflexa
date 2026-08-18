@@ -43,6 +43,12 @@ const prepareNotFound: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: 
 /** A `run` seam that finishes cleanly, appending one assistant message to the loop. */
 const runOk: ChatTurnSeams["run"] = (_agent, initial) =>
     Promise.resolve({ messages: [...initial, assistantMessage], finish: { reason: "stop", cappedOut: false, truncationRecoveries: 0 } });
+/** A `run` seam that resolves a `content-filter` finish — the model declined and stopped. */
+const runFiltered: ChatTurnSeams["run"] = (_agent, initial) =>
+    Promise.resolve({
+        messages: [...initial, assistantMessage],
+        finish: { reason: "content-filter", rawFinishReason: "refusal", cappedOut: false, truncationRecoveries: 0 },
+    });
 /**
  * A `run` seam that RESOLVES an interrupted turn: the streaming wrapper surfaces the abort as a
  * resolved "aborted" finish carrying the partial loop output (here one partial assistant message).
@@ -197,6 +203,20 @@ describe("runChatTurn", () => {
         // A turn that reported nothing carries no `turnUsage` KEY, not one holding `undefined` — the
         // engine spreads it conditionally so absence has one representation all the way to storage.
         expect(appended[0]?.turn && "turnUsage" in appended[0].turn).toBe(false);
+    });
+
+    test("a content-filter finish persists like ok and returns filtered with the endpoint's word", async () => {
+        const { history, appended } = recordingHistory();
+        const outcome = await runWith({ prepare: prepareOk, run: runFiltered, history, signal: new AbortController().signal });
+        expect(outcome.kind).toBe("filtered");
+        if (outcome.kind === "filtered") {
+            expect(outcome.fallbackText).toBe("the answer");
+            expect(outcome.rawFinishReason).toBe("refusal");
+            expect(outcome.appendError).toBeUndefined();
+        }
+        // The refusal keeps the ok path's persistence: the reply and its display projection land.
+        expect(appended[0]?.turn.modelMessages).toEqual([userMessage, assistantMessage]);
+        expect(appended[0]?.turn.displayMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
     });
 
     test("a resolved aborted finish persists [userMessage, ...partial] and returns aborted", async () => {

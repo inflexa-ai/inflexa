@@ -898,9 +898,9 @@ export function turnFailureMessage(cause: unknown): string {
  * flush the streamed text (or the engine's `fallbackText` on a delta-less turn), close any open tool
  * chip, stamp what the turn cost (its duration and, when the run reported one, its token rollup),
  * surface an append fault non-fatally, and set the coarse status.
- * `failed`/`prepare_failed`/`thread_gone`/`agent_unresolved` also raise the error banner with an
- * actionable line; `aborted` returns to idle with no error (the user cancelled), having flushed what
- * streamed. `prepare_failed`/`thread_gone`/`agent_unresolved` bail before the loop, so they pop the
+ * `filtered`/`failed`/`prepare_failed`/`thread_gone`/`agent_unresolved` also raise the error banner
+ * with an actionable line; `aborted` returns to idle with no error (the user cancelled), having flushed
+ * what streamed. `prepare_failed`/`thread_gone`/`agent_unresolved` bail before the loop, so they pop the
  * empty assistant bubble instead.
  */
 function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number): void {
@@ -930,6 +930,30 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             stampTurnCost(assistantId, startedAt, outcome.turnUsage);
             reportAppendError(outcome.appendError);
             setChatStatus("idle");
+            return;
+        case "filtered":
+            // A refusal flushes what it carried the way `ok` does (the reply may hold partial
+            // prose), then raises the banner: the turn ended without an answer, and only a
+            // model change can unblock it, so the user must see why it stopped.
+            if (streamText().length === 0 && outcome.fallbackText.trim().length > 0) {
+                if (streamPartId() === null) beginStreamSegment();
+                setStreamText(outcome.fallbackText);
+            }
+            commitStream();
+            drainOpenTools();
+            stampTurnCost(assistantId, startedAt, outcome.turnUsage);
+            // No raw cause rides on `filtered`; keep a structured stand-in so the details
+            // dialog shows the endpoint's word rather than an empty view.
+            setLastTurnFailure({
+                type: "content_filter",
+                ...(outcome.rawFinishReason !== undefined ? { rawFinishReason: outcome.rawFinishReason } : {}),
+                message: "The model declined this request and stopped the turn.",
+            });
+            setErrorMsg(
+                `The model declined this request and stopped the turn (content filter). Switch the chat model ("Switch chat model" in the command palette), then send the message again. — ${detailsHint()}`,
+            );
+            reportAppendError(outcome.appendError);
+            setChatStatus("error");
             return;
         case "aborted":
             // An aborted turn that produced nothing leaves NO empty assistant shell — the user message
@@ -1561,7 +1585,7 @@ function closeTurnState(): void {
 
 /**
  * Whether the aborted turn actually LANDED an orphan turn on the thread — the precondition for running
- * the durable retract. `ok`/`aborted`/`failed` reach `runAgent` and append unconditionally, so their
+ * the durable retract. `ok`/`filtered`/`aborted`/`failed` reach `runAgent` and append unconditionally, so their
  * orphan is on the tail iff the append did not fault; `prepare_failed`/`thread_gone`/`agent_unresolved`
  * bail BEFORE `appendTurn`, so no orphan exists. Removing the tail when none of this turn's rows are
  * there would delete an EARLIER turn's real history — hence the gate.
@@ -1569,6 +1593,7 @@ function closeTurnState(): void {
 function turnAppendLanded(outcome: TurnOutcome): boolean {
     switch (outcome.kind) {
         case "ok":
+        case "filtered":
         case "aborted":
         case "failed":
             return outcome.appendError === undefined;
