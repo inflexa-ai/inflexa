@@ -334,6 +334,15 @@ export const ReportSessionStartedPartSchema = z.object({
     parentThreadId: z.string(),
 });
 
+// ── Report Rendered ────────────────────────────────────────────────
+
+export const ReportRenderedPartSchema = z.object({
+    type: z.literal("data-report-rendered"),
+    id: z.string(),
+    renderedAt: z.string(),
+    title: z.string().optional(),
+});
+
 // ── Union ───────────────────────────────────────────────────────────
 
 export const CortexChatPartSchema = z.discriminatedUnion("type", [
@@ -355,4 +364,5 @@ export const CortexChatPartSchema = z.discriminatedUnion("type", [
     RunCompletedPartSchema,
     RunFailedPartSchema,
     ReportSessionStartedPartSchema,
+    ReportRenderedPartSchema,
 ]);

@@ -18,12 +18,13 @@
 import { validateUIMessages, type DataUIPart, type UIMessage, type UIMessagePart } from "ai";
 import { z } from "zod";
 
-import type { AskPart, FileReferencePart, PlanPart, PresentationPart, ReportSessionStartedPart, RunCardPart } from "../contracts/chat-parts.js";
+import type { AskPart, FileReferencePart, PlanPart, PresentationPart, ReportRenderedPart, ReportSessionStartedPart, RunCardPart } from "../contracts/chat-parts.js";
 import {
     AskPartSchema,
     FileReferencePartSchema,
     PlanPartSchema,
     PresentationPartSchema,
+    ReportRenderedPartSchema,
     ReportSessionStartedPartSchema,
     RunCardPartSchema,
 } from "../contracts/schemas/chat-parts.js";
@@ -50,6 +51,7 @@ export type ConversationUIData = {
     "file-reference": Payload<FileReferencePart>;
     ask: Payload<AskPart>;
     "report-session-started": Payload<ReportSessionStartedPart>;
+    "report-rendered": Payload<ReportRenderedPart>;
 };
 
 export interface ConversationDisplayMetadata {
@@ -96,6 +98,7 @@ const dataSchemas = {
     "file-reference": FileReferencePartSchema.omit({ type: true }).strict(),
     ask: AskPartSchema.omit({ type: true }).strict(),
     "report-session-started": ReportSessionStartedPartSchema.omit({ type: true }).strict(),
+    "report-rendered": ReportRenderedPartSchema.omit({ type: true }).strict(),
 };
 
 export interface StoredDisplayEnvelope {
