@@ -33,8 +33,9 @@ Two facts constrain the redesign more than anything else:
   own QC.
 - Removing the sandbox from the profile path. The agent keeps its full toolset.
 - The sandbox reaper owner-label round-trip and the provenance socket `sun_path` overflow. Both are
-  prerequisites for a profile whose sandbox outlives 10 minutes and both are in progress on
-  `fix/sandbox-owner-annotation-provenance-socket`.
+  real defects tracked separately, and neither gates this change: the reaper reaps on a ten-minute
+  creation grace, which the 25-minute profile that exposed it reached and a profile finishing in
+  minutes does not.
 - Cortex host changes (`managed/http/analyses.ts`). Separate repo, separate change.
 
 ## Decisions
@@ -83,20 +84,43 @@ the number of subjects, an LLM must not be authoring it.** The `.max()` caps on 
 are what make this enforceable — a model that enumerates members hits a validation error and is told
 to group, so the contract teaches the behaviour instead of the prompt requesting it.
 
-### The scan runs in the sandbox
+### The scan is a tool, and most of it needs no sandbox
 
-An earlier draft split the scan into a host-side tier (walk, stat, magic bytes — bounded reads, no
-decoding) and a sandbox tier (header decode). That split existed for exactly one reason: decoding
-untrusted, user-uploaded bytes — gzip, HDF5, PDF — inside the long-lived multi-tenant Cortex pod is
-an attack surface, and a parser CVE there is far worse than in an ephemeral sandbox.
+Three questions were conflated in earlier drafts — where the scan's logic lives, where it executes,
+and how the agent invokes it. They are independent, and separating them collapses the design.
 
-Keeping the sandbox removes the reason for the split, so the design gets simpler rather than more
-complex: **one pass at full fidelity** — walk, stat, magic bytes, *and* header decode — in a single
-deterministic exec. The agent also keeps its full toolset and can drill into anything the scan
-missed.
+The scan decomposes by what each part touches:
 
-The cost accepted: sandbox provisioning (~2 min) stays on the profile path, and the profile remains
-exposed to the reaper and deadline bugs until those land separately.
+| Part | Touches | Placement |
+|-|-|-|
+| Walk, stat, extension chain | Names and metadata | Host — `WorkspaceFilesystem.list`/`stat`, which already exist |
+| Magic-byte format detection | A bounded byte prefix, compared against a table | Host — a bounded read is not a decode |
+| Tokenisation, kinds, axes, key-set overlap, unmatched bucket, coverage | Nothing but names and sizes already collected | Host — pure TypeScript |
+| Header readout (gzip member, HDF5 root keys, document structure) | A **decoder** over untrusted bytes | Sandbox |
+
+Only the last row needs the sandbox, and the security argument is specific to it: a bounded read
+into a buffer is safe anywhere, but zlib, HDF5, and PDF *parsers* over user-supplied bytes inside
+the long-lived multi-tenant host process are an attack surface an ephemeral sandbox is meant to
+contain.
+
+Two consequences follow, and both are large:
+
+- **Header decoding is O(kinds), not O(files).** Grouping needs only names and sizes, so kinds and
+  axes are derived before any decode. The scan then enriches each kind by decoding **one example
+  member** — roughly four decodes for the 3513-file case, against 3513 in the earlier draft.
+- **There is no scan script to ship.** The logic is harness TypeScript, unit-testable without a
+  container, on the normal release path. The only sandbox interaction is a handful of ordinary
+  execs through the existing `runSandboxExec` path. This removes the `sandbox-base` image
+  dependency entirely — the image is on a manual, per-environment release (`sandbox.image.tag`,
+  not covered by `just promote`), and a design requiring a new binary there would have been gated
+  on it.
+
+`scan_inputs` is therefore an ordinary `defineTool`: `execute` runs the host-side walk and grouping
+directly and reaches into the sandbox only for per-kind enrichment. The agent keeps its full
+toolset and can drill into anything the scan missed.
+
+One implementation note: magic-byte detection needs raw bytes, and `WorkspaceFilesystem.readFile`
+is line- and text-oriented. The seam likely needs a bounded raw-byte read alongside it.
 
 ### The manifest is both injected and exposed
 
@@ -166,10 +190,11 @@ record (WHICH files)" framing in its docstring is aspirational; nothing reads it
   explicit `unmatched` bucket carrying a count and a sample, and the `kinds` cap forces it.
 - **Coverage in the staleness predicate could re-profile forever** on a dataset that legitimately
   resists classification → coverage must not drive unbounded auto-retrigger; see Open Questions.
-- **Scan cost at very large n.** Decoding headers for 100k files is not free → the scan reports
-  truncation rather than silently sampling, and the deadline is raised.
-- **Provisioning stays on the profile path** by keeping the sandbox → accepted; the alternative
-  traded it for parsing untrusted bytes in the Cortex pod.
+- **Scan cost at very large n.** Header decode is O(kinds), but the walk and stat pass is still
+  O(files) → the scan reports truncation rather than silently sampling; the threshold is open.
+- **A bounded raw read still crosses into the host.** Magic-byte detection reads a byte prefix of an
+  untrusted file into the Cortex process → the read is bounded and no decoder runs on it; every
+  parser stays sandboxed, which is where the actual exposure was.
 
 ## Migration Plan
 
@@ -177,17 +202,40 @@ No data migration and no backfill: existing rows stay valid and render through t
 An existing profile is not invalidated by this change — including poor ones like the 49/3513 case,
 which needs an explicit re-profile because it reads as fresh under today's predicate.
 
-Deploy order: the reaper/provenance prerequisites land first, then a harness release, then Cortex
-bumps the dependency. The Cortex-side `analyses.ts` fixes and the Lumen check for the capped `files`
-response follow independently.
+Deploy order: a harness release, then Cortex bumps the dependency. Nothing in `sandbox-base` changes,
+so the manual image release path is not involved. The Cortex-side `analyses.ts` fixes and the Lumen
+check for the capped `files` response follow independently.
+
+## Resolved Decisions
+
+- **Caps**: `kinds` 30, `axes` 8, `files` 50. No legacy analysis carries more individually described
+  files than the write-path cap, so the read/write asymmetry raised earlier is not a live concern.
+- **Scan placement**: settled above — host-side walk and grouping, sandbox only for O(kinds) header
+  decode. No script ships in `sandbox-base`.
+- **Whole-profile deadline**: `DEFAULT_DEADLINE_MS` becomes 20 minutes.
+- **Step budget**: `defaultMaxSteps` stays at 85. Output size is now bounded by the schema caps
+  rather than by the step budget, so headroom costs nothing and a tighter budget would only risk
+  salvaging a profile that was about to finish. The stale comment justifying 85 as "one programmatic
+  pass per input file" is removed, since that strategy is.
+- **Coverage does not auto-retrigger.** It surfaces on `inspect_data_profile` and the ledger. Driving
+  `decideDataProfileAction` from it would re-profile a legitimately unclassifiable input set on every
+  parity check, and bounding that is a separate design.
+- **Entity attribute join is deferred, not dropped.** Because the index is a pure projection (below),
+  adding metadata-sheet attributes later is a second input to the projection and a re-index — no
+  migration and no re-profile.
+
+## The index is a projection, not an artifact
+
+The index is a pure function of the manifest crossed with the submitted kinds: for each kind, for
+each member, template the kind's description with the member's axis values. It has no persisted
+representation of its own and nothing derives from it.
+
+That is worth stating because of what it licenses. The index can be rebuilt at any time by
+re-running the scan and reading `kinds` off the existing profile — no model call, no re-profile.
+Improving the template, adding a tier, or folding in entity attributes later are all re-projections,
+so none of them need a migration and none of them are decisions this change has to get right.
 
 ## Open Questions
 
-1. **Cap values** for `kinds`, `axes`, and `files`. Starting points ~30 / ~8 / ~50; the `files` cap
-   must exceed what legacy rows carry only in the write path, since reads are uncapped.
-2. **Where the scan script lives.** Baking it into `sandbox-base` puts it on a manual, per-environment
-   image release path (`sandbox.image.tag`); writing it to the sandbox at exec time ships on the normal
-   harness path. Leaning write-at-exec for that reason alone.
-3. **Does coverage auto-retrigger, or only surface?** Surfacing it on `inspect_data_profile` and the
-   ledger is unambiguously right; making it drive `decideDataProfileAction` risks a loop and needs a
-   bound before it can.
+1. **Scan behaviour at very large n.** Header decode is now O(kinds), but the walk is still O(files).
+   The threshold at which the scan reports truncation rather than completing is unspecified.

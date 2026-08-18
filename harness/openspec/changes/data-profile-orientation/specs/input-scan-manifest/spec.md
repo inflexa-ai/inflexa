@@ -9,9 +9,20 @@ identified from magic bytes rather than extension alone. For formats the scan re
 it SHALL additionally carry a header readout obtained by reading a bounded prefix — never
 by decoding a file in full.
 
-The scan SHALL run inside the sandbox. Input files are user-supplied and the scan decodes
-them (gzip members, container headers, document structure); performing that decode in the
-long-lived multi-tenant host process is the attack surface the sandbox exists to contain.
+The scan SHALL be exposed as a tool. Its enumeration, format detection, and grouping SHALL
+run in the harness process over the workspace read seam, which is sandbox-independent. Only
+the header readout SHALL run in the sandbox, because it runs a decoder over user-supplied
+bytes and a decoder in the long-lived multi-tenant host process is the exposure the sandbox
+exists to contain. A bounded prefix read compared against a magic-byte table is not a decode
+and SHALL NOT require the sandbox.
+
+Header readout SHALL be performed per kind, not per file: grouping depends only on names and
+sizes, so kinds SHALL be derived before any decode and each kind SHALL be enriched by
+decoding a bounded number of its members. A scan that decoded every file would make the
+enrichment cost scale with input size, which is the cost this capability exists to remove.
+
+The scan SHALL NOT require a binary or script shipped in the sandbox image, so it is
+releasable on the harness's own path.
 
 The scan SHALL be the sole enumeration pass. The profiler agent SHALL NOT be required to
 issue one command per input file to discover structure.
@@ -32,6 +43,53 @@ issue one command per input file to discover structure.
 
 - **WHEN** the scan runs over a tree of 3513 staged files
 - **THEN** it SHALL return one manifest describing all of them in a single execution
+
+#### Scenario: Header decode does not scale with file count
+
+- **GIVEN** a tree of 3513 files forming four kinds
+- **WHEN** the scan runs
+- **THEN** it SHALL decode headers for a bounded number of members per kind
+- **AND** SHALL NOT decode a header per file
+
+### Requirement: The scan recognises the bioinformatics formats the platform accepts
+
+The scan SHALL identify, at minimum, the formats the platform's agents are equipped to
+analyse, so that a kind's `format` is a fact rather than an extension guess:
+
+- **Variants** — VCF, BCF, and their tabix/CSI indexes
+- **Alignments** — SAM, BAM, CRAM, and their indexes
+- **Sequence** — FASTA, FASTQ, and their bgzip-compressed forms
+- **Intervals and annotation** — BED, GFF/GFF3, GTF, WIG, bigWig, bigBed, chain
+- **Matrices and containers** — HDF5, h5ad, loom, Matrix Market with its barcode and feature
+  sidecars, Zarr, RDS
+- **Tabular** — CSV, TSV, and other delimited text with the delimiter sniffed, Parquet, Excel
+- **Genotype** — PLINK bed/bim/fam and pgen/pvar/psam
+- **Chemistry and structure** — SDF, MOL/MOL2, SMILES, PDB, mmCIF
+- **Mass spectrometry** — mzML, mzXML, mzIdentML, MGF
+- **Arrays** — IDAT, CEL
+- **Imaging** — DICOM, NIfTI, OME-TIFF
+- **Documents and config** — PDF, DOCX, Markdown, JSON, YAML
+
+Compression wrappers (gzip, bgzip, zstd, bzip2) SHALL be reported alongside the inner format
+rather than in place of it, because `.vcf.gz` is a VCF and a kind grouped on the wrapper
+would merge unrelated data.
+
+An unrecognised format SHALL be reported as unknown with its extension chain preserved. The
+list is a floor, not a closed set, and an unknown format SHALL NOT prevent a file from
+joining a kind — grouping depends on names and sizes, which are always available.
+
+#### Scenario: A compressed format reports its inner type
+
+- **WHEN** the scan encounters `sample.vcf.gz`
+- **THEN** it SHALL report the format as VCF with a gzip wrapper
+- **AND** SHALL NOT report the format as gzip
+
+#### Scenario: An unknown format still groups
+
+- **GIVEN** 200 files of a format the scan does not recognise, sharing a naming pattern
+- **WHEN** the scan runs
+- **THEN** it SHALL report the format as unknown with the extension chain preserved
+- **AND** SHALL still group them into one kind with its axis
 
 ### Requirement: The scan derives kinds and axes from filenames
 
