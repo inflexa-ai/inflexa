@@ -267,18 +267,13 @@ export interface SandboxIdentity {
  * A sandbox machine the backend is running that Cortex *manages*
  * (`app.kubernetes.io/managed-by=cortex`), enumerated by the reaper for the
  * cluster→registry sweep (see the harness-sandbox-exec spec). `ownerWorkflowId`
- * is null for machines that record no owner at all, which are only reaped past
- * a creation-time grace and only when observably dead.
+ * is the id as minted, so it is usable as a DBOS lookup key; null means the
+ * machine records no owner, and such a machine is reaped only past a
+ * creation-time grace and only when observably dead.
  */
 export interface ManagedSandbox {
     sandboxId: string;
     ownerWorkflowId: string | null;
-    /**
-     * Whether `ownerWorkflowId` is the id as minted, and so usable as a DBOS
-     * lookup key. False when it was recovered from a lossy encoding — a K8s
-     * label written by a prior release — where a failed lookup proves nothing.
-     */
-    ownerIsVerbatim: boolean;
     createdAtMs: number | null;
 }
 

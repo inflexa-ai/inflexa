@@ -18,7 +18,7 @@ const GRACE = 10 * 60_000;
 const NOW = 1_000_000_000;
 
 function managed(sandboxId: string, ownerWorkflowId: string | null, createdAtMs: number | null = NOW): ManagedSandbox {
-    return { sandboxId, ownerWorkflowId, ownerIsVerbatim: ownerWorkflowId !== null, createdAtMs };
+    return { sandboxId, ownerWorkflowId, createdAtMs };
 }
 
 const DEAD: SandboxLiveness = { alive: false, oomKilled: false };

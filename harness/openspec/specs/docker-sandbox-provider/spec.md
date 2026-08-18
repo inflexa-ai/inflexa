@@ -270,13 +270,13 @@ returning each one's `sandboxId`, `ownerWorkflowId`, and creation time, so the
 scheduled reaper (`registerSandboxReaper`) can map a machine back to its owning
 workflow and tear down orphans.
 
-`ownerWorkflowId` is a DBOS lookup key, so every backend SHALL record it verbatim
-and SHALL report whether the value it returns is verbatim (`ownerIsVerbatim`).
-Docker label values are unconstrained, so this backend stores and returns the id
-as given. A backend whose metadata namespace cannot hold the id unaltered — see
-the K8s label cap in the harness-sandbox-exec spec — SHALL record it somewhere
-that can, and SHALL NOT report a rewritten value as verbatim: a lookup that fails
-against a lossy id proves nothing about the owning workflow.
+`ownerWorkflowId` is a DBOS lookup key, so every backend SHALL record and return
+it verbatim, and SHALL report `null` rather than a rewritten value when it holds
+no verbatim id: a lookup that fails against a lossy id proves nothing about the
+owning workflow, so a lossy id is worse than none. Docker label values are
+unconstrained, so this backend stores the id as given. A backend whose chosen
+metadata namespace cannot hold the id unaltered — see the K8s label cap in the
+harness-sandbox-exec spec — SHALL record it in one that can.
 
 #### Scenario: Managed containers are enumerable for the reaper
 
@@ -290,7 +290,12 @@ against a lossy id proves nothing about the owning workflow.
   value cap and carries characters illegal in one
 - **WHEN** `listManagedSandboxes()` is called
 - **THEN** the reported `ownerWorkflowId` SHALL equal the `childWorkflowId` byte for byte
-- **AND** `ownerIsVerbatim` SHALL be true
+
+#### Scenario: A machine recording no owner reports none
+
+- **GIVEN** a managed machine carrying no owner workflow id
+- **WHEN** `listManagedSandboxes()` is called
+- **THEN** the reported `ownerWorkflowId` SHALL be `null`
 
 #### Scenario: Reaper tears down an orphaned machine
 
