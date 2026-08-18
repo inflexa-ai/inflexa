@@ -168,11 +168,9 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(conversation.utilityProvider).toBeDefined();
             expect(conversation.utilityModel).toBeDefined();
             // The conversation bundle carries the local realizations: the configured
-            // templates tree, the read-only report-html skills tree, the
-            // unavailable-preview factory, and the shared launcher.
+            // templates tree, the configured skills tree, and the shared launcher.
             expect(conversation.templatesDir).toBe(templatesDir);
             expect(conversation.skillsDir).toBe(skillsDir);
-            expect(conversation.createPreviewPublisher).toBeInstanceOf(Function);
             expect(conversation.runLauncher.launch).toBeInstanceOf(Function);
             // The Logger seam reaches every conversation tool that takes one — `generate_plan`
             // above all, which drives a whole sub-agent loop and writes no ledger row, so its

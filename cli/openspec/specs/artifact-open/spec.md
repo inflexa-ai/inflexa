@@ -30,22 +30,16 @@ blocked turn.
 ### Requirement: Openable cards resolve their reference at open time
 
 Openable card parts SHALL store the semantic reference from the harness
-contract (analysis-rooted paths, `previewId`/`previewPath`, the embedded
+contract (analysis-rooted paths, the embedded
 echart spec and `dataPath`, the deterministic `pres-` id) and SHALL NOT store
 a resolved location. Resolution to an openable location happens when the user
-opens: `data-file-reference` paths and `data-report-preview` previews resolve
+opens: `data-file-reference` paths resolve
 against `resolveWorkspaceRoot(analysisId)`; `echart`/`svg` presentations
 resolve to their materialized file under the workspace's `presentations/`
 directory. A reference that fails to resolve
 (missing file, workspace desync) SHALL render that entry in a degraded state
 with its path visible, and open attempts on it SHALL produce a notice — never
 an error.
-
-#### Scenario: Report preview opens in the browser
-
-- **GIVEN** a `data-report-preview` card `{ previewId, previewPath: "v3/index.html" }`
-- **WHEN** the user opens it
-- **THEN** the CLI resolves `{workspaceRoot}/previews/{previewId}/v3/index.html` and opens it with the OS opener
 
 #### Scenario: Referenced file is gone
 
@@ -57,7 +51,7 @@ an error.
 `echart` and `svg` presentations SHALL materialize on demand into the analysis
 workspace's reserved `presentations/` directory
 (`{workspaceRoot}/presentations/`, a root-level sibling of `data/`, `runs/`,
-`reports/`, and `previews/`), keyed by the card's deterministic `pres-` id so
+and `reports/`), keyed by the card's deterministic `pres-` id so
 re-emission and re-open are idempotent. `svg` content materializes as an
 `.svg` file. `echart` content materializes as a self-contained HTML shell
 embedding the spec and loading ECharts from a pinned-major CDN URL, with a

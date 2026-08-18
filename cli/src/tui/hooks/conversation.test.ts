@@ -482,21 +482,6 @@ describe("send() drives the adapter + engine", () => {
         expect(card?.folderPath).toBe("runs/r/figures");
     });
 
-    test("data-report-preview-failed becomes a degraded openable card naming the reason", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
-            void emit({
-                type: "data-report-preview-failed",
-                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
-                data: { id: "x", previewId: "p", version: 2, reason: "render timed out" },
-            });
-        });
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const card = findPart((p): p is Extract<Part, { type: "openable-card" }> => p.type === "openable-card");
-        const target = card?.entries[0]?.target;
-        expect(target?.kind).toBe("unavailable");
-        if (target?.kind === "unavailable") expect(target.reason).toBe("render timed out");
-    });
-
     test("copy-on-receive: mutating an emitted echart spec after emit does not corrupt the store", async () => {
         let spec: Record<string, unknown> = {};
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {

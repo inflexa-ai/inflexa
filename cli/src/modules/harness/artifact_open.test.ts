@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { echartHtml, materializeTarget, readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "./artifact_open.ts";
+import { echartHtml, materializeTarget, readFileReference, readPresentation } from "./artifact_open.ts";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { freshDb } from "../../test_support/db.ts";
@@ -67,20 +67,6 @@ describe("readFileReference", () => {
         const out = readFileReference({ id: "g", files: [{ path: "runs/r/out.csv" }] });
         expect(out.entries[0]?.name).toBe("out.csv");
         expect(out.folderPath).toBeUndefined();
-    });
-});
-
-describe("readReportPreview / readReportPreviewFailed", () => {
-    test("a preview resolves against previews/{previewId}/{previewPath}", () => {
-        const out = readReportPreview({ id: "x", previewId: "prv-9", version: 3, title: "Report", previewPath: "v3/index.html", format: "html" });
-        expect(out.entry.name).toBe("Report v3");
-        expect(out.entry.target).toEqual({ kind: "workspace-file", path: "previews/prv-9/v3/index.html" });
-    });
-
-    test("a failed preview is an unavailable entry naming the reason", () => {
-        const out = readReportPreviewFailed({ id: "x", previewId: "p", version: 2, reason: "render timed out" });
-        expect(out.entry.target).toEqual({ kind: "unavailable", reason: "render timed out" });
-        expect(out.entry.caption).toBe("render timed out");
     });
 });
 

@@ -26,7 +26,7 @@ import {
     readRunCard,
     subAgentActivityLabel,
 } from "../../modules/harness/chat_printer.ts";
-import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
+import { readFileReference, readPresentation } from "../../modules/harness/artifact_open.ts";
 import {
     buildChatSession,
     healTailOrphan,
@@ -615,12 +615,6 @@ function renderDataPart(type: `data-${string}`, data: unknown): void {
         case "data-file-reference":
             appendPart(fileReferencePart(data, currentAnalysisId ?? ""));
             return;
-        case "data-report-preview":
-            appendPart(reportPreviewPart(data, currentAnalysisId ?? ""));
-            return;
-        case "data-report-preview-failed":
-            appendPart(reportPreviewFailedPart(data, currentAnalysisId ?? ""));
-            return;
         case "data-report-session-started": {
             appendPart({ id: randomUUIDv7(), type: "report-session", threadId: readReportSessionStarted(data).threadId });
             // The spawn wrote its thread row BEFORE it emitted this part, thus a read now finds the
@@ -690,18 +684,6 @@ function fileReferencePart(data: unknown, analysisId: string): OpenableCardPart 
         entries: view.entries,
         ...(view.folderPath !== undefined ? { folderPath: view.folderPath } : {}),
     };
-}
-
-/** Build the openable-card part for a `data-report-preview`. */
-function reportPreviewPart(data: unknown, analysisId: string): OpenableCardPart {
-    const view = readReportPreview(data);
-    return { id: randomUUIDv7(), type: "openable-card", analysisId, ...(view.title !== undefined ? { title: view.title } : {}), entries: [view.entry] };
-}
-
-/** Build the degraded openable-card part for a `data-report-preview-failed` (naming the reason, nothing to open). */
-function reportPreviewFailedPart(data: unknown, analysisId: string): OpenableCardPart {
-    const view = readReportPreviewFailed(data);
-    return { id: randomUUIDv7(), type: "openable-card", analysisId, entries: [view.entry] };
 }
 
 /** Push the user's turn as its own message, with its text part, re-enforcing the mount cap. */
@@ -1100,12 +1082,6 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
                 break;
             case "data-file-reference":
                 parts.push(fileReferencePart(part, analysisId));
-                break;
-            case "data-report-preview":
-                parts.push(reportPreviewPart(part, analysisId));
-                break;
-            case "data-report-preview-failed":
-                parts.push(reportPreviewFailedPart(part, analysisId));
                 break;
             case "data-report-session-started":
                 parts.push({ id: randomUUIDv7(), type: "report-session", threadId: readReportSessionStarted(part).threadId });
