@@ -41,6 +41,7 @@ import { str256, type Str256 } from "../lib/types.ts";
 import {
     createAnalysis,
     listRecentAnalyses,
+    makeAnalysisFarm,
     renameAnalysisAndMoveWorkspace,
     applyInputsDiff,
     removeInput,
@@ -614,7 +615,10 @@ function NewAnalysisInputsDialog(props: { name: Str256 }): JSX.Element {
                 // exactly the files the user chose — `createAnalysis` enrolls nothing on its own.
                 createAnalysis({ cwd: ws.workingDir, name: props.name, inputPaths: paths }).match(
                     (a) => {
-                        void openAnalysis(ws, a);
+                        // The farm of the analysis is made before the chat opens, because the planner
+                        // names the packages of a plan into it and the planner runs from that chat. A
+                        // farm failure never fails the creation, thus this always reaches the chat.
+                        void makeAnalysisFarm(a.id).then(() => openAnalysis(ws, a));
                         notify({ kind: "info", text: `Created analysis "${a.name}"` });
                     },
                     (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),

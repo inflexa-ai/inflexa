@@ -4,7 +4,7 @@ import { confirm, dieOn, fail, promptText, select } from "../../lib/cli.ts";
 import { getLogger } from "../../lib/log.ts";
 import { str256, type Str256, type IdOrName } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import { createAnalysis, matchAnalysis } from "./analysis.ts";
+import { createAnalysis, makeAnalysisFarm, matchAnalysis } from "./analysis.ts";
 import { resolveContext, describeContext, type ContextFlags } from "./context.ts";
 import { resolveOutputDir } from "./output.ts";
 
@@ -73,6 +73,8 @@ async function promptName(): Promise<Str256> {
 async function startNewTarget(cwd: string): Promise<ChatTarget> {
     const name = await promptName();
     const analysis = createAnalysis({ cwd, name }).match((a) => a, dieOn("Failed to start analysis"));
+    // The farm is made with the analysis, and a farm failure never fails the creation.
+    await makeAnalysisFarm(analysis.id);
     return resolveChatTarget(analysis);
 }
 
@@ -111,6 +113,9 @@ export async function resolveNewTarget(opts: { name?: string; paths: string[]; p
         (a) => a,
         (e) => (e.type === "workspace_unavailable" ? fail(e.message) : fail("Failed to create analysis", e.cause)),
     );
+
+    // The farm is made with the analysis, and a farm failure never fails the creation.
+    await makeAnalysisFarm(analysis.id);
 
     // Creation guaranteed a writable anchor, so this only misses on a same-instant desync.
     const outDir = resolveOutputDir(analysis).match(

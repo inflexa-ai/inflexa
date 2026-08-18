@@ -1,5 +1,7 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { ok, err, type Result } from "neverthrow";
+import { z } from "zod";
 import {
     bootHarness,
     createAskGateway,
@@ -29,6 +31,8 @@ import {
     type ExecuteAnalysisResult,
     type FarmResolution,
     type MachineBudget,
+    type PackageRequest,
+    type PackageRequestOutcome,
     type Pool,
     type RegisterNotificationSweepDeps,
     type RegisterReaperDeps,
@@ -46,8 +50,19 @@ import { createCredentialSource, credentialErrorMessage, type Credential, type C
 import { acquireInstanceLock, releaseInstanceLock, HARNESS_RUNTIME_LOCK_KEY } from "../../lib/lock.ts";
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
+import { readFileResult } from "../../lib/fs.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
-import { analysisFarmPath, composeFarm, describeFarmCompositionError } from "../libs/composition.ts";
+import {
+    analysisFarmPath,
+    describeFarmCompositionError,
+    extendFarm,
+    makeEmptyFarm,
+    readDepsGraph,
+    resolvePackageRequest,
+    type DepsGraph,
+    type PackageRequestRef,
+    type RequestResolutionError,
+} from "../libs/composition.ts";
 import { imagePackagesFile, storePackagesFile, type PoolInventoryGap } from "../libs/packages.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
@@ -285,19 +300,20 @@ async function resolveSandboxEngineOnce(): Promise<Result<ResolvedSandboxEngine,
  * The farm-provider seam realization (`lib-store-provisioning` spec): an analysis id
  * in, the host path of `farms/<analysisId>` out.
  *
- * The provider is where LAZY composition lives. The harness resolves it at each
- * `createSandbox` call, thus the FIRST sandbox action of an analysis makes its farm
- * by construction, and an analysis in which the user only chats gets none. A farm
- * that is already there is returned as it is, so a second sandbox costs one `stat`.
+ * The farm is made WITH its analysis, and it starts empty. Thus the ordinary answer
+ * here is one `stat` of a path that is already there, and the provider composes
+ * nothing: the packages of a farm come from the plan of the analysis and from the
+ * steps, which name them long before and long after this call.
  *
- * A composition failure resolves as `unavailable`, and it carries the reason. The
- * harness then refuses that one sandbox with its `farm_unavailable` state, which is
- * a refusal of one action and never a boot failure.
+ * The provider makes an empty farm when the farm is ABSENT. A user can make an analysis
+ * while the catalog still downloads, and a store that arrived after that would leave the
+ * analysis with no farm forever. An empty farm invents no package set, thus this heals
+ * the miss and it breaks no rule. The provider never takes a closure, because a closure
+ * links what a caller names and this caller names nothing.
  *
- * The reason travels two ways, and the two do not overlap. It rides the refusal for
- * an action that RUNS, and the message of the harness then names it. `composeFarm`
- * also records it for the sandbox gate (`tui/hooks/sandbox_gate.tsx`), which refuses
- * BEFORE an action starts and thus never sees a harness error.
+ * A failure resolves as `unavailable`, and it carries the reason. The harness then
+ * refuses that one sandbox with its `farm_unavailable` state, which is a refusal of
+ * one action and never a boot failure.
  *
  * The provider can only ever name `farms/<analysisId>`, thus it never names the
  * catalog template: an analysis id is a UUIDv7, and the template is `catalog`.
@@ -305,18 +321,180 @@ async function resolveSandboxEngineOnce(): Promise<Result<ResolvedSandboxEngine,
 async function resolveAnalysisFarm(storeRoot: string, analysisId: string): Promise<FarmResolution> {
     const farmPath = analysisFarmPath(storeRoot, analysisId);
     if (existsSync(farmPath)) return { kind: "farm", location: farmPath };
-    const composed = await composeFarm({ storeRoot, analysisId });
-    return composed.match(
-        (composition): FarmResolution => ({ kind: "farm", location: composition.farmPath }),
+    const made = await makeEmptyFarm({ storeRoot, analysisId });
+    return made.match(
+        (farm): FarmResolution => ({ kind: "farm", location: farm.farmPath }),
         (error): FarmResolution => {
             const reason = describeFarmCompositionError(error);
-            harnessLogger("farm-provider").warn("could not compose the package farm of this analysis — the sandbox is refused", {
+            harnessLogger("farm-provider").warn("could not make the package farm of this analysis — the sandbox is refused", {
                 analysisId,
                 farmPath,
                 reason,
             });
             return { kind: "unavailable", reason };
         },
+    );
+}
+
+/** The one field of a farm lock that the extension seam reads: the closure that the farm links right now. */
+const farmClosureSchema = z.object({ store_dirs: z.array(z.string()).default([]) });
+
+/**
+ * The store directories that a farm links right now, read from the lock of that farm.
+ *
+ * The composer writes that record at each link pass, and it publishes no reader of
+ * it. The seam wants the state BEFORE its own extension, because that is what
+ * separates a link that this call made from a link that the farm already held.
+ *
+ * A lock that does not read is an empty answer. The outcome then says `linked` where
+ * it could have said `present`, which is one word coarse and never a wrong
+ * instruction.
+ */
+function farmClosure(farmPath: string): ReadonlySet<string> {
+    return readFileResult(join(farmPath, "lock.json"), "read the lock of the farm").match(
+        (raw) => new Set(JSON.parseWith(raw, farmClosureSchema)?.store_dirs ?? []),
+        () => new Set<string>(),
+    );
+}
+
+/** The text of one request, exactly as the step wrote it. Each outcome carries it back. */
+function requestedText(request: PackageRequest): string {
+    return request.kind === "distribution" ? request.requirement : request.module;
+}
+
+/**
+ * One request in the vocabulary of the pool.
+ *
+ * The two shapes agree today. The map keeps them independent, because the harness
+ * owns the words of a step and the composer owns the words of the store.
+ */
+function packageRequestRef(request: PackageRequest): PackageRequestRef {
+    return request.kind === "distribution" ? { kind: "distribution", requirement: request.requirement } : { kind: "import", module: request.module };
+}
+
+/**
+ * Whether the store could ever acquire the named distribution.
+ *
+ * The store acquires a Python package, and it cannot acquire an R one: the R tracks
+ * arrive with the catalog. Thus a name that only the R track of the pool records is a
+ * dead end, and a mark that said otherwise would send an agent around the same loop
+ * forever.
+ */
+function acquisitionPossibleFor(graph: DepsGraph, name: string): boolean {
+    return !(graph.byName.r.has(name) && !graph.byName.python.has(name));
+}
+
+/**
+ * Why the pool answered one request with nothing, in words that a person reads.
+ *
+ * The reason carries the REMEDY, and the harness never does. An acquisition is a host
+ * action, thus the command that takes it belongs to this embedder: a managed
+ * deployment runs the same harness and has no `inflexa` binary. A remedy in the
+ * harness would name a command that a user there cannot run.
+ */
+function absentOutcome(graph: DepsGraph, request: PackageRequest, error: RequestResolutionError): PackageRequestOutcome {
+    const requested = requestedText(request);
+    switch (error.type) {
+        case "unknown_distribution":
+            return {
+                kind: "absent",
+                requested,
+                reason: `the store holds no package named "${error.name}" — run \`inflexa store add ${error.name}\` to acquire it`,
+                acquisitionPossible: true,
+            };
+        case "unknown_version": {
+            const possible = acquisitionPossibleFor(graph, error.name);
+            return {
+                kind: "absent",
+                requested,
+                reason:
+                    `the store holds "${error.name}" at ${error.available.join(", ")}, and not at ${error.version}` +
+                    (possible
+                        ? ` — run \`inflexa store add ${error.name}==${error.version}\` to acquire that version, or name one of the versions above`
+                        : ", and this store acquires no R package, thus no retry of that version succeeds"),
+                acquisitionPossible: possible,
+            };
+        }
+        case "unknown_import":
+            return {
+                kind: "absent",
+                requested,
+                reason: `no package of the store gives the module "${error.module}" — run \`inflexa store add <package>\` for the package that gives it`,
+                acquisitionPossible: true,
+            };
+        case "malformed_requirement":
+            // No acquisition can answer text that is not a requirement, thus the mark says
+            // so and the reason names the two forms that the pool reads.
+            return { kind: "absent", requested, reason: `"${requested}" is not "name" or "name==version"`, acquisitionPossible: false };
+        default: {
+            // The union is closed, thus the compiler proves that this is unreachable.
+            const unreachable: never = error;
+            throw new Error(`unhandled request resolution error: ${JSON.stringify(unreachable)}`);
+        }
+    }
+}
+
+/**
+ * The farm-extension seam realization (`link_packages`): the requests of one sandbox
+ * step in, one outcome for each request out, in the order of the requests.
+ *
+ * The seam runs in THIS process, beside the tool that calls it. It reads the graph, it
+ * resolves each request against the pool, and it links what resolved. Thus it starts
+ * no container, it opens no network connection, and it starts no `inflexa` child: an
+ * acquisition is a host action, before a run, and it is never a step of a run.
+ *
+ * The graph is read ONE time for the whole batch, and the extension is one call under
+ * the per-farm mutex that {@link extendFarm} takes. A refusal refuses the whole batch,
+ * because the link pass plans the whole extension before it writes anything.
+ */
+export async function linkPackagesIntoFarm(
+    storeRoot: string,
+    analysisId: string,
+    requests: readonly PackageRequest[],
+): Promise<readonly PackageRequestOutcome[]> {
+    const read = readDepsGraph(storeRoot);
+    if (read.isErr()) {
+        // A store with no readable graph answers nothing at all. An acquisition cannot
+        // heal that, thus each request is a dead end and the reason names the store.
+        const reason = describeFarmCompositionError(read.error);
+        return requests.map((request) => ({ kind: "absent", requested: requestedText(request), reason, acquisitionPossible: false }));
+    }
+    const graph = read.value;
+
+    const resolutions = requests.map((request) => ({ request, resolved: resolvePackageRequest(graph, packageRequestRef(request)) }));
+    const roots = [
+        ...new Set(
+            resolutions.flatMap(({ resolved }) =>
+                resolved.match(
+                    (answer) => [answer.storeDir],
+                    () => [],
+                ),
+            ),
+        ),
+    ];
+
+    // The closure of the farm BEFORE the extension, which is what tells `present` from
+    // `linked`. A batch that resolved nothing extends nothing, thus it reads nothing.
+    const linkedAlready = roots.length === 0 ? new Set<string>() : farmClosure(analysisFarmPath(storeRoot, analysisId));
+    const extended = roots.length === 0 ? null : await extendFarm({ storeRoot, analysisId, roots });
+
+    return resolutions.map(({ request, resolved }) =>
+        resolved.match(
+            (answer): PackageRequestOutcome => {
+                const requested = requestedText(request);
+                if (extended === null || extended.isOk()) {
+                    return { kind: linkedAlready.has(answer.storeDir) ? "present" : "linked", requested, name: answer.name, version: answer.version };
+                }
+                const error = extended.error;
+                // A version collision names the two store directories, and the tool reports
+                // both and stops. Each resolved request of the batch carries it, because the
+                // extension refused whole and the farm stayed exactly as it was.
+                return error.type === "version_collision"
+                    ? { kind: "collision", requested, name: error.name, linkedDirectory: error.existing, requestedDirectory: error.incoming }
+                    : { kind: "absent", requested, reason: describeFarmCompositionError(error), acquisitionPossible: false };
+            },
+            (failure) => absentOutcome(graph, request, failure),
+        ),
     );
 }
 
@@ -960,6 +1138,12 @@ async function bootHarnessRuntimeOnce(
             packagesFile,
             imagePackagesFile,
             bioKeys: cfg.bioKeys,
+            // The farm-extension seam, which gives each sandbox agent the `link_packages`
+            // tool. It links from the pool of the same store root that `farmSource` reads,
+            // thus a step reaches a package that the plan did not name. It acquires
+            // nothing: this call runs in the harness host process, and an acquisition is a
+            // host action before a run.
+            extendAnalysisFarm: (analysisId, requests) => linkPackagesIntoFarm(env.libStoreDir, analysisId, requests),
         };
 
         // Registration cohort — ONE pre-launch call. `assembleCoreRuntime`
@@ -1021,6 +1205,11 @@ async function bootHarnessRuntimeOnce(
             resolveWorkspaceRoot,
             runAuthorizer,
             runLauncher,
+            // The same seam realization the sandbox agents get, on the chat path.
+            // `execute_analysis` links the packages that the plan names before it
+            // launches the run. Thus an analysis that starts from chat mounts the
+            // closure the planner asked for, exactly as `inflexa run --plan` does.
+            extendAnalysisFarm: composition.extendAnalysisFarm,
             createPreviewPublisher: async () => new UnavailablePreviewPublisher(),
             bioKeys: cfg.bioKeys,
             templatesDir: cfg.templatesDir,

@@ -49,10 +49,21 @@ import {
 
 import { describeCause } from "../../lib/cause.ts";
 import { fail, dieOn, failViaShutdown } from "../../lib/cli.ts";
+import { env } from "../../lib/env.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
+import {
+    describeFarmCompositionError,
+    extendFarm,
+    readDepsGraph,
+    resolvePackageRequest,
+    type DepsGraph,
+    type FarmCompositionError,
+    type RequestResolutionError,
+    type ResolvedRequest,
+} from "../libs/composition.ts";
 import { stageInputs } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { validatePlanFile, persistPlan, type PlanIntakeError } from "./plan_intake.ts";
@@ -288,6 +299,228 @@ export async function triggerAnalysisRun(
     return ok({ kind: "started", runId });
 }
 
+// ── The packages of a plan ───────────────────────────
+
+/**
+ * One requirement of a plan and the store directory of the pool that answers it.
+ *
+ * The requirement rides beside the answer because the two are different texts. The
+ * step wrote `polars==1.2`, and the pool answers with a canonical name, a resolved
+ * version, and a store directory. A refusal must quote what the step wrote.
+ */
+export type PlanPackageMatch = {
+    /** The requirement exactly as the step of the plan wrote it. */
+    readonly requirement: string;
+    /** The store directory of the pool that answers it, with its canonical name and its resolved version. */
+    readonly answer: ResolvedRequest;
+};
+
+/**
+ * One requirement of a plan that did not reach the farm, and why.
+ *
+ * The two kinds are two different faults, and the user acts on each one differently.
+ * `not_in_pool` is a package that this machine never acquired, thus the user acquires
+ * it and the run waits on that answer. `link_failed` is a package that the pool holds
+ * and that the link pass did not write, thus it is a fault of the host and never a
+ * gap in the catalog.
+ *
+ * A link pass writes the whole batch or none of it, thus one `link_failed` names each
+ * requirement of that batch. A refusal for each one would repeat one reason many
+ * times.
+ */
+export type PlanPackageRefusal =
+    | {
+          readonly kind: "not_in_pool";
+          /** The requirement exactly as the step of the plan wrote it. */
+          readonly requirement: string;
+          /**
+           * The track that the pool knows the name under, or null when no track holds
+           * the name. The graph is the one host record of the track of a package, thus
+           * a guess from the spelling of a name would be worse than no reason at all.
+           */
+          readonly track: ResolvedRequest["track"] | null;
+          readonly cause: RequestResolutionError;
+      }
+    | {
+          readonly kind: "link_failed";
+          /** Each requirement of the batch that the link pass refused. */
+          readonly requirements: readonly string[];
+          readonly cause: FarmCompositionError;
+      };
+
+/** Why the packages of a plan did not reach the farm of the analysis. */
+export type PlanPackageError =
+    /** The resolved dependency graph is absent or unusable, thus no requirement can resolve. */
+    | { readonly type: "pool_unreadable"; readonly cause: FarmCompositionError }
+    /** One refusal for each requirement that did not reach the farm. The run must not start. */
+    | { readonly type: "packages_unavailable"; readonly refusals: readonly PlanPackageRefusal[] };
+
+/** What the package pass of a plan put into the farm of the analysis. */
+export type PlanPackageLink = {
+    /** Each requirement that the steps named, with no duplicate, in the order that the steps name them. */
+    readonly requested: readonly string[];
+    /** The requirements that the pool answered, with the store directory of each. */
+    readonly linked: readonly PlanPackageMatch[];
+    /**
+     * The whole closure that the farm links now. Empty when the plan names no
+     * package, because the pass then reads neither the graph nor the farm.
+     */
+    readonly storeDirs: readonly string[];
+};
+
+/**
+ * The track that the pool knows a name under, or null when no track holds it.
+ *
+ * The resolution searches the Python track first, thus a name that reached a version
+ * refusal is an R name exactly when the Python track holds none of it. A refusal for
+ * an R package carries a reason of its own, because this store acquires no R package
+ * and no retry of such a request ever succeeds.
+ */
+function trackOfRefusal(graph: DepsGraph, cause: RequestResolutionError): ResolvedRequest["track"] | null {
+    if (cause.type === "unknown_import" || cause.type === "malformed_requirement") return null;
+    if ((graph.byName.python.get(cause.name)?.length ?? 0) > 0) return "python";
+    return (graph.byName.r.get(cause.name)?.length ?? 0) > 0 ? "r" : null;
+}
+
+/**
+ * Link the packages that a plan names into the farm of its analysis, before the run
+ * starts.
+ *
+ * The planner names the packages of each step, and this pass is the one place where
+ * that set meets the pool of this machine. Each requirement resolves against the
+ * resolved dependency graph. What the pool holds links in ONE extension, thus the
+ * farm takes one mutex acquisition and not one for each package. What the pool lacks
+ * is a refusal, and the caller asks the user to acquire it.
+ *
+ * The pass starts no container, and it opens no network connection. It reads the
+ * graph, and it writes symbolic links. An acquisition is `inflexa store add`, which
+ * takes minutes and holds the network open, thus it stays a deliberate action of the
+ * user.
+ *
+ * The set is not a promise of completeness. A step that meets a package which the
+ * plan did not name reaches it through `link_packages`, the farm-extension seam of
+ * the harness. Thus one package that a plan missed does not fail a whole run.
+ *
+ * A plan that names no package reads neither the graph nor the farm. A plan from an
+ * older writer carries no package entry, and a store from an older download carries
+ * no graph. A refusal there would stop a run that wants nothing from the pool.
+ */
+export async function linkPlanPackages(params: {
+    /** The store root that the CLI owns, which is `env.libStoreDir`. */
+    readonly storeRoot: string;
+    /** The analysis whose farm gains the links. */
+    readonly analysisId: string;
+    /** The validated plan. Its steps carry the requirements. */
+    readonly plan: AnalysisPlan;
+}): Promise<Result<PlanPackageLink, PlanPackageError>> {
+    const requested = [...new Set(params.plan.steps.flatMap((step) => step.packages ?? []))];
+    if (requested.length === 0) return ok({ requested, linked: [], storeDirs: [] });
+
+    const graph = readDepsGraph(params.storeRoot);
+    if (graph.isErr()) return err({ type: "pool_unreadable", cause: graph.error });
+
+    // The whole set resolves before one link is written, thus a plan that names two
+    // packages the pool lacks reports both at one time.
+    const matches: PlanPackageMatch[] = [];
+    const refusals: PlanPackageRefusal[] = [];
+    for (const requirement of requested) {
+        // `kind: "distribution"` because the planner writes requirement form, and
+        // `validatePlan` refused each entry that is not one.
+        resolvePackageRequest(graph.value, { kind: "distribution", requirement }).match(
+            (answer) => void matches.push({ requirement, answer }),
+            (cause) => void refusals.push({ kind: "not_in_pool", requirement, track: trackOfRefusal(graph.value, cause), cause }),
+        );
+    }
+    if (matches.length === 0) return err({ type: "packages_unavailable", refusals });
+
+    // The pool holds these, thus the farm takes them even when a different
+    // requirement of the same plan is a refusal. The links are additive, thus the
+    // re-run that follows the acquisition finds them already there.
+    const extended = await extendFarm({ storeRoot: params.storeRoot, analysisId: params.analysisId, roots: matches.map((match) => match.answer.storeDir) });
+    if (extended.isErr()) {
+        refusals.push({ kind: "link_failed", requirements: matches.map((match) => match.requirement), cause: extended.error });
+        return err({ type: "packages_unavailable", refusals });
+    }
+    if (refusals.length > 0) return err({ type: "packages_unavailable", refusals });
+    return ok({ requested, linked: matches, storeDirs: extended.value.storeDirs });
+}
+
+/**
+ * One refusal of the package pass, as a line that a person or an agent can act on.
+ *
+ * A bare "not found" is what sends a caller around the same loop for ever, thus each
+ * line names the remedy, or the reason that there is none.
+ */
+function describePlanPackageRefusal(refusal: PlanPackageRefusal): string {
+    if (refusal.kind === "link_failed") {
+        // The composer gives a lowercase fragment, thus the first letter rises to
+        // start the sentence that carries it. Each variant of that fragment begins
+        // with a word or a count, thus the rise is safe.
+        const reason = describeFarmCompositionError(refusal.cause);
+        return (
+            `The farm did not take the packages that the pool holds: ${refusal.requirements.join(", ")}. ` +
+            `${reason.charAt(0).toUpperCase()}${reason.slice(1)}. ` +
+            "A link pass writes the whole batch or none of it, thus the farm stays exactly as it was."
+        );
+    }
+    switch (refusal.cause.type) {
+        case "unknown_distribution":
+            // No track of the pool holds the name, thus the host knows no ecosystem
+            // for it and it must guess none. The line carries both facts, and the
+            // reader applies the one that fits.
+            return (
+                `The package pool holds nothing named "${refusal.cause.name}" (the plan wrote "${refusal.cause.requested}"). ` +
+                `Run \`inflexa store add ${refusal.cause.name}\` to acquire a Python package of that name. ` +
+                "This store acquires no R package, thus a request for an R package that the catalog does not carry never succeeds."
+            );
+        case "unknown_version":
+            return refusal.track === "r"
+                ? `The package pool holds no version ${refusal.cause.version} of the R package "${refusal.cause.name}". It holds ${refusal.cause.available.join(", ")}. ` +
+                      "This store acquires no R package, thus no retry of that version succeeds. Name one of the versions above in the plan."
+                : `The package pool holds no version ${refusal.cause.version} of "${refusal.cause.name}". It holds ${refusal.cause.available.join(", ")}. ` +
+                      `Name one of those versions in the plan, or run \`inflexa store add ${refusal.cause.name}==${refusal.cause.version}\` to acquire the one that the plan named.`;
+        case "unknown_import":
+            // Unreachable: the pass always asks with `kind: "distribution"`. The
+            // branch keeps the switch exhaustive over the shared refusal union.
+            return `No package of the pool gives the module "${refusal.cause.module}". A plan names a package, and the name of a module and the name of a package are two different things.`;
+        case "malformed_requirement":
+            // Unreachable on this path: `validatePlan` refuses each entry that is not
+            // a requirement, and the run command gates the plan before this pass.
+            return `"${refusal.cause.requested}" is not a requirement. Write \`name\` for the newest version the pool holds, or \`name==version\` for one exact version.`;
+        default: {
+            // The union is closed, thus the compiler proves that this is unreachable.
+            const unreachable: never = refusal.cause;
+            throw new Error(`unhandled package refusal: ${JSON.stringify(unreachable)}`);
+        }
+    }
+}
+
+/**
+ * The package-pass failure, as the report that stops the run.
+ *
+ * A refusal that the pool cannot answer and a refusal that the link pass made land in
+ * ONE report, thus the user fixes both in one pass. A link fault that stayed silent
+ * would leave a farm short of a package that this machine already holds.
+ */
+export function describePlanPackageError(error: PlanPackageError): string {
+    switch (error.type) {
+        case "pool_unreadable":
+            return `Could not read what the package pool holds: ${describeFarmCompositionError(error.cause)}. The plan names packages, thus the run did not start.`;
+        case "packages_unavailable": {
+            const acquirable = error.refusals.some((refusal) => refusal.kind === "not_in_pool");
+            return [
+                "The packages of this plan did not all reach the farm of this analysis, thus the run did not start.",
+                ...error.refusals.map((refusal) => `  - ${describePlanPackageRefusal(refusal)}`),
+                ...(acquirable ? ["Acquire each package above with `inflexa store add <spec>`. Then run `inflexa run --plan <file>` again."] : []),
+            ].join("\n\n");
+        }
+        default: {
+            const exhaustive: never = error;
+            throw new Error(`unhandled package pass error: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}
+
 // ── The `inflexa run` command ────────────────────────
 
 /** The `empty`-context hint specific to `inflexa run` (see {@link resolveSingleAnalysis}). */
@@ -386,6 +619,25 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     );
 
     ensureLibStoreUsable();
+
+    // The packages of the plan reach the farm here, and this is the ONE point every
+    // cli plan passes on its way to a run. It sits before the image check on purpose:
+    // the check can pull a published image, and a refusal must not cost the user that
+    // wait. It also sits before the boot, thus a refused plan leaves no side effect —
+    // no runtime, no staged file, and no ledger row.
+    //
+    // A package the pool lacks REFUSES the run. The spec says the run waits on the
+    // answer of the user, and `inflexa run` has no wait: it runs on a non-TTY stdin,
+    // and the acquisition is `inflexa store add`, which is a separate deliberate
+    // command with its own consent. Thus the report names the packages and the
+    // remedy, and the user acquires them and runs the command again.
+    (await linkPlanPackages({ storeRoot: env.libStoreDir, analysisId: analysis.id, plan: intake.plan })).match(
+        (link) => {
+            if (link.linked.length > 0) log.step(`Linked ${link.linked.length} package(s) of the plan into the farm of "${analysis.name}"`);
+        },
+        (e) => fail(describePlanPackageError(e)),
+    );
+
     await ensureSandboxImage(cfg.sandboxImage);
 
     // Claim the per-analysis instance lock before boot, so this analysis stays

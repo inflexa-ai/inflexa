@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
@@ -10,6 +10,7 @@ import {
     type CoreRuntimeDeps,
     type CreateSandboxClientConfig,
     type EmbeddingProvider,
+    type FarmResolution,
     type LlmUsageRecord,
 } from "@inflexa-ai/harness";
 
@@ -17,9 +18,9 @@ import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
-import { takeFarmCompositionFailure } from "../libs/composition.ts";
+import { extendFarm, makeEmptyFarm } from "../libs/composition.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { bootHarnessRuntime, buildAuthInjectingFetch, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
+import { bootHarnessRuntime, buildAuthInjectingFetch, linkPackagesIntoFarm, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
 import { agentProviderInner } from "./agent_switch.ts";
 import type { ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
@@ -89,7 +90,11 @@ function seedLibStoreRoot(withInventory: boolean): string {
         // stub that seam, so this only has to be a store that a reader would call usable.
         writeFileSync(
             join(root, "deps.json"),
-            JSON.stringify({ version: 1, nodes: { "numpy-1.26.4-0000000000000000": { track: "python", imports: ["numpy"], entry_points: [], edges: [] } } }),
+            JSON.stringify({
+                version: 1,
+                nodes: { "numpy-1.26.4-0000000000000000": { track: "python", imports: ["numpy"], entry_points: [], edges: [] } },
+                by_name: { python: { numpy: ["numpy-1.26.4-0000000000000000"] }, r: {} },
+            }),
         );
     }
     return root;
@@ -1053,15 +1058,16 @@ describe("bootHarnessRuntime", () => {
 // --- the farm provider (tasks 3.1, 3.2, 3.5) ---------------------------------
 //
 // There is no active farm at the store level. The harness learns the farm of a sandbox only through the
-// provider the composition root supplies, and the provider composes on a miss. Thus two analyses that run
-// at the same time mount two farms, and an analysis that only chats composes none.
+// provider the composition root supplies. The farm is made WITH its analysis, thus the provider returns
+// what the creation made, and it composes no closure of its own: a composition links what a caller names,
+// and this caller names nothing.
 //
 // The mount itself belongs to the harness (`docker-client`), thus these tests drive the provider and the
 // mount configuration, and they start no container.
 
 describe("the farm provider the composition root supplies", () => {
     /** The provider of the last boot, from the sandbox-client configuration the CLI built. */
-    async function bootProvider(): Promise<(analysisId: string) => Promise<string | undefined> | string | undefined> {
+    async function bootProvider(): Promise<(analysisId: string) => Promise<FarmResolution>> {
         const captured: { config: CreateSandboxClientConfig | null } = { config: null };
         const seams: BootSeams = {
             ...recordingSeams([]),
@@ -1073,37 +1079,70 @@ describe("the farm provider the composition root supplies", () => {
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
         expect(result.isOk()).toBe(true);
         const source = captured.config?.farmSource;
-        // The CLI composes a farm for each analysis, thus it names that source and no other.
+        // The CLI owns a farm for each analysis, thus it names that source and no other.
         expect(source?.kind).toBe("per-analysis");
         // The farm bind nests inside the store bind, thus the two must name one store root.
         expect(captured.config?.libStorePath).toBe(env.libStoreDir);
         const resolve = source?.kind === "per-analysis" ? source.resolve : undefined;
         expect(resolve).toBeDefined();
-        // The tests below read the location, thus unwrap the resolution here.
-        return async (analysisId: string) => {
-            const resolution = await resolve!(analysisId);
-            return resolution.kind === "farm" ? resolution.location : undefined;
-        };
+        return async (analysisId: string) => resolve!(analysisId);
     }
 
-    test("two analyses get two farms, and each one carries its own links", async () => {
+    /** The location of a resolved farm, or `undefined` when the provider named none. */
+    function locationOf(resolution: FarmResolution): string | undefined {
+        return resolution.kind === "farm" ? resolution.location : undefined;
+    }
+
+    test("the farm that the creation of the analysis made is returned as it is, and the provider links nothing into it", async () => {
+        const storeRoot = seedComposableStore(true);
+        try {
+            const analysisId = randomUUIDv7();
+            // What `analysis new` makes: the farm, empty and with its markers only.
+            const made = (await makeEmptyFarm({ storeRoot, analysisId }))._unsafeUnwrap();
+            const stamp = lstatSync(join(made.farmPath, "lock.json")).mtimeMs;
+            const provider = await bootProvider();
+
+            expect(locationOf(await provider(analysisId))).toBe(made.farmPath);
+
+            // The provider composed nothing: the lock is untouched, and the template's own
+            // closure (beta, and the alpha that beta names) is nowhere in this farm.
+            expect(lstatSync(join(made.farmPath, "lock.json")).mtimeMs).toBe(stamp);
+            expect(readdirSync(made.farmPath).sort()).toEqual(["lock.json", "meta.json", "packages.txt"]);
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+
+    test("an absent farm resolves by making an empty one, thus a store that arrived later still serves the analysis", async () => {
+        const storeRoot = seedComposableStore(true);
+        try {
+            const provider = await bootProvider();
+            const analysisId = randomUUIDv7();
+
+            const farm = locationOf(await provider(analysisId));
+
+            expect(farm).toBe(join(storeRoot, "farms", analysisId));
+            // The two completeness markers the harness usability gate requires.
+            expect(existsSync(join(farm as string, "packages.txt"))).toBe(true);
+            expect(existsSync(join(farm as string, "meta.json"))).toBe(true);
+            // And no package: the healed farm is the empty farm that the creation would have made.
+            expect(existsSync(join(farm as string, "python"))).toBe(false);
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+
+    test("two analyses get two farms, and each one starts empty", async () => {
         const storeRoot = seedComposableStore(true);
         try {
             const provider = await bootProvider();
             const first = randomUUIDv7();
             const second = randomUUIDv7();
 
-            const farms = [await provider(first), await provider(second)];
+            const farms = [locationOf(await provider(first)), locationOf(await provider(second))];
 
             expect(farms).toEqual([join(storeRoot, "farms", first), join(storeRoot, "farms", second)]);
-            for (const farm of farms) {
-                // The two completeness markers the harness usability gate requires.
-                expect(existsSync(join(farm as string, "packages.txt"))).toBe(true);
-                expect(existsSync(join(farm as string, "meta.json"))).toBe(true);
-                // The closure of the template's requested set: beta, and the alpha that beta names.
-                expect(lstatSync(join(farm as string, "python", "site-packages", "beta")).isSymbolicLink()).toBe(true);
-                expect(lstatSync(join(farm as string, "python", "site-packages", "alpha")).isSymbolicLink()).toBe(true);
-            }
+            for (const farm of farms) expect(readdirSync(farm as string).sort()).toEqual(["lock.json", "meta.json", "packages.txt"]);
             // The template belongs to composition and never to a sandbox.
             expect(farms).not.toContain(join(storeRoot, "farms", "catalog"));
         } finally {
@@ -1111,33 +1150,172 @@ describe("the farm provider the composition root supplies", () => {
         }
     });
 
-    test("a farm that is already there is returned as it is, thus a second sandbox composes nothing again", async () => {
+    test("a farm that is already there is returned as it is, thus a second sandbox writes nothing again", async () => {
         const storeRoot = seedComposableStore(true);
         try {
             const provider = await bootProvider();
             const analysisId = randomUUIDv7();
-            const farm = (await provider(analysisId)) as string;
+            const farm = locationOf(await provider(analysisId)) as string;
             const stamp = lstatSync(join(farm, "lock.json")).mtimeMs;
 
-            expect(await provider(analysisId)).toBe(farm);
+            expect(locationOf(await provider(analysisId))).toBe(farm);
             expect(lstatSync(join(storeRoot, "farms", analysisId, "lock.json")).mtimeMs).toBe(stamp);
         } finally {
             clearLibStoreRoot();
         }
     });
 
-    test("a composition failure returns no farm, and it leaves the reason for the sandbox gate", async () => {
-        // A store with no catalog template: composition has no default root set and no warm cache donor.
+    test("a farm that cannot be made returns no farm, and the refusal carries the reason", async () => {
+        // A store with no catalog template: a farm has no architecture to record.
         seedComposableStore(false);
         try {
             const provider = await bootProvider();
             const analysisId = randomUUIDv7();
 
-            expect(await provider(analysisId)).toBeUndefined();
+            const resolution = await provider(analysisId);
 
-            const failure = takeFarmCompositionFailure();
-            expect(failure?.analysisId).toBe(analysisId);
-            expect(failure?.reason).toContain("catalog template");
+            expect(resolution.kind).toBe("unavailable");
+            // The harness refuses that ONE sandbox and names this reason.
+            expect(resolution.kind === "unavailable" ? resolution.reason : "").toContain("catalog template");
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+});
+
+// --- the farm-extension seam (tasks 11.1, 11.3) ------------------------------
+//
+// `link_packages` reaches the pool through this seam. It runs in the harness host process, beside the tool
+// that calls it, thus it links and it acquires NOTHING: it starts no container, it opens no network
+// connection, and it starts no `inflexa` child. An acquisition is a host action, before a run.
+
+describe("the farm-extension seam the composition root binds", () => {
+    /** The fixture pool holds `beta`, which names `alpha`. Both are Python store directories. */
+    const BETA = "beta-0.4.1-000000000000bbbb";
+
+    /**
+     * Run one seam call while each child-process call of Bun refuses.
+     *
+     * An acquisition is the one thing that this seam must never do. Each route to one leaves this
+     * process: the provisioner container, and the `inflexa` child that a host command spawns. A stub
+     * that throws fails the test at either call, and the name that it captured says which one ran.
+     */
+    async function withoutAChildProcess<T>(body: () => Promise<T>): Promise<{ readonly value: T; readonly spawned: string[] }> {
+        const spawned: string[] = [];
+        const realSpawn = Bun.spawn;
+        const realSpawnSync = Bun.spawnSync;
+        const refuse =
+            (name: string) =>
+            (...args: unknown[]): never => {
+                spawned.push(`${name}: ${JSON.stringify(args[0])}`);
+                throw new Error(`the seam started a child process through ${name}`);
+            };
+        try {
+            // A stub can never satisfy the overloaded signature of one of these built-ins,
+            // thus each write goes through `unknown`. It is sound because the stub is total:
+            // each call records and throws, and the `finally` below puts the real one back
+            // whatever the body does.
+            Bun.spawn = refuse("Bun.spawn") as unknown as typeof Bun.spawn;
+            Bun.spawnSync = refuse("Bun.spawnSync") as unknown as typeof Bun.spawnSync;
+            return { value: await body(), spawned };
+        } finally {
+            Bun.spawn = realSpawn;
+            Bun.spawnSync = realSpawnSync;
+        }
+    }
+
+    test("links what the pool holds, and it starts no child process and acquires nothing", async () => {
+        const storeRoot = seedComposableStore(true);
+        try {
+            const analysisId = randomUUIDv7();
+            (await makeEmptyFarm({ storeRoot, analysisId }))._unsafeUnwrap();
+            const pool = readdirSync(join(storeRoot, "store")).sort();
+
+            const { value: outcomes, spawned } = await withoutAChildProcess(() =>
+                linkPackagesIntoFarm(storeRoot, analysisId, [{ kind: "distribution", requirement: "beta" }]),
+            );
+
+            expect(spawned).toEqual([]);
+            expect(outcomes).toEqual([{ kind: "linked", requested: "beta", name: "beta", version: "0.4.1" }]);
+            // The farm links the package and the closure of it, and the pool gained nothing:
+            // the seam moved no bytes and it resolved no version.
+            expect(lstatSync(join(storeRoot, "farms", analysisId, "python", "site-packages", "beta")).isSymbolicLink()).toBe(true);
+            expect(lstatSync(join(storeRoot, "farms", analysisId, "python", "site-packages", "alpha")).isSymbolicLink()).toBe(true);
+            expect(readdirSync(join(storeRoot, "store")).sort()).toEqual(pool);
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+
+    test("a package that the pool does not hold is absent with a reason, and nothing is acquired for it", async () => {
+        const storeRoot = seedComposableStore(true);
+        try {
+            const analysisId = randomUUIDv7();
+            (await makeEmptyFarm({ storeRoot, analysisId }))._unsafeUnwrap();
+            const pool = readdirSync(join(storeRoot, "store")).sort();
+
+            const { value: outcomes, spawned } = await withoutAChildProcess(() =>
+                linkPackagesIntoFarm(storeRoot, analysisId, [
+                    { kind: "distribution", requirement: "scanpy" },
+                    { kind: "import", module: "sklearn" },
+                ]),
+            );
+
+            expect(spawned).toEqual([]);
+            // One outcome for each request, in the order of the requests.
+            expect(outcomes.map((outcome) => outcome.kind)).toEqual(["absent", "absent"]);
+            // The reason carries the remedy, because the harness names no command of its
+            // own: a managed deployment runs the same harness and holds no `inflexa`.
+            expect(outcomes[0]).toEqual({
+                kind: "absent",
+                requested: "scanpy",
+                reason: 'the store holds no package named "scanpy" — run `inflexa store add scanpy` to acquire it',
+                acquisitionPossible: true,
+            });
+            expect(outcomes[1]).toEqual({
+                kind: "absent",
+                requested: "sklearn",
+                reason: 'no package of the store gives the module "sklearn" — run `inflexa store add <package>` for the package that gives it',
+                acquisitionPossible: true,
+            });
+            // A refusal acquires nothing and links nothing: the pool and the farm are as they were.
+            expect(readdirSync(join(storeRoot, "store")).sort()).toEqual(pool);
+            expect(readdirSync(join(storeRoot, "farms", analysisId)).sort()).toEqual(["lock.json", "meta.json", "packages.txt"]);
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+
+    test("a package that the farm already links is present, and a version the pool does not hold names the versions it has", async () => {
+        const storeRoot = seedComposableStore(true);
+        try {
+            const analysisId = randomUUIDv7();
+            (await makeEmptyFarm({ storeRoot, analysisId }))._unsafeUnwrap();
+            (await extendFarm({ storeRoot, analysisId, roots: [BETA] }))._unsafeUnwrap();
+
+            const outcomes = await linkPackagesIntoFarm(storeRoot, analysisId, [
+                { kind: "distribution", requirement: "beta" },
+                { kind: "distribution", requirement: "beta==9.9.9" },
+                { kind: "distribution", requirement: "rpkga==9.9" },
+            ]);
+
+            expect(outcomes[0]).toEqual({ kind: "present", requested: "beta", name: "beta", version: "0.4.1" });
+            expect(outcomes[1]).toEqual({
+                kind: "absent",
+                requested: "beta==9.9.9",
+                reason:
+                    'the store holds "beta" at 0.4.1, and not at 9.9.9 — run `inflexa store add beta==9.9.9` to acquire that version, ' +
+                    "or name one of the versions above",
+                acquisitionPossible: true,
+            });
+            // The store cannot acquire an R package at all, thus the mark says so and the
+            // reason names no remedy, because no retry and no later attempt can change it.
+            expect(outcomes[2]).toEqual({
+                kind: "absent",
+                requested: "rpkga==9.9",
+                reason: 'the store holds "rpkga" at 1.0, and not at 9.9, and this store acquires no R package, thus no retry of that version succeeds',
+                acquisitionPossible: false,
+            });
         } finally {
             clearLibStoreRoot();
         }

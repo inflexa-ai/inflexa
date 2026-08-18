@@ -9,7 +9,10 @@ import { findAnalysesByRef, listAnalysesByAnchor, listAnalysesByProject, listAna
 import { insertAnalysis, insertAnalysisInput, deleteAnalysisInput, renameAnalysis } from "../../db/primary_mutation.ts";
 import { currentUserActor } from "../prov/prov.ts";
 import { Bus } from "../../lib/bus.ts";
+import { env } from "../../lib/env.ts";
 import { renameResult } from "../../lib/fs.ts";
+import { getLogger } from "../../lib/log.ts";
+import { describeFarmCompositionError, makeEmptyFarm } from "../libs/composition.ts";
 import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
 import { findMarkerUpwards, isDirWritable } from "../anchor/marker.ts";
 import { classifyInputPath } from "./input.ts";
@@ -242,6 +245,33 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, Work
                     .andThen((created) => (inputPaths.length > 0 ? addInputs(created.id, inputPaths, opts.cwd).map(() => created) : ok(created)))
             );
         }),
+    );
+}
+
+/**
+ * Make the package farm of a new analysis, empty and with its markers only.
+ *
+ * The farm is made WITH the analysis, because the planner names the packages of a plan
+ * INTO a farm and it cannot name them into a farm that does not exist. A farm is a tree
+ * of links and three small records, thus an empty one costs almost nothing and an
+ * analysis in which the user only chats keeps it that way. It links no package: no
+ * package set lives in the store, in an agent, or here.
+ *
+ * A farm failure NEVER fails the creation of the analysis, thus this resolves after a
+ * failure exactly as it does after a success. The store is a directory on the machine
+ * of the user, and a user can make an analysis while the catalog still downloads. The
+ * database and the store then disagree, which is the normal condition and never a hard
+ * error. Chat, the workspace read surface, and the planner want no package at all. The
+ * sandbox gate is what refuses a sandbox action, with a named reason of its own.
+ *
+ * The record of the failure is the log. The farm provider makes the farm again at the
+ * first sandbox action of the analysis, thus a store that arrives later heals the miss.
+ */
+export async function makeAnalysisFarm(analysisId: string): Promise<void> {
+    const made = await makeEmptyFarm({ storeRoot: env.libStoreDir, analysisId });
+    made.match(
+        () => undefined,
+        (error) => getLogger("analysis").warn({ analysisId, reason: describeFarmCompositionError(error) }, "could not make the package farm of this analysis"),
     );
 }
 

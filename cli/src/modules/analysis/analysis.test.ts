@@ -1,11 +1,22 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import { makeBaseSlug, matchOutputPrefix, detectSourceAnalysis, createAnalysis, applyInputsDiff, renameAnalysisAndMoveWorkspace } from "./analysis.ts";
+import {
+    makeBaseSlug,
+    matchOutputPrefix,
+    detectSourceAnalysis,
+    createAnalysis,
+    applyInputsDiff,
+    makeAnalysisFarm,
+    renameAnalysisAndMoveWorkspace,
+} from "./analysis.ts";
 import { archivedOutputSubdir, defaultOutputSubdir, disposeWorkspace, invalidateWorkspaceRoot, resolveOutputDir } from "./output.ts";
+import { env } from "../../lib/env.ts";
+import { analysisFarmPath } from "../libs/composition.ts";
 import { freshDb } from "../../test_support/db.ts";
+import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { deleteAnalysis, insertAnchor, insertAnalysis } from "../../db/primary_mutation.ts";
 import { findAnalysesByRef, listAnalyses, listAnalysisInputs } from "../../db/primary_query.ts";
 import { asStr256, str256 } from "../../lib/types.ts";
@@ -299,5 +310,110 @@ describe("delete → recreate does not inherit the previous analysis's artifacts
 
         // And the first analysis's work is still on disk, where the user was told it would be.
         expect(readFileSync(join(dir, archivedOutputSubdir("trial"), "runs", "run-1", "result.csv"), "utf-8")).toBe("old,data");
+    });
+});
+
+// --- the farm of a new analysis (tasks 8.1, 8.4, 2.1, 2.5) -------------------
+
+describe("the package farm of a new analysis", () => {
+    let dir = "";
+
+    /**
+     * A store root that holds the catalog template and no pool.
+     *
+     * The template is what gives a farm the architecture that the store serves, thus it
+     * is the whole of what an EMPTY farm needs. A pool would add nothing here: the farm
+     * of a new analysis links no package.
+     */
+    function seedStoreTemplate(): string {
+        const root = env.libStoreDir;
+        assertTestSandbox(root);
+        assertTestSandbox(env.locksDir);
+        rmSync(root, { recursive: true, force: true });
+        const template = join(root, "farms", "catalog");
+        mkdirSync(template, { recursive: true });
+        writeFileSync(join(template, "lock.json"), JSON.stringify({ requested: ["beta"], resolved: [], store_dirs: ["beta-0.4.1-000000000000bbbb"] }));
+        writeFileSync(join(template, "meta.json"), JSON.stringify({ version: "catalog", arch: "linux-arm64", tracks: ["python"] }));
+        return root;
+    }
+
+    /**
+     * The usability gate of the harness, as `libStoreUsable` decides it
+     * (`harness/src/sandbox/docker-client.ts`).
+     *
+     * The harness publishes no reader of that gate, thus this mirrors the three questions
+     * that it asks: a path that resolves to a directory, plus the two completeness
+     * markers. `statSync` FOLLOWS a link exactly as the gate does, thus a farm that
+     * dangles fails here as it fails there.
+     */
+    function passesTheUsabilityGate(farmPath: string): boolean {
+        try {
+            if (!statSync(farmPath).isDirectory()) return false;
+        } catch {
+            return false;
+        }
+        return existsSync(join(farmPath, "packages.txt")) && existsSync(join(farmPath, "meta.json"));
+    }
+
+    beforeEach(() => {
+        freshDb();
+        invalidateWorkspaceRoot();
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-farm-")));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+        assertTestSandbox(env.libStoreDir);
+        rmSync(env.libStoreDir, { recursive: true, force: true });
+    });
+
+    test("the farm is made with the analysis, it carries its markers only, and it passes the usability gate", async () => {
+        const root = seedStoreTemplate();
+        const analysis = createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() })._unsafeUnwrap();
+
+        await makeAnalysisFarm(analysis.id);
+
+        const farmPath = analysisFarmPath(root, analysis.id);
+        expect(passesTheUsabilityGate(farmPath)).toBe(true);
+        // The three markers, and nothing beside them: no python tree, no r tree, and no
+        // link. The planner is what names a package into this farm, and it has not run.
+        expect(readdirSync(farmPath).sort()).toEqual(["lock.json", "meta.json", "packages.txt"]);
+    });
+
+    test("a chat-only analysis keeps the empty farm, and it links no package", async () => {
+        const root = seedStoreTemplate();
+        const analysis = createAnalysis({ cwd: dir, name: str256("Only chat")._unsafeUnwrap() })._unsafeUnwrap();
+        await makeAnalysisFarm(analysis.id);
+        const farmPath = analysisFarmPath(root, analysis.id);
+        const stamp = statSync(join(farmPath, "lock.json")).mtimeMs;
+
+        // Chat runs no plan and no sandbox action, thus nothing extends the farm.
+
+        expect(statSync(join(farmPath, "lock.json")).mtimeMs).toBe(stamp);
+        expect(passesTheUsabilityGate(farmPath)).toBe(true);
+        // The lock records no store directory, and the inventory advertises no section.
+        const lock = JSON.parse(readFileSync(join(farmPath, "lock.json"), "utf8")) as { requested: string[]; store_dirs: string[] };
+        expect({ requested: lock.requested, storeDirs: lock.store_dirs }).toEqual({ requested: [], storeDirs: [] });
+        expect(readFileSync(join(farmPath, "packages.txt"), "utf8")).not.toContain("##");
+    });
+
+    test("a store that the machine does not hold yet never fails the creation of the analysis", async () => {
+        // The catalog still downloads, or it was never asked for. The two stores then
+        // disagree, which is the normal condition and never a hard error.
+        assertTestSandbox(env.libStoreDir);
+        rmSync(env.libStoreDir, { recursive: true, force: true });
+        const analysis = createAnalysis({ cwd: dir, name: str256("Early")._unsafeUnwrap() })._unsafeUnwrap();
+
+        await makeAnalysisFarm(analysis.id);
+
+        // No farm, and no refusal: the analysis is on the machine, and chat, the workspace
+        // read surface, and the planner want no package at all. The sandbox gate is what
+        // refuses a sandbox action, with a reason of its own.
+        expect(existsSync(analysisFarmPath(env.libStoreDir, analysis.id))).toBe(false);
+        expect(
+            listAnalyses()
+                ._unsafeUnwrap()
+                .map((a) => a.id),
+        ).toEqual([analysis.id]);
     });
 });

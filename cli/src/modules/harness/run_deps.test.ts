@@ -69,6 +69,15 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         packagesFile: null,
         imagePackagesFile: null,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        // The farm-extension seam. These tests build no farm, thus the stand-in answers
+        // each request with the state that a store which holds nothing gives.
+        extendAnalysisFarm: async (_analysisId, requests) =>
+            requests.map((request) => ({
+                kind: "absent" as const,
+                requested: request.kind === "distribution" ? request.requirement : request.module,
+                reason: "this composition mounts no store",
+                acquisitionPossible: false,
+            })),
     };
 }
 

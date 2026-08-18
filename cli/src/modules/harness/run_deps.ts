@@ -9,6 +9,7 @@ import {
     type CoreWorkflowDeps,
     type EmbeddingProvider,
     type ExecuteAnalysisDeps,
+    type ExtendAnalysisFarm,
     type Logger,
     type Pool,
     type ResolveWorkspaceRoot,
@@ -116,6 +117,17 @@ export type RunEngineComposition = {
     readonly imagePackagesFile: string | null;
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
     readonly bioKeys: ResolvedHarnessConfig["bioKeys"];
+    /**
+     * The farm-extension seam, realized by the composer in the process of the cli
+     * (`runtime.ts`). Its presence is what gives each step agent the `link_packages`
+     * tool, thus a step reaches a package that the pool holds and the plan did not
+     * name.
+     *
+     * Carried unconditionally: the cli owns the store, so it can always answer the
+     * call. A request that the pool cannot answer comes back as one named outcome, and
+     * it is never an absent capability.
+     */
+    readonly extendAnalysisFarm: ExtendAnalysisFarm;
 };
 
 /**
@@ -148,6 +160,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         ...(comp.imagePackagesFile ? { imagePackagesFile: comp.imagePackagesFile } : {}),
         bioKeys: comp.bioKeys,
         blockerHolder: ctx.blockerHolder,
+        extendAnalysisFarm: comp.extendAnalysisFarm,
         step: {
             sandbox: ctx.sandbox,
             workspaceRoot: comp.resolveWorkspaceRoot(ctx.input.analysisId),
