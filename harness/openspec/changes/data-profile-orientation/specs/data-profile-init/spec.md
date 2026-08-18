@@ -1,5 +1,43 @@
 ## ADDED Requirements
 
+### Requirement: Grouping the dataset is the agent's judgement, not the scan's
+
+The kinds and axes a profile carries SHALL be the agent's determination. The scan supplies
+observations — name structure, variable positions and their value sets, format, headers,
+cross-shape value overlap (see the input-scan-manifest spec) — and the agent decides what
+constitutes a kind, which variable positions are axes, and what each represents.
+
+`KindSchema` SHALL require the agent to state **what one member of the kind represents** as a
+distinct field from the kind's description. That field is the grouping decision made explicit:
+it cannot be answered by accepting an observation, because the scan never asserts what a member
+is. A schema that asked only for a description would be satisfiable by restating the observed
+shape, leaving the agent's central judgement present in the output but never exercised.
+
+`AxisSchema` SHALL require an agent-supplied label. The scan reports that a position varies and
+which values it takes; what the variation *is* — a subject, a timepoint, a treatment arm, a
+chromosome shard — is not derivable from the values.
+
+The agent's kinds SHALL NOT be constrained to correspond to observed shapes. It MAY split one
+shape into several kinds, cover several shapes with one kind, or declare an axis the scan did
+not report.
+
+#### Scenario: Each kind states what a member represents
+
+- **WHEN** the agent submits a kind
+- **THEN** the submission SHALL carry what one member of that kind represents, distinct from the kind's description
+
+#### Scenario: A categorical variable position is not an entity axis
+
+- **GIVEN** a manifest reporting one shape whose variable position takes the values `tumor` and `normal`
+- **WHEN** the agent recognises these as arms of a comparison
+- **THEN** it SHALL be able to submit them as two kinds, or as one kind whose axis is labelled as a comparison arm rather than a subject
+
+#### Scenario: The agent declares an axis the scan did not observe
+
+- **GIVEN** an axis evident from a metadata sheet but not from filenames
+- **WHEN** the agent submits its profile
+- **THEN** the submission SHALL be able to carry that axis
+
 ### Requirement: The profiler's output is bounded by kind, not by file count
 
 `ProfilerOutputSchema` SHALL bound every array an agent authors. `kinds` and `files` SHALL

@@ -1,5 +1,48 @@
 ## ADDED Requirements
 
+### Requirement: The scan reports observations; the agent decides the grouping
+
+The scan SHALL report **what is observable** about the staged input tree and SHALL NOT decide
+how the tree is grouped. Deciding which files constitute a *kind*, which varying filename
+positions are *axes*, and what any of them mean is the profiler agent's responsibility (see the
+data-profile-init spec). This is the governing constraint of this capability, and every
+requirement below is subordinate to it.
+
+The two SHALL NOT share vocabulary. The scan reports `shapes` — sets of files that are
+mechanically indistinguishable by name structure, format, and location — and, per shape, the
+positions in the filename whose token varies, with the values observed at each. It SHALL NOT
+emit a field named `kinds` or `axes`, and its output SHALL NOT be shaped so that copying it
+constitutes a valid profile. The vocabulary separation is the enforcement: a scan that handed
+the agent a field named `kinds` and asked it to author `kinds` would be asking it to ratify a
+machine's guess, and ratification is indistinguishable from judgement in the output.
+
+The agent's kinds and axes SHALL NOT be required to correspond one-to-one with observed shapes
+and variable positions. An agent MAY report one kind spanning several shapes, several kinds
+within one shape, a variable position that is not an axis, or an axis the scan did not observe.
+
+A shape is a mechanical fact: these filenames differ only here. A kind is a claim about meaning:
+these files are the same sort of thing. The scan can establish the first and cannot establish the
+second, and a manifest that blurred them would make the agent's central judgement invisible —
+present in the output, but never actually exercised.
+
+#### Scenario: The manifest carries no kinds or axes
+
+- **WHEN** the scan returns a manifest
+- **THEN** it SHALL NOT contain a field named `kinds` or `axes`
+- **AND** its shapes SHALL be presented as observations of name structure, not as a grouping of the dataset
+
+#### Scenario: The agent's kinds need not match the observed shapes
+
+- **GIVEN** a manifest reporting one shape whose variable position takes the values `tumor` and `normal`
+- **WHEN** the agent determines these are two arms rather than members of one set
+- **THEN** it SHALL be able to submit two kinds over the one shape
+
+#### Scenario: The agent may span shapes with one kind
+
+- **GIVEN** a manifest reporting two shapes whose files serve the same analytical role
+- **WHEN** the agent determines they are one kind
+- **THEN** it SHALL be able to submit one kind covering both shapes
+
 ### Requirement: A deterministic scan enumerates the staged input tree
 
 The harness SHALL provide an input scan that walks a staged input tree and returns a
@@ -9,17 +52,18 @@ identified from magic bytes rather than extension alone. For formats the scan re
 it SHALL additionally carry a header readout obtained by reading a bounded prefix — never
 by decoding a file in full.
 
-The scan SHALL be exposed as a tool. Its enumeration, format detection, and grouping SHALL
-run in the harness process over the workspace read seam, which is sandbox-independent. Only
-the header readout SHALL run in the sandbox, because it runs a decoder over user-supplied
-bytes and a decoder in the long-lived multi-tenant host process is the exposure the sandbox
-exists to contain. A bounded prefix read compared against a magic-byte table is not a decode
-and SHALL NOT require the sandbox.
+The scan SHALL be exposed as a tool. Its enumeration, format detection, and shape
+observation SHALL run in the harness process over the workspace read seam, which is
+sandbox-independent. Only the header readout SHALL run in the sandbox, because it runs a
+decoder over user-supplied bytes and a decoder in the long-lived multi-tenant host process
+is the exposure the sandbox exists to contain. A bounded prefix read compared against a
+magic-byte table is not a decode and SHALL NOT require the sandbox.
 
-Header readout SHALL be performed per kind, not per file: grouping depends only on names and
-sizes, so kinds SHALL be derived before any decode and each kind SHALL be enriched by
-decoding a bounded number of its members. A scan that decoded every file would make the
-enrichment cost scale with input size, which is the cost this capability exists to remove.
+Header readout SHALL be performed per shape, not per file: shape observation depends only
+on names and sizes, so shapes SHALL be observed before any decode and each shape SHALL be
+enriched by decoding a bounded number of its files. A scan that decoded every file would
+make the enrichment cost scale with input size, which is the cost this capability exists
+to remove.
 
 The scan SHALL NOT require a binary or script shipped in the sandbox image, so it is
 releasable on the harness's own path.
@@ -46,15 +90,15 @@ issue one command per input file to discover structure.
 
 #### Scenario: Header decode does not scale with file count
 
-- **GIVEN** a tree of 3513 files forming four kinds
+- **GIVEN** a tree of 3513 files forming four observed shapes
 - **WHEN** the scan runs
-- **THEN** it SHALL decode headers for a bounded number of members per kind
+- **THEN** it SHALL decode headers for a bounded number of files per shape
 - **AND** SHALL NOT decode a header per file
 
 ### Requirement: The scan recognises the bioinformatics formats the platform accepts
 
 The scan SHALL identify, at minimum, the formats the platform's agents are equipped to
-analyse, so that a kind's `format` is a fact rather than an extension guess:
+analyse, so that a file's `format` is a fact rather than an extension guess:
 
 - **Variants** — VCF, BCF, and their tabix/CSI indexes
 - **Alignments** — SAM, BAM, CRAM, and their indexes
@@ -71,12 +115,12 @@ analyse, so that a kind's `format` is a fact rather than an extension guess:
 - **Documents and config** — PDF, DOCX, Markdown, JSON, YAML
 
 Compression wrappers (gzip, bgzip, zstd, bzip2) SHALL be reported alongside the inner format
-rather than in place of it, because `.vcf.gz` is a VCF and a kind grouped on the wrapper
-would merge unrelated data.
+rather than in place of it, because `.vcf.gz` is a VCF and a shape observed on the wrapper
+would present unrelated data as mechanically alike.
 
 An unrecognised format SHALL be reported as unknown with its extension chain preserved. The
-list is a floor, not a closed set, and an unknown format SHALL NOT prevent a file from
-joining a kind — grouping depends on names and sizes, which are always available.
+list is a floor, not a closed set, and an unknown format SHALL NOT prevent a file from joining
+a shape — shape observation depends on names and sizes, which are always available.
 
 #### Scenario: A compressed format reports its inner type
 
@@ -84,119 +128,115 @@ joining a kind — grouping depends on names and sizes, which are always availab
 - **THEN** it SHALL report the format as VCF with a gzip wrapper
 - **AND** SHALL NOT report the format as gzip
 
-#### Scenario: An unknown format still groups
+#### Scenario: An unknown format still joins a shape
 
-- **GIVEN** 200 files of a format the scan does not recognise, sharing a naming pattern
+- **GIVEN** 200 files of a format the scan does not recognise, sharing a name structure
 - **WHEN** the scan runs
 - **THEN** it SHALL report the format as unknown with the extension chain preserved
-- **AND** SHALL still group them into one kind with its axis
+- **AND** SHALL still report them as one shape with its variable position
 
-### Requirement: The scan derives kinds and axes from filenames
+### Requirement: The scan reports filename structure as evidence, not as a conclusion
 
-The manifest SHALL express the tree as **kinds** crossed with **axes**.
+Per shape the scan SHALL report the constant and variable positions of its filenames, and per
+variable position the number of distinct values observed and a bounded sample of those values.
 
-A *kind* is a set of files sharing a detected pattern, carrying at minimum a path pattern,
-a member count, the detected format, and up to three example paths. A file matching no
-other file is a kind of count one; there SHALL NOT be a separate concept, threshold, or
-schema arm for singletons.
+The value sample is normative and is the material the agent's decision rests on. A count alone
+cannot distinguish an entity identifier (`0001`…`1171`) from a categorical label
+(`tumor`/`normal`) from a shard index (`chr1`…`chr22`), and those readings imply entirely
+different kinds. Reporting the count without the values would leave the agent with nothing to
+decide *from*, which in practice means deferring to whatever the scan implied.
 
-An *axis* is a position in a kind's filename pattern whose token varies across members. Per
-axis the manifest SHALL carry the position, the cardinality, and a bounded sample of the
-distinct values observed. The value sample is normative: cardinality alone cannot
-distinguish an entity identifier (`0001`…`1171`) from a categorical label
-(`tumor`/`normal`), and that distinction determines whether members are instances of one
-thing or arms of a comparison.
+The scan SHALL report co-occurrence between variable positions where more than one varies, so a
+nested structure is visible as such. It SHALL NOT report a single flat file count in place of
+per-position value sets, because the per-position structure is the dataset's design evidence and
+a flat count destroys it.
 
-Kind and axis SHALL be structural. The scan SHALL NOT assign domain meaning to either, and
-the manifest SHALL NOT encode any dataset-specific vocabulary — a patient cohort is one
-input shape among many, and a scan that names it forecloses the others.
-
-#### Scenario: A repeating set becomes one kind with an axis
+#### Scenario: A repeating structure is reported with its values
 
 - **GIVEN** 1171 files named `PATIENT_<id>.haplotypecaller.vcf.gz`
 - **WHEN** the scan runs
-- **THEN** the manifest SHALL carry one kind of count 1171 with that path pattern
-- **AND** one axis at the varying position with cardinality 1171 and a bounded sample of its distinct values
+- **THEN** the manifest SHALL report one shape of 1171 files with one variable position
+- **AND** that position SHALL carry a distinct-value count of 1171 and a bounded sample of the values observed
 
-### Requirement: Nested axes are reported per axis, not collapsed
-
-Where a kind's pattern has more than one varying position, the manifest SHALL report each
-as its own axis with its own cardinality, rather than reporting a single flat member count.
-The per-axis cardinalities are the dataset's design skeleton, and a flat count destroys it.
-
-#### Scenario: Three varying positions yield three axes
+#### Scenario: Nested variation is reported per position
 
 - **GIVEN** files named `PT<subject>_D<timepoint>_rep<replicate>.fastq.gz` spanning 1171 subjects, 3 timepoints, and 2 replicates
 - **WHEN** the scan runs
-- **THEN** the manifest SHALL report three axes with cardinalities 1171, 3, and 2
-- **AND** SHALL NOT report only a single member count of 7026
+- **THEN** the manifest SHALL report three variable positions with distinct-value counts 1171, 3, and 2
+- **AND** SHALL NOT report only a single file count of 7026
 
-### Requirement: The manifest is a proposal the agent may revise
+#### Scenario: A categorical value set is visible as one
 
-The manifest's kinds and axes SHALL be presented to the profiler agent as a mechanical
-proposal, and the agent SHALL be able to split, merge, or relabel any of them. Pattern
-detection groups by name shape and cannot see meaning: two files differing only by a token
-may be replicates of one thing or arms of a comparison, and only the agent can tell which.
+- **GIVEN** a shape whose variable position takes exactly the values `tumor` and `normal`
+- **WHEN** the scan runs
+- **THEN** the manifest SHALL report those two values, not merely a distinct-value count of 2
 
-#### Scenario: The agent splits a proposed kind
+### Requirement: Token correspondence across shapes is reported with evidence
 
-- **GIVEN** a proposed kind whose axis values are `tumor` and `normal`
-- **WHEN** the agent determines these are two arms rather than two members
-- **THEN** it SHALL be able to report them as two kinds
+The manifest SHALL report token correspondence across shapes with its evidence and SHALL NOT
+assume it. Where two shapes' variable positions draw on overlapping value sets, the manifest
+SHALL report each shape's observed value set and the overlap between them, and SHALL NOT
+present the shapes as sharing one axis — whether they do is the agent's determination.
 
-### Requirement: Cross-kind entity correspondence is reported with evidence
-
-The manifest SHALL report cross-kind entity correspondence with its evidence and SHALL NOT
-assume it. Where two kinds appear to share an axis, because the same entity token appears in
-both, the manifest SHALL report each kind's observed key set and the overlap between them
-rather than silently merging the kinds onto one axis. Where key sets do not correspond, the
-manifest SHALL report them as separate axes.
-
-Entity matching across kinds is heuristic: it depends on stripping a kind-specific suffix
-before tokenising, and near-miss namings defeat it. A join asserted without evidence is
-worse than no join, because a downstream consumer cannot tell it was guessed.
+Correspondence across shapes is heuristic: it depends on stripping a shape-specific suffix
+before tokenising, and near-miss namings defeat it. Reported as evidence it is useful; asserted
+as a conclusion it is a guess a downstream consumer cannot tell was guessed.
 
 #### Scenario: Overlap is reported, including its gaps
 
-- **GIVEN** 1171 files of one kind and 1168 of another whose entity tokens correspond
+- **GIVEN** 1171 files of one shape and 1168 of another whose variable-position values overlap
 - **WHEN** the scan runs
-- **THEN** the manifest SHALL report the correspondence and name the 3 entities present in the first kind and absent from the second
+- **THEN** the manifest SHALL report the overlap and name the 3 values present in the first and absent from the second
 
-#### Scenario: Non-corresponding key sets are not merged
+#### Scenario: Non-overlapping value sets are not presented as one axis
 
-- **GIVEN** two kinds whose entity tokens do not correspond
+- **GIVEN** two shapes whose variable-position values do not overlap
 - **WHEN** the scan runs
-- **THEN** the manifest SHALL report them as separate axes rather than asserting a shared one
+- **THEN** the manifest SHALL report them as unrelated value sets rather than asserting a shared axis
 
-### Requirement: Files matching no pattern are bucketed, not enumerated as kinds
+### Requirement: Files with no shared name structure are reported in aggregate
 
-Files that fit no detected pattern SHALL be reported in a single unmatched bucket carrying
-a count and a bounded sample of paths. The scan SHALL NOT emit one kind per unmatched file:
-a tree of arbitrarily named files would otherwise produce a kind count proportional to the
-file count, which is the unbounded output this capability exists to prevent.
+Files whose name structure matches no other file SHALL be reported in a single aggregate
+carrying a count and a bounded sample of paths. The scan SHALL NOT report one shape per such
+file: a tree of arbitrarily named files would otherwise produce a shape count proportional to
+the file count, which is the unbounded output this capability exists to prevent.
 
-#### Scenario: Arbitrary filenames collapse into one bucket
+The aggregate is an observation like any other. Whether those files are notable singletons
+worth individual description, or an unclassified remainder, is the agent's determination.
 
-- **GIVEN** 3000 files whose names share no detectable pattern
+#### Scenario: Arbitrary filenames collapse into one aggregate
+
+- **GIVEN** 3000 files whose names share no structure with any other file
 - **WHEN** the scan runs
-- **THEN** the manifest SHALL report one unmatched bucket with a count of 3000 and a bounded path sample
-- **AND** SHALL NOT report 3000 kinds
+- **THEN** the manifest SHALL report one aggregate with a count of 3000 and a bounded path sample
+- **AND** SHALL NOT report 3000 shapes
 
-### Requirement: Coverage is counted, not inferred
+### Requirement: Coverage is measured against the agent's kinds, not the scan's shapes
 
-The manifest SHALL report how many staged files were assigned to a kind and how many fell
-to the unmatched bucket, so a consumer can establish coverage arithmetically. Cross-kind
-member counts SHALL likewise be reported, so a missing companion file is a counting result
-rather than a judgement.
+The harness SHALL compute the profile's coverage by matching the agent's submitted kind
+patterns against the scanned file set, and SHALL report how many files matched at least one
+declared kind and how many matched none.
 
-Completeness established by counting is the quality signal worth carrying: it costs a count,
-and it changes what a plan can assume. Per-file statistical quality measures are not in
-scope for the scan or the profile.
+Coverage measures the profile, not the scan. Computing it from the scan's own shapes would
+report only whether the scan grouped its own observations — always yes — and would say nothing
+about whether the agent's kinds actually describe the dataset. Measured against the submitted
+kinds it is a real check: a profile whose kinds leave most of the tree unmatched is visibly
+incomplete, which is the failure that today reads as a fresh, complete profile.
 
-#### Scenario: Coverage is derivable from the manifest
+The computation SHALL be deterministic. Matching declared patterns against a known file set
+requires no judgement, and coverage a model self-reported would not be a check.
 
-- **WHEN** the scan assigns 49 of 3513 files to kinds
-- **THEN** the manifest SHALL report both figures, so a consumer can establish that coverage was partial
+#### Scenario: Coverage reflects the submitted kinds
+
+- **GIVEN** a scan of 3513 files and a submitted profile whose kind patterns match 49 of them
+- **WHEN** coverage is computed
+- **THEN** it SHALL report 49 matched and 3464 unmatched
+
+#### Scenario: Full coverage is reported as such
+
+- **GIVEN** a submitted profile whose kind patterns match every scanned file
+- **WHEN** coverage is computed
+- **THEN** it SHALL report zero unmatched
 
 ### Requirement: The manifest is both injected and callable
 
@@ -207,13 +247,14 @@ agent turn to request it is waste, and a briefing carrying thousands of bare pat
 context that carries no structure.
 
 The harness SHALL additionally expose the scan as a `scan_inputs` tool accepting a path, so
-the agent can re-scan a subtree.
+the agent can re-scan a subtree — which is how an agent that disagrees with the observed
+shapes gets the evidence to group differently.
 
 #### Scenario: The briefing carries structure, not an enumeration
 
 - **GIVEN** an analysis with 3513 staged input files
 - **WHEN** the profiler's briefing is assembled
-- **THEN** it SHALL carry the manifest's kinds and axes
+- **THEN** it SHALL carry the manifest's shapes and their variable-position value sets
 - **AND** SHALL NOT carry one line per input file
 
 #### Scenario: The agent re-scans a subtree
