@@ -17,7 +17,7 @@ import {
 import { getLogger } from "../../lib/log.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
-import { enumerateInputSignatures, inputSignature, isInputSetMaterialized, stageInputs, type StagedInput } from "../staging/staging.ts";
+import { enumerateInputSignatures, inputSignature, inputSignatureDigest, isInputSetMaterialized, stageInputs, type StagedInput } from "../staging/staging.ts";
 import { noteDataProfileState } from "./agent_switch.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 
@@ -120,7 +120,7 @@ export type ProfileParitySeams = {
     readonly reconcile: typeof reconcileOrphanedDataProfile;
     /** Cheap (stat/readdir) read of the current input signature set — the drift check's left-hand side. */
     readonly enumerate: typeof enumerateInputSignatures;
-    /** Read the ledger status (lifecycle state + the completed profile's `result.inputFiles`). */
+    /** Read the ledger status (lifecycle state + the completed profile's input comparand). */
     readonly loadStatus: typeof loadDataProfileStatus;
     /** Null the ledger back to "not profiled" when the input set empties (guarded to skip a live run). */
     readonly clear: typeof clearDataProfile;
@@ -170,17 +170,34 @@ function inputSetMatches(current: ReadonlySet<string>, profiled: readonly string
 }
 
 /**
- * The signatures a completed ledger row was taken against, or `null` when the row records none.
+ * Whether a completed ledger row was taken against the input set enumerated just now.
  *
- * A row whose `result` is absent, or whose `result` predates the `inputFiles` field, cannot prove it
- * covered the current bytes — `inputFileIds` answers WHICH files, never WHETHER they changed. Both
- * cases collapse to `null`, which the caller reads as drift: re-profiling repairs the contract gap and
+ * Which comparand the row carries depends on when it was written, and both eras answer the same
+ * question:
+ *
+ * - `inputSignature` (current) — `{ count, digest }` over the profiled set's identities, sizes, and
+ *   mtimes. Compared by digesting the current enumeration through the harness's OWN function, so the
+ *   two sides cannot drift apart in how they define "the same set".
+ * - `inputFiles` (legacy) — the per-file triples the signature replaced, compared member-wise.
+ *
+ * A row carrying neither cannot prove it covered the current bytes — `inputFileIds` answers WHICH
+ * files, never WHETHER they changed — so it reads as drift. Re-profiling repairs the contract gap and
  * costs one run, the same self-heal the null-`result` case has always had.
  */
-function profiledSignatures(status: DataProfileStatus | null): string[] | null {
-    const files = status?.result?.inputFiles;
-    if (!files) return null;
-    return files.map((f) => inputSignature(f.fileId, f.size, f.mtimeMs));
+function isProfiledAtParity(status: DataProfileStatus | null, current: ReadonlySet<string>): boolean {
+    const result = status?.result;
+    if (!result) return false;
+    if (result.inputSignature) {
+        const now = inputSignatureDigest(current);
+        return now.count === result.inputSignature.count && now.digest === result.inputSignature.digest;
+    }
+    if (result.inputFiles) {
+        return inputSetMatches(
+            current,
+            result.inputFiles.map((f) => inputSignature(f.fileId, f.size, f.mtimeMs)),
+        );
+    }
+    return false;
 }
 
 /**
@@ -360,8 +377,7 @@ export async function ensureProfileAtParity(
         // STATE, not whether this drive performed it: the files are on disk, so it is true even though
         // nothing was written here. Inferred rather than checked, which is why the deliberate
         // {@link forceReprofile} / `inflexa profile` stays the repair path for a hand-emptied tree.
-        const profiled = profiledSignatures(status);
-        if (profiled !== null && inputSetMatches(currentSignatures, profiled)) return { kind: "already_profiled", materialized: true };
+        if (isProfiledAtParity(status, currentSignatures)) return { kind: "already_profiled", materialized: true };
     }
 
     const dataDirResult = resolveDataDir(analysis, seams);

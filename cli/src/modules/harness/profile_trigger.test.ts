@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { err, errAsync, ok, okAsync } from "neverthrow";
-import { makeLocalAuth, type DataProfileInputFile, type DataProfileStatus, type DataProfileTriggerParams } from "@inflexa-ai/harness";
+import { makeLocalAuth, type DataProfileInputFile, type DataProfileStatus, type DataProfileTriggerParams, computeInputSignature } from "@inflexa-ai/harness";
 
 import { ensureProfileAtParity, forceReprofile, seedProfileLedger, type ProfileParitySeams } from "./profile_trigger.ts";
 import { __resetGaugeForTest } from "./agent_switch.ts";
@@ -54,6 +54,19 @@ function completedWith(files: DataProfileInputFile[]): DataProfileStatus {
         startedAt: null,
         completedAt: null,
         result: { summary: "s", files: [], inputFileIds: files.map((f) => f.fileId), inputFiles: files, profiledAt: "2026-01-01T00:00:00Z" },
+        workflowId: null,
+        seedInputFileIds: null,
+    };
+}
+
+/** A `completed` status written by a CURRENT harness: an input signature, and no per-file list. */
+function completedWithSignature(files: DataProfileInputFile[]): DataProfileStatus {
+    return {
+        status: "completed",
+        error: null,
+        startedAt: null,
+        completedAt: null,
+        result: { summary: "s", files: [], inputSignature: computeInputSignature(files), profiledAt: "2026-01-01T00:00:00Z" },
         workflowId: null,
         seedInputFileIds: null,
     };
@@ -186,6 +199,26 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
             loadStatus: () => okAsync(completedWith([file("f2"), file("f1")])),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
+    });
+
+    test("a current-harness profile at parity is recognised through its input signature", async () => {
+        // The row carries `inputSignature` and no per-file list. Read as drift, every parity check
+        // would re-profile an unchanged dataset — the loop this comparand exists to prevent.
+        const { seams, ran } = trackingSeams({
+            enumerate: () => ok(enumerated([file("f1"), file("f2")])),
+            loadStatus: () => okAsync(completedWithSignature([file("f1"), file("f2")])),
+        });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
+        expect(ran).toEqual({ stage: false, seed: false, trigger: false });
+    });
+
+    test("a signature profile whose bytes changed under one path re-profiles", async () => {
+        const { seams } = trackingSeams({
+            enumerate: () => ok(enumerated([file("f1", 11, 5000), file("f2")])),
+            loadStatus: () => okAsync(completedWithSignature([file("f1"), file("f2")])),
+            trigger: async () => "restarted",
+        });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
     });
 
     test("a completed profile whose set drifted re-profiles (restarted)", async () => {
