@@ -41,15 +41,14 @@ const harnessConfigSchema = z.object({
         .optional(),
     adminPort: z.number().int().positive().optional(),
     skillsDir: z.string().optional(),
-    templatesDir: z.string().optional(),
 });
 
 /**
  * The `harness` config key resolved to concrete values. The embedder is NOT
  * configured here: it comes from the top-level `embedding` config key, resolved
- * by `modules/embedding/resolve.ts` at boot. The two genuine launch prerequisites
- * this config cannot default are the skills and templates trees (outside a dev
- * checkout); the pre-flight turns either `null` into an actionable error.
+ * by `modules/embedding/resolve.ts` at boot. The one genuine launch prerequisite
+ * this config cannot default is the skills tree (outside a dev
+ * checkout); the pre-flight turns a `null` into an actionable error.
  */
 export type ResolvedHarnessConfig = {
     /** Chat model id; `null` means resolve the default from the proxy's `/models` at boot. */
@@ -74,8 +73,6 @@ export type ResolvedHarnessConfig = {
     /** DBOS admin port. */
     readonly adminPort: number;
     readonly skillsDir: string | null;
-    /** Root templates tree for in-process report rendering; `null` outside a dev checkout without the config key. */
-    readonly templatesDir: string | null;
     /**
      * Set when the `harness` config key was present but failed validation (e.g. a field of the wrong
      * type). Carries the offending field paths so boot can report the real problem instead of a
@@ -93,23 +90,15 @@ export type ResolvedHarnessConfig = {
 const devSkillsDir = join(import.meta.dir, "../../../../skills");
 
 /**
- * Dev-checkout templates tree: the shared repo-root `templates/` directory
- * (cli/src/modules/harness → four levels up). Meaningless inside a compiled
- * binary — `import.meta.dir` is a bundled virtual path there — which is why
- * non-dev runs require the config key instead.
- */
-const devTemplatesDir = join(import.meta.dir, "../../../../templates");
-
-/**
- * Release-build default for `skillsDir`/`templatesDir`: the hash-keyed directory the binary extracts its
+ * Release-build default for `skillsDir`: the hash-keyed directory the binary extracts its
  * embedded content into (`modules/harness/content.ts` materializes it before the runtime's pre-flight
  * gate). Pure path computation — no IO here. `env.contentHash` is baked into every release binary (so
  * when `env.isDevelopment` is false it is present); the `null` fallback is a defensive backstop for a
  * misbuild that omitted it, which `ensureBundledContent` catches first and reports as `no_content_hash`.
- * A `null` here degrades to the existing `skills_dir_missing`/`templates_dir_missing` gate rather than a
+ * A `null` here degrades to the existing `skills_dir_missing` gate rather than a
  * malformed `<contentDir>/undefined/...` path.
  */
-function releaseContentDir(sub: "skills" | "templates"): string | null {
+function releaseContentDir(sub: "skills"): string | null {
     return env.contentHash ? join(env.contentDir, env.contentHash, sub) : null;
 }
 
@@ -177,7 +166,6 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         // rationale live at stackPorts in lib/env.ts; a config.json `harness.adminPort` still wins here.
         adminPort: cfg?.adminPort ?? env.adminPort,
         skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
-        templatesDir: cfg?.templatesDir ?? (env.isDevelopment ? devTemplatesDir : releaseContentDir("templates")),
         configError,
     };
 }

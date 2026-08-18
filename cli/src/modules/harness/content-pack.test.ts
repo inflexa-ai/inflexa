@@ -35,21 +35,20 @@ describe("packContent / unpackTo", () => {
         }
     });
 
-    test("unpacks the three trees of one archive into their own directories", () => {
-        // One archive carries the skills tree, the templates tree, and the page assets of the report, thus
-        // one hash covers the three. The boot of a release binary reads the three directories, and it
+    test("unpacks the two trees of one archive into their own directories", () => {
+        // One archive carries the skills tree and the page assets of the report, thus
+        // one hash covers the two. The boot of a release binary reads the two directories, and it
         // extracts again when one of them is absent.
-        const threeTrees: PackEntry[] = [
+        const twoTrees: PackEntry[] = [
             { path: "skills/report-html/SKILL.md", bytes: Buffer.from("# Report HTML\n", "utf8") },
-            { path: "templates/report-html/base.html.j2", bytes: Buffer.from("{% block body %}{% endblock %}", "utf8") },
             // A font and a chart runtime are binary, thus the asset entry carries bytes that are not text.
             { path: "assets/space-grotesk-latin-wght-normal.woff2", bytes: Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xff]) },
         ];
 
-        const written = unpackTo(packContent(threeTrees), dest)._unsafeUnwrap();
+        const written = unpackTo(packContent(twoTrees), dest)._unsafeUnwrap();
 
-        expect([...written].sort()).toEqual(threeTrees.map((f) => f.path).sort());
-        for (const f of threeTrees) {
+        expect([...written].sort()).toEqual(twoTrees.map((f) => f.path).sort());
+        for (const f of twoTrees) {
             expect(readFileSync(join(dest, f.path)).equals(f.bytes)).toBe(true);
         }
     });

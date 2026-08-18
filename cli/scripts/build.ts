@@ -45,19 +45,18 @@ function bakedVarNames(source: string): string[] {
     return names;
 }
 
-// Walk the repo-root skills/ and templates/ trees (relative to the cli/ build cwd) into PackEntry[] with
+// Walk the repo-root skills/ tree (relative to the cli/ build cwd) into PackEntry[] with
 // forward-slash paths like `skills/foo/SKILL.md`. Entries are sorted and hashed downstream, so walk order
 // does not matter. Only plain files are packed; directories recurse, other node types are skipped.
 function collectContentEntries(): PackEntry[] {
     const out: PackEntry[] = [];
-    for (const treeName of ["skills", "templates"] as const) {
-        const root = join("..", treeName);
-        if (!existsSync(root)) {
-            console.error(`error: expected content tree ${root} (relative to cli/) does not exist`);
-            process.exit(1);
-        }
-        walkContentTree(root, root, treeName, out);
+    const treeName = "skills";
+    const root = join("..", treeName);
+    if (!existsSync(root)) {
+        console.error(`error: expected content tree ${root} (relative to cli/) does not exist`);
+        process.exit(1);
     }
+    walkContentTree(root, root, treeName, out);
     return out;
 }
 
@@ -156,19 +155,19 @@ if (channel === "production" && !gitCommit) {
 // anyway, just less legibly.
 if (gitCommit) define["process.env.INFLEXA_GIT_COMMIT"] = JSON.stringify(gitCommit);
 
-// Bundled content: the shared repo-root skills/ + templates/ trees ride embedded in the binary and are
-// extracted on first run (src/modules/harness/content.ts). Pack them into cli/content.pack — the path
+// Bundled content: the shared repo-root skills/ tree rides embedded in the binary and is
+// extracted on first run (src/modules/harness/content.ts). Pack it into cli/content.pack — the path
 // content.ts imports with `{ type: "file" }` — BEFORE the Bun.build loop, so the bundler embeds the
 // archive, and --define the content hash so env.contentHash names the extraction dir. The hash is over
-// content, so a skills/templates edit re-extracts on the next install; identical content reuses the dir.
+// content, so a skills edit re-extracts on the next install; identical content reuses the dir.
 // Same explicit-define treatment as INFLEXA_GIT_COMMIT (not the bakedEnv scanner, whose missing-var guard
 // spans every channel). See content-pack.ts for the archive format.
 //
-// The page assets of the report ride in the same archive. The two trees keep their own guard, because an
+// The page assets of the report ride in the same archive. The skills tree keeps its own guard, because an
 // empty walk and an empty asset manifest have different causes.
 const treeEntries = collectContentEntries();
 if (treeEntries.length === 0) {
-    console.error("error: no skills/templates files found to bundle — expected ../skills and ../templates relative to cli/");
+    console.error("error: no skills files found to bundle — expected ../skills relative to cli/");
     process.exit(1);
 }
 // The collection gives a Result, and this script is the boundary that stops the build. A page asset that

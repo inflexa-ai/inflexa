@@ -149,8 +149,6 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
     readonly runLauncher: RunLauncher;
     /** API keys for the external bio/chem data sources. */
     readonly bioKeys: BioToolKeys;
-    /** Root templates dir. No tool of the roster reads it. */
-    readonly templatesDir: string;
     /** Skills root. No tool of the roster reads it. */
     readonly skillsDir: string;
     /** Headless-Chrome config for report snapshot/preview rendering. */

@@ -42,7 +42,6 @@ function cliproxyConnection(provider: string, agents: ResolvedModelConnection["a
 }
 
 let skillsDir: string;
-let templatesDir: string;
 
 /**
  * The `core` bundle the last boot handed to the harness — i.e. exactly what `assembleCoreRuntime`
@@ -53,9 +52,7 @@ let lastCore: CoreRuntimeDeps | null = null;
 
 function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHarnessConfig {
     skillsDir = join(tmpdir(), `harness-runtime-test-skills-${randomUUIDv7()}`);
-    templatesDir = join(tmpdir(), `harness-runtime-test-templates-${randomUUIDv7()}`);
     mkdirSync(skillsDir, { recursive: true });
-    mkdirSync(templatesDir, { recursive: true });
     return {
         model: "claude-test-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
@@ -63,7 +60,6 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
         resourcePolicy: { perStep: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 }, budget: { cpu: 1, memoryGb: 1 } },
         adminPort: 8433,
         skillsDir,
-        templatesDir,
         ...overrides,
     };
 }
@@ -168,8 +164,7 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(conversation.utilityProvider).toBeDefined();
             expect(conversation.utilityModel).toBeDefined();
             // The conversation bundle carries the local realizations: the configured
-            // templates tree, the configured skills tree, and the shared launcher.
-            expect(conversation.templatesDir).toBe(templatesDir);
+            // skills tree, and the shared launcher.
             expect(conversation.skillsDir).toBe(skillsDir);
             expect(conversation.runLauncher.launch).toBeInstanceOf(Function);
             // The Logger seam reaches every conversation tool that takes one — `generate_plan`
@@ -261,7 +256,6 @@ afterEach(() => {
     __resetHarnessRuntimeForTest();
     lastCore = null;
     rmSync(skillsDir, { recursive: true, force: true });
-    rmSync(templatesDir, { recursive: true, force: true });
 });
 
 describe("bootHarnessRuntime", () => {
@@ -738,18 +732,6 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: cfg });
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "skills_dir_missing" });
-        expect(calls).toEqual([]);
-    });
-
-    test("missing templates dir fails before any side effect", async () => {
-        const calls: string[] = [];
-        const cfg = testConfig();
-        // Skills tree stays present, so the templates gate (which sits right after it)
-        // is the one that fires — a distinct pre-flight prerequisite.
-        rmSync(templatesDir, { recursive: true, force: true });
-        const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: cfg });
-
-        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "templates_dir_missing" });
         expect(calls).toEqual([]);
     });
 

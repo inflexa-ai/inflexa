@@ -275,7 +275,7 @@ where it flows → what the harness actually does with it → the UI surfaces a 
 - The `harness.*` shape is CLI-owned (`modules/harness/config.ts:15-49`):
   `model: z.string().optional()` — resolved as `model: string | null` where "`null` means resolve
   the default from the proxy's `/models` at boot" — plus bioKeys, sandboxImage, resourceLimits,
-  adminPort, skillsDir, templatesDir. **Nothing in the product ever writes `harness.model`** (the
+  adminPort, skillsDir. **Nothing in the product ever writes `harness.model`** (the
   only `harness`-key writers are the setup budget prompt and `sandbox pull`); it is hand-edited
   only.
 - **The embedding block is the working precedent for provider decoupling** (`config.ts:56-63`,

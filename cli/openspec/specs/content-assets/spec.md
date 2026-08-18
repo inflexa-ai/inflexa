@@ -3,9 +3,9 @@
 ## Purpose
 TBD - created by archiving change add-bundled-content-assets. Update Purpose after archive.
 ## Requirements
-### Requirement: Release binaries embed the skills, the templates, and the report page assets
+### Requirement: Release binaries embed the skills and the report page assets
 
-Every compiled release target SHALL embed the repository-root `skills/` and `templates/` trees plus the report page assets as a single content archive, and the build SHALL bake a deterministic **content hash** — computed over the archived file set (sorted `path` + `sha256(bytes)`), independent of tar mtime/ownership — into the binary as a compile-time constant. The archive and its hash SHALL be produced by `scripts/build.ts` for every cross-compiled target, and the build's existing `--version` smoke test SHALL still pass.
+Every compiled release target SHALL embed the repository-root `skills/` tree plus the report page assets as a single content archive, and the build SHALL bake a deterministic **content hash** — computed over the archived file set (sorted `path` + `sha256(bytes)`), independent of tar mtime/ownership — into the binary as a compile-time constant. The archive and its hash SHALL be produced by `scripts/build.ts` for every cross-compiled target, and the build's existing `--version` smoke test SHALL still pass.
 
 The asset entries MUST come from the manifest that the harness exports, and the build MUST restate no file name of its own. Each entry names a staged file and a module specifier. The build MUST resolve each specifier through the installation of the harness. The packages that hold the assets are dependencies of the harness, and not of the CLI.
 
@@ -14,11 +14,11 @@ The build MUST refuse a specifier that does not resolve, thus a binary that miss
 #### Scenario: Build embeds content into each target
 
 - **WHEN** `bun run build` (or `build:all`) compiles a target
-- **THEN** the resulting binary carries the skills+templates+assets archive internally and a baked content hash identifying that exact file set, with no separate content artifact emitted
+- **THEN** the resulting binary carries the skills+assets archive internally and a baked content hash identifying that exact file set, with no separate content artifact emitted
 
 #### Scenario: Identical content yields the same hash
 
-- **WHEN** two builds embed byte-identical skills+templates+assets trees
+- **WHEN** two builds embed byte-identical skills+assets trees
 - **THEN** both bake the same content hash, and a changed file in any tree produces a different hash
 
 #### Scenario: An unresolvable asset refuses the build
@@ -38,14 +38,14 @@ The build MUST refuse a specifier that does not resolve, thus a binary that miss
 
 ### Requirement: First run materializes bundled content under the data directory
 
-On a release-build boot, before the skills/templates pre-flight existence gate, the system SHALL ensure the embedded archive is extracted to `join(env.contentDir, <contentHash>, {"skills","templates","assets"})` — where `env.contentDir` is `join(dataDir(), "inflexa", "content")`, a peer of `refs/` and `models/` — and SHALL resolve `skillsDir`/`templatesDir` to that directory when no config override is set. Extraction SHALL be atomic (extract into a temporary sibling directory, then `rename` onto the hash-named directory) and idempotent (an already-present hash directory is reused without re-extracting).
+On a release-build boot, before the skills pre-flight existence gate, the system SHALL ensure the embedded archive is extracted to `join(env.contentDir, <contentHash>, {"skills","assets"})` — where `env.contentDir` is `join(dataDir(), "inflexa", "content")`, a peer of `refs/` and `models/` — and SHALL resolve `skillsDir` to that directory when no config override is set. Extraction SHALL be atomic (extract into a temporary sibling directory, then `rename` onto the hash-named directory) and idempotent (an already-present hash directory is reused without re-extracting).
 
-The materialization MUST give back the assets directory beside the other two. The warm-path check MUST cover each of the three, thus a hash directory that holds two of them is not reused as complete.
+The materialization MUST give back the assets directory beside the skills tree. The warm-path check MUST cover each of the two, thus a hash directory that holds one of them is not reused as complete.
 
 #### Scenario: Fresh install extracts and boots
 
-- **WHEN** a freshly installed binary boots with an empty data directory and no `skillsDir`/`templatesDir` override
-- **THEN** the embedded archive is extracted to `contentDir/<hash>/{skills,templates,assets}`, the pre-flight gate passes, and the harness reads skills and renders templates from that directory
+- **WHEN** a freshly installed binary boots with an empty data directory and no `skillsDir` override
+- **THEN** the embedded archive is extracted to `contentDir/<hash>/{skills,assets}`, the pre-flight gate passes, and the harness reads the skills from that directory
 
 #### Scenario: Already-extracted content is reused
 
@@ -63,7 +63,7 @@ Because the extraction directory is keyed by content hash, installing a binary w
 
 #### Scenario: Upgrade re-extracts fresh content
 
-- **WHEN** a newer binary carrying changed skills/templates first runs against a data dir that holds an older hash directory
+- **WHEN** a newer binary carrying changed skills first runs against a data dir that holds an older hash directory
 - **THEN** it extracts and resolves to a new `contentDir/<newhash>` tree, and the harness reads the new content
 
 #### Scenario: Content-neutral upgrade reuses the tree
@@ -78,12 +78,12 @@ Because the extraction directory is keyed by content hash, installing a binary w
 
 ### Requirement: Development runs resolve to the repository content trees
 
-A development build SHALL NOT embed or extract content: it SHALL resolve `skillsDir`/`templatesDir` to the repository-root `skills/`/`templates/` trees via `import.meta.dir`, and the `INFLEXA_DEV=1` support escape hatch SHALL NOT repoint content resolution — content resolution keys off the build channel, not the dev-commands toggle.
+A development build SHALL NOT embed or extract content: it SHALL resolve `skillsDir` to the repository-root `skills/` tree via `import.meta.dir`, and the `INFLEXA_DEV=1` support escape hatch SHALL NOT repoint content resolution — content resolution keys off the build channel, not the dev-commands toggle.
 
 #### Scenario: Dev uses the checkout, never the data dir
 
-- **WHEN** `bun run dev` resolves skills/templates
-- **THEN** it points at the repo-root trees and never reads or writes `env.contentDir`
+- **WHEN** `bun run dev` resolves the skills
+- **THEN** it points at the repo-root tree and never reads or writes `env.contentDir`
 
 #### Scenario: Dev-commands hatch does not repoint content
 
@@ -92,7 +92,7 @@ A development build SHALL NOT embed or extract content: it SHALL resolve `skills
 
 ### Requirement: Content materialization failure fails boot visibly
 
-When the embedded archive cannot be materialized — an unwritable data directory, an unreadable archive, or an extraction failure — the system SHALL fail boot with an error that names the target path and the remedy, and SHALL NOT fall back to a fake or empty content directory. Materialization SHALL be expressed on the `Result` channel (no `throw`), and its error SHALL be distinguishable from the plain `skills_dir_missing`/`templates_dir_missing` gate.
+When the embedded archive cannot be materialized — an unwritable data directory, an unreadable archive, or an extraction failure — the system SHALL fail boot with an error that names the target path and the remedy, and SHALL NOT fall back to a fake or empty content directory. Materialization SHALL be expressed on the `Result` channel (no `throw`), and its error SHALL be distinguishable from the plain `skills_dir_missing` gate.
 
 #### Scenario: Unwritable data directory reports the real cause
 

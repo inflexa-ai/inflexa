@@ -191,7 +191,6 @@ export type HarnessBootError =
     | { type: "embedding_dimension_mismatch"; expected: number; actual: number }
     | { type: "content_materialize_failed"; cause: ContentError }
     | { type: "skills_dir_missing"; path: string | null }
-    | { type: "templates_dir_missing"; path: string | null }
     | { type: "proxy_key_missing"; cause: ChatSetupError }
     | { type: "model_api_key_missing"; providerVar: string }
     | { type: "model_unresolved"; cause: ChatSetupError }
@@ -236,12 +235,10 @@ export function describeBootError(e: HarnessBootError): string {
             ].join("\n");
         case "skills_dir_missing":
             return `Skills directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.skillsDir\` in config.json (a checkout's \`skills/\` tree).`;
-        case "templates_dir_missing":
-            return `Templates directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.templatesDir\` in config.json (a checkout's \`templates/\` tree).`;
         case "content_materialize_failed":
             return [
-                `Could not unpack the bundled skills, templates, and report page assets into ${env.contentDir} (${e.cause.type}).`,
-                "Ensure the data directory is writable, or point `harness.skillsDir`/`harness.templatesDir` at your own trees in config.json.",
+                `Could not unpack the bundled skills and report page assets into ${env.contentDir} (${e.cause.type}).`,
+                "Ensure the data directory is writable, or point `harness.skillsDir` at your own tree in config.json.",
             ].join("\n");
         case "proxy_key_missing":
             return "Proxy client key not found — run `inflexa setup` to provision the proxy first.";
@@ -622,10 +619,10 @@ async function bootHarnessRuntimeOnce(
     // against the silently-substituted default connection.
     if (connection.configError) return err({ type: "model_connection_invalid", issues: connection.configError.issues });
 
-    // A release binary ships skills/templates/assets embedded, not on disk: materialize them (idempotent) to
-    // the hash-keyed content dir that cfg.skillsDir/templatesDir already resolve to in a release build,
+    // A release binary ships skills/assets embedded, not on disk: materialize them (idempotent) to
+    // the hash-keyed content dir that cfg.skillsDir already resolves to in a release build,
     // BEFORE the prerequisite gates below, so those gates find a populated tree. Gated to release — a dev
-    // run resolves both to the repo checkout and must not touch the embedded archive. The dynamic import
+    // run resolves the skills to the repo checkout and must not touch the embedded archive. The dynamic import
     // keeps content.ts (and its embedded pack, absent from a dev checkout) out of a dev module graph.
     //
     // The extract is the one proof that the assets are on disk, thus the returned path is what the boot
@@ -646,14 +643,6 @@ async function bootHarnessRuntimeOnce(
     // proxy fronts OAuth chat providers and serves no embeddings route.
     if (cfg.skillsDir === null || !existsSync(cfg.skillsDir)) {
         return err({ type: "skills_dir_missing", path: cfg.skillsDir });
-    }
-    // Templates are the conversation agent's second unconditional prerequisite:
-    // `ConversationAgentDeps.templatesDir` is a required field, but no tool of
-    // the current roster reads the tree. Gated here, beside skills, so a
-    // missing tree fails free before any side effect (mirrors the skills gate
-    // exactly — `cfg.templatesDir` is non-null past this point).
-    if (cfg.templatesDir === null || !existsSync(cfg.templatesDir)) {
-        return err({ type: "templates_dir_missing", path: cfg.templatesDir });
     }
     const embedderResult = seams.resolveEmbedding();
     if (embedderResult.isErr()) return err({ type: "embedding_unresolved", cause: embedderResult.error });
@@ -844,8 +833,8 @@ async function bootHarnessRuntimeOnce(
         // provider, which splits per user-facing agent below. The embedding provider is
         // NOT built here — it was resolved up-front (`embedding`, via the
         // resolveEmbedding seam) and is threaded through unchanged, so every path shares
-        // the one resolved instance. `cfg.skillsDir` and `cfg.templatesDir` are non-null
-        // here — the pre-flight above returned if either was null.
+        // the one resolved instance. `cfg.skillsDir` is non-null
+        // here — the pre-flight above returned if it was null.
         //
         // One provider instance per DISTINCT resolved agent model over the SHARED
         // connection: the wire model is baked into each `ChatProvider`
@@ -1079,8 +1068,7 @@ async function bootHarnessRuntimeOnce(
         // The conversation agent's dep surface minus the three fields
         // `assembleCoreRuntime` injects itself (both workflow callables + the resource
         // policy). Every non-chat backend is the shared instance; the chat provider +
-        // model are the CONVERSATION agent's. `templatesDir` is
-        // non-null past the pre-flight gate; `chrome: {}` is the honest local default —
+        // model are the CONVERSATION agent's. `chrome: {}` is the honest local default —
         // it names no browser endpoint, thus a report session reports the absent
         // browser instead of a failed connection.
         const conversation: ConversationAssemblyDeps = {
@@ -1101,7 +1089,6 @@ async function bootHarnessRuntimeOnce(
             runAuthorizer,
             runLauncher,
             bioKeys: cfg.bioKeys,
-            templatesDir: cfg.templatesDir,
             skillsDir: cfg.skillsDir,
             // Gives the planner reference discovery over the same store the sandbox
             // mounts, so a plan can name what this install actually holds.

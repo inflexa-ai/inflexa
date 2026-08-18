@@ -18,12 +18,12 @@ export type ContentError =
     | { type: "unwritable"; path: string; cause: unknown };
 
 /**
- * The three directory paths of the materialized content.
+ * The two directory paths of the materialized content.
  *
- * The harness reads the skills tree and the templates tree from disk. The embedder binds the page-asset
+ * The harness reads the skills tree from disk. The embedder binds the page-asset
  * lookup over the assets directory, thus no other code derives that path.
  */
-export type ContentDirs = { readonly skillsDir: string; readonly templatesDir: string; readonly assetsDir: string };
+export type ContentDirs = { readonly skillsDir: string; readonly assetsDir: string };
 
 /**
  * The three values that {@link extractContent} operates over.
@@ -32,7 +32,7 @@ export type ContentDirs = { readonly skillsDir: string; readonly templatesDir: s
  * embedded asset, and a test can vary each value.
  */
 export type ContentExtractInput = {
-    /** The path of the packed archive that carries the skills tree, the templates tree, and the assets. */
+    /** The path of the packed archive that carries the skills tree and the assets. */
     readonly archivePath: string;
     /** The parent of each hash directory. The extract makes it when it is absent. */
     readonly contentDir: string;
@@ -41,7 +41,7 @@ export type ContentExtractInput = {
 };
 
 /**
- * Extract the archive to `<contentDir>/<contentHash>/{skills,templates,assets}` and return those dirs.
+ * Extract the archive to `<contentDir>/<contentHash>/{skills,assets}` and return those dirs.
  *
  * The extract is idempotent, and the warm path is cheap. It reuses a hash dir that is already present, with
  * one `existsSync` call for each directory. A NEW binary version bakes a new content hash, so its first run
@@ -57,7 +57,6 @@ export function extractContent(input: ContentExtractInput): Result<ContentDirs, 
     const target = join(input.contentDir, hash);
     const dirs: ContentDirs = {
         skillsDir: join(target, "skills"),
-        templatesDir: join(target, "templates"),
         assetsDir: join(target, "assets"),
     };
 
@@ -109,12 +108,12 @@ export function extractContent(input: ContentExtractInput): Result<ContentDirs, 
 /**
  * Is each directory of the materialized content present on disk?
  *
- * One archive carries the three trees, thus a hash dir that holds a subset comes from a partial extract or
+ * One archive carries the two trees, thus a hash dir that holds a subset comes from a partial extract or
  * from a deletion by hand. Such a dir is not reusable: the warm path must extract again, and the recovery
  * after a lost rename race must report the failure.
  */
 function isComplete(dirs: ContentDirs): boolean {
-    return existsSync(dirs.skillsDir) && existsSync(dirs.templatesDir) && existsSync(dirs.assetsDir);
+    return existsSync(dirs.skillsDir) && existsSync(dirs.assetsDir);
 }
 
 /**
