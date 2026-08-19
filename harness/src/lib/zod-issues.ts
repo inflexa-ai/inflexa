@@ -21,7 +21,9 @@
  *    caller's data; it distinguishes the two modes so the message the model
  *    reads matches the mistake it actually made. When neither mode explains the
  *    string it stays silent, because speculative advice to a model that is
- *    already misdiagnosing is worse than no advice at all.
+ *    already misdiagnosing is worse than no advice at all. It also measures a
+ *    string that broke a maximum length, because the Zod message gives the
+ *    bound and never the length that arrived.
  *  - `repairToolInput` — an **issue-guided** repair: only a path where the
  *    schema wanted an `object` or `array` and found a string is even considered,
  *    so a tool that legitimately declares a `z.string()` field is never touched.
@@ -61,9 +63,12 @@ const TRAILING_CALL_TAGS = /<\/parameter>\s*(?:<\/invoke>\s*)?$/;
  * said. `input` is the raw value that failed validation — the same value handed
  * to `safeParse` — because the issue alone does not carry the offending value.
  *
- * Fires only for an `invalid_type` issue wanting an `object` or an `array` whose
- * path resolves to a string, and only when that string demonstrably *is* the
- * expected value:
+ * Fires for a `too_big` issue on a string, which yields the length that arrived
+ * and the count to remove.
+ *
+ * Fires otherwise only for an `invalid_type` issue wanting an `object` or an
+ * `array` whose path resolves to a string, and only when that string
+ * demonstrably *is* the expected value:
  *
  *  1. it parses in full as JSON of the expected type → double encoding, and
  *  2. it parses only once a wrapper artifact is stripped → the value is intact
@@ -76,6 +81,9 @@ const TRAILING_CALL_TAGS = /<\/parameter>\s*(?:<\/invoke>\s*)?$/;
  * `undefined` rather than throwing.
  */
 export function hintForZodIssue(issue: z.core.$ZodIssue, input: unknown): string | undefined {
+    const overLength = hintForOverLongString(issue, input);
+    if (overLength !== undefined) return overLength;
+
     const expected = repairableExpectation(issue);
     if (expected === undefined) return undefined;
 
@@ -132,6 +140,30 @@ export function repairToolInput(input: unknown, error: z.ZodError): unknown | un
     } catch {
         return undefined;
     }
+}
+
+/**
+ * The measurement of a string that broke its maximum length, or `undefined` for
+ * any other issue.
+ *
+ * A Zod `too_big` message names the bound and stops there. A model reasons in
+ * tokens, thus it cannot count the characters that it sent, and it cuts by
+ * guess. Each guess costs one rejected call. The hint gives the two numbers
+ * that end the guess: the length that arrived, and the count to remove.
+ */
+function hintForOverLongString(issue: z.core.$ZodIssue, input: unknown): string | undefined {
+    if (issue.code !== "too_big" || issue.origin !== "string") return undefined;
+
+    const value = resolvePath(input, issue.path);
+    if (typeof value !== "string") return undefined;
+
+    const maximum = Number(issue.maximum);
+    if (!Number.isFinite(maximum)) return undefined;
+
+    const excess = value.length - maximum;
+    if (excess <= 0) return undefined;
+
+    return `This argument arrived with ${value.length} characters. Remove at least ${excess} characters, and send it again.`;
 }
 
 /** The `object`/`array` expectation of an `invalid_type` issue, if it has one. */
