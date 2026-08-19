@@ -44,6 +44,9 @@ import {
     type ExtractValuesResult,
     type ExtractValuesWorkflowInput,
 } from "../tasks/extract-values.js";
+import { registerDeriveTableExecWorkflow, triggerDeriveTableExec } from "../tasks/derive-table-exec.js";
+import type { DeriveTableExecInput } from "../tools/report-session/derive-table.js";
+import type { ExecResult } from "../sandbox/types.js";
 import { createCitationResolver, type CitationResolverConfig } from "../citations/resolve.js";
 import type { CitationResolver } from "../citations/types.js";
 import type { AuthContext } from "../auth/types.js";
@@ -83,6 +86,7 @@ export interface RegisteredWorkflows {
     readonly executeTargetAssessment: (input: ExecuteTargetAssessmentInput) => Promise<ExecuteTargetAssessmentResult>;
     readonly dataProfile: (input: DataProfileWorkflowInput) => Promise<void>;
     readonly extractValues: (input: ExtractValuesWorkflowInput) => Promise<ExtractValuesResult>;
+    readonly deriveTableExec: (input: DeriveTableExecInput) => Promise<ExecResult>;
 }
 
 /**
@@ -300,6 +304,12 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         runAuthorizer: wf.dataProfile.runAuthorizer,
         ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
     });
+    // A session derivation runs its container here and not in the turn. The await of an exec is a
+    // workflow-body call under the callback transport, thus the tool starts this workflow and awaits it.
+    const deriveTableExec = registerDeriveTableExecWorkflow({
+        sandboxClient: wf.dataProfile.sandboxClient,
+        ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
+    });
 
     // The session runtime binds the per-session state to the thread behind the
     // tool boundary, thus one instance serves every report thread. It comes before
@@ -373,7 +383,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         // and the same run authorizer. Thus a session derivation and an extraction run on
         // one substrate, and neither one mints a run of the analysis.
         derivations: reportSession.derivations,
-        sandboxClient: wf.dataProfile.sandboxClient,
+        runDerivation: (input) => triggerDeriveTableExec(deriveTableExec, input),
         runAuthorizer: conversation.runAuthorizer,
         makeResolver: makeReportResolver,
         ...(eyes ? { eyes } : {}),
@@ -404,6 +414,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             executeTargetAssessment,
             dataProfile,
             extractValues,
+            deriveTableExec,
         },
         citationResolver,
     };
