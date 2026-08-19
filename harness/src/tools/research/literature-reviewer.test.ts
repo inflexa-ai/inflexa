@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { makeMessage, scriptedProvider, textBlock } from "../../loop/__fixtures__/scripted-provider.js";
+import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
 import { createLiteratureReviewerTool } from "./literature-reviewer.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
@@ -60,6 +61,28 @@ describe("literatureReviewer sub-agent tool", () => {
 
         // The child transcript is not exposed — only the report leaves the tool.
         expect(Object.keys(result)).toEqual(["report"]);
+    });
+
+    it("returns an error, not an empty report, when the child run ends without a final text", async () => {
+        // A terminal reply with no text block ends the child loop, and the
+        // transcript then holds no report. The tool must surface that as an
+        // error that names the finish reason, not as `ok({ report: "" })`.
+        const provider = scriptedProvider([makeMessage([], "end_turn")]);
+        const tool = createLiteratureReviewerTool({
+            provider,
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            citationResolver: unusedCitationResolver,
+        });
+
+        const { ctx } = makeToolContext();
+        const outcome = await tool.execute({ brief: "Investigate BRCA1." }, ctx);
+
+        expect(outcome.isErr()).toBe(true);
+        const error = outcome._unsafeUnwrapErr();
+        expect(error.error).toContain("no report");
+        expect(error.error).toContain("stop");
+        expect(error.retryable).toBe(true);
     });
 
     it("distinguishes citation discovery from verification without collapsing uncertainty", () => {

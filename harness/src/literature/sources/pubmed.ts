@@ -84,6 +84,10 @@ const xmlParser = new XMLParser({
     attributeNamePrefix: "@_",
     isArray: (name) => ["PubmedArticle", "Author", "MeshHeading", "AbstractText", "sec", "p", "record"].includes(name),
     textNodeName: "#text",
+    // Each consumer reads a text node as a string. Without this option the
+    // parser turns a numeric text node into a number, and a year-only PubDate
+    // then crashes the year extraction in `parseEsummary`.
+    parseTagValue: false,
 });
 
 interface DocSumItem {
