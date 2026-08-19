@@ -27,6 +27,7 @@ import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { CreateSandboxMeta, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 import { runDeriveTableExecBody } from "../../tasks/derive-table-exec.js";
+import { workflowIdFromExec } from "../../sandbox/exec-id.js";
 import type { AppendDerivationOutcome, DerivationRecord } from "../../state/report-session-state.js";
 import { reportSessionDir } from "../../workspace/paths.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
@@ -583,6 +584,20 @@ describe("a composition with no sandbox", () => {
         const result = (await tool.execute({ script: SCRIPT, inputs: [PINNED_PATH], output: "yield.csv" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(result.outcome).toBe("unavailable");
+    });
+
+    it("submits an exec id that names the workflow that awaits it", async () => {
+        // A callback host reads the owner workflow out of the exec id alone. A flat id makes the completion
+        // callback unroutable, and the exec then settles on the pull backstop alone.
+        const root = await makeRoot();
+        const { tool, sandbox } = makeTool({ root });
+
+        await derive(tool, {});
+
+        const submitted = sandbox.submits[0];
+        expect(submitted).toBeDefined();
+        expect(workflowIdFromExec(submitted!.execId)).not.toBeNull();
+        expect(sandbox.creates[0]!.childWorkflowId).toBe(workflowIdFromExec(submitted!.execId));
     });
 
     it("derives whatever transport the client awaits under, because the container runs in a workflow", async () => {
