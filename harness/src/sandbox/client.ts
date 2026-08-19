@@ -1,5 +1,5 @@
 /**
- * `SandboxClient` — the five-method seam every sandbox-backed module in
+ * `SandboxClient` — the seam every sandbox-backed module in
  * the harness sits on. Implementations are backend-selected
  * (`docker`/`k8s`) by `createSandboxClient()` in `create-sandbox.ts` and
  * injected at the composition root as a construction-time dependency
@@ -17,33 +17,18 @@
  *   Many execs may fire against the same machine.
  * - The **exec** lifetime is one `submitExec → awaitExec`.
  *
- * `awaitExec` runs in the workflow body (not as a DBOS step) because
- * `DBOS.recv` and `DBOS.writeStream` are body-only.
+ * **Every caller of `awaitExec` runs inside a DBOS workflow body.** `DBOS.recv`
+ * and `DBOS.writeStream` are body-only, thus the callback transport cannot
+ * settle anywhere else, and the poll transport reaches for `DBOS.runStep` and
+ * `DBOS.sleepms` defaults. A caller that starts from a live chat turn registers
+ * its own workflow and starts it: `tasks/extract-values.ts` and
+ * `tasks/derive-table-exec.ts` are the two worked examples. No type carries this
+ * rule yet, thus a new caller must read this paragraph.
  */
 
-import type {
-    CreateSandboxMeta,
-    ExecEmit,
-    ExecResult,
-    ManagedSandbox,
-    SandboxIdentity,
-    SandboxLiveness,
-    SandboxRef,
-    SandboxTransport,
-    SubmitExecBody,
-} from "./types.js";
+import type { CreateSandboxMeta, ExecEmit, ExecResult, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SubmitExecBody } from "./types.js";
 
 export interface SandboxClient {
-    /**
-     * The result transport this client awaits under, fixed at construction. A caller that runs outside a
-     * workflow body reads it: `callback` awaits through `DBOS.recv`, which is body-only, thus such a caller
-     * must refuse before it starts a container it can never await.
-     *
-     * Optional, because a hand-written realization states nothing here. Absent means unknown, and a caller
-     * treats it as the poll default rather than refusing every composition that omits it.
-     */
-    readonly transport?: SandboxTransport;
-
     /**
      * DBOS step (`sandbox.create`) — the spawn half of the two-step create
      * (see the harness-sandbox-exec spec). Launches the sandbox-base container/Job under the

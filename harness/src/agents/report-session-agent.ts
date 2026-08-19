@@ -28,7 +28,7 @@ import type { Pool } from "pg";
 import type { AuthContext } from "../auth/types.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { AgentDefinition } from "../loop/types.js";
-import type { SandboxClient } from "../sandbox/client.js";
+import type { DeriveTableRunner } from "../tools/report-session/derive-table.js";
 import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { EmbeddingProvider } from "../providers/types.js";
@@ -91,10 +91,11 @@ export interface ReportSessionAgentDeps {
     /** Derivation ledger -- the derivation tool appends one record for each derived table. */
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     /**
-     * Sandbox seam -- the derivation tool runs one ephemeral container for each derived table. Omitted, the
-     * tool reports that the composition gives no sandbox, and it derives nothing.
+     * Derivation-exec seam -- the derivation tool runs one ephemeral container for each derived table, and
+     * the composition realizes this seam over a registered workflow. Omitted, the tool reports that the
+     * composition gives no sandbox, and it derives nothing.
      */
-    readonly sandboxClient?: SandboxClient;
+    readonly runDerivation?: DeriveTableRunner;
     /**
      * Run-authorization seam -- the derivation tool authorizes the exec and revokes on every terminal path.
      * Omitted, the tool derives nothing, the same as an absent sandbox client.
@@ -143,7 +144,7 @@ export interface ReportSessionAgentDeps {
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
-    const { derivations, sandboxClient, runAuthorizer, makeSessionPages, resolvePageUrl } = deps;
+    const { derivations, runDerivation, runAuthorizer, makeSessionPages, resolvePageUrl } = deps;
     const authoring = createReportAuthoringTools(gateway);
 
     const tools: Tool[] = [
@@ -178,7 +179,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             gateway,
             resolveWorkspaceRoot,
             derivations,
-            ...(sandboxClient ? { sandboxClient } : {}),
+            ...(runDerivation ? { runDerivation } : {}),
             ...(runAuthorizer ? { runAuthorizer } : {}),
             ...(logger ? { logger } : {}),
         }),

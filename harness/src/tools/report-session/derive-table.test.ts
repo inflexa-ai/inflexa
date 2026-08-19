@@ -25,7 +25,8 @@ import type { DbError } from "../../lib/db-result.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { CreateSandboxMeta, ExecResult, SandboxRef, SandboxTransport, SubmitExecBody } from "../../sandbox/types.js";
+import type { CreateSandboxMeta, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
+import { runDeriveTableExecBody } from "../../tasks/derive-table-exec.js";
 import type { AppendDerivationOutcome, DerivationRecord } from "../../state/report-session-state.js";
 import { reportSessionDir } from "../../workspace/paths.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
@@ -161,7 +162,6 @@ function makeSandbox(args: {
     readonly root: string;
     readonly reply?: ExecResult;
     readonly throws?: boolean;
-    readonly transport?: SandboxTransport;
     readonly write?: (outputHostPath: string) => Promise<void>;
 }): FakeSandbox {
     const creates: CreateSandboxMeta[] = [];
@@ -169,7 +169,6 @@ function makeSandbox(args: {
     const teardowns: string[] = [];
     const ref: SandboxRef = { sandboxId: "sbx-derive-1", host: "127.0.0.1", port: 8765, backend: "docker", callbackSecret: "base64:secret" };
     const client = {
-        ...(args.transport === undefined ? {} : { transport: args.transport }),
         createSandbox(meta: CreateSandboxMeta): Promise<SandboxRef> {
             creates.push(meta);
             return Promise.resolve(ref);
@@ -260,7 +259,9 @@ function makeTool(args: { root: string; snapshot?: ReportSnapshot; result?: Exec
         gateway,
         resolveWorkspaceRoot: () => args.root,
         derivations: ledger,
-        sandboxClient: sandbox.client,
+        // The composition realizes the runner over a registered workflow. The test drives the same body,
+        // with a fixed clock, thus the seam calls under test are the seam calls in production.
+        runDerivation: (input) => runDeriveTableExecBody(input, { sandboxClient: sandbox.client, now: () => Promise.resolve(0) }),
         runAuthorizer: auth.authorizer,
     });
     return { tool, gateway, sandbox, ledger, auth };
@@ -584,31 +585,16 @@ describe("a composition with no sandbox", () => {
         expect(result.outcome).toBe("unavailable");
     });
 
-    it("refuses under a callback transport, because a turn cannot await one", async () => {
+    it("derives whatever transport the client awaits under, because the container runs in a workflow", async () => {
+        // The runner is a registered workflow, thus the await is a body call under each transport. The tool
+        // reads no transport at all, and no composition refuses for one.
         const root = await makeRoot();
-        // The callback await is a workflow-body call, and a report turn is not one. The refusal comes before
-        // any container starts, thus nothing is left running that nothing can await.
-        const sandbox = makeSandbox({ root, transport: "callback", write: writesTable() });
-        const { tool, ledger } = makeTool({ root, sandbox });
+        const { tool, sandbox, ledger } = makeTool({ root });
 
-        const result = await derive(tool, {});
-
-        expect(result.outcome).toBe("unavailable");
-        if (result.outcome === "unavailable") {
-            expect(result.detail).toContain("callbacks");
-        }
-        expect(sandbox.creates).toHaveLength(0);
-        expect(ledger.records).toHaveLength(0);
-    });
-
-    it("derives under the poll transport, and under a client that states none", async () => {
-        const root = await makeRoot();
-        const polling = makeTool({ root, sandbox: makeSandbox({ root, transport: "poll", write: writesTable() }) });
-        expect((await derive(polling.tool, {})).outcome).toBe("derived");
-
-        // An absent field states nothing, thus it reads as the poll default and it refuses nothing.
-        const silent = makeTool({ root: await makeRoot() });
-        expect((await derive(silent.tool, {})).outcome).toBe("derived");
+        expect((await derive(tool, {})).outcome).toBe("derived");
+        expect(sandbox.creates).toHaveLength(1);
+        expect(sandbox.teardowns).toHaveLength(1);
+        expect(ledger.records).toHaveLength(1);
     });
 
     it("refuses a call whose scope names no report thread", async () => {

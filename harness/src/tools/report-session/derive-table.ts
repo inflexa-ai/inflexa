@@ -7,7 +7,7 @@
  *
  * A session derivation is not an analysis run. It mints no run id, it registers no artifact, and it writes
  * under the session directory alone. The rails are the rails of the value tier (`tasks/extract-values.ts`):
- * the sandbox client, the identity mint, and the authorizer on every terminal path. The container is
+ * the injected exec runner, the identity mint, and the authorizer on every terminal path. The container is
  * ephemeral, and it goes away with the work.
  *
  * The container mounts the analysis tree read-only, and one write mount covers the `derived/` directory of
@@ -29,13 +29,12 @@
  * condition one time, up front, the same discipline as the eyes. A per-attempt failure would instead read as
  * a transient fault, and it would invite a repeat of a call that can never pass.
  *
- * The transport of the client is the second such bound. A derivation runs inside one live turn and not
- * inside a workflow body. The poll transport awaits with plain steps and a plain sleep, thus it settles
- * there. The callback transport awaits through `DBOS.recv`, which a workflow body alone can call, thus this
- * tool refuses up front under it rather than start a container that nothing can await.
+ * The container runs behind a seam, and never in the turn. An await of an exec is a workflow-body call
+ * under the callback transport, and a report turn is not a body. Thus the tool takes an injected runner,
+ * and a registered workflow owns the container. The tool holds no sandbox client, and it imports no DBOS.
  */
 
-import { err, ok, type Result } from "neverthrow";
+import { ok, type Result } from "neverthrow";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
@@ -46,10 +45,8 @@ import { classifyWithinRoot, computeSha256, computeSha256File } from "../../lib/
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import type { ResourceSpec } from "../../config/resource-limits.js";
 import { snapshotEntry } from "../../report-model/reference-resolver.js";
-import type { SandboxClient } from "../../sandbox/client.js";
 import { generateExecutionId } from "../../sandbox/execution-id.js";
-import { mintSandboxIdentity } from "../../sandbox/identity.js";
-import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
+import type { ExecResult, SubmitExecBody } from "../../sandbox/types.js";
 import type { DerivationRecord, DerivationSource, ReportSessionStateStore } from "../../state/report-session-state.js";
 import { isSafeId, reportSessionDerivedDir, toSandboxPath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
@@ -99,26 +96,26 @@ export interface DeriveTableToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
-    readonly sandboxClient?: SandboxClient;
+    readonly runDerivation?: DeriveTableRunner;
     readonly runAuthorizer?: RunAuthorizer;
     readonly logger?: Logger;
 }
 
 /** The synthetic run id and step id of one derivation. Both are constants, and neither names a run row. */
-const DERIVE_RUN_LITERAL = "derive-table" as const;
-const DERIVE_STEP_LITERAL = "derive" as const;
+export const DERIVE_RUN_LITERAL = "derive-table" as const;
+export const DERIVE_STEP_LITERAL = "derive" as const;
 
 /** The provenance agent id. No agent loop runs in the container, thus this names the derivation pass. */
 const DERIVE_AGENT_ID = "table-deriver" as const;
 
 /** The exec budget of one derivation. It matches the budget of the value tier. */
-const DERIVATION_DEADLINE_MS = 300_000;
+export const DERIVATION_DEADLINE_MS = 300_000;
 
 /**
  * The container size of one derivation. A join or a pivot loads each declared input into pandas at one
  * time, thus the container needs the headroom of the value tier.
  */
-const DERIVATION_RESOURCES: ResourceSpec = { cpu: 2, memoryGb: 8 };
+export const DERIVATION_RESOURCES: ResourceSpec = { cpu: 2, memoryGb: 8 };
 
 /** The cap of the script, in bytes. A reshaping script sits far under it, and the command line carries it. */
 const SCRIPT_CAP_BYTES = 64 * 1024;
@@ -135,14 +132,8 @@ export const DERIVE_OUTPUT_ENV = "DERIVE_OUTPUT";
 /** The cap of the failure detail that the tool copies out of the standard error of the script. */
 const STDERR_TAIL_CAP = 2_000;
 
-/** The awaitExec callback. A derivation reports no live activity, thus the callback drops each event. */
-const noopEmit: ExecEmit = () => {};
-
 /** The line that the agent reads when the composition binds no sandbox rails. */
 const NO_SANDBOX_DETAIL = "the composition gives no sandbox, thus this session cannot derive a table";
-
-/** The line that the agent reads when the sandbox client awaits under a transport that a turn cannot drive. */
-const CALLBACK_TRANSPORT_DETAIL = "the sandbox of this composition reports through callbacks, which a report turn cannot await, thus it derives no table";
 
 /** One declared input, as the container reads it: the mounted path of the file, and its pinned hash. */
 export interface DerivationInputMount {
@@ -203,18 +194,12 @@ export function describeExecFailure(result: ExecResult): string | undefined {
 }
 
 /**
- * Run one derivation in an ephemeral container, and give the exec result back.
+ * The exec of one derivation, as a registered workflow reads it.
  *
- * The container mounts the analysis tree read-only, and the declared write tail is its one writable mount.
- * Thus the script reads the evidence and it writes into the `derived/` directory of the session and nowhere
- * else. The teardown runs on both paths, thus no machine outlives the call. A teardown fault reaches the log
- * alone, because the work is done.
- *
- * Each seam call is guarded, thus a fault of the sandbox becomes a short detail and the tool keeps its
- * no-throw contract.
+ * Each field is plain data, thus the value crosses the workflow boundary and it survives a replay. The
+ * paths are container paths already: the host maps them one time, before the start.
  */
-async function runDerivationExec(args: {
-    readonly client: SandboxClient;
+export interface DeriveTableExecInput {
     readonly analysisId: string;
     readonly executionId: string;
     readonly script: string;
@@ -222,51 +207,16 @@ async function runDerivationExec(args: {
     readonly workingDir: string;
     readonly inputs: readonly DerivationInputMount[];
     readonly output: string;
-    readonly logger: Logger;
-}): Promise<Result<ExecResult, string>> {
-    let sandbox: SandboxRef;
-    try {
-        sandbox = await args.client.createSandbox(
-            {
-                runId: DERIVE_RUN_LITERAL,
-                stepId: DERIVE_STEP_LITERAL,
-                analysisId: args.analysisId,
-                childWorkflowId: `${DERIVE_RUN_LITERAL}:${args.executionId}`,
-                resources: DERIVATION_RESOURCES,
-                writableTail: args.writableTail,
-            },
-            mintSandboxIdentity(DERIVE_RUN_LITERAL),
-        );
-    } catch (cause) {
-        args.logger.error("the derivation sandbox did not start", args.logger.errorFields(cause));
-        return err("the derivation sandbox did not start");
-    }
-
-    try {
-        // The tool runs inside one live turn and it never replays, thus the wall clock is the deadline.
-        const deadline = Date.now() + DERIVATION_DEADLINE_MS;
-        await args.client.submitExec(
-            sandbox,
-            buildDerivationExec({
-                script: args.script,
-                execId: args.executionId,
-                workingDir: args.workingDir,
-                inputs: args.inputs,
-                output: args.output,
-            }),
-        );
-        return ok(await args.client.awaitExec(sandbox, args.executionId, noopEmit, deadline));
-    } catch (cause) {
-        args.logger.error("the derivation exec did not complete", args.logger.errorFields(cause));
-        return err("the derivation exec did not complete");
-    } finally {
-        try {
-            await args.client.teardown(sandbox);
-        } catch (cause) {
-            args.logger.warn("the derivation sandbox did not tear down", args.logger.errorFields(cause));
-        }
-    }
 }
+
+/**
+ * Run one derivation exec and give the terminal result back.
+ *
+ * The composition realizes it over a registered workflow, thus the container lives inside a workflow body
+ * and the await is legal under each transport. A fault of the sandbox rejects the promise, and the tool
+ * turns that rejection into one short detail.
+ */
+export type DeriveTableRunner = (input: DeriveTableExecInput) => Promise<ExecResult>;
 
 /**
  * Make the derivation tool over the session-state gateway, the derivation ledger, and the sandbox rails.
@@ -276,7 +226,7 @@ async function runDerivationExec(args: {
  */
 export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTableInput, DeriveTableResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("derive-table");
-    const { sandboxClient, runAuthorizer } = deps;
+    const { runDerivation, runAuthorizer } = deps;
 
     return defineTool({
         id: "derive_table",
@@ -301,15 +251,9 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
         execute: async (input, ctx): Promise<Result<DeriveTableResult, ToolError>> => {
             // The check runs before every read, thus one clear signal replaces a failure for each attempt.
             // It also narrows the two rails below, thus the exec needs no assertion.
-            if (sandboxClient === undefined || runAuthorizer === undefined) {
+            if (runDerivation === undefined || runAuthorizer === undefined) {
                 logger.warn("the composition gives no sandbox, thus no derivation can run");
                 return ok({ outcome: "unavailable", detail: NO_SANDBOX_DETAIL });
-            }
-            // The await of the callback transport is a workflow-body call, and a report turn is not one. An
-            // absent field states nothing, thus it reads as the poll default and it refuses nothing.
-            if (sandboxClient.transport === "callback") {
-                logger.warn("the sandbox client awaits through callbacks, thus no derivation can run in a turn");
-                return ok({ outcome: "unavailable", detail: CALLBACK_TRANSPORT_DETAIL });
             }
 
             const opened = await openReportThread(deps.gateway, ctx.session.scope);
@@ -401,7 +345,7 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
             let result: DeriveTableResult | undefined;
             try {
                 result = await derive({
-                    client: sandboxClient,
+                    runDerivation,
                     derivations: deps.derivations,
                     root,
                     threadId,
@@ -443,7 +387,7 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
  * wrote. A clearance fault refuses the derivation, because the same doubt stands.
  */
 async function derive(args: {
-    readonly client: SandboxClient;
+    readonly runDerivation: DeriveTableRunner;
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     readonly root: string;
     readonly threadId: string;
@@ -472,8 +416,9 @@ async function derive(args: {
         }
     }
 
-    const executed = await runDerivationExec({
-        client: args.client,
+    // The path mapper refuses a stored path that escapes the root, with a throw. It runs before the try,
+    // thus that refusal stays a throw and it never reads as a fault of the container.
+    const execInput: DeriveTableExecInput = {
         analysisId: args.analysisId,
         executionId,
         script: args.script,
@@ -481,12 +426,16 @@ async function derive(args: {
         workingDir,
         inputs: args.sources.map((source) => ({ path: toSandboxPath(args.root, args.analysisId, join(args.root, source.path)), hash: source.hash })),
         output: toSandboxPath(args.root, args.analysisId, absolute),
-        logger: args.logger,
-    });
-    if (executed.isErr()) {
-        return { outcome: "exec-failed", detail: executed.error };
+    };
+
+    let executed: ExecResult;
+    try {
+        executed = await args.runDerivation(execInput);
+    } catch (cause) {
+        args.logger.error("the derivation exec did not complete", { threadId: args.threadId, ...defaultErrorFields(cause) });
+        return { outcome: "exec-failed", detail: "the derivation exec did not complete" };
     }
-    const failure = describeExecFailure(executed.value);
+    const failure = describeExecFailure(executed);
     if (failure !== undefined) {
         return { outcome: "exec-failed", detail: failure };
     }
