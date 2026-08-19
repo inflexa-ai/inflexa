@@ -243,7 +243,6 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     const isAlive = async (ref: SandboxRef) => unwrapOrThrow(await ops.isAlive(ref));
 
     return {
-        transport,
         createSandbox: async (meta, identity) => {
             // The config states an engine fact (binds preserve host ownership);
             // which remediation that fact demands — today, a world-writable step
