@@ -12,10 +12,14 @@
  * The body owns the whole machine lifetime. It creates the container, submits one exec, awaits the terminal
  * result, and tears the container down on both paths. A teardown fault reaches the log alone, because the
  * work is done by then.
+ *
+ * The exec id is `${workflowId}:${stepId}:${fnId}`, the one shape that `workflowIdFromExec` parses. A
+ * callback host reads the owner workflow out of the exec id alone, thus a flat id makes the completion
+ * callback unroutable and it lands as a `400`. The pull backstop still settles such an exec, but it pays
+ * the quiet interval first.
  */
 
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
-import { randomUUID } from "node:crypto";
 
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -53,7 +57,10 @@ export interface DeriveTableExecDeps {
  */
 export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: DeriveTableExecDeps): Promise<ExecResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("derive-table-exec").with({ analysisId: input.analysisId });
-    const workflowId = DBOS.workflowID ?? `${DERIVE_RUN_LITERAL}:${input.executionId}`;
+    const workflowId = DBOS.workflowID ?? deriveTableExecWorkflowId(input.executionId);
+    // One workflow submits one exec, thus the function id is a constant. The three segments are what a
+    // callback host parses to find the workflow that awaits this exec.
+    const execId = `${workflowId}:${DERIVE_STEP_LITERAL}:fn-0`;
 
     const sandbox = await deps.sandboxClient.createSandbox(
         {
@@ -75,13 +82,13 @@ export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: 
             sandbox,
             buildDerivationExec({
                 script: input.script,
-                execId: input.executionId,
+                execId,
                 workingDir: input.workingDir,
                 inputs: input.inputs,
                 output: input.output,
             }),
         );
-        return await deps.sandboxClient.awaitExec(sandbox, input.executionId, noopEmit, deadline);
+        return await deps.sandboxClient.awaitExec(sandbox, execId, noopEmit, deadline);
     } finally {
         try {
             await deps.sandboxClient.teardown(sandbox);
@@ -99,9 +106,14 @@ export function registerDeriveTableExecWorkflow(deps: DeriveTableExecDeps): (inp
     return DBOS.registerWorkflow((input: DeriveTableExecInput) => runDeriveTableExecBody(input, deps), { name: "derive-table-exec" });
 }
 
-/** The per-attempt workflow id. The execution id is unique already, and the nonce keeps a retry distinct. */
-export function deriveTableExecWorkflowId(executionId: string, nonce: string): string {
-    return `${DERIVE_RUN_LITERAL}:${executionId}:${nonce}`;
+/**
+ * The workflow id of one derivation.
+ *
+ * It carries exactly one colon, because `workflowIdFromExec` recovers the id by a strip of the last two
+ * colon-delimited segments of the exec id. The execution id is unique already, thus no nonce joins it.
+ */
+export function deriveTableExecWorkflowId(executionId: string): string {
+    return `${DERIVE_RUN_LITERAL}:${executionId}`;
 }
 
 /**
@@ -112,7 +124,7 @@ export function deriveTableExecWorkflowId(executionId: string, nonce: string): s
  */
 export async function triggerDeriveTableExec(workflow: (input: DeriveTableExecInput) => Promise<ExecResult>, input: DeriveTableExecInput): Promise<ExecResult> {
     const handle = (await DBOS.startWorkflow(workflow, {
-        workflowID: deriveTableExecWorkflowId(input.executionId, randomUUID()),
+        workflowID: deriveTableExecWorkflowId(input.executionId),
     })(input)) as WorkflowHandle<ExecResult>;
     return handle.getResult();
 }
