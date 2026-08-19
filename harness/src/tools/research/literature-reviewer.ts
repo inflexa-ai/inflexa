@@ -15,7 +15,7 @@
  * so the child never replays).
  */
 
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { finalText, runAgent } from "../../loop/run-agent.js";
@@ -100,7 +100,7 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
         }),
         describeCall: "none",
         execute: async ({ brief }, ctx) => {
-            const { messages: transcript } = await runAgent(agent, [{ role: "user", content: brief }], forSubAgent(ctx.session, AGENT_ID), {
+            const { messages: transcript, finish } = await runAgent(agent, [{ role: "user", content: brief }], forSubAgent(ctx.session, AGENT_ID), {
                 provider: deps.provider,
                 signal: ctx.signal,
                 emit: ctx.emit,
@@ -112,7 +112,15 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
                 // same frame, same call path, same loop-local step names.
                 invocationId: ctx.invocationId,
             });
-            return ok({ report: finalText(transcript) });
+            const report = finalText(transcript);
+            // A child run can end with no final text. Examples are a terminal
+            // reply with no text block, and a capped-out run whose wrap-up is
+            // empty. An ok result with an empty report hides that failure, so
+            // the tool returns an error that names the finish reason.
+            if (report.trim() === "") {
+                return err({ error: `The literature reviewer gave no report (finish reason: ${finish.reason}). Retry, or narrow the brief.`, retryable: true });
+            }
+            return ok({ report });
         },
     });
 }

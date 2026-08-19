@@ -49,6 +49,29 @@ const ESUMMARY_XML = `<?xml version="1.0"?>
   </DocSum>
 </eSummaryResult>`;
 
+// An electronic-only or ahead-of-print record can carry a bare year in PubDate.
+// The parser must keep that value as text. A numeric parse of it crashed the
+// year extraction, and one such record discarded the whole result set.
+const YEAR_ONLY_ESUMMARY_XML = `<?xml version="1.0"?>
+<eSummaryResult>
+  <DocSum>
+    <Id>12345678</Id>
+    <Item Name="PubDate" Type="Date">2021 Mar 15</Item>
+    <Item Name="Source" Type="String">Nature</Item>
+    <Item Name="AuthorList" Type="List">
+      <Item Name="Author" Type="String">Smith J</Item>
+    </Item>
+    <Item Name="Title" Type="String">BRCA1 and drug resistance</Item>
+    <Item Name="FullJournalName" Type="String">Nature Reviews Cancer</Item>
+  </DocSum>
+  <DocSum>
+    <Id>40000001</Id>
+    <Item Name="PubDate" Type="Date">2026</Item>
+    <Item Name="Source" Type="String">Nat Rev Drug Discov</Item>
+    <Item Name="Title" Type="String">Ahead-of-print record</Item>
+  </DocSum>
+</eSummaryResult>`;
+
 const EFETCH_XML = `<?xml version="1.0"?>
 <PubmedArticleSet>
   <PubmedArticle>
@@ -147,6 +170,36 @@ describe("pubmed — action 'search'", () => {
         expect(explicit[0]!.searchParams.get("mindate")).toBe("2020/01/01");
         expect(explicit[0]!.searchParams.get("maxdate")).toBe("2021/12/31");
         expect(explicit[0]!.searchParams.get("datetype")).toBe("pdat");
+    });
+
+    it("returns every summary when one record carries a year-only PubDate", async () => {
+        stubNcbi((url) => {
+            if (url.pathname.endsWith("esearch.fcgi")) return json({ esearchresult: { idlist: ["12345678", "40000001"], count: "2" } });
+            return xml(YEAR_ONLY_ESUMMARY_XML);
+        });
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ action: "search", query: "Bender A[Author]" }, ctx))._unsafeUnwrap();
+
+        expect(result).toEqual({
+            totalFound: 2,
+            results: [
+                {
+                    pmid: "12345678",
+                    title: "BRCA1 and drug resistance",
+                    journal: "Nature Reviews Cancer",
+                    year: "2021",
+                    authors: "Smith J",
+                },
+                {
+                    pmid: "40000001",
+                    title: "Ahead-of-print record",
+                    journal: "Nat Rev Drug Discov",
+                    year: "2026",
+                    authors: "",
+                },
+            ],
+        });
     });
 
     it("returns an empty results list when nothing matches (does not throw, and does not call esummary)", async () => {
