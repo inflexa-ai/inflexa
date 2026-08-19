@@ -36,16 +36,20 @@ import { defineTool, type Tool, type ToolError } from "./define-tool.js";
  * message row, thus the schema holds no unbounded string out of the store.
  *
  * The description caps the brief at approximately 2000 tokens, and a token is
- * about four characters. Thus the five bounds sum to 8000 characters, and the
+ * about four characters. Thus the five bounds sum to 8200 characters, and the
  * widest brief that the schema admits still meets the cap that the agent reads.
  *
  * The share of each field follows its role. `audience` names one reader, thus a
  * phrase is enough. `objective` and `angle` carry a sentence or two. Each
  * optional field carries a list of items, thus it takes the largest share.
+ *
+ * The bound of `audience` holds 400 characters, not the 200 that the phrase
+ * alone needs. A model counts tokens, not characters, thus a tight bound gives
+ * a rejected call and a retry.
  */
 const BRIEF_MAX = {
     objective: 1500,
-    audience: 200,
+    audience: 400,
     angle: 1500,
     exclusions: 2400,
     openQuestions: 2400,

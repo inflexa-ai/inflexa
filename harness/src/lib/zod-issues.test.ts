@@ -26,6 +26,36 @@ const NestedSchema = z.object({
 });
 
 describe("hintForZodIssue", () => {
+    test("measures a string that went past its maximum length", () => {
+        const schema = z.object({ audience: z.string().max(400) });
+        const input = { audience: "x".repeat(463) };
+
+        const [issue] = issuesFor(schema, input);
+        const hint = hintForZodIssue(issue!, input);
+
+        expect(hint).toBeDefined();
+        expect(hint).toContain("463 characters");
+        expect(hint).toContain("63 characters");
+    });
+
+    test("stays silent for a string that is too short", () => {
+        const schema = z.object({ audience: z.string().min(4) });
+        const input = { audience: "ab" };
+
+        const [issue] = issuesFor(schema, input);
+
+        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+    });
+
+    test("stays silent when a maximum applies to an array, not to a string", () => {
+        const schema = z.object({ steps: z.array(z.string()).max(1) });
+        const input = { steps: ["a", "b"] };
+
+        const [issue] = issuesFor(schema, input);
+
+        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+    });
+
     test("hints when an object field arrived as a JSON-encoded string", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: JSON.stringify({ runId: "run-1" }) };

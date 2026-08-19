@@ -394,8 +394,8 @@ describe("the bounds of the brief", () => {
     it("refuses a field past its bound, and accepts the same field at the bound", async () => {
         // The bound of `audience` is the smallest of the five, thus one long value
         // shows the rule with no dependence on the number itself.
-        const atBound = { ...INPUT, audience: "x".repeat(200) };
-        const pastBound = { ...INPUT, audience: "x".repeat(201) };
+        const atBound = { ...INPUT, audience: "x".repeat(400) };
+        const pastBound = { ...INPUT, audience: "x".repeat(401) };
 
         expect(tool.inputSchema.safeParse(atBound).success).toBe(true);
         expect(tool.inputSchema.safeParse(pastBound).success).toBe(false);
