@@ -384,3 +384,13 @@ example `cd harness`. Then the change goes into the correct spec tree.
 
 `AGENTS.md` is a symbolic link to `CLAUDE.md` at each level. The two names give
 one file.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in the GitHub Issues of `inflexa-ai/inflexa`. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Multi-context: the root `CONTEXT.md` is the map to the per-subsystem `CONTEXT.md` files. See `docs/agents/domain.md`.
