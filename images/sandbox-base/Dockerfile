@@ -17,7 +17,7 @@ ARG BASE_IMAGE=rocker/r-ver:4.6.0@sha256:6f05a1a8b8c52328f181593923909b01cbfd14c
 # Stage 1: Build sandbox-server (Go static binary)
 # =============================================================================
 
-FROM golang:1.26-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669 AS server-builder
+FROM golang:1.27rc3-bookworm@sha256:e265a6dd120f4bff9beabc3e2e5e2f3198bdb6a7235cca1562962863980ea7e2 AS server-builder
 
 WORKDIR /build
 COPY images/sandbox-base/server/go.mod images/sandbox-base/server/go.sum ./
