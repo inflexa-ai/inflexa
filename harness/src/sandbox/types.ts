@@ -31,6 +31,76 @@ export const SandboxTransportSchema = z.enum(["poll", "callback"]);
 export type SandboxTransport = z.infer<typeof SandboxTransportSchema>;
 
 /**
+ * The declared owner of the sandbox toolchain. `"image"` states that the
+ * image owns the interpreters, conda, and Node. `"store"` states that the
+ * mounted store owns them. An absent config field means `"store"`, thus an
+ * old embedder keeps its environment and its prompt prefix. The harness keys
+ * the resolver env and the orient-core prompt text on this declared value
+ * only, and it never infers its host.
+ */
+export type ToolchainSource = "image" | "store";
+
+/**
+ * A resolved farm. `farmPath` is a host directory for the Docker backend,
+ * and a PVC-relative path for the K8s backend. `cachePath` is the optional
+ * per-analysis read-write cache. When it is present, the backend mounts it
+ * at `/mnt/libs/cache`.
+ */
+export interface FarmLocation {
+    readonly farmPath: string;
+    readonly cachePath?: string;
+}
+
+/** The answer of a farm resolver: a usable farm, or a refusal that carries the reason of the embedder. */
+export type FarmResolution = { readonly kind: "available"; readonly location: FarmLocation } | { readonly kind: "unavailable"; readonly reason: string };
+
+/** Resolve the farm of one analysis. A backend calls this at each `createSandbox`, thus a new farm reaches the next sandbox with no restart. */
+export type ResolveAnalysisFarm = (analysisId: string) => Promise<FarmResolution>;
+
+/**
+ * Where the farm of an analysis comes from. A required field of each sandbox
+ * backend config — the harness never invents a farm location, and it reads
+ * no store-root `current` pointer. `fixed` names one farm for every
+ * analysis. `per-analysis` supplies a resolver.
+ */
+export type FarmSource = { readonly kind: "fixed"; readonly location: FarmLocation } | { readonly kind: "per-analysis"; readonly resolve: ResolveAnalysisFarm };
+
+/**
+ * One package ask of the farm-extension seam. `version` pins one exact
+ * version. `ecosystem` qualifies a name that both tracks can hold. Without
+ * it, a name that both tracks hold comes back as a `collision` outcome.
+ */
+export interface PackageRequest {
+    readonly name: string;
+    readonly version?: string;
+    readonly ecosystem?: "python" | "r";
+}
+
+/**
+ * One outcome per request, index-aligned with the request array.
+ * - `linked` — the pool held the package, and this call linked it.
+ * - `present` — the farm linked it already.
+ * - `absent` — the pool does not hold it. `acquisitionPossible` states that
+ *   the host can acquire that ecosystem, or that it cannot.
+ * - `collision` — the request resolves to two store directories: two
+ *   versions of one distribution, or one name that both tracks hold. The
+ *   outcome is terminal for the request.
+ */
+export type PackageRequestOutcome =
+    | { readonly kind: "linked"; readonly name: string; readonly version: string }
+    | { readonly kind: "present"; readonly name: string; readonly version: string }
+    | { readonly kind: "absent"; readonly name: string; readonly acquisitionPossible: boolean }
+    | { readonly kind: "collision"; readonly name: string; readonly storeDirs: readonly [string, string] };
+
+/**
+ * The farm-extension seam. The realization of the embedder links host-staged
+ * packages into the farm of the analysis. It never installs, downloads, or
+ * acquires. A link is live in a sandbox that already runs, because the farm
+ * rides a bind mount.
+ */
+export type ExtendAnalysisFarm = (analysisId: string, requests: readonly PackageRequest[]) => Promise<readonly PackageRequestOutcome[]>;
+
+/**
  * Per-sandbox-machine liveness verdict. `oomKilled` is meaningful only when
  * `alive` is false: true when the backend reports the machine was killed for
  * exceeding its memory limit (Docker `State.OOMKilled`; K8s container

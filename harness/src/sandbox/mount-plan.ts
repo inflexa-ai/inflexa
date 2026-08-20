@@ -29,6 +29,7 @@
  */
 
 import { assertSafeId, assertSafeTail } from "../workspace/paths.js";
+import type { ToolchainSource } from "./types.js";
 
 export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"] as const;
 
@@ -39,6 +40,19 @@ export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"
  */
 export const LIBS_CONTAINER_PATH = "/mnt/libs";
 export const REFS_CONTAINER_PATH = "/mnt/refs";
+
+/** Container path of the per-analysis read-write cache, when a farm resolution carries a cache location. */
+export const FARM_CACHE_CONTAINER_PATH = "/mnt/libs/cache";
+
+/**
+ * Container path of the mounted farm, keyed on the declared toolchain. With
+ * `"image"` the farm mounts at `/mnt/libs/farm`. With `"store"` (or absent)
+ * it stays `/mnt/libs/current`, because the baked resolvers of the old
+ * images name that path.
+ */
+export function farmContainerPath(toolchainSource: ToolchainSource | undefined): string {
+    return toolchainSource === "image" ? `${LIBS_CONTAINER_PATH}/farm` : `${LIBS_CONTAINER_PATH}/current`;
+}
 
 export interface MountPlanCoords {
     analysisId: string;
@@ -61,10 +75,18 @@ export interface MountPlanCoords {
 }
 
 export interface MountPlanStores {
-    /** Lib store is mounted at `/mnt/libs` and its env is emitted. */
+    /** Lib store is mounted at `/mnt/libs`, with the farm nested inside it, and its env is emitted. */
     libs: boolean;
     /** Ref store is mounted at `/mnt/refs`. */
     refs: boolean;
+    /**
+     * The declared toolchain owner. Keys the farm container path and the
+     * resolver env. Absent means `"store"`: the legacy environment,
+     * byte-identical to the one before the field existed.
+     */
+    toolchainSource?: ToolchainSource;
+    /** The farm resolution carries a cache location, mounted read-write at `/mnt/libs/cache`. */
+    cache?: boolean;
 }
 
 export interface MountPlan {
@@ -82,6 +104,10 @@ export interface MountPlan {
     workingDir: string;
     /** Container path of the lib store, present only when `libs`. */
     libsPath?: string;
+    /** Container path of the farm of the analysis, present only when `libs`. Keyed on the toolchain source. */
+    farmPath?: string;
+    /** Container path of the read-write cache, present only when `libs` and `cache`. */
+    cachePath?: string;
     /** Container path of the ref store, present only when `refs`. */
     refsPath?: string;
     /** Pre-created subdirectories under the writable mount. Empty when read-only
@@ -170,14 +196,37 @@ export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: 
 }
 
 /**
- * Lib-store package-discovery env. PYTHONPATH is intentionally omitted —
- * system Python resolves via a `.pth` file in the lib store.
+ * Lib-store package-discovery env, keyed on the declared toolchain.
+ * PYTHONPATH is intentionally omitted — system Python resolves via a `.pth`
+ * file in the lib store.
+ *
+ * With `"store"` (or absent) the env is byte-identical to the legacy one:
+ * the conda `bin` under `/mnt/libs/current`, thus an old embedder keeps its
+ * exact environment. With `"image"` the image owns the toolchain: `PATH`
+ * holds `/opt/conda/bin` before the farm `python/bin` at the end, thus a
+ * farm script never shadows an image tool. The cache env points into the
+ * read-write cache mount only when it is present — the entrypoint fallback
+ * covers the caches otherwise.
  */
-function libStoreEnv(): Record<string, string> {
+function libStoreEnv(toolchainSource: ToolchainSource | undefined, cache: boolean): Record<string, string> {
+    if (toolchainSource !== "image") {
+        return {
+            R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran",
+            NODE_PATH: "/mnt/libs/current/node/node_modules",
+            PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin",
+        };
+    }
+    const farm = farmContainerPath(toolchainSource);
     return {
-        R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran",
-        NODE_PATH: "/mnt/libs/current/node/node_modules",
-        PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin",
+        R_LIBS_SITE: `${farm}/r/github:${farm}/r/bioconductor:${farm}/r/cran`,
+        NODE_PATH: "/opt/node/node_modules",
+        PATH: `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin:${farm}/python/bin`,
+        ...(cache
+            ? {
+                  NUMBA_CACHE_DIR: `${FARM_CACHE_CONTAINER_PATH}/numba-cache`,
+                  MPLCONFIGDIR: `${FARM_CACHE_CONTAINER_PATH}/matplotlib_config`,
+              }
+            : {}),
     };
 }
 
@@ -189,17 +238,20 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
     const readonlyTreePath = `/${analysisId}`;
     const write = sandboxWriteTail(coords);
     const writableStepPath = write === undefined ? undefined : `${readonlyTreePath}/${write.tail}`;
+    const cache = stores.libs && stores.cache === true;
 
     return {
         readonlyTreePath,
         writableStepPath,
         workingDir: writableStepPath ?? readonlyTreePath,
         libsPath: stores.libs ? LIBS_CONTAINER_PATH : undefined,
+        farmPath: stores.libs ? farmContainerPath(stores.toolchainSource) : undefined,
+        cachePath: cache ? FARM_CACHE_CONTAINER_PATH : undefined,
         refsPath: stores.refs ? REFS_CONTAINER_PATH : undefined,
         stepSubdirs: write?.subdirs ?? [],
         env: {
             PROVENANCE_WATCH_DIRS: readonlyTreePath,
-            ...(stores.libs ? libStoreEnv() : {}),
+            ...(stores.libs ? libStoreEnv(stores.toolchainSource, cache) : {}),
         },
     };
 }

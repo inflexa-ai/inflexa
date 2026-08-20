@@ -3,9 +3,10 @@
  *
  * Thin wrapper around `dockerode`. Storage is wired via `HostConfig.Binds`:
  * a flat read-only mount of the analysis tree at `/{resourceId}`, a nested
- * read-write mount of the step's artifact dir, and the lib/ref stores at
- * `/mnt/libs` / `/mnt/refs` when their host paths are configured. Container
- * paths and lib-store env come from the shared mount plan (`mount-plan.ts`).
+ * read-write mount of the step's artifact dir, the package store at
+ * `/mnt/libs` with the resolved farm nested inside it, and the ref store at
+ * `/mnt/refs` when its host path is configured. Container paths and
+ * lib-store env come from the shared mount plan (`mount-plan.ts`).
  *
  * ## The cpu files
  *
@@ -38,7 +39,7 @@
  * effective capabilities.
  */
 
-import { existsSync, lstatSync, statSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import Docker from "dockerode";
@@ -48,6 +49,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
+import { readFarmLock, resolveFarmSource } from "./farm.js";
 import { buildMountPlan, sandboxWriteTail } from "./mount-plan.js";
 import { CPU_ONLINE_PATH, CPUINFO_PATH, cpuFiles, readHostCpuinfoOnce } from "./cpu-files.js";
 import { threadLimitEnv } from "./thread-env.js";
@@ -56,7 +58,16 @@ import { threadLimitEnv } from "./thread-env.js";
 function statusOf(e: SandboxError): number | undefined {
     return "status" in e ? e.status : undefined;
 }
-import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
+import type {
+    CreateSandboxMeta,
+    FarmSource,
+    ManagedSandbox,
+    SandboxIdentity,
+    SandboxLiveness,
+    SandboxRef,
+    SandboxTransport,
+    ToolchainSource,
+} from "./types.js";
 
 const SANDBOX_SERVER_PORT = 8765;
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -96,6 +107,15 @@ export interface DockerClientConfig {
     /** Host lib store; bind-mounted read-only at `/mnt/libs` when set. */
     libStorePath?: string;
     /**
+     * Where the farm of an analysis comes from. Required — the harness never
+     * invents a farm location. `FarmLocation.farmPath` is a host directory
+     * here, bind-mounted read-only at the farm container path. Consulted only
+     * when `libStorePath` is set.
+     */
+    farmSource: FarmSource;
+    /** The declared toolchain owner. Absent means `"store"`, the legacy environment. */
+    toolchainSource?: ToolchainSource;
+    /**
      * Host ref store; bind-mounted read-only at `/mnt/refs`. Embedders pass the
      * configured store location unconditionally — existence is (re-)checked at each
      * sandbox creation, so a store installed mid-session is mounted into subsequent
@@ -127,32 +147,13 @@ export interface DockerClientConfig {
      */
     readHostCpuinfo?: () => Promise<string | undefined>;
     /**
-     * Optional logger so a lib-store degradation (a configured store whose `current`
-     * vanished or went incomplete by sandbox-create time) is observable instead of a
+     * Optional logger so a store degradation (a resolved farm whose `inflexa.lock`
+     * is absent or invalid by sandbox-create time) is observable instead of a
      * silent libs-mount drop. Matches the `reaper`/`watchdog` logger seam.
      */
     logger?: Logger;
     /** Hook called after the registry row is written. */
     registerSandbox: (meta: CreateSandboxMeta, ref: SandboxRef) => Promise<void>;
-}
-
-/**
- * Whether the lib store's `current` resolves to a COMPLETE, usable version, not merely a
- * present symlink. By sandbox-create time `current` may be gone (concurrent prune/`rm`), a
- * dangling symlink (its target pruned), or an incomplete tree. Binding a missing source
- * makes Docker auto-create a root-owned dir (bricking a later store refresh); binding a broken
- * one mounts broken content. Require a resolved directory carrying both completeness
- * markers `activate` writes before it flips the pointer.
- */
-function libStoreUsable(libStorePath: string): boolean {
-    const current = join(libStorePath, "current");
-    try {
-        // statSync FOLLOWS the symlink, so a dangling `current` throws here and is rejected.
-        if (!statSync(current).isDirectory()) return false;
-    } catch {
-        return false;
-    }
-    return existsSync(join(current, "packages.txt")) && existsSync(join(current, "meta.json"));
 }
 
 /**
@@ -340,16 +341,32 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                 (async () => {
                     const { sandboxId, callbackSecret } = identity;
 
-                    // Re-check AT sandbox-creation time: `config.libStorePath` was fixed at CLI
-                    // boot and the store may have gone away since (see libStoreUsable). Not
-                    // usable → skip the mount (sandbox degrades to available:false) and log it,
-                    // since an otherwise-silent libs-mount drop is invisible to operators.
-                    const libsMounted = !!config.libStorePath && libStoreUsable(config.libStorePath);
-                    if (config.libStorePath && !libsMounted) {
-                        logger.warn(
-                            "lib store configured but `current` is missing or incomplete at sandbox creation — mounting no library store (sandbox degrades to available:false)",
-                            { libStorePath: config.libStorePath, sandboxId },
-                        );
+                    // Farm resolution comes before any container work: a resolver
+                    // refusal and a resolver throw refuse the whole call, and no
+                    // container is made. The reason of the embedder rides in the error.
+                    let farm;
+                    if (config.libStorePath) {
+                        const resolved = await resolveFarmSource(config.farmSource, meta.analysisId, "docker.createSandbox");
+                        if (resolved.isErr()) return err(resolved.error);
+                        farm = resolved.value;
+                    }
+
+                    // The `inflexa.lock` gate runs at each create: the store may have
+                    // gone away, or the farm may be half-written. A gate failure
+                    // degrades — both store mounts drop, the container is still made,
+                    // and the sandbox reports the store as unavailable. The warning is
+                    // logged because an otherwise-silent mount drop is invisible to
+                    // operators.
+                    let libsMounted = false;
+                    if (config.libStorePath && farm) {
+                        const lock = readFarmLock(farm.farmPath);
+                        libsMounted = lock.isOk();
+                        if (lock.isErr()) {
+                            logger.warn(
+                                "the farm of the analysis has no usable inflexa.lock at sandbox creation — mounting no package store (sandbox degrades to available:false)",
+                                { libStorePath: config.libStorePath, farmPath: farm.farmPath, lockError: lock.error.type, sandboxId },
+                            );
+                        }
                     }
 
                     // Re-checked here too, so a ref store installed after boot is mounted into
@@ -363,6 +380,8 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     const plan = buildMountPlan(meta, {
                         libs: libsMounted,
                         refs: refsMounted,
+                        toolchainSource: config.toolchainSource,
+                        cache: farm?.cachePath !== undefined,
                     });
 
                     const hostTreePath = config.resolveWorkspaceRoot(meta.analysisId);
@@ -382,12 +401,16 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     const cpuDir = join(dirname(hostTreePath), CPU_FILES_DIR, sandboxId);
                     const cpuBinds = await writeCpuFiles(cpuDir, cpuFiles(threads, cpuinfo), logger, sandboxId);
                     if (cpuBinds.length > 0) cpuDirs.set(sandboxId, cpuDir);
+                    // The farm bind comes after the store bind, thus the nesting is
+                    // stable; the cache bind comes after the two store binds.
                     const binds = [
                         `${hostTreePath}:${plan.readonlyTreePath}:ro`,
                         ...(write && plan.writableStepPath
                             ? [`${tailWritePrefix({ workspaceRoot: hostTreePath, tail: write.tail })}:${plan.writableStepPath}:rw`]
                             : []),
                         ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
+                        ...(libsMounted && farm && plan.farmPath ? [`${farm.farmPath}:${plan.farmPath}:ro`] : []),
+                        ...(libsMounted && farm?.cachePath && plan.cachePath ? [`${farm.cachePath}:${plan.cachePath}:rw`] : []),
                         ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
                         ...cpuBinds,
                     ];

@@ -567,6 +567,19 @@ export type { ResolveWorkspaceRoot } from "./workspace/paths.js";
 export { createSandboxClient } from "./sandbox/create-sandbox.js";
 export type { CreateSandboxClientConfig, SandboxBackendConfig } from "./sandbox/create-sandbox.js";
 export type { SandboxClient } from "./sandbox/client.js";
+// Package-store seams. `FarmSource` is a required backend config field: the
+// embedder names where the farm of an analysis comes from. `ExtendAnalysisFarm`
+// is the optional link seam behind the `link_packages` tool.
+export type {
+    ExtendAnalysisFarm,
+    FarmLocation,
+    FarmResolution,
+    FarmSource,
+    PackageRequest,
+    PackageRequestOutcome,
+    ResolveAnalysisFarm,
+    ToolchainSource,
+} from "./sandbox/types.js";
 export { MachineBudgetSchema, ResourceLimitsSchema, ResourcePolicySchema, ResourceSpecSchema, parseResourcePolicy } from "./config/resource-limits.js";
 export type { MachineBudget, ResourceLimits, ResourcePolicy, ResourceSpec } from "./config/resource-limits.js";
 export { createWorkspaceFilesystem } from "./workspace/filesystem.js";

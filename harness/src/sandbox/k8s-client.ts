@@ -6,10 +6,11 @@
  * Storage is wired via the shared session PVC: a flat read-only `volumeMount`
  * of the analysis tree at `/{resourceId}` plus a nested read-write mount of the
  * step's artifact dir, with the lib/ref stores mounted read-only at `/mnt/libs`
- * / `/mnt/refs` when their PVCs are set. Container paths and lib-store env come
- * from the shared mount plan; the PVC `subPath`s are derived from the same
- * `resolveWorkspaceRoot` seam the harness pre-creates the step tree under, so
- * both sides address one directory by construction.
+ * / `/mnt/refs` when their PVCs are set. The farm of the analysis mounts as a
+ * read-only `subPath` of the libs PVC, after the store mount. Container paths
+ * and lib-store env come from the shared mount plan; the PVC `subPath`s are
+ * derived from the same `resolveWorkspaceRoot` seam the harness pre-creates
+ * the step tree under, so both sides address one directory by construction.
  */
 
 import { relative as relativePath, sep } from "node:path";
@@ -29,9 +30,20 @@ import { ResultAsync, err, ok } from "neverthrow";
 
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
+import { resolveFarmSource } from "./farm.js";
 import { buildMountPlan, buildSessionSubPaths } from "./mount-plan.js";
 import { threadLimitEnv } from "./thread-env.js";
-import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
+import type {
+    CreateSandboxMeta,
+    FarmLocation,
+    FarmSource,
+    ManagedSandbox,
+    SandboxIdentity,
+    SandboxLiveness,
+    SandboxRef,
+    SandboxTransport,
+    ToolchainSource,
+} from "./types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 
@@ -108,6 +120,15 @@ export interface K8sClientConfig {
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** PVC claim mounted read-only at `/mnt/libs` when set. */
     libStorePvc?: string;
+    /**
+     * Where the farm of an analysis comes from. Required — the harness never
+     * invents a farm location. The farm is a `subPath` into `libStorePvc`,
+     * thus `FarmLocation.farmPath` is PVC-relative here. Consulted only when
+     * `libStorePvc` is set.
+     */
+    farmSource: FarmSource;
+    /** The declared toolchain owner. Absent means `"store"`, the legacy environment. */
+    toolchainSource?: ToolchainSource;
     /** PVC claim mounted read-only at `/mnt/refs` when set. */
     refStorePvc?: string;
     /** Node selector pinning sandbox pods to the dedicated agent pool. Omit for default scheduling. */
@@ -176,11 +197,26 @@ function workspaceSubPathFor(config: K8sClientConfig, analysisId: string): strin
     return posix;
 }
 
-function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity: SandboxIdentity): V1Job {
+/**
+ * A farm location on K8s is a `subPath` into the libs PVC. A subPath must be
+ * a relative path with no `..` — an absolute or escaping value would mount a
+ * directory nothing resolved. `createSandbox` runs inside a DBOS workflow
+ * body, where a throw is the durable failure signal.
+ */
+function pvcSubPath(value: string, what: string): string {
+    if (value.length === 0 || value.startsWith("/") || value.split("/").includes("..")) {
+        throw new Error(`k8s sandbox: ${what} must be a non-empty PVC-relative path without '..' (got ${JSON.stringify(value)})`);
+    }
+    return value;
+}
+
+function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity: SandboxIdentity, farm: FarmLocation | undefined): V1Job {
     const { sandboxId } = identity;
     const plan = buildMountPlan(meta, {
         libs: !!config.libStorePvc,
         refs: !!config.refStorePvc,
+        toolchainSource: config.toolchainSource,
+        cache: farm?.cachePath !== undefined,
     });
 
     const transport = config.transport ?? "poll";
@@ -240,15 +276,36 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
     }
 
     if (config.libStorePvc && plan.libsPath) {
+        const cacheSubPath = farm?.cachePath !== undefined && plan.cachePath ? pvcSubPath(farm.cachePath, "the farm cache") : undefined;
         volumes.push({
             name: LIBS_VOLUME_NAME,
-            persistentVolumeClaim: { claimName: config.libStorePvc, readOnly: true },
+            // Volume-level readOnly only when nothing writes through the claim:
+            // the cache mount needs write access, and the per-mount flags keep
+            // the store and the farm read-only either way.
+            persistentVolumeClaim: { claimName: config.libStorePvc, ...(cacheSubPath === undefined ? { readOnly: true } : {}) },
         });
         volumeMounts.push({
             name: LIBS_VOLUME_NAME,
             mountPath: plan.libsPath,
             readOnly: true,
         });
+        // The farm mount comes after the store mount, thus the nesting is stable.
+        if (farm && plan.farmPath) {
+            volumeMounts.push({
+                name: LIBS_VOLUME_NAME,
+                mountPath: plan.farmPath,
+                subPath: pvcSubPath(farm.farmPath, "the farm"),
+                readOnly: true,
+            });
+        }
+        if (cacheSubPath !== undefined && plan.cachePath) {
+            volumeMounts.push({
+                name: LIBS_VOLUME_NAME,
+                mountPath: plan.cachePath,
+                subPath: cacheSubPath,
+                readOnly: false,
+            });
+        }
     }
 
     if (config.refStorePvc && plan.refsPath) {
@@ -525,7 +582,18 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
             return new ResultAsync(
                 (async () => {
                     const { sandboxId } = identity;
-                    const job = buildJobSpec(meta, config, identity);
+
+                    // Farm resolution comes before any cluster work: a resolver
+                    // refusal and a resolver throw refuse the whole call, and no
+                    // Job is made.
+                    let farm: FarmLocation | undefined;
+                    if (config.libStorePvc) {
+                        const resolved = await resolveFarmSource(config.farmSource, meta.analysisId, "k8s.createSandbox");
+                        if (resolved.isErr()) return err(resolved.error);
+                        farm = resolved.value;
+                    }
+
+                    const job = buildJobSpec(meta, config, identity, farm);
 
                     const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, meta.childWorkflowId, job);
                     if (adopted.isErr()) return err(adopted.error);

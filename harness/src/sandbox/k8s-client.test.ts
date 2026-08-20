@@ -10,10 +10,14 @@ import type { BatchV1Api, CoreV1Api, V1Job, V1Pod } from "@kubernetes/client-nod
 
 import { createK8sSandboxOps, sanitizeLabelValue } from "./k8s-client.js";
 import { mintSandboxIdentity } from "./identity.js";
+import type { FarmSource } from "./types.js";
 
 /** The conventional managed layout: workspace roots sit directly under the PVC mountpoint. */
 const SESSION_PVC_ROOT = "/sessions";
 const resolveWorkspaceRoot = (analysisId: string) => `${SESSION_PVC_ROOT}/${analysisId}`;
+
+/** The managed shape: one farm location, PVC-relative, for every analysis. */
+const FIXED_FARM: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
 
 function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: number; existingOwner?: string } = {}) {
     const createdJobs: V1Job[] = [];
@@ -90,6 +94,7 @@ describe("k8s createSandbox", () => {
             cortexBaseUrl: "https://cortex.example.com:443",
             transport: "callback",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -171,6 +176,7 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             // An embedder whose roots are NOT `{pvcRoot}/{analysisId}`. The pod must mount the
             // directory the harness pre-creates under this root, not a same-named sibling of it.
@@ -204,6 +210,7 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot: (id) => `${SESSION_PVC_ROOT}/${id}`,
             sessionPvc: "cortex-sessions",
@@ -247,6 +254,7 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot: () => "/elsewhere/an-1",
             sessionPvc: "cortex-sessions",
@@ -277,6 +285,7 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://cortex.example.com:443",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -317,6 +326,7 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -364,6 +374,7 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -418,6 +429,7 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -457,6 +469,7 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -497,6 +510,7 @@ describe("k8s createSandbox failure cleanup", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -526,6 +540,7 @@ describe("k8s createSandbox failure cleanup", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -565,6 +580,7 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -609,6 +625,7 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -646,6 +663,7 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -679,6 +697,7 @@ describe("k8s job ownership labels", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -720,6 +739,7 @@ describe("k8s job ownership labels", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -761,6 +781,7 @@ describe("k8s job ownership labels", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -805,6 +826,7 @@ describe("k8s host-supplied pod labels", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://cortex.internal:443",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
@@ -916,6 +938,7 @@ describe("k8s teardown", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             batchApi: stub.batchApi,
@@ -939,6 +962,7 @@ describe("k8s teardown", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             batchApi: stub.batchApi,
@@ -984,6 +1008,7 @@ describe("k8s isAlive", () => {
                 image: "sandbox-base:latest",
                 cortexBaseUrl: "https://x",
                 namespace: "sandbox",
+                farmSource: FIXED_FARM,
                 sessionPvcRoot: SESSION_PVC_ROOT,
                 resolveWorkspaceRoot,
                 batchApi: stub.batchApi,
@@ -1018,6 +1043,7 @@ describe("k8s isAlive", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
             batchApi: stub.batchApi,
@@ -1034,5 +1060,84 @@ describe("k8s isAlive", () => {
             })
         )._unsafeUnwrap();
         expect(liveness).toEqual({ alive: false, oomKilled: true });
+    });
+});
+
+describe("k8s createSandbox — the farm mounts", () => {
+    const META = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } } as const;
+
+    function opsWith(farmSource: FarmSource, stub: ReturnType<typeof stubApis>, toolchainSource?: "image" | "store") {
+        return createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            farmSource,
+            toolchainSource,
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            libStorePvc: "cortex-libs",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+    }
+
+    test("the farm mounts as a read-only subPath of the libs PVC, after the store mount", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.2" }, metadata: { name: "sbx-f" } }]);
+
+        (await opsWith(FIXED_FARM, stub).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        const container = stub.createdJobs[0]!.spec!.template.spec!.containers[0]!;
+        const mounts = container.volumeMounts!.filter((m) => m.name === "libs");
+        expect(mounts.map((m) => ({ mountPath: m.mountPath, subPath: m.subPath, readOnly: m.readOnly }))).toEqual([
+            { mountPath: "/mnt/libs", subPath: undefined, readOnly: true },
+            { mountPath: "/mnt/libs/current", subPath: "farms/catalog", readOnly: true },
+        ]);
+    });
+
+    test("a cache location mounts read-write at /mnt/libs/cache through the same claim", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.3" }, metadata: { name: "sbx-c" } }]);
+        const source: FarmSource = { kind: "fixed", location: { farmPath: "farms/an-1", cachePath: "caches/an-1" } };
+
+        (await opsWith(source, stub, "image").createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
+        const libsVolume = podSpec.volumes!.find((v) => v.name === "libs")!;
+        // The claim carries no volume-level readOnly when the cache writes
+        // through it — the per-mount flags keep the store and the farm read-only.
+        expect(libsVolume.persistentVolumeClaim!.readOnly).toBeUndefined();
+
+        const mounts = podSpec.containers[0]!.volumeMounts!.filter((m) => m.name === "libs");
+        expect(mounts.map((m) => ({ mountPath: m.mountPath, subPath: m.subPath, readOnly: m.readOnly }))).toEqual([
+            { mountPath: "/mnt/libs", subPath: undefined, readOnly: true },
+            { mountPath: "/mnt/libs/farm", subPath: "farms/an-1", readOnly: true },
+            { mountPath: "/mnt/libs/cache", subPath: "caches/an-1", readOnly: false },
+        ]);
+    });
+
+    test("a resolver refusal returns farm_unavailable and creates no Job", async () => {
+        const stub = stubApis([]);
+        const source: FarmSource = { kind: "per-analysis", resolve: async () => ({ kind: "unavailable", reason: "no store yet" }) };
+
+        const result = await opsWith(source, stub).createSandbox(META, mintSandboxIdentity("run-1"));
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("farm_unavailable");
+            if (result.error.type === "farm_unavailable") expect(result.error.reason).toBe("no store yet");
+        }
+        expect(stub.createdJobs).toHaveLength(0);
+    });
+
+    test("an absolute farm path is refused before any Job is made", async () => {
+        const stub = stubApis([]);
+        const source: FarmSource = { kind: "fixed", location: { farmPath: "/mnt/libs/farms/x" } };
+
+        const attempt = async (): Promise<void> => {
+            (await opsWith(source, stub).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        };
+        await expect(attempt()).rejects.toThrow(/PVC-relative/);
+        expect(stub.createdJobs).toHaveLength(0);
     });
 });
