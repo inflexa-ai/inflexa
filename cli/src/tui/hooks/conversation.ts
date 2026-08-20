@@ -106,9 +106,8 @@ export type UIMessage = {
 const MESSAGE_CAP = 200;
 
 // The identity the ask seam keys a standing `always` grant on. One person owns a
-// local CLI install, and the CLI holds no account model, so every turn of every
-// analysis carries this one value. The harness never interprets it — a managed
-// host passes the identity of its signed-in person here instead.
+// local install, and the CLI holds no account model, so every turn carries this
+// one value.
 const LOCAL_ASK_USER_ID = "local";
 
 const [messages, setMessages] = createStore<UIMessage[]>([]);
