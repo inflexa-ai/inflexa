@@ -25,6 +25,35 @@ if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
   exit 1
 fi
 
+# cli/package.json is the one source of the product metadata, the same as it
+# is for the version (see .github/citation/sync.sh). .github/npm/assemble.ts
+# reads the same file for the npm packages. Edit the metadata there, not in
+# the template.
+manifest="$(dirname "$0")/../../cli/package.json"
+desc=$(jq -r '.description // ""' "$manifest")
+homepage=$(jq -r '.homepage // ""' "$manifest")
+
+if [ -z "$desc" ] || [ -z "$homepage" ]; then
+  echo "error: $manifest must give a description and a homepage" >&2
+  exit 1
+fi
+
+# Both values land inside a double-quoted Ruby string and inside a sed
+# program below. A quote, a backslash, or a line break breaks one of the two,
+# thus reject such a value before the splice.
+case "$desc$homepage" in
+  *'"'* | *'\'* | *$'\n'*)
+    echo "error: description and homepage in $manifest must hold no quote, backslash, or line break" >&2
+    exit 1
+    ;;
+esac
+
+# & and the | delimiter stay special in a sed replacement.
+esc_desc=${desc//&/\\&}
+esc_desc=${esc_desc//|/\\|}
+esc_homepage=${homepage//&/\\&}
+esc_homepage=${esc_homepage//|/\\|}
+
 sum_of() {
   local sha
   sha=$(awk -v name="$1" '$2 == name { print $1 }' "$assets/SHA256SUMS")
@@ -40,6 +69,8 @@ notices_sha=$(shasum -a 256 "$assets/THIRD-PARTY-NOTICES.txt" | awk '{ print $1 
 rendered=$(
   sed \
     -e "s/{{VERSION}}/$version/g" \
+    -e "s|{{DESCRIPTION}}|$esc_desc|g" \
+    -e "s|{{HOMEPAGE}}|$esc_homepage|g" \
     -e "s/{{SHA_DARWIN_ARM64}}/$(sum_of inflexa-darwin-arm64)/g" \
     -e "s/{{SHA_DARWIN_X64}}/$(sum_of inflexa-darwin-x64)/g" \
     -e "s/{{SHA_LINUX_X64}}/$(sum_of inflexa-linux-x64)/g" \

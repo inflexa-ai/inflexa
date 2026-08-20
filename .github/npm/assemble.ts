@@ -19,27 +19,31 @@ import { createHash } from "node:crypto";
 import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const DESCRIPTION = "Local-first AI agent for reproducible biological data analysis";
 const REPO_URL = "https://github.com/inflexa-ai/inflexa";
-const HOMEPAGE_URL = "https://inflexa.ai";
 
+// cli/package.json is the one source of the product metadata, the same as it
+// is for the version (see .github/citation/sync.sh). That manifest is private
+// and thus never reaches npm, so the three fields are copied here into the
+// manifests that npm does receive. .github/homebrew/render.sh reads the same
+// file for the formula. Edit the metadata there, not here.
+const CLI_MANIFEST = join(import.meta.dir, "..", "..", "cli", "package.json");
+const cli = JSON.parse(readFileSync(CLI_MANIFEST, "utf8")) as {
+    description?: string;
+    homepage?: string;
+    keywords?: string[];
+};
+
+const DESCRIPTION = cli.description;
+const HOMEPAGE_URL = cli.homepage;
 // Only the wrapper carries the keywords: the five platform packages are
-// install-gated binary carriers, and the same terms on each of them puts five
+// install-gated binary carriers, and the same terms on each of them put five
 // near-identical results into one npm search.
-const KEYWORDS = [
-    "bioinformatics",
-    "computational-biology",
-    "ai-agent",
-    "agentic-ai",
-    "genomics",
-    "multi-omics",
-    "rna-seq",
-    "single-cell",
-    "reproducible-research",
-    "provenance",
-    "local-first",
-    "llm",
-];
+const KEYWORDS = cli.keywords;
+
+if (!DESCRIPTION || !HOMEPAGE_URL || !KEYWORDS?.length) {
+    console.error(`error: ${CLI_MANIFEST} must give a description, a homepage, and at least one keyword`);
+    process.exit(1);
+}
 
 type Platform = {
     /** npm naming: process.platform-process.arch, the launcher's lookup key. */
