@@ -13,9 +13,17 @@
  *
  * A pure function over the record — no I/O, no LLM, no pipeline. It is the whole
  * mechanism.
+ *
+ * Every path it renders is projected into the frame-independent
+ * `/{analysisId}/…` form. The record stores a path relative to the analysis
+ * root, which is the correct form to store; but a step agent resolves a relative
+ * path against its own working directory, thus the stored form names a file that
+ * does not exist there. The absolute form resolves to the same file in every
+ * frame, including the conversation agent's, so the projection is unconditional.
  */
 
 import type { DataProfileResult } from "../state/data-profile.js";
+import { toAnalysisRootPath } from "../workspace/paths.js";
 
 /** The character budget the projection guarantees it will not exceed. */
 export const DATA_PROFILE_ORIENTATION_MAX_CHARS = 1200;
@@ -91,8 +99,12 @@ function formatFileFacts(file: DataProfileResult["files"][number]): string {
  * A snapshot written before the record was widened carries none of the structured
  * fields. Rather than emit a bare file list, that case falls back to the narrative
  * summary — the one orientation a legacy row does have.
+ *
+ * `analysisId` roots each rendered file path (see the module header). It is the
+ * id of the analysis the profile belongs to, and it is what the sandbox mounts
+ * the tree at.
  */
-export function buildDataProfileOrientation(result: DataProfileResult, maxChars: number = DATA_PROFILE_ORIENTATION_MAX_CHARS): string {
+export function buildDataProfileOrientation(result: DataProfileResult, analysisId: string, maxChars: number = DATA_PROFILE_ORIENTATION_MAX_CHARS): string {
     const lines: string[] = [];
 
     const identity = [
@@ -154,7 +166,7 @@ export function buildDataProfileOrientation(result: DataProfileResult, maxChars:
         const header = shown.length < result.files.length ? `${label} (${shown.length} of ${result.files.length}):` : `${label} (${result.files.length}):`;
         lines.push(header);
         for (const file of shown) {
-            lines.push(`- ${file.path} — ${clip(file.description, MAX_FILE_DESCRIPTION_CHARS)}${formatFileFacts(file)}`);
+            lines.push(`- ${toAnalysisRootPath(analysisId, file.path)} — ${clip(file.description, MAX_FILE_DESCRIPTION_CHARS)}${formatFileFacts(file)}`);
         }
     }
 

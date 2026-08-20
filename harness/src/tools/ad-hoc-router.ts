@@ -82,7 +82,7 @@ async function profileOrientation(pool: Pool, analysisId: string, logger: Logger
     try {
         const status = unwrapOrThrow(await loadDataProfileStatus(pool, analysisId));
         if (!status?.result) return "No persisted data-profile facts are available.";
-        return buildDataProfileOrientation(status.result, DATA_PROFILE_ORIENTATION_MAX_CHARS);
+        return buildDataProfileOrientation(status.result, analysisId, DATA_PROFILE_ORIENTATION_MAX_CHARS);
     } catch (error) {
         logger.warn("could not load data profile for ad hoc routing", { error: error instanceof Error ? error.message : String(error) });
         return "The persisted data profile could not be loaded; route from the request alone.";

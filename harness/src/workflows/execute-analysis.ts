@@ -531,7 +531,7 @@ export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepI
     // through the same helpers the sandbox mount and the mutate tools use, so
     // the seed cannot disagree with the container about where anything is.
     const workspace = {
-        analysisRoot: `/${analysisId}`,
+        analysisId,
         workingDir: toSandboxPath(workspaceRoot, analysisId, stepWritePrefix({ workspaceRoot, runId, stepId })),
     };
 

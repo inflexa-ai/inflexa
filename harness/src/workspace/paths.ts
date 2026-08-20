@@ -26,7 +26,7 @@
  * read-only).
  */
 
-import { relative as relativePath, resolve as resolvePath, sep } from "node:path";
+import { posix as posixPath, relative as relativePath, resolve as resolvePath, sep } from "node:path";
 
 /**
  * The workspace-root resolution seam (see the workspace-root-resolution spec).
@@ -208,7 +208,53 @@ export function toSandboxPath(workspaceRoot: string, resourceId: string, hostAbs
     if (tail === ".." || tail.startsWith("../")) {
         throw new Error(`toSandboxPath: host path escapes the workspace root: ${hostAbsPath}`);
     }
+    return joinAnalysisRoot(resourceId, tail);
+}
+
+/**
+ * Map an analysis-root-relative path to the frame-independent `/{resourceId}/…`
+ * form this module defines at the top of the file.
+ *
+ * A record that outlives one agent stores the root-relative form, because that
+ * form does not depend on where a host puts the root. But a reader always reads
+ * inside a frame, and an agent whose working directory is a step directory
+ * resolves `data/inputs/x.csv` against that step directory. Thus one stored path
+ * is correct in the store and wrong in the message. This is the projection that a
+ * renderer applies before a stored path reaches an agent.
+ *
+ * The input comes from a record and it is a POSIX path, thus it normalizes under
+ * POSIX rules. The read is tolerant of the near-misses that a model writes: a
+ * leading slash, a `./` prefix, and a doubled separator all name the same file,
+ * and a path that already carries the correct root passes through. A tail that
+ * climbs above the root is returned as it is, because such a path must fail at
+ * the resolver as `out_of_scope`. A prefix would only make it look canonical.
+ */
+export function toAnalysisRootPath(resourceId: string, path: string): string {
+    const trimmed = path.trim();
+    if (trimmed === "") return `/${resourceId}`;
+
+    // Already rooted at this analysis: normalize the tail, then attach the root again.
+    const rooted = trimmed.startsWith("/") ? stripAnalysisRoot(trimmed, resourceId) : null;
+    if (rooted !== null) return joinAnalysisRoot(resourceId, normalizeTail(rooted));
+
+    // A record holds no host path. Thus a leading slash is how a model writes the
+    // same root-relative path, and the remainder is the tail.
+    const tail = normalizeTail(trimmed.replace(/^\/+/, ""));
+    if (tail === ".." || tail.startsWith("../")) return trimmed;
+    return joinAnalysisRoot(resourceId, tail);
+}
+
+/** `/{resourceId}` plus a tail. An empty tail gives the bare root. */
+function joinAnalysisRoot(resourceId: string, tail: string): string {
     return tail === "" ? `/${resourceId}` : `/${resourceId}/${tail}`;
+}
+
+/** Collapse `.`, `..`, and a doubled separator in a POSIX tail. A bare `.` becomes empty. */
+function normalizeTail(tail: string): string {
+    if (tail === "") return "";
+    const normalized = posixPath.normalize(tail);
+    if (normalized === "." || normalized === "./") return "";
+    return normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
 }
 
 /**

@@ -123,21 +123,35 @@ export function renderTask(step: AnalysisStep): string {
 
 // ── (2) Workspace ─────────────────────────────────────────────────────
 
-/** The two in-sandbox paths that anchor every path the agent writes or reads. */
+/**
+ * What anchors every path the agent writes or reads: the id the tree is mounted
+ * at, and the step's writable directory.
+ *
+ * The frame carries the id rather than the analysis root, because the root is
+ * `/{analysisId}` and two fields for one value can disagree. The id is also what
+ * every other path in the briefing is rooted with, thus one field serves the
+ * workspace section and the orientation alike.
+ */
 export interface WorkspaceFrame {
-    /** In-sandbox analysis root — the read-only mount of the whole analysis tree. */
-    readonly analysisRoot: string;
+    /** The analysis id. The sandbox mounts the read-only analysis tree at `/{analysisId}`. */
+    readonly analysisId: string;
     /** In-sandbox working directory — this step's writable artifact directory, and its cwd. */
     readonly workingDir: string;
 }
 
+/** The in-sandbox analysis root of a frame — the read-only mount of the whole tree. */
+export function analysisRootOf(frame: WorkspaceFrame): string {
+    return `/${frame.analysisId}`;
+}
+
 export function renderWorkspace(frame: WorkspaceFrame): string {
-    if (!frame.analysisRoot.trim() || !frame.workingDir.trim()) return "";
+    if (!frame.analysisId.trim() || !frame.workingDir.trim()) return "";
+    const analysisRoot = analysisRootOf(frame);
     return section(
         "Workspace",
         bullets([
             `Working directory (writable, your cwd): \`${frame.workingDir}\` — write outputs to \`output/\`, \`figures/\`, \`scripts/\`, \`logs/\` under it.`,
-            `Analysis root (read-only): \`${frame.analysisRoot}\` — inputs at \`${frame.analysisRoot}/data/inputs/\`, prior runs at \`${frame.analysisRoot}/runs/\`.`,
+            `Analysis root (read-only): \`${analysisRoot}\` — inputs at \`${analysisRoot}/data/inputs/\`, prior runs at \`${analysisRoot}/runs/\`.`,
         ]),
     );
 }
@@ -149,9 +163,9 @@ export function renderWorkspace(frame: WorkspaceFrame): string {
  * Absent or not-yet-profiled → `""`, and the agent falls back to its always-on
  * `inspect_data_profile` tool.
  */
-export function renderOrientation(profile: DataProfileResult | null | undefined): string {
+export function renderOrientation(profile: DataProfileResult | null | undefined, analysisId: string): string {
     if (!profile) return "";
-    const orientation = buildDataProfileOrientation(profile, DATA_PROFILE_ORIENTATION_MAX_CHARS);
+    const orientation = buildDataProfileOrientation(profile, analysisId, DATA_PROFILE_ORIENTATION_MAX_CHARS);
     if (orientation.trim().length === 0) return "";
     return section("Data orientation", `${orientation}\n\nThis is a bounded projection — call \`inspect_data_profile\` for the full profile.`);
 }
@@ -229,7 +243,12 @@ export interface StepBriefing {
  * caller's durable step replay-stable.
  */
 export function composeStepBriefing(briefing: StepBriefing): string {
-    return [renderTask(briefing.step), renderWorkspace(briefing.workspace), renderOrientation(briefing.profile), renderUpstream(briefing.upstream)]
+    return [
+        renderTask(briefing.step),
+        renderWorkspace(briefing.workspace),
+        renderOrientation(briefing.profile, briefing.workspace.analysisId),
+        renderUpstream(briefing.upstream),
+    ]
         .filter(Boolean)
         .join("\n\n");
 }

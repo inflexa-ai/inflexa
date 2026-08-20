@@ -333,7 +333,7 @@ const NO_FACTS_GUIDANCE =
  *
  * Pure — the same grounding renders the same string.
  */
-function renderDataContext(grounding: DataGrounding): string {
+function renderDataContext(grounding: DataGrounding, analysisId: string): string {
     switch (grounding.kind) {
         case "absent":
             return "";
@@ -357,7 +357,7 @@ function renderDataContext(grounding: DataGrounding): string {
                 "From this analysis's persisted data profile — the authoritative record of what the input data " +
                     "is, derived by profiling the files themselves. Nobody typed it; ground your plan in it.",
                 "",
-                buildDataProfileOrientation(grounding.result, DATA_PROFILE_ORIENTATION_MAX_CHARS),
+                buildDataProfileOrientation(grounding.result, analysisId, DATA_PROFILE_ORIENTATION_MAX_CHARS),
             ];
             if (grounding.kind === "provisional") {
                 lines.push(
@@ -1004,7 +1004,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 },
             );
             const grounding = classifyGrounding(profileStatus);
-            const dataContextBlock = renderDataContext(grounding);
+            const dataContextBlock = renderDataContext(grounding, analysisId);
 
             // Reference data and package availability are mandatory grounding,
             // not optional planner lookups. Read both inventories host-side before

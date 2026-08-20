@@ -3,6 +3,9 @@ import { describe, expect, it } from "bun:test";
 import type { DataProfileResult } from "../state/data-profile.js";
 import { buildDataProfileOrientation, DATA_PROFILE_ORIENTATION_MAX_CHARS } from "./data-profile-orientation.js";
 
+/** The analysis every rendered path is rooted with. */
+const ANALYSIS_ID = "an-1";
+
 const RICH: DataProfileResult = {
     summary: "Bulk RNA-seq of rectal mucosal biopsies, 24 samples, UC vs healthy controls.",
     files: [
@@ -44,7 +47,7 @@ const LEGACY: DataProfileResult = {
 
 describe("buildDataProfileOrientation", () => {
     it("projects the dataset identity, design, concerns, and file dimensions", () => {
-        const text = buildDataProfileOrientation(RICH);
+        const text = buildDataProfileOrientation(RICH, ANALYSIS_ID);
 
         expect(text).toContain("transcriptomics / bulk-rna-seq");
         expect(text).toContain("Homo sapiens (taxon 9606)");
@@ -54,7 +57,7 @@ describe("buildDataProfileOrientation", () => {
         expect(text).toContain("Two groups (12 UC, 12 control)");
         expect(text).toContain("batch confounded with group in batch 2");
         // Dimensions ride with each file, which is the only place they appear.
-        expect(text).toContain("data/inputs/f1/counts.csv — Raw gene-level count matrix (20531 x 24, CSV)");
+        expect(text).toContain("/an-1/data/inputs/f1/counts.csv — Raw gene-level count matrix (20531 x 24, CSV)");
         expect(text).toContain("Files (2):");
     });
 
@@ -63,7 +66,7 @@ describe("buildDataProfileOrientation", () => {
             ...RICH,
             organism: { scientificName: "Mus musculus", taxonId: "10090", source: "inferred", confidence: "low", notes: "from gene ID patterns" },
         };
-        expect(buildDataProfileOrientation(guessed)).toContain("Mus musculus (taxon 10090) [low confidence]");
+        expect(buildDataProfileOrientation(guessed, ANALYSIS_ID)).toContain("Mus musculus (taxon 10090) [low confidence]");
     });
 
     it("omits fields the profiler left null or unset instead of printing empties", () => {
@@ -77,7 +80,7 @@ describe("buildDataProfileOrientation", () => {
             tissue: null,
             condition: null,
         };
-        const text = buildDataProfileOrientation(sparse);
+        const text = buildDataProfileOrientation(sparse, ANALYSIS_ID);
 
         expect(text).toContain("Dataset: transcriptomics");
         expect(text).not.toContain("tissue:");
@@ -88,7 +91,7 @@ describe("buildDataProfileOrientation", () => {
     });
 
     it("falls back to the summary for a legacy snapshot that has no structured fields", () => {
-        const text = buildDataProfileOrientation(LEGACY);
+        const text = buildDataProfileOrientation(LEGACY, ANALYSIS_ID);
 
         expect(text).toContain("Three RNA-seq count matrices and a sample sheet.");
         expect(text).toContain("data/inputs/f1/counts.csv — Raw count matrix");
@@ -106,7 +109,7 @@ describe("buildDataProfileOrientation", () => {
                 cols: 4,
             })),
         };
-        const text = buildDataProfileOrientation(many);
+        const text = buildDataProfileOrientation(many, ANALYSIS_ID);
 
         expect(text).toContain("Files (8 of 30):");
         expect(text).toContain("data/inputs/f7/counts.csv");
@@ -118,7 +121,7 @@ describe("buildDataProfileOrientation", () => {
             ...RICH,
             qualityAssessment: { concerns: ["c1", "c2", "c3", "c4", "c5"], strengths: [] },
         };
-        expect(buildDataProfileOrientation(many)).toContain("Concerns: c1; c2; c3 (+2 more)");
+        expect(buildDataProfileOrientation(many, ANALYSIS_ID)).toContain("Concerns: c1; c2; c3 (+2 more)");
     });
 
     // The bound is the whole point: this text is destined for a context window it does
@@ -147,19 +150,19 @@ describe("buildDataProfileOrientation", () => {
             qualityAssessment: { concerns: Array.from({ length: 100 }, () => "Q".repeat(1_000)), strengths: [] },
         };
 
-        expect(buildDataProfileOrientation(monstrous).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
+        expect(buildDataProfileOrientation(monstrous, ANALYSIS_ID).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
     });
 
     it("honours a caller-supplied bound", () => {
-        expect(buildDataProfileOrientation(RICH, 80).length).toBeLessThanOrEqual(80);
-        expect(buildDataProfileOrientation(RICH, 0)).toBe("");
+        expect(buildDataProfileOrientation(RICH, ANALYSIS_ID, 80).length).toBeLessThanOrEqual(80);
+        expect(buildDataProfileOrientation(RICH, ANALYSIS_ID, 0)).toBe("");
     });
 
     it("stays well under the bound for an ordinary profile", () => {
-        expect(buildDataProfileOrientation(RICH).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
+        expect(buildDataProfileOrientation(RICH, ANALYSIS_ID).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
         // A real profile should not be flirting with the cap — if it is, the projection
         // has stopped being an orientation and become a dump.
-        expect(buildDataProfileOrientation(RICH).length).toBeLessThan(800);
+        expect(buildDataProfileOrientation(RICH, ANALYSIS_ID).length).toBeLessThan(800);
     });
 });
 
@@ -193,7 +196,7 @@ describe("a dataset described by kinds", () => {
     };
 
     it("renders the kinds before the notable files", () => {
-        const text = buildDataProfileOrientation(STRUCTURED);
+        const text = buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID);
         expect(text).toContain("Kinds (2, 2339 files):");
         expect(text).toContain("per-patient variant calls (1171x, VCF) — one patient's somatic variant calls");
         expect(text).toContain("Axes: patient (1171)");
@@ -201,16 +204,35 @@ describe("a dataset described by kinds", () => {
     });
 
     it("names a coverage shortfall rather than implying the kinds cover everything", () => {
-        expect(buildDataProfileOrientation(STRUCTURED)).toContain("Coverage: 2339 of 2340 files match a kind");
+        expect(buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID)).toContain("Coverage: 2339 of 2340 files match a kind");
     });
 
     it("stays within the character budget on a structured profile", () => {
-        expect(buildDataProfileOrientation(STRUCTURED).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
+        expect(buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
     });
 
     it("falls back to the file list for a snapshot written before kinds existed", () => {
-        const text = buildDataProfileOrientation(RICH);
+        const text = buildDataProfileOrientation(RICH, ANALYSIS_ID);
         expect(text).not.toContain("Kinds (");
         expect(text).toContain("Files (2):");
+    });
+});
+
+describe("the frame of a rendered path", () => {
+    it("roots every file path, so none reads as relative to the agent's working directory", () => {
+        const text = buildDataProfileOrientation(RICH, ANALYSIS_ID);
+        for (const line of text.split("\n").filter((l) => l.startsWith("- data") || l.startsWith("- /"))) {
+            expect(line).toStartWith(`- /${ANALYSIS_ID}/`);
+        }
+    });
+
+    it("roots a stored path that already carries the root exactly once", () => {
+        const rooted: DataProfileResult = {
+            ...RICH,
+            files: [{ path: `/${ANALYSIS_ID}/data/inputs/f1/counts.csv`, description: "Raw count matrix" }],
+        };
+        const text = buildDataProfileOrientation(rooted, ANALYSIS_ID);
+        expect(text).toContain(`/${ANALYSIS_ID}/data/inputs/f1/counts.csv`);
+        expect(text).not.toContain(`/${ANALYSIS_ID}/${ANALYSIS_ID}`);
     });
 });
