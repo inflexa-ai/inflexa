@@ -124,3 +124,32 @@ describe("validatePlan per-step resource ceiling", () => {
         expect(result.valid).toBe(true);
     });
 });
+
+describe("validatePlan package entries", () => {
+    it("passes an absent packages array — stored plans from before the field carry none", () => {
+        const result = validatePlan(plan([step({ id: "T1S1" })]));
+        expect(result.valid).toBe(true);
+    });
+
+    it("passes the requirement forms: a bare name, and name==version", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["scanpy", "numpy==1.26.4", "ANCOM-BC2"] })]));
+        expect(result.valid).toBe(true);
+    });
+
+    it("refuses a store directory, naming the step and the entry", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["/mnt/libs/store/scanpy-1.12.3-e71bae79"] })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("T1S1") && e.includes("/mnt/libs/store/scanpy-1.12.3-e71bae79"))).toBe(true);
+    });
+
+    it("refuses a URL", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["https://example.com/pkg.whl"] })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("package location"))).toBe(true);
+    });
+
+    it("refuses a relative path", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["./vendor/pkg"] })]));
+        expect(result.valid).toBe(false);
+    });
+});

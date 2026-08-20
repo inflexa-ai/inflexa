@@ -72,6 +72,10 @@ export const STEP_NON_TASK_FIELDS = [
     "summary",
     "artifactIds",
     "error",
+    // Withheld on purpose: the pre-launch link pass consumes the packages of a
+    // step, and a step agent must not re-litigate them (the
+    // planning-enhancements spec).
+    "packages",
 ] as const satisfies readonly (keyof AnalysisStep)[];
 
 // ── Formatting primitives ─────────────────────────────────────────────

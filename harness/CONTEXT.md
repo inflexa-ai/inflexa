@@ -178,6 +178,46 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   `skill_search` and `skill_read` tools surface them to a sandbox agent. The
   search is by keyword, not by vector. `shared/omics-general` loads for each
   analysis agent.
+- **Package store** — The host directory with the pool, the farms, and the
+  graph, mounted read-only at `/mnt/libs`. The sandbox images bake no analysis
+  package: the store is the one source of a library. The term replaces
+  "lib store" everywhere.
+- **Pool** (`store/`) — The content-addressed directories of the store, one
+  per installed distribution, write-once. Ten analyses that use one package
+  version share one copy.
+- **Farm** — The per-analysis symlink tree into the pool. A backend resolves
+  it through the required `farmSource` config at each `createSandbox`, and it
+  mounts as a second read-only bind nested inside the store bind. Under
+  `toolchainSource: "image"` the farm container path is `/mnt/libs/farm`.
+  Under `"store"` (or absent) it stays `/mnt/libs/current`, because the baked
+  resolvers of the old images name it. A farm carries exactly one metadata
+  file, `inflexa.lock` — the mount gate and the package inventory read it.
+- **Farm source (`farmSource`)** — The required backend config field that
+  names where the farm of an analysis comes from. `fixed` names one farm for
+  every analysis (the managed shape). `per-analysis` supplies a resolver of
+  the embedder. The harness never invents a farm location.
+- **Toolchain source (`toolchainSource`)** — The declared owner of the
+  sandbox toolchain: `"image"` (conda at `/opt/conda`, Node at `/opt/node`)
+  or `"store"`, with absent as `"store"`. It keys the resolver env and the
+  orient-core prompt text. The harness never infers its host.
+- **Catalog** — The published default package set that the store download
+  delivers, as the farm `farms/catalog` with its prepared caches.
+- **Graph** (`deps.json`) — The resolved dependency edges at the store root.
+  `emit_deps.py` of the provisioner writes it, and a farm composition walks
+  it as a lookup, never a resolution.
+- **Provisioner** — The network-enabled container
+  (`images/sandbox-provisioner`) that writes the pool and the farms. Five
+  subcommands, one mode each: `build`, `acquire`, `prepare`, `reclaim`,
+  `remove-farm`. It holds the compilers and an egress allowlist. The runtime
+  image holds neither.
+- **Acquisition** — An install into the pool, by the provisioner, with no
+  farm work. It is two-phase. The run stages its graph nodes in a report
+  file, and it never touches `deps.json`. The host commits after the load
+  check passes inside the sandbox image.
+- **Farm extension (`ExtendAnalysisFarm`)** — The optional seam behind the
+  `link_packages` sandbox tool and the pre-launch link pass of
+  `execute_analysis`. The realization of the embedder links host-staged
+  packages into the farm of the analysis, live, with no restart.
 
 ## Session and capability seams
 

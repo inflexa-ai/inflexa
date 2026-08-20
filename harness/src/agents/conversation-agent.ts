@@ -31,6 +31,7 @@ import type { AcquireEyes } from "../lib/eyes.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
+import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
@@ -183,6 +184,13 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      * built-in tool.
      */
     readonly hostTools?: readonly Tool[];
+    /**
+     * The farm-extension seam of the embedder. When it is bound,
+     * `execute_analysis` links the packages of the plan into the farm of the
+     * analysis before the launch, and a pool miss refuses the launch. Without
+     * it, the link pass returns at once.
+     */
+    readonly extendAnalysisFarm?: ExtendAnalysisFarm;
 }
 
 /** Build the conversation `AgentDefinition` with every tool fully dep-bound. */
@@ -203,7 +211,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         resourcePolicy,
         hostTools,
         refStorePath,
-        packagesFile,
+        farmLockFile,
+        imagePackagesFile,
         usageRecorder,
         citationResolver,
     } = deps;
@@ -254,7 +263,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // What is importable inside a sandbox. Reads the same manifest a sandbox agent
         // reads, host-side — so "is scanpy available?" is a manifest lookup here rather
         // than launching analysis computation to run one import.
-        createListAvailablePackagesTool({ ...(packagesFile ? { packagesFile } : {}) }),
+        createListAvailablePackagesTool({ ...(farmLockFile ? { farmLockFile } : {}), ...(imagePackagesFile ? { imagePackagesFile } : {}) }),
         // Execution.
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.
@@ -266,7 +275,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             usageRecorder,
             bioKeys,
             ...(refStorePath ? { refStorePath } : {}),
-            ...(packagesFile ? { packagesFile } : {}),
+            ...(farmLockFile ? { farmLockFile } : {}),
+            ...(imagePackagesFile ? { imagePackagesFile } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         createExecuteAnalysisTool({
@@ -277,6 +287,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             resourcePolicy,
             utilityProvider,
             utilityModel,
+            ...(deps.extendAnalysisFarm ? { extendAnalysisFarm: deps.extendAnalysisFarm } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         // The one report path. The tool starts a report thread as a child of the

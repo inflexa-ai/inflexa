@@ -38,11 +38,19 @@ export interface EnvironmentStorePaths {
      */
     readonly refStorePath?: string;
     /**
-     * Host path of the library store's `packages.txt` — the inventory of what is
-     * importable inside a sandbox. Omit when the host mounts the store at the
+     * Host path of the `inflexa.lock` of the farm — the inventory of what is
+     * importable inside a sandbox. Omit when the host mounts the farm at the
      * sandbox's own path, which makes the container path correct as-is; a host
-     * whose store is baked into the image and never bind-mounted must inject the
-     * path to its own extracted copy, or the inventory reads as unknown.
+     * that reads the farm somewhere else must inject the path, or the
+     * inventory reads as unknown.
      */
-    readonly packagesFile?: string;
+    readonly farmLockFile?: string;
+    /**
+     * Host path of the baked image inventory fragment
+     * (`image-packages.txt`) — the image-owned tools that
+     * `list_available_packages` merges into its report. Omit when the host
+     * cannot read one; a missing fragment merges nothing, and that is a
+     * normal state.
+     */
+    readonly imagePackagesFile?: string;
 }

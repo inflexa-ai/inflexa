@@ -141,7 +141,22 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
         }
     }
 
-    // 6. Step-id path safety. The id becomes the `runs/{runId}/{stepId}` directory
+    // 6. Package entries are requirements, never locations. A path, a URL, or
+    //    a store directory in a plan would publish an installer detail as an
+    //    interface — the link pass resolves names against the pool. An absent
+    //    array passes, because stored plans from before the field carry none.
+    for (const step of plan.steps) {
+        for (const entry of step.packages ?? []) {
+            if (/^[.~]|[/\\]|:\/\//.test(entry)) {
+                errors.push(
+                    `Step "${step.id}" names a package location "${entry}" — name each package as a requirement ` +
+                        `(a bare name, or name==version), never a path, a URL, or a store directory`,
+                );
+            }
+        }
+    }
+
+    // 7. Step-id path safety. The id becomes the `runs/{runId}/{stepId}` directory
     //    segment and a `/{analysisId}/…` container mount path; an unsafe segment
     //    (a slash, or `.`/`..`) could traverse or widen the mount. The sandbox
     //    mount boundary also rejects these (assertSafeId), but catching it here

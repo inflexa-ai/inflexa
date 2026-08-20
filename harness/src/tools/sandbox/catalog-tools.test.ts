@@ -123,16 +123,26 @@ describe("queryPackages — listing", () => {
 });
 
 // The tool's own read path had no coverage, which is how it stayed broken on hosts
-// that never mount the store at the sandbox's path: the read fails, the result is a
+// that never mount the farm at the sandbox's path: the read fails, the result is a
 // data variant rather than an error, and nothing surfaces it.
 describe("list_available_packages — reading the inventory", () => {
-    it("reads the injected host path rather than assuming the container's", async () => {
+    const LOCK = {
+        schema: 1,
+        arch: "arm64",
+        packages: [
+            { name: "Seurat", version: "5.1.0", track: "cran", store_dir: "seurat-5.1.0-abcd1234abcd1234", hash: "a".repeat(64), requested: true },
+            { name: "scanpy", version: "1.10.0", track: "python", store_dir: "scanpy-1.10.0-abcd1234abcd1234", hash: "b".repeat(64), requested: true },
+        ],
+        languages: {},
+    };
+
+    it("reads the inflexa.lock at the injected host path rather than assuming the container's", async () => {
         const dir = await mkdtemp(join(tmpdir(), "packages-"));
-        const packagesFile = join(dir, "packages.txt");
-        await writeFile(packagesFile, PACKAGES_TXT);
+        const farmLockFile = join(dir, "inflexa.lock");
+        await writeFile(farmLockFile, JSON.stringify(LOCK));
 
         const result = (
-            await createListAvailablePackagesTool({ packagesFile }).execute({ names: ["Seurat", "nonesuch"] }, makeToolContext().ctx)
+            await createListAvailablePackagesTool({ farmLockFile }).execute({ names: ["Seurat", "nonesuch"] }, makeToolContext().ctx)
         )._unsafeUnwrap() as { available: true; checked: { requested: string; present: boolean }[] };
 
         expect(result.available).toBe(true);
@@ -142,11 +152,44 @@ describe("list_available_packages — reading the inventory", () => {
         ]);
     });
 
+    it("merges the baked image fragment into the report when the host can read one", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "packages-"));
+        const farmLockFile = join(dir, "inflexa.lock");
+        const imagePackagesFile = join(dir, "image-packages.txt");
+        await writeFile(farmLockFile, JSON.stringify(LOCK));
+        await writeFile(imagePackagesFile, "## System tools (CLI)\nsamtools, bcftools\n");
+
+        const result = (await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
+            available: true;
+            total: number;
+            content: string;
+        };
+
+        expect(result.available).toBe(true);
+        expect(result.total).toBe(4);
+        expect(result.content).toContain("Python (pip)");
+        expect(result.content).toContain("System tools (CLI)");
+        expect(result.content).toContain("samtools");
+    });
+
+    it("still reports the farm inventory when no image fragment is readable", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "packages-"));
+        const farmLockFile = join(dir, "inflexa.lock");
+        await writeFile(farmLockFile, JSON.stringify(LOCK));
+
+        const result = (
+            await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile: join(dir, "absent.txt") }).execute({}, makeToolContext().ctx)
+        )._unsafeUnwrap() as { available: true; total: number };
+
+        expect(result.available).toBe(true);
+        expect(result.total).toBe(2);
+    });
+
     // Naming packages in this state is worse than silence: the agent cannot verify any
     // of them, and a generous guess is exactly what produces a confident bad import.
     it("reports the package set as UNKNOWN when the inventory cannot be read, naming no packages", async () => {
-        const missing = join(tmpdir(), "packages-does-not-exist-xyz", "packages.txt");
-        const result = (await createListAvailablePackagesTool({ packagesFile: missing }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
+        const missing = join(tmpdir(), "packages-does-not-exist-xyz", "inflexa.lock");
+        const result = (await createListAvailablePackagesTool({ farmLockFile: missing }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
             available: false;
             content: string;
         };

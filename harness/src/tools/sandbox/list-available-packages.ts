@@ -2,25 +2,19 @@
  * listAvailablePackages — query the R/Python/CLI/Node packages available in the
  * sandbox.
  *
- * The data source is the store's `packages.txt`, assembled by the library-store
- * build (see the lib-store-build spec) and read from wherever the HOST can see
- * it — the container path when the host mounts the same store, an injected path
- * when it does not. Its shape is fixed by the
- * producers (`scripts/lib-store-common.sh`, `images/sandbox-python/inflexa-libs-refresh`):
- * two `#` advisory lines, then one `## <Section>` heading per language track
- * followed by that track's packages as a single comma-separated line.
+ * The primary source is the `inflexa.lock` of the mounted farm — the one
+ * metadata file of a farm (the lib-store spec) — read from wherever the HOST
+ * can see it: the farm container path when the host mounts the same farm, an
+ * injected path when it does not. The baked image inventory fragment
+ * (`image-packages.txt`, at `/opt/inflexa` in the image) merges into the
+ * report when the host can read one. The fragment keeps the section format:
  *
- *     # Available packages in the sandbox environment.
- *     # Do NOT attempt to install packages — ...
+ *     ## System tools (CLI)
+ *     samtools, bcftools, ...
  *
- *     ## R (CRAN)
- *     Seurat, dplyr, ggplot2, ...
- *
- *     ## Python (pip)
- *     anndata, scanpy, ...
- *
- * The file carries **names only — there are no version strings in it**, so this
- * tool reports presence and language track and cannot report a version.
+ * The rendered listing carries **names only, without version strings**, so
+ * this tool reports presence and language track and does not report a
+ * version.
  */
 
 import { readFile } from "node:fs/promises";
@@ -32,13 +26,43 @@ import { defineTool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
+import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
 
 /**
- * Where the list lives when the host mounts the library store at the same path
- * the sandbox does. Hosts that do not — the store is baked into the image and
- * never bind-mounted — inject their own path instead.
+ * Where the lock lives when the host mounts the farm at the same path the
+ * sandbox does. Both farm container paths are tried, because the path keys on
+ * the declared toolchain (`/mnt/libs/farm` under `"image"`, `/mnt/libs/current`
+ * under `"store"`), and the tool does not carry that declaration. A host that
+ * reads the farm somewhere else injects its own path instead.
  */
-const DEFAULT_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/current/packages.txt`;
+const DEFAULT_FARM_LOCK_FILES = [`${LIBS_CONTAINER_PATH}/farm/inflexa.lock`, `${LIBS_CONTAINER_PATH}/current/inflexa.lock`] as const;
+
+/** Where the baked image inventory fragment lives inside the image. */
+const DEFAULT_IMAGE_PACKAGES_FILE = "/opt/inflexa/image-packages.txt";
+
+/** The section title of each known lock track. An unknown track titles itself. */
+const TRACK_TITLES: Record<string, string> = {
+    python: "Python (pip)",
+    cran: "R (CRAN)",
+    bioconductor: "R (Bioconductor)",
+    github: "R (GitHub)",
+    node: "Node (npm)",
+};
+
+/**
+ * Group the lock packages into sections, one per track, in a stable order:
+ * the known tracks first, then an unknown track at its first occurrence.
+ */
+export function lockSections(lock: FarmLock): Section[] {
+    const byTrack = new Map<string, string[]>();
+    for (const track of Object.keys(TRACK_TITLES)) byTrack.set(track, []);
+    for (const pkg of lock.packages) {
+        const open = byTrack.get(pkg.track);
+        if (open) open.push(pkg.name);
+        else byTrack.set(pkg.track, [pkg.name]);
+    }
+    return [...byTrack.entries()].filter(([, packages]) => packages.length > 0).map(([track, packages]) => ({ title: TRACK_TITLES[track] ?? track, packages }));
+}
 
 /**
  * Default cap on a listing — high enough that the real store is never truncated.
@@ -57,7 +81,7 @@ const DEFAULT_LIMIT = 2_000;
  * fail at runtime instead of probing first.
  */
 const UNAVAILABLE_NOTE =
-    "Package list not available — the library store's inventory could not be read, so what is installed is UNKNOWN. " +
+    "Package list not available — the inventory of the farm could not be read, so what is installed is UNKNOWN. " +
     "Do not assume any package is present, and do not infer one from the analysis you were asked to run. " +
     "Probe each package you intend to use before relying on it (`python3 -c 'import <pkg>'`, " +
     'R `requireNamespace("<pkg>", quietly = TRUE)`) and degrade gracefully when it is absent. ' +
@@ -200,11 +224,12 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
     return { available: true, total, returned, hasMore: returned < total, content };
 }
 
-export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "packagesFile">;
+export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile">;
 
-/** Create the package inventory over a host-readable `packages.txt`. */
+/** Create the package inventory over a host-readable farm `inflexa.lock`, merged with the image fragment. */
 export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps = {}) {
-    const packagesFile = deps.packagesFile ?? DEFAULT_PACKAGES_FILE;
+    const lockCandidates = deps.farmLockFile ? [deps.farmLockFile] : DEFAULT_FARM_LOCK_FILES;
+    const imagePackagesFile = deps.imagePackagesFile ?? DEFAULT_IMAGE_PACKAGES_FILE;
     return defineTool({
         id: "list_available_packages",
         description:
@@ -258,13 +283,21 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
         execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
             // An unreadable inventory is an expected environment state — model it as an
             // `available: false` data variant telling the caller the set is UNKNOWN.
-            let raw: string;
-            try {
-                raw = await readFile(packagesFile, "utf-8");
-            } catch {
+            let lock: FarmLock | null = null;
+            for (const candidate of lockCandidates) {
+                lock = readFarmLockFile(candidate).unwrapOr(null);
+                if (lock !== null) break;
+            }
+            if (lock === null) {
                 return ok({ available: false, content: UNAVAILABLE_NOTE });
             }
-            return ok(queryPackages(parsePackagesFile(raw), input));
+            // The baked image fragment merges in when the host can read one; a
+            // missing fragment merges nothing, and that is the normal state for
+            // a host that runs outside the image.
+            const fragmentSections: Section[] = await readFile(imagePackagesFile, "utf-8")
+                .then(parsePackagesFile)
+                .catch((): Section[] => []);
+            return ok(queryPackages([...lockSections(lock), ...fragmentSections], input));
         },
     });
 }

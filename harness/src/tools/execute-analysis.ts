@@ -18,6 +18,7 @@ import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { buildRunCardData } from "../memory/card-builders.js";
 import type { ChatProvider } from "../providers/types.js";
+import type { ExtendAnalysisFarm, PackageRequest } from "../sandbox/types.js";
 import { AnalysisPlanSchema, type AnalysisPlan } from "../schemas/workflow-state.js";
 import { validatePlan } from "../schemas/validate-plan.js";
 import { RunDedupCollisionError, insertRun, loadPlan, queryActiveRun, reserveRunById, updateRunStatus, upsertPlan } from "../state/index.js";
@@ -53,6 +54,12 @@ export interface ExecuteAnalysisToolDeps {
     readonly utilityProvider: ChatProvider;
     readonly utilityModel: string;
     readonly logger?: Logger;
+    /**
+     * The farm-extension seam of the embedder. When it is bound, the launch
+     * links the packages of the plan into the farm of the analysis before the
+     * run reserves anything. Without it, the link pass returns at once.
+     */
+    readonly extendAnalysisFarm?: ExtendAnalysisFarm;
 }
 
 export class PlanNotFoundError extends Error {
@@ -81,6 +88,55 @@ export class PlanValidationError extends Error {
 
 function isDedupCollision(err: unknown): boolean {
     return err instanceof RunDedupCollisionError || (err instanceof Error && err.name === "RunDedupCollisionError");
+}
+
+/**
+ * A pool miss at the pre-launch link pass. The message names the missing
+ * packages and no remedy command — the remedy belongs to the embedder, and
+ * its wrapper appends it.
+ */
+export class PlanPackagesMissingError extends Error {
+    constructor(
+        readonly missing: string[],
+        readonly collisions: string[],
+    ) {
+        const parts = [
+            missing.length > 0 ? `the pool does not hold: ${missing.join(", ")}` : null,
+            collisions.length > 0 ? `a collision refused: ${collisions.join(", ")}` : null,
+        ].filter((p): p is string => p !== null);
+        super(`The packages of this plan cannot link — ${parts.join("; ")}`);
+        this.name = "PlanPackagesMissingError";
+    }
+}
+
+/** One plan package entry, in requirement form: a bare name, or a name with one exact version. */
+function parseRequirement(entry: string): PackageRequest {
+    const split = entry.indexOf("==");
+    if (split < 0) return { name: entry.trim() };
+    return { name: entry.slice(0, split).trim(), version: entry.slice(split + 2).trim() };
+}
+
+/**
+ * Link the packages of the plan into the farm of the analysis, before the
+ * run reserves anything. The linked set is the union of the packages of each
+ * step. A pool miss and a collision refuse the launch with the names. Without
+ * a bound seam, the pass returns at once.
+ */
+async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefined, analysisId: string, plan: AnalysisPlan): Promise<void> {
+    if (!extendAnalysisFarm) return;
+    const union = new Map<string, PackageRequest>();
+    for (const step of plan.steps) {
+        for (const entry of step.packages ?? []) {
+            union.set(entry.trim().toLowerCase(), parseRequirement(entry));
+        }
+    }
+    if (union.size === 0) return;
+    const outcomes = await extendAnalysisFarm(analysisId, [...union.values()]);
+    const missing = outcomes.filter((o) => o.kind === "absent").map((o) => o.name);
+    const collisions = outcomes.filter((o) => o.kind === "collision").map((o) => o.name);
+    if (missing.length > 0 || collisions.length > 0) {
+        throw new PlanPackagesMissingError(missing, collisions);
+    }
 }
 
 function planSummary(plan: AnalysisPlan): string {
@@ -230,6 +286,10 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
             } else {
                 plan = await persistedAdHocPlan(deps, { analysisId, request: input.request!, ctx, planId });
             }
+
+            // The link pass comes before the run reserves anything, thus a pool
+            // miss leaves no run row and no revoked authorization behind.
+            await linkPlanPackages(deps.extendAnalysisFarm, analysisId, plan);
 
             const runId = input.mode === "plan" ? randomUUID() : adHocRunId(analysisId, ctx.invocationId);
             if (input.mode === "plan") {
