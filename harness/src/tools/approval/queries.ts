@@ -27,7 +27,6 @@ export type AnswerOutcome = "applied" | "not_found" | "already_terminal";
 export interface PendingAsk {
     readonly id: string;
     readonly analysisId: string;
-    /** The person the ask went to, thus a host can route it to that person. */
     readonly userId: string;
     readonly threadId: string | null;
     readonly title: string;
@@ -46,7 +45,6 @@ export interface AskResolution {
 export interface AskRow {
     readonly id: string;
     readonly analysisId: string;
-    /** The person the ask goes to. An `always` keys its standing grant on this. */
     readonly userId: string;
     readonly threadId: string | null;
     readonly title: string;
@@ -200,10 +198,8 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
             // caveat: every insert writes grant_key (command when the tool supplied
             // none), and the COALESCE above covers any pending row that predates
             // the column — `command` is NOT NULL, so the key can never be null.
-            // `user_id` reads the same way, and its COALESCE gives the empty string
-            // for a row that predates that column. Such a row is an orphan of a dead
-            // process, and the empty identity matches no real person, thus the grant
-            // it would write can never short-circuit a live ask.
+            // `user_id` reads the same way: its COALESCE gives the empty string for a
+            // row that predates the column, and that identity matches no real user.
             const granted = updated.rows[0] as { analysis_id: string; user_id: string; grant_key: string };
             return tryMutation("asks.answer:grant", async () => {
                 await client.query({

@@ -432,10 +432,6 @@ CREATE TABLE IF NOT EXISTS cortex_working_memory (
 CREATE TABLE IF NOT EXISTS cortex_asks (
   id           TEXT PRIMARY KEY,
   analysis_id  TEXT NOT NULL,
-  -- The person that the ask goes to, as the embedder names one. The grant an
-  -- 'always' writes carries this value, thus the decision of one person never
-  -- approves the turn of a different person. Nullable only so the additive
-  -- migration can add it to an already-created table with no backfill.
   user_id      TEXT,
   thread_id    TEXT,
   title        TEXT NOT NULL,
@@ -460,12 +456,11 @@ CREATE INDEX IF NOT EXISTS idx_cortex_asks_analysis
 CREATE INDEX IF NOT EXISTS idx_cortex_asks_pending
   ON cortex_asks(status) WHERE status = 'pending';
 
--- Standing approval grants behind an 'always' reply. The key is the analysis,
--- the person the ask went to, and the ask's grant key (the displayed command when
--- the tool gave no broader key). A later ask that matches all three
--- auto-approves with no pause. A grant lives for the lifecycle of its analysis,
--- it survives a process restart, and it applies to no other analysis and to no
--- other person.
+-- Standing approval grants behind an 'always' reply — keyed by the analysis, the
+-- user, and the ask's grant key (the displayed command when the tool supplied no
+-- broader key), so a later matching ask auto-approves without pausing. Lives for
+-- the analysis lifecycle, surviving process restarts, and never applies to
+-- another analysis or another user.
 CREATE TABLE IF NOT EXISTS cortex_ask_grants (
   analysis_id  TEXT NOT NULL,
   user_id      TEXT NOT NULL,
@@ -660,17 +655,10 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                     ALTER TABLE cortex_ask_grants RENAME COLUMN command TO grant_key;
                   END IF;
                 END $$`,
-                // The person that an ask goes to. Nullable and unbackfilled, as
-                // grant_key is: every new row writes it, and an orphaned legacy pending
-                // row is swept to 'expired' before any answer reads it.
                 "ALTER TABLE cortex_asks ADD COLUMN IF NOT EXISTS user_id TEXT",
-                // A grant belongs to one person, thus the person joins the key. The
-                // guard reads information_schema, so the work runs one time and a fresh
-                // database (which the CREATE TABLE above already shapes) skips it. An
-                // existing row cannot get a person: it keeps the empty default, which
-                // matches no real identity, thus the row is inert and no row is lost.
-                // Scoped to current_schema() so parallel test schemas in the same
-                // database never trigger each other's migration.
+                // The user joins the grant key. Guarded and scoped like the rename
+                // above. An existing row keeps the empty default, which matches no real
+                // identity, so it is inert rather than deleted.
                 `DO $$ BEGIN
                   IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns

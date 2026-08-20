@@ -40,20 +40,12 @@ export interface AskGatewayDeps {
 
 /**
  * Per-turn context an embedder binds into the `Ask` seam. It scopes the ask to an
- * analysis/thread and to one person, carries the turn's abort `signal`, and
- * supplies the `emit` sink the `data-ask` part flows through.
+ * analysis/thread and to one user, carries the turn's abort `signal`, and supplies
+ * the `emit` sink the `data-ask` part flows through.
  */
 export interface AskContext {
     readonly analysisId: string;
-    /**
-     * The person the ask goes to, as an opaque identity the embedder names. It
-     * keys the standing grant an `always` records, thus the decision of one person
-     * never approves the turn of a different person in the same analysis.
-     *
-     * The harness cannot derive it — it never reads the `auth` capability — and it
-     * never interprets the value. It is required, because an absent identity would
-     * hand every embedder that forgot it an analysis-wide grant.
-     */
+    /** The opaque identity of the person the ask goes to. The harness never reads it. */
     readonly userId: string;
     readonly threadId?: string;
     readonly signal: AbortSignal;
@@ -97,10 +89,9 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
             createdAt: now,
         };
 
-        // A standing grant this person recorded for this ask's grant key — the
-        // command unless the tool supplied a broader key — short-circuits the prompt:
-        // record the invocation as `resolved` for the audit trail and return without
-        // pausing. The grant of a different person never matches here.
+        // A standing grant this user holds for this ask's grant key — the command
+        // unless the tool supplied a broader key — short-circuits the prompt: record
+        // the invocation as `resolved` for the audit trail and return without pausing.
         if (unwrapOrThrow(await selectGrant(pool, ctx.analysisId, ctx.userId, request.grantKey ?? request.command))) {
             unwrapOrThrow(await insertGrantedAsk(pool, row, now));
             return { kind: "always" };
