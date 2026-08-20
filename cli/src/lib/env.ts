@@ -222,7 +222,7 @@ export function isReservedPostgresPort(port: number): boolean {
     return reservedPostgresPorts.includes(port);
 }
 
-/** The four host-side stack paths that must not be shared across build channels. See {@link stackPaths}. */
+/** The five host-side stack paths that must not be shared across build channels. See {@link stackPaths}. */
 export type StackPaths = {
     /** CLIProxyAPI config file, bind-mounted into the proxy container. */
     readonly cliproxyConfigPath: string;
@@ -232,6 +232,12 @@ export type StackPaths = {
     readonly postgresDataDir: string;
     /** Generated Docker Compose file orchestrating the stack. */
     readonly composeFilePath: string;
+    /**
+     * Where a failed `inflexa setup` records the step it stopped at, so the next run can offer to
+     * continue there. Channel-aware with the rest: a dev run's failure must never redirect the wizard of
+     * an installed production binary, whose step list can differ.
+     */
+    readonly setupStatePath: string;
 };
 
 /**
@@ -244,11 +250,13 @@ export function stackPaths(dataDirBase: string, channel: string | undefined): St
     const proxyDir = dev ? "cliproxy-dev" : "cliproxy";
     const postgresDir = dev ? "postgres-dev" : "postgres";
     const composeFile = dev ? "docker-compose.dev.yml" : "docker-compose.yml";
+    const setupStateFile = dev ? "setup-state.dev.json" : "setup-state.json";
     return {
         cliproxyConfigPath: join(dataDirBase, "inflexa", proxyDir, "config.yaml"),
         cliproxyAuthDir: join(dataDirBase, "inflexa", proxyDir, "auth"),
         postgresDataDir: join(dataDirBase, "inflexa", postgresDir),
         composeFilePath: join(dataDirBase, "inflexa", composeFile),
+        setupStatePath: join(dataDirBase, "inflexa", setupStateFile),
     };
 }
 
@@ -333,6 +341,12 @@ export const env = Object.freeze({
      * run; the launch-time gate generates it if missing.
      */
     composeFilePath: stackDirs.composeFilePath,
+    /**
+     * The checkpoint of a failed `inflexa setup` — the name of the step that stopped, plus the version
+     * of the binary that wrote it. A complete run deletes the file, thus its presence alone means "the
+     * last run failed". See src/modules/infra/setup.ts.
+     */
+    setupStatePath: stackDirs.setupStatePath,
     configPath: join(configDir(), "inflexa", "config.json"),
     authPath: join(configDir(), "inflexa", "auth.json"),
     provKeyPath: join(configDir(), "inflexa", "prov_key.json"),
@@ -548,6 +562,12 @@ export const envDoc: Readonly<
         kind: "path",
         label: "compose file",
         description: "Docker Compose file orchestrating the proxy and Postgres containers",
+        baseVar: dataVar,
+    },
+    setupStatePath: {
+        kind: "path",
+        label: "setup checkpoint",
+        description: "the step a failed `inflexa setup` stopped at; deleted when a run completes",
         baseVar: dataVar,
     },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },

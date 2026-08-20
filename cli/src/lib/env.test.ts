@@ -128,6 +128,7 @@ describe("stackPaths", () => {
             cliproxyAuthDir: join(base, "inflexa", "cliproxy", "auth"),
             postgresDataDir: join(base, "inflexa", "postgres"),
             composeFilePath: join(base, "inflexa", "docker-compose.yml"),
+            setupStatePath: join(base, "inflexa", "setup-state.json"),
         });
     });
 
@@ -137,17 +138,19 @@ describe("stackPaths", () => {
             cliproxyAuthDir: join(base, "inflexa", "cliproxy-dev", "auth"),
             postgresDataDir: join(base, "inflexa", "postgres-dev"),
             composeFilePath: join(base, "inflexa", "docker-compose.dev.yml"),
+            setupStatePath: join(base, "inflexa", "setup-state.dev.json"),
         });
     });
 
     test("no stack path is shared across channels — the whole mount/compose surface is disjoint", () => {
         const prod = Object.values(stackPaths(base, "production"));
         const dev = Object.values(stackPaths(base, "development"));
-        // Every prod path is absent from the dev set (and vice versa), and the union is 8 distinct paths:
+        // Every prod path is absent from the dev set (and vice versa), and the union is 10 distinct paths:
         // a single shared entry would re-open a collision (shared PGDATA, one build rewriting the other's
-        // compose file, or — worst — a shared proxy credential dir the OAuth rotation would corrupt).
+        // compose file, a dev failure that redirects the wizard of an installed binary, or — worst — a
+        // shared proxy credential dir the OAuth rotation would corrupt).
         for (const p of prod) expect(dev).not.toContain(p);
-        expect(new Set([...prod, ...dev]).size).toBe(8);
+        expect(new Set([...prod, ...dev]).size).toBe(10);
     });
 });
 

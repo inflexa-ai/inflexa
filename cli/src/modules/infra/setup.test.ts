@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { REFERENCE_DATA_CATALOG } from "@inflexa-ai/harness";
+import pkg from "../../../package.json";
 import { ok, err } from "neverthrow";
 import {
     adoptedConnection,
@@ -2339,5 +2340,138 @@ describe("setup() — batch orchestration", () => {
                 entry.effect(observe());
             });
         }
+    });
+
+    describe("the checkpoint of a failed run", () => {
+        beforeEach(() => {
+            assertTestSandbox(env.setupStatePath);
+            rmSync(env.setupStatePath, { force: true });
+        });
+
+        afterEach(() => {
+            rmSync(env.setupStatePath, { force: true });
+        });
+
+        test("a complete run leaves no checkpoint, so the next run asks everything", async () => {
+            await runSetup(batch({}));
+
+            expect(process.exitCode).toBe(0);
+            expect(existsSync(env.setupStatePath)).toBe(false);
+        });
+
+        test("a failed step records its own name and the version that wrote it", async () => {
+            refsStep.mockImplementation(async () => err({ type: "download_failed" as const, message: "the mirror refused" }));
+
+            const output = await runSetup(batch({}));
+
+            expect(process.exitCode).toBe(1);
+            expect(JSON.parse(readFileSync(env.setupStatePath, "utf8"))).toEqual({ step: "refs", version: pkg.version });
+            // The step that failed is named back to the operator, because the record is only useful if
+            // they know a re-run will act on it.
+            expect(output).toContain('continue from the "refs" step');
+        });
+
+        test("a record from another binary version is ignored, and the completing run deletes it", async () => {
+            mkdirSync(dirname(env.setupStatePath), { recursive: true });
+            writeFileSync(env.setupStatePath, JSON.stringify({ step: "refs", version: "0.0.0-not-this-build" }));
+
+            await runSetup(batch({}));
+
+            // A foreign record names a position THIS build cannot honor, so the run proceeds normally —
+            // and completing it clears the file rather than leaving the stale record for the next run.
+            expect(process.exitCode).toBe(0);
+            expect(existsSync(env.setupStatePath)).toBe(false);
+        });
+    });
+
+    describe("a checkpoint continue silences only the steps before it", () => {
+        let wasTTY: boolean | undefined;
+        let prompts: string[];
+        let selects: string[];
+        let continueChoice: "continue" | "restart";
+
+        const CONTINUE_QUESTION = "Continue from there?";
+
+        beforeEach(() => {
+            assertTestSandbox(env.setupStatePath);
+            rmSync(env.setupStatePath, { force: true });
+            wasTTY = process.stdin.isTTY;
+            Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+            prompts = [];
+            selects = [];
+            continueChoice = "continue";
+            spies.push(
+                spyOn(cliPrompts, "promptText").mockImplementation(async (message: string, opts?: { defaultValue?: string }) => {
+                    prompts.push(message);
+                    return opts?.defaultValue ?? "openai";
+                }),
+                spyOn(cliPrompts, "promptTextOptional").mockImplementation(async (message: string) => {
+                    prompts.push(message);
+                    return null;
+                }),
+                spyOn(cliPrompts, "select").mockImplementation(async (message: string, options: { value: string; label: string }[]) => {
+                    selects.push(message);
+                    // Only the continue offer is steered per test; every other select takes its first
+                    // option, which is each one's documented default.
+                    return message.includes(CONTINUE_QUESTION) ? continueChoice : options[0]!.value;
+                }),
+                spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () => ok({ type: "declined" as const })),
+                spyOn(compose, "composeAvailable").mockImplementation(async () => true),
+                spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)),
+            );
+            globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 404 }))) as unknown as typeof fetch;
+        });
+
+        afterEach(() => {
+            Object.defineProperty(process.stdin, "isTTY", { value: wasTTY, configurable: true });
+            rmSync(env.setupStatePath, { force: true });
+        });
+
+        /** Write the checkpoint this build would honor, at `step`. */
+        function checkpointAt(step: string): void {
+            mkdirSync(dirname(env.setupStatePath), { recursive: true });
+            writeFileSync(env.setupStatePath, JSON.stringify({ step, version: pkg.version }));
+        }
+
+        /** An interactive invocation with the Postgres step on, so its prompts are observable. */
+        const interactiveRun = { auth: false, start: false, force: false, postgres: true, flags: {} } as const;
+
+        function asked(messages: readonly string[], fragment: string): boolean {
+            return messages.some((message) => message.includes(fragment));
+        }
+
+        test("a `refs` checkpoint resolves the earlier steps in silence and still asks the refs step", async () => {
+            // Stand in for what the failed run persisted, so a silenced Postgres step has a value to resolve.
+            writeConfig({ ...readConfig(), postgres: { user: "fleet" } })._unsafeUnwrap();
+            checkpointAt("refs");
+
+            await runSetup(interactiveRun);
+
+            expect(process.exitCode).toBe(0);
+            expect(asked(selects, CONTINUE_QUESTION)).toBe(true);
+            // Every step before the checkpoint resolved without a question.
+            expect(asked(selects, "How should inflexa reach models?")).toBe(false);
+            expect(asked(prompts, "Username")).toBe(false);
+            expect(asked(prompts, "Port")).toBe(false);
+            // The checkpoint step itself still asks — a continue starts AT the step that failed.
+            expect(refsStep.mock.calls.at(-1)![0].interactive).toBe(true);
+            // A silenced step resolves what the failed run persisted, and writes nothing new.
+            expect(readConfig().postgres).toEqual({ user: "fleet" });
+            // The completed run cleared the record.
+            expect(existsSync(env.setupStatePath)).toBe(false);
+        });
+
+        test("start again asks every question, and the record is gone either way", async () => {
+            checkpointAt("refs");
+            continueChoice = "restart";
+
+            await runSetup(interactiveRun);
+
+            expect(process.exitCode).toBe(0);
+            expect(asked(selects, "How should inflexa reach models?")).toBe(true);
+            expect(asked(prompts, "Username")).toBe(true);
+            expect(asked(prompts, "Port")).toBe(true);
+            expect(existsSync(env.setupStatePath)).toBe(false);
+        });
     });
 });

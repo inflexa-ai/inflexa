@@ -1,12 +1,23 @@
 import { readdir, readFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+import pkg from "../../../package.json";
 
 import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
-import { type Result, ok, err } from "neverthrow";
+import { Result, ok, err } from "neverthrow";
 import { z } from "zod";
-import { ensureRuntime, readConfig, resolvePostgresConfig, selectedRuntime, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
+import {
+    ensureRuntime,
+    readConfig,
+    resolveConnectionMode,
+    resolvePostgresConfig,
+    selectedRuntime,
+    writeConfig,
+    type ConfigError,
+    type ModelAuthConfig,
+} from "../../lib/config.ts";
 import { ensureReady, firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import {
     anthropicAuthTokenSet,
@@ -107,6 +118,93 @@ type SetupOptions = {
      */
     flags?: SetupAnswerFlags;
 };
+
+// --- the setup checkpoint --------------------------------------------------
+//
+// The wizard below asks a long questionnaire, and a failure at a late step used to cost the operator the
+// whole questionnaire again. The checkpoint gives the wizard one memory: the name of the step that
+// stopped.
+//
+// It marks a FAILED run only, and a complete run deletes the record. Thus a deliberate re-run after a
+// success keeps the full questionnaire, which is what a re-run is for, while a re-run after a failure
+// offers to continue. This is why the file holds no "these steps are done" list — such a list would make
+// every later re-run partial.
+
+/**
+ * The ordered step names of {@link setup}. The order IS the wizard's order, and the index of a name in
+ * this list is what "before the checkpoint" means. A name belongs here when a failure at a LATER step
+ * must not make the operator answer that step again.
+ */
+const SETUP_STEPS = ["connection", "auth", "postgres", "model", "resources", "embeddings", "refs", "sandbox"] as const;
+
+/** One step of the {@link setup} wizard. See {@link SETUP_STEPS}. */
+type SetupStep = (typeof SETUP_STEPS)[number];
+
+/**
+ * The on-disk record. `version` is the version of the binary that wrote it: a release can add, drop, or
+ * reorder a step name, so a record from a different build names a position THIS build cannot honor.
+ */
+const setupStateSchema = z.object({ step: z.enum(SETUP_STEPS), version: z.string() });
+
+/**
+ * The step the last failed run stopped at, or `null`. Absence is the NORMAL condition — a complete run
+ * deletes the file — so every fault resolves to `null` rather than to an error: no file, unreadable
+ * bytes, invalid JSON, a foreign schema, and a record from another binary version all mean the same
+ * thing here. A checkpoint that cannot be read costs one questionnaire, which is the state this feature
+ * improves on, and never a failed setup.
+ */
+function readSetupState(): SetupStep | null {
+    return Result.fromThrowable(
+        () => setupStateSchema.safeParse(JSON.parse(readFileSync(env.setupStatePath, "utf8"))),
+        () => undefined,
+    )().match(
+        (parsed) => (parsed.success && parsed.data.version === pkg.version ? parsed.data.step : null),
+        () => null,
+    );
+}
+
+/** The one fault a checkpoint write or delete can carry. Narrow by design: the caller only warns. */
+type SetupStateError = { type: "io_failed"; cause: unknown };
+
+/**
+ * Record `step` as the point a failed run stopped at. The write is never fatal to the caller — the run
+ * has already failed, and the record is an affordance for the NEXT run — so this gives the fault back
+ * rather than acting on it.
+ */
+function writeSetupState(step: SetupStep): Result<void, SetupStateError> {
+    return Result.fromThrowable(
+        () => {
+            mkdirSync(dirname(env.setupStatePath), { recursive: true });
+            writeFileSync(env.setupStatePath, JSON.stringify({ step, version: pkg.version }, null, 4) + "\n");
+        },
+        (cause): SetupStateError => ({ type: "io_failed", cause }),
+    )();
+}
+
+/**
+ * Delete the checkpoint, which is what marks the run complete. `force` makes the absent-file case a
+ * no-op, and that is the usual case: most runs never wrote a record.
+ */
+function clearSetupState(): Result<void, SetupStateError> {
+    return Result.fromThrowable(
+        () => rmSync(env.setupStatePath, { force: true }),
+        (cause): SetupStateError => ({ type: "io_failed", cause }),
+    )();
+}
+
+/**
+ * Ask whether to continue from `step`. Gives the step to continue from, or `null` to ask everything.
+ * This is the FIRST question of the run, ahead of `intro`, because its answer decides which of the
+ * questions after it are asked at all.
+ */
+async function offerContinue(step: SetupStep): Promise<SetupStep | null> {
+    log.warn(`The last setup run stopped at the "${step}" step.`);
+    const chosen = await select("Continue from there?", [
+        { value: "continue", label: `Continue from "${step}" — keep the answers before it` },
+        { value: "restart", label: "Start again — ask every question" },
+    ]);
+    return chosen === "continue" ? step : null;
+}
 
 export async function setup(options: SetupOptions): Promise<void> {
     // "Never prompt" is one fact, not two: `--yes` and a missing terminal withdraw the terminal
@@ -215,13 +313,36 @@ export async function setup(options: SetupOptions): Promise<void> {
     }
     const rt = readyResult.value;
 
+    // The checkpoint of a failed earlier run, and the operator's answer about it. Read AFTER the answer
+    // set validates and the runtime probes, because a run that dies there provisions nothing and so has no
+    // step to continue from. A run that cannot prompt never offers: `continueFrom` stays null, every
+    // predicate below resolves exactly as it did before this feature, and batch behavior is unchanged.
+    const failedAt = readSetupState();
+    const continueFrom = failedAt !== null && canPrompt ? await offerContinue(failedAt) : null;
+
+    /** True when `step` sits BEFORE the checkpoint the operator chose to continue from. */
+    const done = (step: SetupStep): boolean => continueFrom !== null && SETUP_STEPS.indexOf(step) < SETUP_STEPS.indexOf(continueFrom);
+
+    /**
+     * Whether `step` may ask its questions. A done step still RUNS — it resolves its value in silence,
+     * through the same no-prompt path a batch run already takes — so the later steps that consume that
+     * value see no difference. That existing path is what keeps this change small.
+     */
+    const asks = (step: SetupStep): boolean => canPrompt && !done(step);
+
     intro("inflexa setup");
+
+    // The single write seam of the checkpoint. The try below leaves through many error returns and one
+    // throw, and a mark at each of them would drift the first time a return is added. One variable, set at
+    // the head of each step, plus one write in the `finally`, covers all of them — and `process.exitCode`
+    // is the signal every one of those returns already sets.
+    let currentStep: SetupStep = "connection";
 
     try {
         // The connection mode is the ONE question whose batch default the resolver applies early and
         // whose interactive default it deliberately does NOT — applying it would pre-empt the wizard's
         // first prompt. So an unresolved mode here means exactly "an interactive run still has to ask".
-        const mode = await chooseConnectionMode(connectionMode);
+        const mode = await chooseConnectionMode(connectionMode, asks("connection"));
 
         // `--provider` wears the vocabulary of the connection mode (design D4), so its check can only run
         // once the mode is known — under batch that is upfront in the resolver, on an interactive run it
@@ -275,7 +396,15 @@ export async function setup(options: SetupOptions): Promise<void> {
             }
         }
 
-        if (mode === "cliproxy") {
+        currentStep = "auth";
+        // Both halves of the mode block write their result to config, so a continue past it reads what the
+        // failed run already persisted. The cliproxy half would be harmless to repeat (the proxy config
+        // heals, and an existing credential skips the login), but the direct half has NO silent path —
+        // `collectDirectConnection` can only prompt — so skipping the block as a unit is the only way to
+        // keep a continue from asking for the endpoint, the credential, and the model a second time.
+        if (done("auth")) {
+            log.info(`Keeping the ${mode} model connection that the last run saved.`);
+        } else if (mode === "cliproxy") {
             // --- proxy config ---
             const writeResult = await writeProxyConfig();
             if (writeResult.isErr()) {
@@ -496,12 +625,13 @@ export async function setup(options: SetupOptions): Promise<void> {
             }
         }
 
+        currentStep = "postgres";
         // --- postgres config ---
         // Postgres is provisioned in BOTH modes; only the compose file's service set differs (the mode
         // drops or keeps the proxy service — see generateComposeFile).
         let pgConn: PostgresConnection;
         if (options.postgres) {
-            const resolvedPostgres = await promptPostgresConfig(answers.postgres, canPrompt);
+            const resolvedPostgres = await promptPostgresConfig(answers.postgres, asks("postgres"));
             if (resolvedPostgres.isErr()) {
                 log.error(
                     `The answered Postgres configuration could not be saved: ${resolvedPostgres.error.type}.\n` +
@@ -571,6 +701,7 @@ export async function setup(options: SetupOptions): Promise<void> {
             pgConn = resolvePostgresConfig();
         }
 
+        currentStep = "model";
         // --- default chat model ---
         // Cliproxy only, and only after the compose step above started the proxy, so the live `/models`
         // list and the accessibility sweep can answer. Nothing here WAITS on the proxy's port bind (the
@@ -578,13 +709,14 @@ export async function setup(options: SetupOptions): Promise<void> {
         // gracefully, which is fine because it is optional and must never fail setup. An ANSWERED model
         // is a pin (no select); an unanswered one offers a preselected Auto default plus the account's
         // accessible models, and under batch keeps Auto semantics by writing nothing.
-        const cliproxyModel = await runDefaultModelSetup(mode, answers.connection?.model, batch, validate);
+        const cliproxyModel = await runDefaultModelSetup(mode, answers.connection?.model, !asks("model"), validate);
         if (cliproxyModel.isErr()) {
             log.error(cliproxyModel.error.message);
             process.exitCode = 1;
             return;
         }
 
+        currentStep = "resources";
         // --- analysis resource allowance ---
         // Collects the machine budget for the harness's resource policy — the
         // total share of this host analyses may use; per-step ceilings are
@@ -592,7 +724,7 @@ export async function setup(options: SetupOptions): Promise<void> {
         // share persists the machine-relative absolutes without the prompt; a run
         // that can neither ask nor read an answer skips entirely — the resolved
         // default (half the detected machine) applies unpersisted.
-        const resourceAllowance = await promptResourceConfig(answers.resources?.sharePct, canPrompt);
+        const resourceAllowance = await promptResourceConfig(answers.resources?.sharePct, asks("resources"));
         if (resourceAllowance.isErr()) {
             log.error(
                 `The answered resource allowance could not be saved: ${resourceAllowance.error.type}.\n` +
@@ -602,6 +734,7 @@ export async function setup(options: SetupOptions): Promise<void> {
             return;
         }
 
+        currentStep = "embeddings";
         // --- embeddings ---
         // The spec-bound position for the INTERACTIVE embedding question — after auth
         // + postgres, before "Setup complete". The clack select offers
@@ -612,7 +745,7 @@ export async function setup(options: SetupOptions): Promise<void> {
         // See modules/embedding/setup.ts.
         if (!embeddingModeAnswered) {
             const { runEmbeddingSetup } = await import("../embedding/setup.ts");
-            const embedResult = await runEmbeddingSetup(canPrompt, embeddingAnswers);
+            const embedResult = await runEmbeddingSetup(asks("embeddings"), embeddingAnswers);
             if (embedResult.isErr()) {
                 log.error(`Embedding setup: ${embedResult.error.message}`);
                 process.exitCode = 1;
@@ -620,6 +753,7 @@ export async function setup(options: SetupOptions): Promise<void> {
             }
         }
 
+        currentStep = "refs";
         // --- reference data ---
         // The setup offer and `inflexa refs download` share one handler. Creating the public
         // store/user namespace is deliberate here; no passive runtime path creates it.
@@ -627,8 +761,8 @@ export async function setup(options: SetupOptions): Promise<void> {
         const selection = referenceSelectionOf(answers.refs);
         const refsResult = await runReferenceSetup({
             // A selection is its own consent, so the only thing left to decide is whether the step may
-            // ask: a terminal that batch mode has not withdrawn.
-            interactive: canPrompt,
+            // ask: a terminal that neither batch mode nor the checkpoint has withdrawn.
+            interactive: asks("refs"),
             ...(selection === undefined ? {} : { selection }),
         });
         if (refsResult.isErr()) {
@@ -637,12 +771,21 @@ export async function setup(options: SetupOptions): Promise<void> {
             return;
         }
 
+        currentStep = "sandbox";
         // --- sandbox image ---
         // Provision the sandbox image through the SAME handler as
         // `inflexa sandbox pull` (design: one dogfooded path). A pull failure warns
         // and continues — the image is an offer here, not a hard prerequisite
         // (`inflexa profile` pulls it on demand if still missing).
-        await runSandboxImageSetup(answers.sandbox, canPrompt);
+        await runSandboxImageSetup(answers.sandbox, asks("sandbox"));
+
+        // Deleting the record IS the mark of a complete run: the next run then finds no checkpoint and
+        // asks everything, which is what a deliberate re-run is for. A failed delete leaves a stale record,
+        // whose only cost is one offer to continue on the next run, so it warns rather than failing here.
+        clearSetupState().match(
+            () => undefined,
+            () => log.warn(`Could not clear the setup checkpoint at ${env.setupStatePath}. The next run may offer to continue from a finished step.`),
+        );
 
         // Re-read rather than tracking "did THIS run configure embeddings": the closing hint is about the
         // MACHINE's state, and a backend left by the interactive picker above — or by an earlier run, which
@@ -653,6 +796,13 @@ export async function setup(options: SetupOptions): Promise<void> {
     } catch (error) {
         log.error(`Setup failed unexpectedly: ${error}`);
         process.exitCode = 1;
+    } finally {
+        if (process.exitCode === 1) {
+            writeSetupState(currentStep).match(
+                () => log.info(`Re-run \`inflexa setup\` to continue from the "${currentStep}" step.`),
+                () => log.warn("Could not record the setup checkpoint, so the next run asks every question again."),
+            );
+        }
     }
 }
 
@@ -1277,10 +1427,14 @@ const ANTHROPIC_AUTH_TOKEN_VAR = "ANTHROPIC_AUTH_TOKEN";
  * / `connection.mode` answer, or the `cliproxy` default it applies under batch), else an interactive
  * select. The mode value is validated in exactly one place — the answers schema — so this takes it
  * pre-narrowed rather than re-parsing a string a second front-end already checked.
+ *
+ * `canAsk` is false when a checkpoint continue has already passed this step. The persisted mode
+ * (`resolveConnectionMode`) is then the right answer, because the earlier run wrote it — and its
+ * `cliproxy` fallback matches what a terminal-less run resolved to before this parameter existed.
  */
-async function chooseConnectionMode(answered: ConnectionMode | undefined): Promise<ConnectionMode> {
+async function chooseConnectionMode(answered: ConnectionMode | undefined, canAsk: boolean): Promise<ConnectionMode> {
     if (answered) return answered;
-    if (!process.stdin.isTTY) return "cliproxy";
+    if (!canAsk) return resolveConnectionMode();
     const chosen = await select("How should inflexa reach models?", [
         { value: "cliproxy", label: "Managed local proxy (CLIProxyAPI) — default" },
         { value: "direct", label: "Direct endpoint (your own provider)" },
