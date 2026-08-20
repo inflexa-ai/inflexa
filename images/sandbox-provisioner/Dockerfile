@@ -54,7 +54,7 @@ RUN bash /tmp/install-build-toolchain.sh python3-yaml python3-packaging iptables
 
 # Pinned to sandbox-base's uv so resolution and wheel selection are identical to
 # what the runtime image environment expects.
-ARG UV_VERSION=0.7.12
+ARG UV_VERSION=0.12.5
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv
 

@@ -3,7 +3,7 @@
 ## Overview
 
 The **one runtime image** of every sandbox. It bundles the language runtimes
-(R 4.6.0, Python 3.12, Node.js 20), the bioconda command-line tools at
+(R 4.6.0, Python 3.12, Node.js 24), the bioconda command-line tools at
 `/opt/conda`, the Node packages at `/opt/node`, and Chromium. It also carries
 a Go **sandbox-server**, the in-container counterpart to the harness
 `SandboxClient`: the client submits work, and the server runs commands and
