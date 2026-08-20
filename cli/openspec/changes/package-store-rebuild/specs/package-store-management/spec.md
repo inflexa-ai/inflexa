@@ -86,6 +86,27 @@ and a reported refusal. `store reclaim` frees the orphaned bytes.
 - **WHEN** the flight completes
 - **THEN** the graph holds no node for it, and the failure reports with the load error
 
+### Requirement: A flight launches the provisioner with the acquisition egress classes
+
+The flight MUST pass the egress allowlist of an acquisition to the
+provisioner container, through its `INFLEXA_EGRESS_ALLOW` environment
+variable. The launch adds the `NET_ADMIN` capability for the rule install. The
+list MUST hold two host classes only: the pinned Python index with its file
+host, and the configured pak repositories. The GitHub hosts and
+`git.bioconductor.org` belong to the catalog build alone. A flight MUST NOT
+launch the provisioner with the variable unset, because an unset variable
+gives open egress.
+
+#### Scenario: The flight passes the two classes
+
+- **WHEN** a flight launches the provisioner `acquire` run
+- **THEN** the container env carries `INFLEXA_EGRESS_ALLOW` with the index hosts and the pak repositories, and no GitHub host
+
+#### Scenario: No open-egress acquisition exists
+
+- **WHEN** any code path of the CLI launches a provisioner `acquire` run
+- **THEN** the launch sets the allowlist variable
+
 ### Requirement: The post-plan conversation asks per package
 
 After a plan is made, the conversation agent MUST write the package list of

@@ -29,8 +29,8 @@ firewall path and before the exec. When the read-write cache mount at
 `/mnt/libs/cache` is present, the seed does nothing, because the env
 already points into it. Without the mount, the seed copies `numba-cache`
 and `matplotlib_config` from the farm mount at `/mnt/libs/farm` to
-writable paths under `/tmp`, and it exports `NUMBA_CACHE_DIR` and `MPLCONFIGDIR`. On arm64 it
-sets `NUMBA_CPU_NAME=generic`. A missing cache MUST degrade in silence,
+writable paths under `/tmp`. It then exports `NUMBA_CACHE_DIR` and
+`MPLCONFIGDIR`. On arm64 it sets `NUMBA_CPU_NAME=generic`. A missing cache MUST degrade in silence,
 because a cold cache costs time and not correctness.
 
 #### Scenario: The caches seed at boot
@@ -50,9 +50,9 @@ because a cold cache costs time and not correctness.
 ### Requirement: Single base image Dockerfile location
 
 The base image Dockerfile MUST be at `images/sandbox-base/Dockerfile`. The
-`images/` directory MUST contain exactly three entries: `sandbox-base/`,
-`sandbox-provisioner/`, and `package-store/` (the manifest, the per-arch
-locks, and the warm scripts).
+subdirectories of `images/` MUST be `sandbox-base/`, `sandbox-provisioner/`,
+and `package-store/` (the manifest, the per-arch locks, and the warm
+scripts), and no other. A variant-image directory MUST NOT exist.
 
 #### Scenario: Dockerfile locations
 
