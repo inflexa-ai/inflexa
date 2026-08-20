@@ -53,7 +53,7 @@ const { cli } = await import("../src/cli/index.ts");
 // Every exported env-var doc list is imported, not just `envDoc`: a variable that is a feature's only
 // secret channel (INFLEXA_MODEL_API_KEY, INFLEXA_EMBEDDING_API_KEY) must not be visible in `--help` and
 // absent from the published reference. src/cli/gen_docs.test.ts fails when a list reaches no page here.
-const { embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc } = await import("../src/lib/env.ts");
+const { embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc, updateEnvDoc } = await import("../src/lib/env.ts");
 type EnvDocEntry = import("../src/lib/env.ts").EnvDocEntry;
 
 const OUT_DIR = join(import.meta.dir, "..", "dist-docs");
@@ -227,7 +227,7 @@ function renderEnvironmentPage(): string {
     // of their own — `--help` prints a single Environment block, and the page is the same data for the
     // same reader, so a row-for-row match is worth more than a heading per doc list. Order mirrors
     // renderEnvHelp's too: env-backed vars, then the secret channels, then the base-dir overrides.
-    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc]) {
+    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc, ...updateEnvDoc]) {
         varRows.push([codeSpan(doc.name), escapeProse(doc.description)]);
     }
     for (const [name, labels] of baseVarLabels) {

@@ -1,7 +1,7 @@
 import { Command } from "commander";
 
 import pkg from "../../package.json";
-import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc, type EnvDocEntry } from "../lib/env.ts";
+import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc, updateEnvDoc, type EnvDocEntry } from "../lib/env.ts";
 // Type-only, so the registry keeps its lazy-import discipline: nothing of the setup module loads until
 // the action runs. It is the shape of `setup`'s answer flags — see the batch options declared below.
 import type { SetupAnswerFlags } from "../modules/infra/setup_answers.ts";
@@ -32,7 +32,7 @@ function renderEnvHelp(): string {
     }
     // The direct-connection and embedding secret vars are not `env`-field-backed (their resolvers read them
     // on demand), so they live in their own doc lists; render them among the other var rows.
-    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc]) {
+    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc, ...updateEnvDoc]) {
         varRows.push([doc.name, doc.description]);
     }
     for (const [name, labels] of baseVarLabels) {
@@ -486,6 +486,24 @@ export function buildProgram(): Command {
         const { runPrune } = await import("../modules/anchor/backstop.ts");
         await runPrune();
     });
+
+    // `blocked`, and not for the usual reason. The command replaces the very file the agent is running
+    // from: `run_inflexa` spawns it as a child of this binary, and on Windows the swap renames the running
+    // executable out of the way. A person upgrades on purpose, at a moment of their choosing; an agent has
+    // no reason to change the tool underneath its own session.
+    registerAction(
+        cli.command("upgrade").description("Install the newest inflexa release, or name the command that does"),
+        {
+            kind: "blocked",
+            reason:
+                "`inflexa upgrade` replaces the inflexa binary you are running from. It is a deliberate, person-driven action. " +
+                "It is not available to you — tell the user to run it themselves.",
+        },
+        async () => {
+            const { upgrade } = await import("../modules/update/upgrade.ts");
+            await upgrade();
+        },
+    );
 
     // GEO datasets → the analysis's folder. `download`, not `add`: it fetches a Series host-side and
     // stops, so naming it `add` would promise the one thing it does not do and collide with `inputs add`,
