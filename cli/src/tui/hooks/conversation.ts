@@ -105,6 +105,12 @@ export type UIMessage = {
 // store's read imposes no ceiling of its own, so this is free to move.
 const MESSAGE_CAP = 200;
 
+// The identity the ask seam keys a standing `always` grant on. One person owns a
+// local CLI install, and the CLI holds no account model, so every turn of every
+// analysis carries this one value. The harness never interprets it — a managed
+// host passes the identity of its signed-in person here instead.
+const LOCAL_ASK_USER_ID = "local";
+
 const [messages, setMessages] = createStore<UIMessage[]>([]);
 const [streamText, setStreamText] = createSignal("");
 const [streamPartId, setStreamPartId] = createSignal<string | null>(null);
@@ -1436,7 +1442,14 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
             // carrying the turn's analysis/thread, its abort signal, and its guarded emit sink, so the
             // gateway's `data-ask` emissions and its poll ride the same signal and sink as every other
             // turn event (a swap/reset that supersedes the turn drops them at `emitForTurn`).
-            ask: (req, emit) => runtime.askGateway.ask(req, { analysisId: opts.analysisId, threadId: opts.sessionId, signal: myTurn.signal, emit }),
+            ask: (req, emit) =>
+                runtime.askGateway.ask(req, {
+                    analysisId: opts.analysisId,
+                    userId: LOCAL_ASK_USER_ID,
+                    threadId: opts.sessionId,
+                    signal: myTurn.signal,
+                    emit,
+                }),
             analysisId: opts.analysisId,
             // The pg thread binds 1:1 to the session, so a plan launched here stamps its run.
             threadId: opts.sessionId,

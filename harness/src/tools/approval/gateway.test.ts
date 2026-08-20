@@ -52,14 +52,18 @@ afterEach(async () => {
 
 const REQUEST: AskRequest = { title: "Run a command", command: "rm -rf /tmp/scratch", detail: "irreversible" };
 
+// Two people in one analysis — the case an analysis-keyed grant used to conflate.
+const USER_A = "user-A";
+const USER_B = "user-B";
+
 /** Start `ask` without awaiting, collecting its emitted `data-ask` parts. */
-function startAsk(request: AskRequest, analysisId = "analysis-A"): StartedAsk {
+function startAsk(request: AskRequest, analysisId = "analysis-A", userId = USER_A): StartedAsk {
     const controller = new AbortController();
     const parts: AskPartData[] = [];
     const emit: EmitFn = (event) => {
         if (event.type === "data-ask") parts.push((event as ChatDataPart).data as AskPartData);
     };
-    const ctx: AskContext = { analysisId, signal: controller.signal, emit };
+    const ctx: AskContext = { analysisId, userId, signal: controller.signal, emit };
     const promise = gateway.ask(request, ctx);
     controllers.push(controller);
     // A swallowing copy so a rejection the test itself awaits is not also seen as
@@ -172,17 +176,34 @@ describe("createAskGateway — answer and pending contract", () => {
         expect(await gateway.answer(idPending, { kind: "once" })).toBe("applied");
         expect(await stillPending.promise).toEqual({ kind: "once" });
     });
+
+    it("reports the user each unresolved ask was raised for", async () => {
+        const forA = startAsk(REQUEST, "analysis-A", USER_A);
+        const idA = await waitForPendingId("analysis-A");
+        const forB = startAsk({ ...REQUEST, command: "second command" }, "analysis-B", USER_B);
+        const idB = await waitForPendingId("analysis-B");
+
+        // A host reads this to route each ask to the person who can answer it.
+        const userById = new Map((await gateway.pending()).map((ask) => [ask.id, ask.userId]));
+        expect(userById.get(idA)).toBe(USER_A);
+        expect(userById.get(idB)).toBe(USER_B);
+
+        // Settle both so teardown has nothing racing the drop.
+        expect(await gateway.answer(idA, { kind: "once" })).toBe("applied");
+        expect(await gateway.answer(idB, { kind: "once" })).toBe("applied");
+        await Promise.all([forA.promise, forB.promise]);
+    });
 });
 
-// ── 5.3 — analysis-scoped standing grants ────────────────────────────
+// ── 5.3 — standing grants, per user inside one analysis ──────────────
 
 describe("createAskGateway — standing grants", () => {
     const GRANTED: AskRequest = { title: "Deploy", command: "git push --force", detail: undefined };
 
-    async function grantCount(analysisId: string, grantKey: string): Promise<number> {
+    async function grantCount(analysisId: string, grantKey: string, userId = USER_A): Promise<number> {
         const res = await pool.query({
-            text: `SELECT count(*)::int AS n FROM cortex_ask_grants WHERE analysis_id = $1 AND grant_key = $2`,
-            values: [analysisId, grantKey],
+            text: `SELECT count(*)::int AS n FROM cortex_ask_grants WHERE analysis_id = $1 AND grant_key = $2 AND user_id = $3`,
+            values: [analysisId, grantKey, userId],
         });
         return (res.rows[0] as { n: number }).n;
     }
@@ -202,7 +223,7 @@ describe("createAskGateway — standing grants", () => {
         const emit: EmitFn = (event) => {
             if (event.type === "data-ask") parts.push((event as ChatDataPart).data as AskPartData);
         };
-        const reply = await gateway.ask(GRANTED, { analysisId: "analysis-A", signal: controller.signal, emit });
+        const reply = await gateway.ask(GRANTED, { analysisId: "analysis-A", userId: USER_A, signal: controller.signal, emit });
 
         expect(reply).toEqual({ kind: "always" });
         expect(parts).toHaveLength(0);
@@ -219,7 +240,7 @@ describe("createAskGateway — standing grants", () => {
 
         const restarted = createAskGateway({ pool });
         const controller = new AbortController();
-        const reply = await restarted.ask(GRANTED, { analysisId: "analysis-A", signal: controller.signal, emit: () => {} });
+        const reply = await restarted.ask(GRANTED, { analysisId: "analysis-A", userId: USER_A, signal: controller.signal, emit: () => {} });
 
         expect(reply).toEqual({ kind: "always" });
         expect(await restarted.pending()).toHaveLength(0);
@@ -238,6 +259,44 @@ describe("createAskGateway — standing grants", () => {
 
         expect(await gateway.answer(otherId, { kind: "once" })).toBe("applied");
         expect(await other.promise).toEqual({ kind: "once" });
+    });
+
+    it("does not apply the grant of one user to another user in the same analysis", async () => {
+        const first = startAsk(GRANTED, "analysis-A", USER_A);
+        const id = await waitForPendingId("analysis-A");
+        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
+        expect(await first.promise).toEqual({ kind: "always" });
+
+        expect(await grantCount("analysis-A", GRANTED.command, USER_A)).toBe(1);
+        expect(await grantCount("analysis-A", GRANTED.command, USER_B)).toBe(0);
+
+        // The same command in the same analysis, for a different person: the ask
+        // pauses as if no grant existed. This is the whole point of the user key.
+        const other = startAsk(GRANTED, "analysis-A", USER_B);
+        const otherId = await waitForPendingId("analysis-A");
+        expect(await gateway.answer(otherId, { kind: "once" })).toBe("applied");
+        expect(await other.promise).toEqual({ kind: "once" });
+    });
+
+    it("records the grant under the user the ask was raised for", async () => {
+        // `answer` takes no identity — the ledger row is what names the person, so a
+        // decision recorded by anyone lands on the user of the paused turn.
+        const started = startAsk(GRANTED, "analysis-A", USER_B);
+        const id = await waitForPendingId("analysis-A");
+        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
+        expect(await started.promise).toEqual({ kind: "always" });
+
+        expect(await grantCount("analysis-A", GRANTED.command, USER_B)).toBe(1);
+        expect(await grantCount("analysis-A", GRANTED.command, USER_A)).toBe(0);
+
+        // The next ask of that same person short-circuits with no prompt.
+        const reply = await gateway.ask(GRANTED, {
+            analysisId: "analysis-A",
+            userId: USER_B,
+            signal: new AbortController().signal,
+            emit: () => {},
+        });
+        expect(reply).toEqual({ kind: "always" });
     });
 
     // A grant key lets a tool bless a broader class than the one command it displays.
@@ -262,7 +321,7 @@ describe("createAskGateway — standing grants", () => {
             if (event.type === "data-ask") parts.push((event as ChatDataPart).data as AskPartData);
         };
         const later: AskRequest = { title: "Write a file", command: "write_file report/b.txt", grantKey: WIDE_KEY };
-        const reply = await gateway.ask(later, { analysisId: "analysis-A", signal: new AbortController().signal, emit });
+        const reply = await gateway.ask(later, { analysisId: "analysis-A", userId: USER_A, signal: new AbortController().signal, emit });
 
         expect(reply).toEqual({ kind: "always" });
         expect(parts).toHaveLength(0);
@@ -338,7 +397,7 @@ describe("createAskGateway — sweep", () => {
     const STALE = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
 
     function pendingRow(createdAt: string): AskRow {
-        return { id: uuidv7(), analysisId: "analysis-A", threadId: null, title: "t", command: "c", detail: null, grantKey: null, createdAt };
+        return { id: uuidv7(), analysisId: "analysis-A", userId: USER_A, threadId: null, title: "t", command: "c", detail: null, grantKey: null, createdAt };
     }
 
     it("expires orphaned pending rows past the max age and returns the count swept", async () => {
