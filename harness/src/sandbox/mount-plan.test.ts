@@ -59,6 +59,52 @@ describe("buildMountPlan", () => {
         expect(plan.env.PATH).toContain("/mnt/libs/current/conda/bin");
     });
 
+    test("the absent toolchain field keeps the legacy env byte-identical", () => {
+        // The whole env object is pinned, not probed: an old embedder that
+        // declares no toolchain must get exactly the environment from before
+        // the field existed.
+        const plan = buildMountPlan(COORDS, { libs: true, refs: false });
+        expect(plan.env).toEqual({
+            PROVENANCE_WATCH_DIRS: "/an-1",
+            R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran",
+            NODE_PATH: "/mnt/libs/current/node/node_modules",
+            PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin",
+        });
+        expect(plan.farmPath).toBe("/mnt/libs/current");
+    });
+
+    test("toolchainSource store equals the absent field", () => {
+        const absent = buildMountPlan(COORDS, { libs: true, refs: false });
+        const declared = buildMountPlan(COORDS, { libs: true, refs: false, toolchainSource: "store" });
+        expect(declared).toEqual(absent);
+    });
+
+    test("toolchainSource image keys the env onto the image toolchain, with the farm python/bin last", () => {
+        const plan = buildMountPlan(COORDS, { libs: true, refs: false, toolchainSource: "image" });
+        expect(plan.farmPath).toBe("/mnt/libs/farm");
+        expect(plan.env.NODE_PATH).toBe("/opt/node/node_modules");
+        expect(plan.env.R_LIBS_SITE).toBe("/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran");
+        // /opt/conda/bin comes before the farm python/bin at the end, thus a
+        // farm script never shadows an image tool.
+        expect(plan.env.PATH!.endsWith("/opt/conda/bin:/mnt/libs/farm/python/bin")).toBe(true);
+        // System Python resolves the store through a .pth file, never PYTHONPATH.
+        expect(plan.env.PYTHONPATH).toBeUndefined();
+    });
+
+    test("a cache location points the cache env into /mnt/libs/cache under the image toolchain", () => {
+        const plan = buildMountPlan(COORDS, { libs: true, refs: false, toolchainSource: "image", cache: true });
+        expect(plan.cachePath).toBe("/mnt/libs/cache");
+        expect(plan.env.NUMBA_CACHE_DIR).toBe("/mnt/libs/cache/numba-cache");
+        expect(plan.env.MPLCONFIGDIR).toBe("/mnt/libs/cache/matplotlib_config");
+    });
+
+    test("no cache location degrades: no cache path and no cache env", () => {
+        const plan = buildMountPlan(COORDS, { libs: true, refs: false, toolchainSource: "image" });
+        expect(plan.cachePath).toBeUndefined();
+        expect(plan.env.NUMBA_CACHE_DIR).toBeUndefined();
+        expect(plan.env.MPLCONFIGDIR).toBeUndefined();
+    });
+
     test("libs unset omits lib-store env and libsPath", () => {
         const plan = buildMountPlan(COORDS, { libs: false, refs: false });
         expect(plan.libsPath).toBeUndefined();
@@ -184,6 +230,8 @@ describe("the declared write tail", () => {
             writableStepPath: "/an-1/runs/run-1/step-a",
             workingDir: "/an-1/runs/run-1/step-a",
             libsPath: "/mnt/libs",
+            farmPath: "/mnt/libs/current",
+            cachePath: undefined,
             refsPath: "/mnt/refs",
             stepSubdirs: STEP_SUBDIRS,
             env: stepPlan.env,

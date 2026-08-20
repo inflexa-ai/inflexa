@@ -15,18 +15,20 @@ import Docker from "dockerode";
 
 import { createDockerSandboxOps, engineConnectionOptions } from "./docker-client.js";
 import { mintSandboxIdentity } from "./identity.js";
+import type { FarmSource } from "./types.js";
 
-// A real, COMPLETE on-disk lib store: the Docker client re-checks `<libStorePath>/current`
-// AT createSandbox time and requires it to resolve to a directory carrying both
-// completeness markers (packages.txt + meta.json), not merely to exist, so tests that
-// expect the /mnt/libs mount must point at a store that is actually usable.
+// A real, usable on-disk farm: the Docker client resolves the farm source at
+// each createSandbox and gates the store mounts on a parseable `inflexa.lock`
+// at a known schema version. Tests that expect the /mnt/libs mounts must
+// point at a farm that is actually usable.
 let libRoot: string;
-async function writeCompleteStore(root: string, version: string): Promise<void> {
-    const vdir = join(root, version);
-    await mkdir(vdir, { recursive: true });
-    await writeFile(join(vdir, "packages.txt"), "# packages\n");
-    await writeFile(join(vdir, "meta.json"), JSON.stringify({ version, arch: "linux-amd64", tracks: [] }));
-    await symlink(version, join(root, "current"));
+let farmDir: string;
+let farmSource: FarmSource;
+async function writeUsableFarm(root: string, analysisId: string): Promise<string> {
+    const farm = join(root, "farms", analysisId);
+    await mkdir(farm, { recursive: true });
+    await writeFile(join(farm, "inflexa.lock"), JSON.stringify({ schema: 1, arch: "arm64", packages: [], languages: {} }));
+    return farm;
 }
 // The ref store has no harness-known interior — the Docker client re-checks only that
 // `refStorePath` is, at createSandbox time, a real (non-symlink) directory, so a bare
@@ -39,7 +41,8 @@ let refsRoot: string;
 let wsRoot: string;
 beforeEach(async () => {
     libRoot = await mkdtemp(join(tmpdir(), "harness-libstore-"));
-    await writeCompleteStore(libRoot, "2026.07.04-abc");
+    farmDir = await writeUsableFarm(libRoot, "an-1");
+    farmSource = { kind: "fixed", location: { farmPath: farmDir } };
     refsRoot = await mkdtemp(join(tmpdir(), "harness-refstore-"));
     wsRoot = await mkdtemp(join(tmpdir(), "harness-workspace-"));
 });
@@ -192,6 +195,7 @@ describe("docker createSandbox — transport modes", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://cortex.example.com:443",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -223,6 +227,7 @@ describe("docker createSandbox — transport modes", () => {
             cortexBaseUrl: "https://cortex.example.com:443",
             transport: "callback",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -248,6 +253,7 @@ describe("docker createSandbox — transport modes", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -273,6 +279,7 @@ describe("docker createSandbox — transport modes", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             libStorePath: libRoot,
             refStorePath: refsRoot,
             docker,
@@ -294,11 +301,13 @@ describe("docker createSandbox — transport modes", () => {
         expect(env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
 
         expect(sandbox.workingDir).toBe("/an-1/runs/run-1/step-a");
-        // A present ref-store directory is bound read-only at /mnt/refs (existing behavior).
+        // The farm bind comes after the store bind, and a present ref-store
+        // directory is bound read-only at /mnt/refs (existing behavior).
         expect(sandbox.binds).toEqual([
             "/sessions/an-1:/an-1:ro",
             "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw",
             `${libRoot}:/mnt/libs:ro`,
+            `${farmDir}:/mnt/libs/current:ro`,
             `${refsRoot}:/mnt/refs:ro`,
         ]);
         expect(registered).toEqual([{ runId: "run-1", stepId: "step-a", sandboxId: ref.sandboxId }]);
@@ -475,6 +484,7 @@ describe("docker createSandbox — transport modes", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -494,6 +504,7 @@ describe("docker createSandbox — mounts and platform", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -516,6 +527,7 @@ describe("docker createSandbox — mounts and platform", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             platform: "linux/arm64",
             docker,
             fetch: okFetch,
@@ -534,6 +546,7 @@ describe("docker createSandbox — mounts and platform", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -551,6 +564,7 @@ describe("docker createSandbox — mounts and platform", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -571,7 +585,7 @@ describe("docker createSandbox — mounts and platform", () => {
             )
         )._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`]);
+        expect(sandboxOf(created)!.binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`, `${farmDir}:/mnt/libs/current:ro`]);
         expect(sandboxOf(created)!.binds.some((b) => b.endsWith(":rw"))).toBe(false);
         expect(sandboxOf(created)!.workingDir).toBe("/an-1");
     });
@@ -582,6 +596,7 @@ describe("docker createSandbox — mounts and platform", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -608,6 +623,7 @@ describe("docker createSandbox — mounts and platform", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -622,14 +638,15 @@ describe("docker createSandbox — mounts and platform", () => {
         expect(created).toHaveLength(0);
     });
 
-    test("skips the /mnt/libs mount when the store's current pointer has vanished since boot", async () => {
+    test("skips the /mnt/libs mounts when the farm has no inflexa.lock", async () => {
         const { docker, created } = stubDocker();
-        await rm(join(libRoot, "current"), { force: true });
+        await rm(join(farmDir, "inflexa.lock"), { force: true });
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -645,13 +662,14 @@ describe("docker createSandbox — mounts and platform", () => {
 
     test("logs a warning when a configured store is unusable at create time", async () => {
         const { docker } = stubDocker();
-        await rm(join(libRoot, "current"), { force: true });
+        await rm(join(farmDir, "inflexa.lock"), { force: true });
         const logger = createCapturingLogger();
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join(wsRoot, id),
+            farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -663,19 +681,20 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const warnings = logger.records.filter((r) => r.level === "warn");
         expect(warnings).toHaveLength(1);
-        expect(warnings[0]!.msg).toContain("lib store");
+        expect(warnings[0]!.msg).toContain("inflexa.lock");
         expect(warnings[0]!.msg).toStartWith("[docker-client] ");
-        expect(warnings[0]!.fields).toMatchObject({ libStorePath: libRoot });
+        expect(warnings[0]!.fields).toMatchObject({ libStorePath: libRoot, farmPath: farmDir });
     });
 
     test("degrades to silence rather than throwing when no logger is wired", async () => {
         const { docker } = stubDocker();
-        await rm(join(libRoot, "current"), { force: true });
+        await rm(join(farmDir, "inflexa.lock"), { force: true });
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -687,14 +706,15 @@ describe("docker createSandbox — mounts and platform", () => {
         expect((await ops.createSandbox(META, mintSandboxIdentity("run-1"))).isOk()).toBe(true);
     });
 
-    test("skips the /mnt/libs mount when `current` is a dangling symlink to a pruned version", async () => {
+    test("skips the /mnt/libs mounts when the inflexa.lock does not parse", async () => {
         const { docker, created } = stubDocker();
-        await rm(join(libRoot, "2026.07.04-abc"), { recursive: true, force: true });
+        await writeFile(join(farmDir, "inflexa.lock"), "not json");
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -704,6 +724,190 @@ describe("docker createSandbox — mounts and platform", () => {
         (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+
+    test("skips the /mnt/libs mounts when the inflexa.lock schema version is unknown", async () => {
+        const { docker, created } = stubDocker();
+        await writeFile(join(farmDir, "inflexa.lock"), JSON.stringify({ schema: 99, arch: "arm64", packages: [], languages: {} }));
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+
+    test("no configured store means the farm source is not called", async () => {
+        const { docker, created } = stubDocker();
+        let resolverCalls = 0;
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource: {
+                kind: "per-analysis",
+                resolve: async () => {
+                    resolverCalls += 1;
+                    return { kind: "available", location: { farmPath: farmDir } };
+                },
+            },
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(resolverCalls).toBe(0);
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+
+    test("a per-analysis resolver refusal returns farm_unavailable with the embedder reason, and no container is made", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource: { kind: "per-analysis", resolve: async () => ({ kind: "unavailable", reason: "the store download is in progress" }) },
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("farm_unavailable");
+            if (result.error.type === "farm_unavailable") expect(result.error.reason).toBe("the store download is in progress");
+        }
+        expect(created).toHaveLength(0);
+    });
+
+    test("a per-analysis resolver throw refuses with farm_unavailable, and no container is made", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource: {
+                kind: "per-analysis",
+                resolve: async () => {
+                    throw new Error("boom");
+                },
+            },
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("farm_unavailable");
+        expect(created).toHaveLength(0);
+    });
+
+    test("a per-analysis resolver feeds the farm of THIS analysis, so a farm made between two sandboxes reaches the next one", async () => {
+        const { docker, created } = stubDocker();
+        const resolvedFor: string[] = [];
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource: {
+                kind: "per-analysis",
+                resolve: async (analysisId) => {
+                    resolvedFor.push(analysisId);
+                    return { kind: "available", location: { farmPath: farmDir } };
+                },
+            },
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(resolvedFor).toEqual(["an-1"]);
+        expect(sandboxOf(created)!.binds).toContain(`${farmDir}:/mnt/libs/current:ro`);
+    });
+
+    test("a cache location on the farm resolution mounts read-write at /mnt/libs/cache, after the two store binds", async () => {
+        const { docker, created } = stubDocker();
+        const cacheDir = join(libRoot, "caches", "an-1");
+        await mkdir(cacheDir, { recursive: true });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource: { kind: "fixed", location: { farmPath: farmDir, cachePath: cacheDir } },
+            toolchainSource: "image",
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created)!;
+        const libsIdx = sandbox.binds.indexOf(`${libRoot}:/mnt/libs:ro`);
+        const farmIdx = sandbox.binds.indexOf(`${farmDir}:/mnt/libs/farm:ro`);
+        const cacheIdx = sandbox.binds.indexOf(`${cacheDir}:/mnt/libs/cache:rw`);
+        expect(libsIdx).toBeGreaterThanOrEqual(0);
+        expect(farmIdx).toBeGreaterThan(libsIdx);
+        expect(cacheIdx).toBeGreaterThan(farmIdx);
+
+        const env = envMapOf(sandbox);
+        expect(env.NUMBA_CACHE_DIR).toBe("/mnt/libs/cache/numba-cache");
+        expect(env.MPLCONFIGDIR).toBe("/mnt/libs/cache/matplotlib_config");
+    });
+
+    test("toolchainSource image mounts the farm at /mnt/libs/farm and moves the resolver env onto the image toolchain", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
+            toolchainSource: "image",
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created)!;
+        expect(sandbox.binds).toContain(`${farmDir}:/mnt/libs/farm:ro`);
+        const env = envMapOf(sandbox);
+        expect(env.NODE_PATH).toBe("/opt/node/node_modules");
+        // The farm python/bin ends the PATH, after every image path, thus a
+        // farm script never shadows an image tool.
+        expect(env.PATH!.endsWith("/opt/conda/bin:/mnt/libs/farm/python/bin")).toBe(true);
+        expect(env.R_LIBS_SITE).toBe("/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran");
+        // Without a cache mount the cache env stays absent — the entrypoint fallback covers it.
+        expect(env.NUMBA_CACHE_DIR).toBeUndefined();
     });
 });
 
@@ -718,6 +922,7 @@ describe("docker createSandbox — ref store re-check", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join(wsRoot, id),
+            farmSource,
             refStorePath: missing,
             docker,
             fetch: okFetch,
@@ -744,6 +949,7 @@ describe("docker createSandbox — ref store re-check", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             refStorePath: installedLater,
             docker,
             fetch: okFetch,
@@ -770,6 +976,7 @@ describe("docker createSandbox — ref store re-check", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             refStorePath: link,
             docker,
             fetch: okFetch,
@@ -789,6 +996,7 @@ describe("docker teardown / isAlive", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -805,6 +1013,7 @@ describe("docker teardown / isAlive", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             registerSandbox: async () => {},
         });
@@ -818,6 +1027,7 @@ describe("docker teardown / isAlive", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             registerSandbox: async () => {},
         });
@@ -847,6 +1057,7 @@ describe("docker teardown / isAlive", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             registerSandbox: async () => {},
         });
@@ -874,6 +1085,7 @@ describe("docker teardown / isAlive", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker: erroringDocker,
             registerSandbox: async () => {},
         });
@@ -954,6 +1166,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -1063,6 +1276,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             docker,
             fetch: unhealthyFetch,
             registerSandbox: async () => {},
@@ -1098,6 +1312,7 @@ describe("docker createSandbox — engine connection", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
             engineSocketPath: "/nonexistent/should-not-be-dialed.sock",
             docker,
             fetch: okFetch,

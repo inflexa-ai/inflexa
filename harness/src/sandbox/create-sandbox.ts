@@ -31,7 +31,7 @@ import { createDockerSandboxOps } from "./docker-client.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { sandboxWriteTail } from "./mount-plan.js";
 import { submitExec, type SubmitExecDeps } from "./submit-exec.js";
-import { toPersistedRef, type CreateSandboxMeta, type SandboxRef, type SandboxTransport } from "./types.js";
+import { toPersistedRef, type CreateSandboxMeta, type FarmSource, type SandboxRef, type SandboxTransport, type ToolchainSource } from "./types.js";
 
 /**
  * Narrow config slice the sandbox factory reads off `Env` — the backend
@@ -78,6 +78,21 @@ export interface CreateSandboxClientConfig {
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Docker: host dir bind-mounted read-only at `/mnt/libs`. */
     libStorePath?: string;
+    /**
+     * Where the farm of an analysis comes from. Required of every embedder —
+     * the harness never invents a farm location, and it reads no store-root
+     * `current` pointer. On Docker, `FarmLocation.farmPath` is a host
+     * directory. On K8s, it is a `subPath` into `libStorePvc`. Consulted only
+     * when a store is configured.
+     */
+    farmSource: FarmSource;
+    /**
+     * The declared toolchain owner. `"image"` keys the resolver env and the
+     * orient-core prompt text onto the image-owned toolchain. Absent means
+     * `"store"`: the legacy environment, byte-identical to the one before
+     * this field existed.
+     */
+    toolchainSource?: ToolchainSource;
     /** Docker: host dir bind-mounted read-only at `/mnt/refs`. */
     refStorePath?: string;
     /** Docker: force the container platform (e.g. `linux/amd64`) so the sandbox matches the mounted lib store's arch. */
@@ -122,9 +137,10 @@ export interface CreateSandboxClientConfig {
     /** Override the backend selection — defaults to `env.SANDBOX_BACKEND`. */
     backend?: "docker" | "k8s";
     /**
-     * Optional logger forwarded to the Docker backend so a lib-store degradation
-     * (a configured store whose `current` vanished/went incomplete mid-session) is
-     * observable rather than a silent mount drop. No-op when unset.
+     * Optional logger forwarded to the Docker backend so a store degradation
+     * (a resolved farm whose `inflexa.lock` vanished or went invalid
+     * mid-session) is observable rather than a silent mount drop. No-op when
+     * unset.
      */
     logger?: Logger;
     /** Dependency seams (fetch, durable step/sleep, clock, recv, warn sink) forwarded to submit/await. */
@@ -204,6 +220,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   sessionPvcRoot: config.sessionPvcRoot,
                   resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                   libStorePvc: config.libStorePvc,
+                  farmSource: config.farmSource,
+                  toolchainSource: config.toolchainSource,
                   refStorePvc: config.refStorePvc,
                   nodeSelector: config.nodeSelector,
                   tolerations: config.tolerations,
@@ -216,6 +234,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   transport,
                   resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                   libStorePath: config.libStorePath,
+                  farmSource: config.farmSource,
+                  toolchainSource: config.toolchainSource,
                   refStorePath: config.refStorePath,
                   platform: config.platform,
                   engineSocketPath: config.engineSocketPath,

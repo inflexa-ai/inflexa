@@ -89,6 +89,19 @@ export type SandboxError =
           readonly sandboxId?: string;
           readonly status?: number;
           readonly cause: unknown;
+      }
+    | {
+          /**
+           * The farm source refused the analysis: the resolver returned
+           * `unavailable`, or it threw. `reason` carries the text of the
+           * embedder verbatim, thus the surface can show why the farm is
+           * not usable yet.
+           */
+          readonly type: "farm_unavailable";
+          readonly op: string;
+          readonly analysisId: string;
+          readonly reason: string;
+          readonly cause?: unknown;
       };
 
 // SandboxError is a `DomainError` (string `type` + `cause`) — the compile-time
@@ -128,6 +141,8 @@ export function describeSandboxError(e: SandboxError): string {
             return `sandbox teardown failed (${e.op}${e.sandboxId ? `: ${e.sandboxId}` : ""})`;
         case "liveness_failed":
             return `sandbox liveness probe failed (${e.op}${e.sandboxId ? `: ${e.sandboxId}` : ""})`;
+        case "farm_unavailable":
+            return `farm unavailable (${e.op}: ${e.analysisId}) — ${e.reason}`;
     }
 }
 
