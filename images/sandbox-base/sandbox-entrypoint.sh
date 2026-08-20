@@ -13,6 +13,13 @@
 # still works; loopback survives for local tooling.
 set -e
 
+# The seed of the prepared caches runs before the firewall path and before the
+# exec. It lives in a file of its own, because the cache check of the build
+# runs that same code while this script execs the server. Refer to
+# /usr/local/bin/inflexa-seed-caches.
+. /usr/local/bin/inflexa-seed-caches
+seed_caches
+
 if [ "${SANDBOX_EGRESS_FIREWALL:-0}" = "1" ]; then
     iptables -A OUTPUT -o lo -j ACCEPT
     iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
@@ -27,6 +34,13 @@ if [ "${SANDBOX_EGRESS_FIREWALL:-0}" = "1" ]; then
         ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
         ip6tables -P OUTPUT DROP
     fi
+
+    # The seed ran as root in this mode. Hand the copies to the workload uid:
+    # numba writes new entries at run time, and a root-owned seed would be
+    # read-only to uid 1000 — the very failure the seed exists to prevent.
+    for _d in /tmp/numba-cache /tmp/matplotlib_config; do
+        [ -d "$_d" ] && chown -R 1000:1000 "$_d" 2>/dev/null || true
+    done
 
     # Drop to uid/gid 1000 with an empty capability bounding+inheritable set, so
     # the workload cannot regain CAP_NET_ADMIN and flush the rules above.

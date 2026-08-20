@@ -1,4 +1,16 @@
-# lib-store-manifest.yaml
+# yaml-language-server: $schema=./manifest.schema.json
+# vim: set ft=yaml ts=4 sw=4 et:
+#
+# The package-store manifest — the intent layer of the store build.
+#
+# An entry is a bare name (with an optional inline pin), or an object:
+#     - name: scanpy
+#       version: "==1.10.*"        # optional constraint
+#       reason: "why the catalog carries it"
+#       warm: warm/scanpy.py       # optional per-package warm script
+# A NEW entry takes the object form, with its reason. The build resolves per
+# arch with hashes, and the workflow commits the per-arch lock files back to
+# the repository. Resolution obeys the manifest first and the lock second.
 r_version: "4.6.0"
 python_version: "3.12"
 # Digest-pinned so CI's `--build-arg BASE_IMAGE` and the Dockerfile default resolve the same
@@ -50,6 +62,11 @@ r:
         - RcppArmadillo
         - BiocManager
         - devtools
+        # devtools Imports pak, thus the closure needs it. pak does not arrive by
+        # itself: the provisioner image installs pak for its own resolve, so the
+        # resolver reads it as satisfied and puts no copy in the pool. The sandbox
+        # image carries no pak, thus a name it must resolve is named here.
+        - pak
         - ggrepel
         - pROC
         - vegan
@@ -84,7 +101,6 @@ r:
         - DBI # AnnotationDbi, RSQLite
         - RSQLite # AnnotationDbi, ensembldb
         - XML # biomaRt, many BioC
-        - CVXR # ANCOMBC
         - DescTools # ANCOMBC
         - energy # ANCOMBC
         - emdbook # apeglm Imports it — needed at RUNTIME, so it has to be staged
@@ -278,7 +294,6 @@ r:
         - Spectra
         - xcms
         - CAMERA
-        - DEP
         - MSstats
         - MSstatsTMT
 
@@ -359,6 +374,22 @@ r:
           # that request answerable. What numbat buys over copykat is tolerance of
           # hyper- and hypodiploid genomes, where a median-ploidy baseline misleads.
 
+    git:
+        # R packages from a git remote pinned to a commit — the declarative form of
+        # what used to be a shell branch in the R Dockerfile. The lock generator
+        # turns each entry into a `git::<url>@<commit>` pak ref, resolves it into the
+        # bulk lock, and installs it into r/bioconductor. A `reason` is mandatory: a
+        # git pin is a standing exception and must say why it exists.
+        - name: DEP
+          url: https://git.bioconductor.org/packages/DEP
+          commit: 251eef42dac5d6e648742ab8b79b8322d6218533
+          reason: >
+            DEP was deprecated and dropped from Bioconductor 3.23, the release that
+            pairs with R 4.6, so it comes from the last release that carried it. This
+            commit is the RELEASE_3_22 branch tip (DEP 1.32.0). git.bioconductor.org
+            keeps release branches indefinitely; refresh the commit with
+            `git ls-remote https://git.bioconductor.org/packages/DEP RELEASE_3_22`.
+
 python:
     pip:
         common:
@@ -384,7 +415,9 @@ python:
             - "grpcio-tools>=1.60"
 
             # Visualization
-            - matplotlib
+            - name: matplotlib
+              reason: "The figure renderer of every analysis; its warm run prepares the font cache."
+              warm: warm/matplotlib.py
             - seaborn
             - plotly
             - kaleido # Resolves to 1.x, which no longer embeds a browser — it drives
@@ -413,8 +446,12 @@ python:
             # Single-cell
             - anndata
             - mudata
-            - scanpy
-            - scvi-tools
+            - name: scanpy
+              reason: "The single-cell pipeline; its warm run prepares the numba kernels of a first analysis."
+              warm: warm/scanpy.py
+            - name: scvi-tools
+              reason: "Batch integration; its warm run proves the SCVI entry point against the resolved set."
+              warm: warm/scvi-tools.py
             - muon
             - "decoupler[full]>=2.1.2"
             - "pydeseq2>=0.5.3"
@@ -430,7 +467,9 @@ python:
             - louvain
             - umap-learn
             - scikit-misc
-            - pertpy
+            - name: pertpy
+              reason: "Perturbation analysis; its warm run prepares the distance kernels."
+              warm: warm/pertpy.py
             - palantir
             - scvelo
             - harmonypy
@@ -447,7 +486,9 @@ python:
               # not part of this image. Skipping the pruning leaves raw
               # co-expression, which is not what pySCENIC is for.
             - "cellrank>=2"
-            - cell2location
+            - name: cell2location
+              reason: "Spatial deconvolution; its warm run proves the regression entry point."
+              warm: warm/cell2location.py
             - rpds-py
             - scglue
 
@@ -572,19 +613,21 @@ python:
         arm64:
             - "liana"
 
-# Node packages installed into the store's node subtree (a flat list, not
-# arch-split). echarts backs the chart/report rendering path.
+# Node packages the runtime image installs at /opt/node (a flat list, not
+# arch-split). echarts backs the chart/report rendering path. A package farm cannot
+# carry this track, thus the image owns it.
 node:
     - echarts
 
 # Build-time dependencies (compilers, -dev headers) are in the builder stages of
-# images/sandbox-python/Dockerfile and images/sandbox-python-r/Dockerfile (not
-# listed here). Runtime system libraries are in images/sandbox-base/Dockerfile
-# (not listed here).
+# images/sandbox-provisioner/Dockerfile (not listed here). Runtime system
+# libraries are in images/sandbox-base/Dockerfile (not listed here).
 #
-# This manifest is the single package-set source of truth consumed by the layered
-# image builds: it only lists the R, Python, Node packages and bioinformatics
-# tools that go on the shared library store at /mnt/libs/current.
+# This manifest is the single package-set source of truth: it only lists the R,
+# Python, and Node packages and the bioinformatics tools of the sandbox. The
+# provisioner builds the R track and the Python track into the package store at
+# /mnt/libs/current. The runtime image builds the conda track and the Node track,
+# at /opt/conda and /opt/node.
 
 # Bioinformatics CLI tools from bioconda. `common` builds on every arch;
 # `amd64` holds tools with no linux-aarch64 bioconda package (the arm64 conda

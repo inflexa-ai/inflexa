@@ -1,170 +1,139 @@
 # Sandbox images
 
-The container images analyses execute in, and the manifest that defines what they
-contain. Everything here is built from one package-set source of truth —
-[`lib-store-manifest.yaml`](./lib-store-manifest.yaml) — and published to GHCR by
-[`.github/workflows/lib-store.yml`](../.github/workflows/lib-store.yml).
+The container images that analyses execute in, and the manifest that decides
+what the package store holds. Everything here builds from one package-set
+source of truth — [`package-store/manifest.yaml`](./package-store/manifest.yaml).
+[`.github/workflows/sandbox-images-build.yml`](../.github/workflows/sandbox-images-build.yml)
+publishes the images, and
+[`.github/workflows/package-store-build.yml`](../.github/workflows/package-store-build.yml)
+publishes the store.
 
-## The image ladder
+## The two images
 
-Three images, each layering `FROM` the one above it. You pick a **variant**
-(`python` or `python-r`); `sandbox-base` is infrastructure, not something an OSS
-user runs directly.
+Two images, two roles. No variant exists, and no image layers on another.
 
-| Image | Is | Adds | Who runs it |
-|-|-|-|-|
-| [`sandbox-base/`](./sandbox-base) | The lean base: R 4.6.0, Python 3.12, Node 20, Chromium, and the Go `sandbox-server` that speaks the harness exec protocol. Its `/mnt/libs/current` is **empty**. | — | The **managed** service, which pulls it per node and mounts the per-track library tarballs read-only. Kept lean because a few hundred MB of packages would be a real cold-start tax — Chromium is the one deliberate exception, since the managed path mounts `kaleido` onto this image and would otherwise have nothing to render figures with. |
-| [`sandbox-python/`](./sandbox-python) | `FROM sandbox-base` | The Python libraries, the bioconda CLI tools (samtools, bcftools, bedtools, …), and the Node package(s) (echarts). | OSS users who don't need R. |
-| [`sandbox-python-r/`](./sandbox-python-r) | `FROM sandbox-python` | The R libraries (CRAN, Bioconductor, GitHub). The full analysis environment. | OSS users — the default, most complete variant. |
+| Image | Role | Who runs it |
+|-|-|-|
+| [`sandbox-base/`](./sandbox-base) | The ONE runtime image: R 4.6.0, Python 3.12, Node 20, Chromium, the bioconda command-line tools at `/opt/conda`, the Node packages at `/opt/node`, and the Go `sandbox-server` that speaks the harness exec protocol. It bakes NO analysis package. | Every sandbox. The packages come from the package store, mounted read-only at `/mnt/libs`, with the farm of the analysis at `/mnt/libs/farm`. |
+| [`sandbox-provisioner/`](./sandbox-provisioner) | The network-enabled builder. It holds the compilers, uv, pak, and an egress allowlist, and it writes the pool and the farms. It never sees user data. | The store build workflow, and the acquisition flights of the host (`inflexa store add`). |
 
-The two variant images **bake the library store in** at `/mnt/libs/current` — the
-exact paths the managed read-only mount uses, so a baked image and a mounted store
-present a byte-identical runtime layout and the harness `lib-store` contract is the
-same either way. No mount, no local `~/.local/share/inflexa/libs` tree, no
-architecture-forcing.
+The two images build from one digest-pinned base (`base_image` in the
+manifest), and the provisioner build asserts that digest. A drift would give
+compiled extensions a different ABI than the sandbox loads them with, thus
+the assert fails the build.
 
 `sandbox-base`'s own [README](./sandbox-base/README.md) documents the exec
-protocol, the transport modes, and the egress firewall — the security-relevant
-machinery. Read it before changing anything under `sandbox-base/`.
+protocol, the transport modes, and the egress firewall — the
+security-relevant machinery. Read it before you change anything under
+`sandbox-base/`.
+
+## The package store
+
+The store is a host directory with three parts:
+
+- **the pool** (`store/`) — content-addressed, write-once directories, one
+  per installed distribution.
+- **the farms** (`farms/<analysis>`) — one symlink tree per analysis. A farm
+  carries exactly one metadata file, `inflexa.lock`.
+- **the graph** (`deps.json`) — the resolved dependency edges.
+
+The store publishes to GHCR as an OCI artifact
+(`ghcr.io/inflexa-ai/package-store`), one artifact per arch, with one zstd
+layer per track. The CLI pulls it with ORAS (`inflexa store download`).
 
 ## Getting an image
 
-Through the CLI, which also records the pulled tag in `config.json` so sandboxes
-use it:
+Through the CLI, which starts the two image transfers as detached children:
 
 ```sh
-inflexa sandbox pull python-r     # or: python
-inflexa sandbox status            # configured variant, GHCR ref, local presence, digest
+inflexa sandbox pull      # the runtime image and the provisioner image
+inflexa sandbox status    # references, presence, digests, transfer states
 ```
 
-Or directly — the published images are multi-arch manifests, so `docker pull`
-resolves your architecture automatically:
+Or directly — the published images are multi-arch manifests:
 
 ```sh
-docker run --rm ghcr.io/inflexa-ai/sandbox-python-r:latest \
-  Rscript -e 'library(Seurat); sessionInfo()'
-
-docker run --rm ghcr.io/inflexa-ai/sandbox-python:latest \
-  python3 -c "import scanpy; print(scanpy.__version__)"
+docker run --rm ghcr.io/inflexa-ai/sandbox-base:latest \
+  samtools --version
 ```
 
-The store is baked and the resolver env is baked in, so a plain `docker run` —
-**no harness, no mount** — resolves imports for the baked packages and answers
-`list_available_packages` (it reads `/mnt/libs/current/packages.txt`).
+A bare `docker run` with no store mounted resolves the image-owned tools
+only. The analysis packages arrive with the store mounts, and
+`list_available_packages` reads the `inflexa.lock` of the mounted farm merged
+with the baked fragment at `/opt/inflexa/image-packages.txt`.
 
-Images publish to `ghcr.io/inflexa-ai/sandbox-{base,python,python-r}`, tagged
-`latest` and `<date>-<sha>`.
+## Adding a package
 
-## Extending an image (`FROM`)
+The `FROM` extension path is retired. The acquisition path is the extension
+mechanism:
 
-Add your own packages without knowing any store paths — the image exports the
-install targets, so a normal `pip install` / `install.packages()` lands in the
-store and resolves at runtime:
+- **For your own analyses** — `inflexa store add <package>`. The provisioner
+  installs it into the pool, and the farm of the analysis links it.
+- **For the published catalog** — add an entry to
+  [`package-store/manifest.yaml`](./package-store/manifest.yaml), never to a
+  Dockerfile. A new entry takes the object form, with its `reason`.
 
-```dockerfile
-FROM ghcr.io/inflexa-ai/sandbox-python-r:latest
-RUN pip install my-extra-package
-RUN Rscript -e 'install.packages("mypkg", repos="https://cloud.r-project.org")'
-RUN inflexa-libs-refresh    # surface the additions in list_available_packages
-```
+## The manifest
 
-| Env var | Points at | So that |
-|-|-|-|
-| `INFLEXA_LIB_ROOT` | `/mnt/libs/current` | single source of truth for the store location |
-| `PIP_TARGET` | `$INFLEXA_LIB_ROOT/python/site-packages` | `pip install X` lands in the store |
-| `R_LIBS_USER` | `$INFLEXA_LIB_ROOT/r/github` | `install.packages("X")` lands in the store (`sandbox-python-r`) — it is the first writable `.libPaths()` entry |
-| `NPM_CONFIG_PREFIX` | `$INFLEXA_LIB_ROOT/node` | `npm install -g X` lands in the store |
-
-conda/mamba already take `-p $INFLEXA_LIB_ROOT/conda`. Always run
-`inflexa-libs-refresh` after installing, so the additions appear in
-`packages.txt`.
-
-**The published images ship no build toolchain** — they are deliberately lean.
-Compiling a source package (a Python package with no wheel, an R package from
-source) needs `build-essential` and the relevant `-dev` headers added in your own
-`FROM` stage.
-
-Point a sandbox at your own extended image by setting `harness.sandboxImage` in
-`config.json`.
-
-## The library store manifest
-
-[`lib-store-manifest.yaml`](./lib-store-manifest.yaml) is the **single
-package-set source of truth** consumed by all the image builds. Add a package
-there, never in a Dockerfile.
-
-It pins the runtime versions (`r_version`, `python_version`, `base_image`) and
-lists packages by **track**:
+[`package-store/manifest.yaml`](./package-store/manifest.yaml) is the intent
+layer, validated by
+[`package-store/manifest.schema.json`](./package-store/manifest.schema.json).
+The build resolves it per arch, with hashes, and the workflow commits the
+per-arch lock files (`package-store/lock.<arch>.json`) back to the
+repository. Resolution obeys the manifest first and the lock second.
 
 | Track | Holds |
 |-|-|
-| `r.cran` | CRAN packages. Transitive CRAN deps of Bioconductor packages are listed **explicitly** — otherwise BiocManager pulls them via bspm+apt during the Bioconductor stage, where they land outside the store subtree. |
-| `r.bioconductor` | Bioconductor packages. |
-| `r.github` | R packages installed from GitHub (`owner/repo`). |
-| `python.pip` | Python packages, under `common` (all arches). |
-| `node` | Node packages — a flat list, not arch-split. `echarts` backs chart/report rendering. |
-| `system_tools` | Bioinformatics CLI tools from bioconda, split `common` (every arch) / `amd64` (tools with no linux-aarch64 bioconda package). |
+| `python.pip` | Python packages, under `common` plus per-arch splits. |
+| `r.cran`, `r.bioconductor` | The R packages that pak resolves as one lockfile. |
+| `r.git`, `r.github` | Catalog-only pinned R sources. An acquisition refuses them. |
+| `node` | The Node packages the IMAGE owns at `/opt/node`. |
+| `system_tools` | The bioconda command-line tools the IMAGE owns at `/opt/conda`. |
 
-`base_image` must match the `BASE_IMAGE` build arg used for `sandbox-base` — the
-sandbox runtime and the library store are built against the same R/Python.
+An entry with `warm: warm/<package>.py` names its per-package warm script.
+The preparation run executes each one against the catalog farm, and the
+cache check replays the recorded workloads inside `sandbox-base`.
 
-Build-time dependencies (compilers, `-dev` headers) are **not** in the manifest:
-they live in the builder stages, via
-[`install-build-toolchain.sh`](./install-build-toolchain.sh). Runtime system
-libraries live in `sandbox-base/Dockerfile`.
+Build-time dependencies (compilers, `-dev` headers) are NOT in the manifest.
+They live in [`install-build-toolchain.sh`](./install-build-toolchain.sh)
+and the builder stages. Runtime system libraries live in
+`sandbox-base/Dockerfile`.
 
 ## Architecture support
 
-Published for `linux/amd64` and, best-effort, `linux/arm64`.
-
-R on amd64 installs fast via r2u (CRAN as `.deb` binaries). On arm64, r2u is
-amd64-only, so CRAN falls back to a source compile and Bioconductor is source-only
-and patchy — the arm64 `sandbox-python-r` is **best-effort**: whatever R actually
-builds and loads is shipped, the rest is dropped and reported in the build's
-coverage report. If arm64 R does not build at all, no arm64 `sandbox-python-r` is
-published; `sandbox-python` (Python + conda + Node) still is.
-
-The amd64 build needs a large self-hosted runner (`inflexa-builder`) — the full R +
-Bioconductor compile does not fit a GitHub-hosted runner.
+Published for `linux/amd64` and, best-effort, `linux/arm64`. The amd64 leg
+is the primary target. On arm64 the R tracks compile from source, thus the
+arm64 store is best-effort: what builds and loads ships, and the coverage
+report names the rest. The builds need the large self-hosted runners
+(`inflexa-builder`, `inflexa-builder-arm64`).
 
 ## Building locally
 
-Build from the **repo root** — every Dockerfile `COPY`s
-`images/lib-store-manifest.yaml` — passing the image each one layers onto:
+Build from the **repo root** — the Dockerfiles `COPY`
+`images/package-store/manifest.yaml`:
 
 ```sh
-docker build -f images/sandbox-base/Dockerfile \
-  --build-arg BASE_IMAGE=rocker/r-ver:4.6.0 \
-  -t sandbox-base:local .
-
-docker build -f images/sandbox-python/Dockerfile \
-  --build-arg SANDBOX_BASE_IMAGE=sandbox-base:local \
-  -t sandbox-python:local .
-
-docker build -f images/sandbox-python-r/Dockerfile \
-  --build-arg SANDBOX_PYTHON_IMAGE=sandbox-python:local \
-  -t sandbox-python-r:local .
+scripts/sandbox-images-build-local.sh              # both images
+scripts/sandbox-images-build-local.sh --base-only  # sandbox-base only
 ```
 
-[`scripts/build-libs-local.sh`](../scripts/build-libs-local.sh) reproduces the
-whole layered build in one go.
-
-Each variant build compiles and installs its tracks in throwaway `*-builder`
-stages, runs a best-effort **load check** (a package that fails to load is dropped
-from its `packages.txt` fragment; a track that loaded zero packages fails the
-build), then copies the finished subtrees into a lean runtime stage. The R tracks
-run sequentially — CRAN → Bioconductor → GitHub share one `.libPaths()` and a
-dependency chain, so they travel together or not at all. Pass a `github_token`
-build secret to raise the GitHub API budget for the GitHub R stage.
+After a build, validate the runtime image or a store with
+[`scripts/package-store-validate/run.sh`](../scripts/package-store-validate/run.sh),
+and drive the provisioner with
+[`scripts/package-store-check-provisioner.sh`](../scripts/package-store-check-provisioner.sh).
 
 ## Contributing
 
-- **Packages** belong in [`lib-store-manifest.yaml`](./lib-store-manifest.yaml),
-  not in a Dockerfile.
-- **Keep the runtime stages lean.** Build tooling (compilers, r2u, `-dev` headers)
-  belongs only in the `*-builder` stages.
-- **Changes under `sandbox-base/`** touch the containment boundary — the exec
-  protocol, the signed endpoints, the egress firewall. Read
+- **Packages** belong in the manifest, not in a Dockerfile. A new entry
+  takes the object form, with its `reason`.
+- **Keep the runtime image lean.** Build tooling belongs to the provisioner
+  and the builder stages only.
+- **Changes under `sandbox-base/`** touch the containment boundary — the
+  exec protocol, the signed endpoints, the egress firewall. Read
   [`sandbox-base/README.md`](./sandbox-base/README.md) and
   [`SECURITY.md`](../SECURITY.md) first, run `go test ./...` inside
-  `sandbox-base/server/`, and call out anything that loosens isolation explicitly.
+  `sandbox-base/server/`, and name anything that loosens isolation
+  explicitly.
+- **Changes under `sandbox-provisioner/`** touch the privileged half of the
+  store: the one container with network and compilers. Keep the egress
+  allowlist exact, and record a change to the privilege asymmetry.
