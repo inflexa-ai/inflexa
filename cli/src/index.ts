@@ -11,6 +11,8 @@ import { readConfig } from "./lib/config.ts";
 import { addLogStream, flushLogsSync, getLogger } from "./lib/log.ts";
 import { createOtelLogStream, initOtel } from "./lib/otel.ts";
 import { onShutdown, shutdown } from "./lib/shutdown.ts";
+import { pendingUpdate } from "./modules/update/latest.ts";
+import { printUpdateNotice } from "./modules/update/notice.ts";
 
 if (initOtel(readConfig().telemetry)) {
     addLogStream(createOtelLogStream());
@@ -60,6 +62,12 @@ for (const signal of ["SIGTERM", "SIGHUP"] as const) {
 
 getLogger("main").info({ argv: process.argv.slice(2) }, "cli start");
 
+// Started BEFORE the command and read AFTER it, so the read overlaps the work a person asked for instead
+// of delaying it. It resolves from a recorded answer on all but one run a day, and it never rejects — see
+// modules/update/latest.ts for every condition that makes it "nothing to report". The TUI is not covered
+// here: it exits through its own shutdown() and asks its own question (tui/app.launch.tsx).
+const updateRead = pendingUpdate();
+
 try {
     await cli.parseAsync();
 } catch (error) {
@@ -89,3 +97,7 @@ try {
         await shutdown(1);
     }
 }
+
+// After the command, and only for a run that got this far: `shutdown(1)` above ends a genuine fault before
+// this line, which is correct — a person reading a failure does not also want news about a release.
+printUpdateNotice(await updateRead);

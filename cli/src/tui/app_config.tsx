@@ -23,6 +23,7 @@ import { listEmbeddingModels } from "../modules/embedding/api_models.ts";
 import { explicitPostgresFields } from "../modules/infra/setup.ts";
 import { DEFAULT_API_BASE_URL, DEFAULT_API_EMBEDDING_DIMENSIONS } from "../modules/embedding/resolve.ts";
 import { LOCAL_EMBEDDING_DIMENSIONS } from "../modules/embedding/local-provider.ts";
+import { claimUpdateNotice } from "../modules/update/notice.ts";
 
 // `-?` strips optionality in the mapping: without it, an optional Config field (e.g. `keybinds`)
 // makes its mapped value `never | undefined`, leaking `undefined` into the indexed union.
@@ -775,6 +776,11 @@ export async function launchConfig() {
     requireInteractiveTerminal("inflexa config");
     // Seed the active theme from persisted config before the renderer reads it.
     setTheme(readConfig().theme);
+
+    // This launcher returns as soon as the renderer has the terminal, so the command beneath it finishes
+    // while the alternate screen is live and a stderr report would paint over it. This screen carries no
+    // update question of its own — the chat is where that belongs — so the message is simply dropped here.
+    claimUpdateNotice();
 
     void render(() => <ConfigApp />, {
         exitOnCtrlC: false,

@@ -56,6 +56,11 @@ const openaiBaseUrlVar = "OPENAI_BASE_URL";
 // configured `{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }` auth block, and detected by
 // setup. Read here (the sole `process.env` reader) — see {@link anthropicAuthTokenSet}.
 const anthropicAuthTokenVar = "ANTHROPIC_AUTH_TOKEN";
+// The two variables that silence the new-release notice. `CI` is the ecosystem's own signal and every
+// major runner sets it; a build log is nobody's terminal, so a notice there is pure noise. Read here (the
+// sole `process.env` reader) — see {@link updateNoticeSuppressed}.
+const noUpdateNoticeVar = "INFLEXA_NO_UPDATE_NOTIFIER";
+const ciVar = "CI";
 
 /**
  * The api-key embedding secret's variable NAME. Unlike this file's other variable names it is EXPORTED,
@@ -283,6 +288,16 @@ export const env = Object.freeze({
      */
     locksDir: join(dataDir(), "inflexa", "locks"),
     /**
+     * The record of the last release-version read: when it ran, and the newest version it saw. See
+     * src/modules/update/latest.ts, which reads it to hold the network read to once a day.
+     *
+     * Deliberately NOT channel-forked, unlike the stack paths above: a development build never reads for
+     * a new release, so a production binary is the only writer this file can have and the two channels
+     * cannot collide here. Losing it costs one extra network read, so nothing downstream treats an
+     * unreadable file as an error.
+     */
+    updateStatePath: join(dataDir(), "inflexa", "update-state.json"),
+    /**
      * Local embedding model storage: `<dataDir>/inflexa/models/`. The GGUF for
      * `bge-small-en-v1.5` (q8_0, 384-dim) is downloaded here on `inflexa setup --embeddings`
      * opt-in. See src/modules/embedding/setup.ts.
@@ -502,6 +517,12 @@ export const envDoc: Readonly<
         baseVar: dataVar,
     },
     locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
+    updateStatePath: {
+        kind: "path",
+        label: "update state",
+        description: "when inflexa last read for a new release, and the newest version it saw",
+        baseVar: dataVar,
+    },
     modelDir: { kind: "path", label: "models", description: "local embedding GGUF models, downloaded by `inflexa setup --embeddings`", baseVar: dataVar },
     embeddingModelPath: {
         kind: "path",
@@ -574,6 +595,30 @@ export const embeddingEnvDoc: readonly { readonly name: string; readonly descrip
             "API key for api-key embeddings (`inflexa setup --embeddings api-key`) — the only channel that secret travels on, since setup answers never carry one; persisted to config.json by the embedding step",
     },
 ]);
+
+/**
+ * `--help` documentation for the new-release notice. A separate list from {@link envDoc} for the reason
+ * {@link modelConnectionEnvDoc} is one: that record is key-locked to `env`'s fields, and this variable is
+ * read on demand ({@link updateNoticeSuppressed}) so a test can vary it inside one process.
+ * Rendered alongside `envDoc`'s var rows by src/cli/index.ts.
+ */
+export const updateEnvDoc: readonly { readonly name: string; readonly description: string }[] = Object.freeze([
+    {
+        name: noUpdateNoticeVar,
+        description: "set to any value to silence the new-release notice; `inflexa upgrade` still works",
+    },
+]);
+
+/**
+ * True when the new-release notice must stay silent: {@link noUpdateNoticeVar} is set, or this is a CI
+ * run. Read at CALL time, not frozen at import, so a test can set either variable within one process.
+ *
+ * It governs the NOTICE only, never `inflexa upgrade`. The two are separate on purpose: silencing an
+ * unasked-for message must not also take away the command that a person runs deliberately.
+ */
+export function updateNoticeSuppressed(): boolean {
+    return Boolean(process.env[noUpdateNoticeVar]) || Boolean(process.env[ciVar]);
+}
 
 // Dev-tooling paths for `bun run dev:install` (scripts/dev_install.ts): where the `inflexa`
 // executable is placed on PATH, and where `wipe`'s `repo` target removes it. Homed here so the
