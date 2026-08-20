@@ -1,6 +1,22 @@
 {
     "name": "inflexa",
     "version": "0.16.1",
+    "description": "Local-first AI agent for reproducible biological data analysis",
+    "keywords": [
+        "bioinformatics",
+        "computational-biology",
+        "ai-agent",
+        "agentic-ai",
+        "genomics",
+        "multi-omics",
+        "rna-seq",
+        "single-cell",
+        "reproducible-research",
+        "provenance",
+        "local-first",
+        "llm"
+    ],
+    "homepage": "https://inflexa.ai",
     "private": true,
     "type": "module",
     "scripts": {
