@@ -1,0 +1,598 @@
+name: Build the package store
+
+# Builds the content-addressed package store with the provisioner container
+# (images/sandbox-provisioner) and publishes it to GHCR as an OCI artifact,
+# one artifact per architecture, through an ORAS push.
+#
+# The sequence per arch, from the package-store-build spec:
+#   1. resolve — `provision build` resolves the manifest, with the committed
+#      per-arch lock second (the `npm install` model), and builds the catalog
+#      farm. The updated lock files commit back with a signed-off commit.
+#   2. load check — inside sandbox-base, never inside the provisioner. A
+#      single load failure drops one package from the advertised inventory; a
+#      track that loaded zero packages fails the build (the non-empty floor).
+#   3. prepare — the per-package warm scripts run against the catalog farm,
+#      and the cache entries record per package in the farm lock.
+#   4. cache check — the recorded workloads replay inside sandbox-base; a
+#      recorded entry that does not load, or that writes again, fails the
+#      artifact.
+#   5. coverage — per track: wanted, loaded, missing; a package published for
+#      this arch, still in the manifest, and now missing is a regression and
+#      fails the build.
+#   6. pack + publish — one zstd layer per track plus one base layer, pushed
+#      under an immutable version tag. Only a push moves `latest-<arch>`.
+#
+# Conventions mirror sandbox-images-build.yml: the same self-hosted EC2
+# builders (a full R + Bioconductor + Python compile does not fit a
+# GitHub-hosted runner), the same arch matrix (amd64 primary, arm64
+# best-effort), the same pinned action digests, workflow_dispatch only. The
+# builders must be started first (`just build-start [arch]`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      r_ncpus:
+        description: "Cap on parallel R source compiles (empty = auto/detectCores). Set for example 4 if the R build runs out of memory."
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MANIFEST: images/package-store/manifest.yaml
+
+jobs:
+  # A single coherent version + the manifest's declared base image, shared by
+  # both arches.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      base_image: ${{ steps.meta.outputs.base_image }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Compute version + parse base image
+        id: meta
+        run: |
+          BASE_IMAGE=$(grep '^base_image:' "$MANIFEST" | awk '{print $2}' | tr -d '"')
+          VERSION=$(date +%Y%m%d)-$(echo "${{ github.sha }}" | head -c 7)
+          {
+            echo "version=$VERSION"
+            echo "base_image=$BASE_IMAGE"
+          } >> "$GITHUB_OUTPUT"
+
+  build-store:
+    needs: prepare
+    permissions:
+      contents: read
+      # The ORAS push writes the store artifact to GHCR under this repository owner.
+      packages: write
+    strategy:
+      fail-fast: false
+      # Keep the arch list + runner labels in lock-step with
+      # sandbox-images-build.yml. amd64 is the primary leg; arm64 is
+      # best-effort (the whole leg continues on error).
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: '["self-hosted", "inflexa-builder"]'
+            best_effort: false
+          - arch: arm64
+            platform: linux/arm64
+            runner: '["self-hosted", "inflexa-builder-arm64"]'
+            best_effort: true
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    continue-on-error: ${{ matrix.best_effort }}
+    # PROVISIONAL backstop, tighter than the 6-hour default. A person revises
+    # it from the first real run of this shape. It holds the arm64 leg, which
+    # compiles the whole R set from source.
+    timeout-minutes: 240
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
+      PROVISIONER_IMAGE: sandbox-provisioner-local
+      SANDBOX_IMAGE: sandbox-base-local
+      STORE_VOLUME: package-store-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+      STORE_IMAGE: ghcr.io/${{ github.repository_owner }}/package-store
+      R_NCPUS: ${{ inputs.r_ncpus }}
+      FARM: catalog
+      # The egress allowlist of the catalog build: the pinned Python index and
+      # its file host, the pak repositories, the GitHub hosts of the github
+      # track, and git.bioconductor.org of the git track. An acquisition run
+      # of the host gets only the first two classes.
+      EGRESS_ALLOW: "pypi.org,files.pythonhosted.org,packagemanager.posit.co,cran.r-project.org,bioconductor.org,github.com,api.github.com,codeload.github.com,objects.githubusercontent.com,raw.githubusercontent.com,git.bioconductor.org"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set up Docker Buildx
+        # The docker daemon's built-in builder: its BuildKit cache lives on the
+        # persistent EBS volume, so warm layers survive stop/start.
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver: docker
+
+      - name: Ensure zstd
+        # The store streams out of the volume and compresses with zstd. The
+        # runner user has no sudo on the self-hosted builders, so fail loudly.
+        run: command -v zstd >/dev/null || { echo "::error::zstd not found on the builder"; exit 1; }
+
+      - name: Log in to GHCR
+        # The ORAS push and the ORAS manifest resolve both read the docker
+        # credential store, so this one login authenticates ORAS as well.
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install ORAS
+        # Pin the version and the per-arch checksum, the same supply-chain rule
+        # the pinned action digests obey. The runner user has no sudo, so the
+        # binary extracts into a temporary directory on PATH.
+        run: |
+          set -euo pipefail
+          ORAS_VERSION=1.2.3
+          case "$ARCH" in
+            amd64) ORAS_SHA256=b4efc97a91f471f323f193ea4b4d63d8ff443ca3aab514151a30751330852827 ;;
+            arm64) ORAS_SHA256=90e24e234dc6dffe73365533db66fd14449d2c9ae77381081596bf92f40f6b82 ;;
+            *) echo "::error::no pinned ORAS checksum for $ARCH"; exit 1 ;;
+          esac
+          dir="$RUNNER_TEMP/oras"
+          mkdir -p "$dir"
+          curl -fsSL -o "$dir/oras.tar.gz" \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${ARCH}.tar.gz"
+          echo "${ORAS_SHA256}  $dir/oras.tar.gz" | sha256sum -c -
+          tar -C "$dir" -xzf "$dir/oras.tar.gz" oras
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/oras" version
+
+      - name: Build the provisioner image
+        # Build context is the repo root. BASE_IMAGE comes from the manifest, so
+        # a manifest bump cannot drift past a stale Dockerfile default; the
+        # Dockerfile asserts the digest itself. `--load` keeps the image local:
+        # sandbox-images-build.yml owns the GHCR publish of the image pair.
+        run: |
+          docker buildx build --load \
+            -f images/sandbox-provisioner/Dockerfile \
+            --platform "$PLATFORM" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            -t "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            .
+
+      - name: Build the sandbox runtime image
+        # The checks below run INSIDE this image, because a sandbox runs it.
+        # The provisioner installs pak, yaml, and jsonlite into its own R
+        # library, thus a load check there resolves names that no farm carries.
+        # The image comes from the working tree, so the store of this run and
+        # this image come from one commit.
+        run: |
+          docker buildx build --load \
+            -f images/sandbox-base/Dockerfile \
+            --platform "$PLATFORM" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --build-arg "TARGETARCH=${ARCH}" \
+            -t "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" \
+            .
+
+      - name: Build the catalog farm (provision build)
+        # NETWORK on an allowlist (the provisioner resolves + compiles). The
+        # store is a named volume mounted READ-WRITE at /mnt/libs — the SAME
+        # path the sandbox later reads it read-only, which is load-bearing: a
+        # farm's symlinks bake /mnt/libs/... as an absolute target. The
+        # committed per-arch lock rides in read-only and the updated lock
+        # comes back through a runner-owned directory.
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker volume rm "$STORE_VOLUME" 2>/dev/null || true
+          docker volume create "$STORE_VOLUME"
+
+          mkdir -p lockout
+          if [ -f "images/package-store/lock.${ARCH}.json" ]; then
+            cp "images/package-store/lock.${ARCH}.json" "lockout/lock.${ARCH}.json"
+          fi
+          chmod 0777 lockout
+
+          docker run --rm \
+            --cap-add NET_ADMIN \
+            -e "INFLEXA_EGRESS_ALLOW=${EGRESS_ALLOW}" \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            -v "${GITHUB_WORKSPACE}/images/package-store:/package-store:ro" \
+            -v "${GITHUB_WORKSPACE}/lockout:/lockout:rw" \
+            -e GITHUB_PAT \
+            -e R_NCPUS \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            build \
+            --manifest /package-store/manifest.yaml \
+            --lock "/lockout/lock.${ARCH}.json" \
+            --farm "$FARM"
+
+      - name: Upload the per-arch lock (for the commit-back job)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-store-lock-${{ matrix.arch }}
+          path: lockout/lock.${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Resolve the farm directory of the store volume
+        id: farm
+        # The steps below read the store root AND the farm, and `-v` mounts a
+        # whole volume with no subpath form. Thus each run binds the farm by
+        # its path on the host of the daemon, which `docker volume inspect`
+        # gives. The daemon is local to the runner, which the `--load` build
+        # and the volume above already depend on.
+        run: |
+          set -euo pipefail
+          MOUNTPOINT=$(docker volume inspect -f '{{ .Mountpoint }}' "$STORE_VOLUME")
+          echo "dir=${MOUNTPOINT}/farms/${FARM}" >> "$GITHUB_OUTPUT"
+          echo "the farm of this run: ${MOUNTPOINT}/farms/${FARM}"
+
+      - name: Load check inside the sandbox image
+        # The check proves the image that runs the code, never the image that
+        # built it. The posture is the posture of a sandbox: no network, uid
+        # 1000, no capability, the store read-only, and the farm at
+        # /mnt/libs/farm. The exit code is tolerated here — the next step
+        # applies the best-effort semantics and the non-empty floor.
+        env:
+          FARM_DIR: ${{ steps.farm.outputs.dir }}
+        run: |
+          set -euo pipefail
+          docker run --rm --network none \
+            --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            -v "${STORE_VOLUME}:/mnt/libs:ro" \
+            -v "${FARM_DIR}:/mnt/libs/farm:ro" \
+            -v "${GITHUB_WORKSPACE}/images/package-store/load-check.py:/opt/load-check.py:ro" \
+            --entrypoint python3 \
+            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" \
+            /opt/load-check.py --farm-lock /mnt/libs/farm/inflexa.lock \
+            > load-check.json || true
+          cat load-check.json
+
+      - name: Apply the load-check verdicts to the advertised inventory
+        # Best-effort with a floor: a single load failure drops that one
+        # package from the advertised inventory of the lock; a track in which
+        # zero packages loaded fails the build. The lock rewrite runs through
+        # the provisioner image, because the volume is root-owned.
+        env:
+          FARM_DIR: ${{ steps.farm.outputs.dir }}
+        run: |
+          docker run --rm -i \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            -v "${GITHUB_WORKSPACE}/load-check.json:/load-check.json:ro" \
+            --entrypoint python3 \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" - <<'PY'
+          import json, sys
+          from pathlib import Path
+          lock_path = Path("/mnt/libs/farms/catalog/inflexa.lock")
+          lock = json.loads(lock_path.read_text())
+          results = json.loads(Path("/load-check.json").read_text()).get("results", [])
+          failed = {(r.get("track"), r.get("package")) for r in results if not r.get("ok")}
+          # The load check keys python results by package name and R results by
+          # name too; the lock's own track names are finer (cran/bioconductor/
+          # github map onto the check's "r").
+          def check_track(track):
+              return "python" if track == "python" else "r"
+          kept, dropped = [], []
+          for pkg in lock.get("packages", []):
+              if (check_track(pkg["track"]), pkg["name"]) in failed:
+                  dropped.append(f"{pkg['track']}/{pkg['name']}")
+              else:
+                  kept.append(pkg)
+          per_track = {}
+          for pkg in kept:
+              per_track[pkg["track"]] = per_track.get(pkg["track"], 0) + 1
+          had_tracks = {pkg["track"] for pkg in lock.get("packages", [])}
+          empty = sorted(t for t in had_tracks if per_track.get(t, 0) == 0)
+          if dropped:
+              print("dropped from the advertised inventory:", ", ".join(sorted(dropped)))
+          if empty:
+              print(f"ERROR: track(s) with zero loaded packages (the non-empty floor): {', '.join(empty)}", file=sys.stderr)
+              sys.exit(1)
+          lock["packages"] = kept
+          tmp = lock_path.with_suffix(".tmp")
+          tmp.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n")
+          tmp.replace(lock_path)
+          print(f"advertised inventory: {len(kept)} package(s), {len(dropped)} dropped")
+          PY
+
+      - name: Prepare the caches of the catalog farm (provision prepare)
+        # The farm binds read-write at /mnt/libs/farm — the container path a
+        # sandbox resolves its farm at — because a numba cache key holds the
+        # source path. The manifest directory rides in for the per-package
+        # warm scripts.
+        env:
+          FARM_DIR: ${{ steps.farm.outputs.dir }}
+        run: |
+          docker run --rm \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            -v "${FARM_DIR}:/mnt/libs/farm:rw" \
+            -v "${GITHUB_WORKSPACE}/images/package-store:/package-store:ro" \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            prepare --manifest /package-store/manifest.yaml --farm "$FARM"
+
+      - name: Cache check inside the sandbox image
+        # A cache file on disk is not evidence: numba keys each entry on the
+        # call signature and the source directory, so a cache can be present
+        # and miss on every call. The check seeds the caches through the same
+        # `seed_caches` a sandbox runs, then replays each recorded per-package
+        # workload with the cache debug on. A recorded entry that writes again
+        # or does not load fails the artifact.
+        env:
+          FARM_DIR: ${{ steps.farm.outputs.dir }}
+        run: |
+          docker run --rm --network none \
+            --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            -v "${STORE_VOLUME}:/mnt/libs:ro" \
+            -v "${FARM_DIR}:/mnt/libs/farm:ro" \
+            -v "${GITHUB_WORKSPACE}/scripts/package-store-warm-check.py:/opt/warm-check.py:ro" \
+            -v "${GITHUB_WORKSPACE}/images/package-store:/opt/package-store:ro" \
+            -w /tmp \
+            --entrypoint /bin/sh \
+            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" -c '
+              set -eu
+              . /usr/local/bin/inflexa-seed-caches
+              seed_caches
+              python3 /opt/warm-check.py'
+
+      - name: Coverage report (regression gate)
+        # The report diffs the advertised inventory against the last published
+        # artifact of THIS arch. The previous lock comes out of the published
+        # base layer, fetched by digest — no full pull.
+        env:
+          FARM_DIR: ${{ steps.farm.outputs.dir }}
+        run: |
+          set -euo pipefail
+          MT_BASE="application/vnd.inflexa.package-store.base.v1.tar+zstd"
+          PREV_ARGS=()
+          REF="${STORE_IMAGE}:latest-${ARCH}"
+          if oras manifest fetch "$REF" > previous-manifest.json 2>/dev/null; then
+            DIGEST=$(python3 -c "import json;print(next((l['digest'] for l in json.load(open('previous-manifest.json')).get('layers',[]) if l.get('mediaType')=='${MT_BASE}'),''))")
+            if [ -n "$DIGEST" ]; then
+              oras blob fetch "${STORE_IMAGE}@${DIGEST}" --output - \
+                | zstd -dc \
+                | tar -xO "./farms/catalog/inflexa.lock" > previous-lock.json \
+                || tar_rc=$?
+              if [ -s previous-lock.json ]; then
+                PREV_ARGS=(--previous-lock previous-lock.json)
+              else
+                echo "::warning::the previous base layer carries no catalog lock; the regression gate has no baseline"
+              fi
+            fi
+          else
+            echo "::notice::no published ${REF}; the first publish has no regression baseline"
+          fi
+          read_lock() { docker run --rm -v "${STORE_VOLUME}:/mnt/libs:ro" --entrypoint cat "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" "/mnt/libs/farms/${FARM}/inflexa.lock"; }
+          read_lock > current-lock.json
+          pip install --quiet --user pyyaml 2>/dev/null || true
+          python3 scripts/package-store-coverage.py \
+            --manifest "$MANIFEST" \
+            --lock current-lock.json \
+            "${PREV_ARGS[@]}" \
+            --arch "$ARCH" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the mount point that the checks left in the store
+        # A bind at /mnt/libs/farm makes the runtime create that directory
+        # inside the volume, and it stays after the container exits. rmdir and
+        # not `rm -rf`: a `farm` that holds content is a farm that something
+        # published at the wrong path, and the test stops the run.
+        run: |
+          docker run --rm \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            --entrypoint sh \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            -c 'rmdir /mnt/libs/farm 2>/dev/null || true; test ! -e /mnt/libs/farm'
+
+      - name: Pack the store into per-track OCI layers
+        # One layer per track plus one base layer. A track layer holds only the
+        # content-addressed store directories of that track, which the farm
+        # links reveal. The base layer holds the farms, the graph, and every
+        # other root entry. Extraction of every layer reassembles the store
+        # root. The tars keep symlinks verbatim: a farm link bakes an absolute
+        # /mnt/libs/store/... target.
+        run: |
+          set -euo pipefail
+          mkdir -p dist/oci dist/layer-lists
+
+          docker run --rm -i \
+            --user "$(id -u):$(id -g)" \
+            -v "${STORE_VOLUME}:/mnt/libs:ro" \
+            -v "${GITHUB_WORKSPACE}/dist/layer-lists:/work:rw" \
+            --entrypoint python3 \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          LIBS = Path("/mnt/libs")
+          STORE = LIBS / "store"
+          FARMS = LIBS / "farms"
+          OUT = Path("/work")
+
+          # The farm subtree a link sits under names its track.
+          def track_of(parts):
+              if parts[0] == "python":
+                  return "python"
+              if parts[0] == "r" and len(parts) >= 2:
+                  return parts[1]
+              return None
+
+          order = ["cran", "bioconductor", "github", "python"]
+          seen = {t: set() for t in order}
+          if FARMS.is_dir():
+              for farm in sorted(FARMS.iterdir()):
+                  if not farm.is_dir() or farm.name.startswith("."):
+                      continue
+                  for dirpath, dirnames, filenames in os.walk(farm):
+                      for name in dirnames + filenames:
+                          p = Path(dirpath) / name
+                          if not p.is_symlink():
+                              continue
+                          tgt = os.readlink(p)
+                          if "/store/" not in tgt:
+                              continue
+                          store_dir = tgt.split("/store/", 1)[1].split("/", 1)[0]
+                          track = track_of(p.relative_to(farm).parts)
+                          if track is not None:
+                              seen[track].add(store_dir)
+
+          assigned = {}
+          for track in order:
+              for store_dir in sorted(seen[track]):
+                  assigned.setdefault(store_dir, track)
+
+          on_disk = set()
+          if STORE.is_dir():
+              for d in STORE.iterdir():
+                  if d.is_dir() and not d.name.startswith("."):
+                      on_disk.add(d.name)
+
+          tracks = []
+          for track in order:
+              members = sorted(f"store/{d}" for d, tr in assigned.items() if tr == track)
+              if members:
+                  (OUT / f"layer.{track}.list").write_text("\n".join(members) + "\n")
+                  tracks.append(track)
+
+          # A store directory that no farm references still travels, in the
+          # base layer, thus extraction reassembles the root exactly.
+          leftover = sorted(f"store/{d}" for d in on_disk if d not in assigned)
+          base = [p.name for p in sorted(LIBS.iterdir(), key=lambda p: p.name)
+                  if p.name != "store" and not p.name.startswith(".")]
+          base += leftover
+          (OUT / "layer.base.list").write_text("\n".join(base) + "\n")
+          print("track layers:", tracks)
+          if leftover:
+              print("note: unreferenced store dirs go to the base layer:", len(leftover))
+          PY
+
+          for list in dist/layer-lists/layer.*.list; do
+            name=$(basename "$list" .list); name="${name#layer.}"
+            docker run --rm -i \
+              -v "${STORE_VOLUME}:/mnt/libs:ro" \
+              --entrypoint tar \
+              "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+              -C /mnt/libs --sort=name -cf - -T - \
+              < "$list" \
+              | zstd -q -3 -o "dist/oci/${name}.tar.zst"
+            sha256sum "dist/oci/${name}.tar.zst" | awk '{print $1}' > "dist/oci/${name}.tar.zst.sha256"
+            echo "layer ${name}: $(du -h "dist/oci/${name}.tar.zst" | cut -f1), sha256 $(cut -c1-12 "dist/oci/${name}.tar.zst.sha256")…"
+          done
+
+      - name: Publish the store to GHCR as an OCI artifact
+        # A version tag is immutable in content. Resolve the tag first: absent
+        # → push; present with the same layer digests → skip; present with
+        # different digests → refuse and stop. Only a push moves the
+        # `latest-<arch>` pointer.
+        run: |
+          set -euo pipefail
+          REF="${STORE_IMAGE}:${VERSION}-${ARCH}"
+          MT_TRACK="application/vnd.inflexa.package-store.track.v1.tar+zstd"
+          MT_BASE="application/vnd.inflexa.package-store.base.v1.tar+zstd"
+          ARTIFACT_TYPE="application/vnd.inflexa.package-store.manifest.v1+json"
+
+          decision=push
+          if oras manifest fetch "$REF" > dist/remote-manifest.json 2> dist/fetch.err; then
+            set +e
+            python3 - <<'PY'
+          import glob, json, sys
+          remote = sorted(l["digest"] for l in json.load(open("dist/remote-manifest.json")).get("layers", []))
+          local = sorted("sha256:" + open(f).read().strip() for f in glob.glob("dist/oci/*.tar.zst.sha256"))
+          sys.exit(0 if remote == local else 3)
+          PY
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then decision=skip
+            elif [ "$rc" -eq 3 ]; then decision=refuse
+            else echo "::error::could not compare $REF layer digests"; exit "$rc"; fi
+          else
+            if grep -qiE "not found|404|NAME_UNKNOWN|MANIFEST_UNKNOWN|no such|does not exist" dist/fetch.err; then
+              decision=push
+            else
+              echo "::error::could not resolve $REF in GHCR"; cat dist/fetch.err; exit 1
+            fi
+          fi
+
+          case "$decision" in
+            refuse)
+              echo "::error::$REF already exists in GHCR with different content. A version tag is immutable in content; cut a new version rather than republish $REF."
+              exit 1
+              ;;
+            skip)
+              echo "::notice::$REF already exists in GHCR with identical layer digests; the push is skipped."
+              ;;
+            push)
+              refs=()
+              for f in $(ls dist/oci/*.tar.zst | sort); do
+                b=$(basename "$f")
+                if [ "$b" = "base.tar.zst" ]; then refs+=("$b:$MT_BASE"); else refs+=("$b:$MT_TRACK"); fi
+              done
+              ( cd dist/oci && oras push "$REF" \
+                  --artifact-type "$ARTIFACT_TYPE" \
+                  --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+                  "${refs[@]}" )
+              echo "::notice::pushed $REF (${#refs[@]} layers)."
+              # A tag move only; it re-uploads no blob. Only the push path
+              # moves it — a skip must not move it backward.
+              oras tag "$REF" "latest-${ARCH}"
+              echo "::notice::moved ${STORE_IMAGE}:latest-${ARCH} to $REF."
+              ;;
+          esac
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rmi "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" 2>/dev/null || true
+          docker rmi "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" 2>/dev/null || true
+          docker volume rm "$STORE_VOLUME" 2>/dev/null || true
+          rm -rf dist lockout load-check.json previous-manifest.json previous-lock.json current-lock.json
+          docker image prune -f 2>/dev/null || true
+          docker container prune -f 2>/dev/null || true
+
+  # The per-arch locks commit back to the repository with one signed-off
+  # commit — the `npm install` model, where the workflow owns the lock write.
+  # One job for both legs, thus the two locks never race a push.
+  commit-locks:
+    needs: build-store
+    if: needs.build-store.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Download the per-arch locks
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: package-store-lock-*
+          path: locks
+          merge-multiple: true
+
+      - name: Commit the locks back, signed off
+        run: |
+          set -euo pipefail
+          mkdir -p images/package-store
+          cp locks/lock.*.json images/package-store/ 2>/dev/null || true
+          if git diff --quiet -- images/package-store; then
+            echo "the locks did not change; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add images/package-store/lock.*.json
+          git commit -s -m "chore(package-store): commit the resolved per-arch locks back" \
+            -m "The build resolved the manifest with the committed lock second. The workflow writes the updated pins back, thus the next build reuses them."
+          git push

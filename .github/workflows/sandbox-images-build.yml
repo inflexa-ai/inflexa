@@ -1,0 +1,240 @@
+name: Build Sandbox Images
+
+# Builds the ONE sandbox runtime image, sandbox-base, from
+# images/sandbox-base/Dockerfile + images/package-store/manifest.yaml and publishes it
+# to GitHub Packages (GHCR) as a multi-arch manifest. The image carries the
+# language runtimes, the system libraries, the bioconda command-line tools at
+# /opt/conda, and the Node packages at /opt/node. It bakes NO R library and NO
+# Python library: the package store is the one source of a library, and
+# .github/workflows/package-store-build.yml publishes it.
+#
+# This workflow also publishes the sandbox-provisioner image, which the CLI store
+# commands run. The provisioner publishes here beside sandbox-base, not in
+# package-store-build.yml. The two images share one base digest, and one workflow
+# keeps the pair in lockstep. If the base digest changes, publish BOTH images again.
+#
+# Both arches build on large self-hosted Graviton/x86 builders — the conda solve
+# and the image assembly do not fit a GitHub-hosted runner. amd64 → label
+# `inflexa-builder` (m6i.4xlarge), arm64 → label `inflexa-builder-arm64`
+# (m7g.4xlarge); the boxes live in platform-infra (modules/internal/builder-ec2*.tf)
+# and are started via `just build-start [arch]`.
+#
+# The build-time LOAD CHECK runs inside the image build (best-effort + non-empty
+# floor) for the two image-owned tracks: the bioconda command-line tools and the
+# Node packages. GHCR push uses the workflow GITHUB_TOKEN (packages: write). The
+# manifest job advances the image :latest tag at publish. Acceptance
+# (.github/workflows/package-store-acceptance.yml) is a non-gating post-publish
+# validation — it reports, it does not promote.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MANIFEST: images/package-store/manifest.yaml
+  IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/sandbox-base
+  # The provisioner image the CLI store commands pull. It publishes from the same
+  # build job as sandbox-base, from the one base digest the manifest declares.
+  IMAGE_PROVISIONER: ghcr.io/${{ github.repository_owner }}/sandbox-provisioner
+  # Single source for the arch list consumed by the manifest combine loop. The
+  # build and acceptance job matrices carry per-arch runner+platform, so they
+  # list the arches inline — keep all three in lock-step.
+  ARCHES: "amd64 arm64"
+
+jobs:
+  # A single coherent version + shared manifest metadata for every arch.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      base_image: ${{ steps.meta.outputs.base_image }}
+      r_version: ${{ steps.meta.outputs.r_version }}
+      python_version: ${{ steps.meta.outputs.python_version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Compute version + parse manifest
+        id: meta
+        run: |
+          BASE_IMAGE=$(grep '^base_image:' "$MANIFEST" | awk '{print $2}' | tr -d '"')
+          R_VERSION=$(grep '^r_version:' "$MANIFEST" | awk '{print $2}' | tr -d '"')
+          PYTHON_VERSION=$(grep '^python_version:' "$MANIFEST" | awk '{print $2}' | tr -d '"')
+          VERSION=$(date +%Y%m%d)-$(echo "${{ github.sha }}" | head -c 7)
+          {
+            echo "version=$VERSION"
+            echo "base_image=$BASE_IMAGE"
+            echo "r_version=$R_VERSION"
+            echo "python_version=$PYTHON_VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      # Arch list — keep in lock-step with the workflow-level ARCHES env (manifest
+      # combine loop) and the acceptance workflow matrix.
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: '["self-hosted", "inflexa-builder"]'
+          - arch: arm64
+            platform: linux/arm64
+            runner: '["self-hosted", "inflexa-builder-arm64"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set up Docker Buildx
+        # Use the docker daemon's built-in builder (not a docker-container builder):
+        # its BuildKit cache lives in /var/lib/docker — the persistent EBS volume —
+        # so warm layers survive the box's stop/start with no long-lived builder to
+        # leave stale state, and no runner-writable cache dir to provision.
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver: docker
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One image, on this arch, tagged <image>:<version>-<arch>. `--load` puts it
+      # in the local docker daemon, and `docker push` then publishes it to GHCR.
+      # There is no inventory label: the mounted farm carries its own inventory
+      # (inflexa.lock), and the image advertises its two owned tracks through the
+      # baked fragment at /opt/inflexa.
+
+      - name: "Build + push: sandbox-base"
+        # TARGETARCH is passed explicitly, although buildx predefines it. The
+        # builder left the predefined value empty at the final FROM interpolation,
+        # and the build then failed on the stage name `runtime-`. An explicit
+        # argument is deterministic on every builder.
+        run: |
+          docker buildx build --load \
+            -f images/sandbox-base/Dockerfile \
+            --platform "$PLATFORM" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --build-arg "TARGETARCH=${ARCH}" \
+            -t "${IMAGE_BASE}:${VERSION}-${ARCH}" \
+            .
+          docker push "${IMAGE_BASE}:${VERSION}-${ARCH}"
+          {
+            echo "## Image build ($ARCH)"
+            echo "| Image | Result |"
+            echo "|-|-|"
+            echo "| sandbox-base | pushed |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The candidate pointer records the exact per-arch image tag, so a downstream
+      # acceptance run validates the image this build published. The store artifact
+      # itself publishes from .github/workflows/package-store-build.yml, and
+      # acceptance mounts it into this image.
+      - name: Record candidate metadata
+        run: |
+          mkdir -p candidate
+          cat > "candidate/linux-${ARCH}.json" <<EOF
+          {"version":"${VERSION}","arch":"linux-${ARCH}","image":"${IMAGE_BASE}:${VERSION}-${ARCH}"}
+          EOF
+          cat "candidate/linux-${ARCH}.json"
+
+      - name: Upload candidate artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sandbox-image-candidate-${{ matrix.arch }}
+          path: candidate/
+          retention-days: 7
+
+      # The provisioner image, on this arch, tagged <image>:<version>-<arch>. This
+      # step builds the provisioner FROM the same digest-pinned base as sandbox-base.
+      # It passes the same BASE_IMAGE argument that the store build passes, from the
+      # manifest. Thus the build cannot use a stale Dockerfile default. The provisioner
+      # Dockerfile asserts the base digest against the manifest. A mismatch fails the
+      # build. `--load` puts the image in the local docker daemon, and `docker push`
+      # then publishes it to GHCR. This step runs after the sandbox-base candidate
+      # upload, thus a provisioner build failure leaves the sandbox-base outputs whole.
+      #
+      # sandbox-provisioner is a NEW GHCR package. The first publish can make it
+      # private. If it is private, a maintainer sets its visibility to public in the
+      # org package settings. sandbox-base and package-store had this same manual step.
+      # Then the CLI pulls the image with no authentication.
+      - name: "Build + push: sandbox-provisioner"
+        run: |
+          docker buildx build --load \
+            -f images/sandbox-provisioner/Dockerfile \
+            --platform "$PLATFORM" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            -t "${IMAGE_PROVISIONER}:${VERSION}-${ARCH}" \
+            .
+          docker push "${IMAGE_PROVISIONER}:${VERSION}-${ARCH}"
+          {
+            echo "| sandbox-provisioner | pushed |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rmi "${IMAGE_BASE}:${VERSION}-${ARCH}" 2>/dev/null || true
+          docker rmi "${IMAGE_PROVISIONER}:${VERSION}-${ARCH}" 2>/dev/null || true
+          rm -rf candidate
+          docker image prune -f 2>/dev/null || true
+          docker container prune -f 2>/dev/null || true
+
+  # Combine the per-arch image tags into one multi-arch manifest list, so
+  # `docker pull` resolves the host arch automatically. Only the arch tags that
+  # actually built are included.
+  manifest:
+    needs: [prepare, build]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifests
+        run: |
+          set -eu
+          combine() {
+            local image="$1"; shift
+            local srcs=()
+            # Arch list from the workflow-level ARCHES env (keep matrices in lock-step).
+            for a in $ARCHES; do
+              tag="${image}:${VERSION}-${a}"
+              if docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then srcs+=("$tag"); fi
+            done
+            if [ "${#srcs[@]}" -eq 0 ]; then
+              echo "::warning::no arch tags for $image — skipping manifest"
+              return 0
+            fi
+            docker buildx imagetools create -t "${image}:${VERSION}" -t "${image}:latest" "${srcs[@]}"
+            echo "published ${image}:latest (${srcs[*]})"
+          }
+          combine "${IMAGE_BASE}"
+          # Combine the provisioner arch tags into one multi-arch manifest too. The
+          # CLI pulls sandbox-provisioner with no platform flag. Thus the manifest must
+          # resolve the host architecture.
+          combine "${IMAGE_PROVISIONER}"

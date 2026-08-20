@@ -1,0 +1,195 @@
+name: Package Store Acceptance
+
+# Acceptance — the after-build, "as a user" validation (see design.md). It runs on
+# a FRESH machine with none of the builder's affordances and obtains the store the
+# way it is actually consumed: it PULLS the published store artifact from GHCR
+# (ghcr.io/<owner>/package-store, published by package-store-build.yml), extracts it,
+# and mounts it read-only into the published sandbox-base image. It then runs the
+# suite (scripts/package-store-validate).
+#
+# No runtime image bakes an R library or a Python library, thus the published store
+# artifact is the one honest source for the import-all invariant and the
+# per-library smoke-test suite.
+#
+# It is NON-GATING: `latest` was already advanced by the build. This run reports a
+# per-arch results table to the step summary and a green/red status for review —
+# it promotes nothing and rolls nothing back.
+#
+# TWO ways in:
+#   * workflow_run — the automatic path, after a *successful* "Build Sandbox Images".
+#     It reads the candidate artifact that build uploaded (the exact per-arch image
+#     version) and mounts the current `latest-<arch>` store artifact.
+#   * workflow_dispatch — the manual path. Give it an image `version` and a
+#     `store_version` (each one empty resolves the current pointer), and it fetches
+#     both straight from GHCR. This is what to use when a build published the image
+#     but then failed a later step, which makes the run `failure` and skips the
+#     automatic path.
+
+on:
+  workflow_run:
+    workflows: ["Build Sandbox Images"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Published sandbox-base version to validate, e.g. 20260721-14213e2. Empty = the current multi-arch :latest."
+        required: false
+        type: string
+      store_version:
+        description: "Published store version to mount, e.g. 20260721-14213e2. Empty = the current latest-<arch> pointer."
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    # Manual runs always proceed; automatic runs only when the build succeeded
+    # (a fully-failed build has no candidate artifact to read).
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    strategy:
+      fail-fast: false
+      # Arch list — keep in lock-step with the build workflow matrix and its
+      # workflow-level ARCHES env (sandbox-images-build.yml).
+      matrix:
+        include:
+          - arch: amd64
+            runner: '["self-hosted", "inflexa-builder"]'
+          - arch: arm64
+            runner: '"ubuntu-24.04-arm"'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    env:
+      ARCH: ${{ matrix.arch }}
+      IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/sandbox-base
+      STORE_IMAGE: ghcr.io/${{ github.repository_owner }}/package-store
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Automatic path only: the artifact carries the exact image version the build
+      # recorded. Manual runs skip it and resolve from GHCR in the next step.
+      - name: Download candidate metadata (from the build run)
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sandbox-image-candidate-${{ matrix.arch }}
+          path: candidate
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve the runtime image
+        id: candidate
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # An explicit version pins the per-arch tag; empty falls back to the
+            # multi-arch :latest, which `docker pull` resolves to this runner's arch.
+            VERSION="$INPUT_VERSION"
+            if [ -n "$VERSION" ]; then IMAGE="${IMAGE_BASE}:${VERSION}-${ARCH}"; else IMAGE="${IMAGE_BASE}:latest"; fi
+            if ! docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+              echo "::error::No published sandbox-base image found for version '${VERSION:-latest}' arch '${ARCH}'."
+              exit 1
+            fi
+            [ -z "$VERSION" ] && VERSION=latest
+          else
+            VERSION=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json'))['version'])")
+            IMAGE=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('image',''))")
+            if [ -z "$IMAGE" ]; then
+              echo "::notice::No candidate image for linux-${ARCH}; nothing to validate."
+              echo "present=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Runtime image for linux-${ARCH}: $IMAGE"
+
+      - name: Pull the published runtime image
+        if: steps.candidate.outputs.present == 'true'
+        run: docker pull "${{ steps.candidate.outputs.image }}"
+
+      - name: Install ORAS
+        if: steps.candidate.outputs.present == 'true'
+        # Pin the version and the per-arch checksum, the same supply-chain rule the
+        # pinned action digests obey. The runner user has no sudo, so extract the
+        # binary into a temporary directory and add that directory to PATH.
+        run: |
+          set -euo pipefail
+          ORAS_VERSION=1.2.3
+          case "$ARCH" in
+            amd64) ORAS_SHA256=b4efc97a91f471f323f193ea4b4d63d8ff443ca3aab514151a30751330852827 ;;
+            arm64) ORAS_SHA256=90e24e234dc6dffe73365533db66fd14449d2c9ae77381081596bf92f40f6b82 ;;
+            *) echo "::error::no pinned ORAS checksum for $ARCH"; exit 1 ;;
+          esac
+          dir="$RUNNER_TEMP/oras"
+          mkdir -p "$dir"
+          curl -fsSL -o "$dir/oras.tar.gz" \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${ARCH}.tar.gz"
+          echo "${ORAS_SHA256}  $dir/oras.tar.gz" | sha256sum -c -
+          tar -C "$dir" -xzf "$dir/oras.tar.gz" oras
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/oras" version
+
+      # The store the way a user consumes it: the published OCI artifact, pulled
+      # and extracted. Each layer is a zstd-compressed tar whose members are
+      # relative to the store root, thus every layer extracts into one directory
+      # and reassembles the /mnt/libs tree, with each symbolic link kept verbatim.
+      - name: Pull and extract the published store artifact
+        id: store
+        if: steps.candidate.outputs.present == 'true'
+        env:
+          STORE_VERSION: ${{ inputs.store_version }}
+        run: |
+          set -euo pipefail
+          command -v zstd >/dev/null || { echo "::error::zstd not found on the runner"; exit 1; }
+          if [ -n "$STORE_VERSION" ]; then REF="${STORE_IMAGE}:${STORE_VERSION}-${ARCH}"; else REF="${STORE_IMAGE}:latest-${ARCH}"; fi
+          if ! oras manifest fetch "$REF" > /dev/null 2>&1; then
+            echo "::error::No published store artifact at $REF. The store publishes from .github/workflows/package-store-build.yml."
+            exit 1
+          fi
+          rm -rf layers store
+          mkdir -p layers store
+          oras pull "$REF" --output layers
+          for f in layers/*.tar.zst; do
+            echo "extracting $(basename "$f")"
+            zstd -dc "$f" | tar -xf - -C store
+          done
+          # The store carries no active-farm pointer. What makes it usable is the
+          # catalog farm with its one metadata file, and the graph that names
+          # every store directory a composition can link.
+          for entry in farms/catalog/inflexa.lock deps.json; do
+            test -e "store/$entry" || { echo "::error::$REF extracted no $entry — the store is unusable."; exit 1; }
+          done
+          # An ABSOLUTE path: a relative bind source is read as a named volume.
+          echo "store_dir=$PWD/store" >> "$GITHUB_OUTPUT"
+          echo "store_ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Store for linux-${ARCH}: $REF, $(ls -1 store/store | wc -l | tr -d ' ') store directories"
+
+      # Mount the extracted store read-only into the published runtime image and run
+      # the suite. acceptance.sh renders the per-arch results table into the step
+      # summary and exits green/red; it promotes nothing.
+      - name: Validate + report
+        if: steps.candidate.outputs.present == 'true'
+        env:
+          SANDBOX_BASE_IMAGE: ${{ steps.candidate.outputs.image }}
+          STORE_DIR: ${{ steps.store.outputs.store_dir }}
+        run: scripts/package-store-acceptance.sh "$ARCH" "${{ steps.candidate.outputs.version }}" --store "$STORE_DIR"
