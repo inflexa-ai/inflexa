@@ -21,7 +21,15 @@
  * results — ride in the step's briefing (its first user message; see
  * `prompts/briefing.ts`), which is composed per dispatch and where per-step
  * content belongs.
+ *
+ * The orient-core text keys on the declared `toolchainSource`
+ * (`sandboxOrientCorePromptFor`). The absent field gives the legacy constant
+ * untouched, thus an old embedder keeps its cached prefix byte-identical.
+ * Both variants are composition-time constants, thus each composition stays
+ * byte-stable across its own steps.
  */
+
+import type { ToolchainSource } from "../sandbox/types.js";
 
 export const sandboxOrientCorePrompt = `# Sandbox Orient-Core
 
@@ -257,6 +265,71 @@ shelling out and don't waste a turn on path discovery:
 \`edit_file\` replaces \`old_string\` with \`new_string\`. Read the file first to
 get the exact text. When \`replace_all\` is false (default), \`old_string\` must
 occur exactly once — include surrounding context to make it unique.
+`;
+
+/**
+ * Swap one exact clause of the legacy orient-core for its image-toolchain
+ * form. The needle must occur exactly once — a moved or duplicated clause
+ * throws at module load, thus a silent drift of the variant is impossible.
+ */
+function replaceExactlyOnce(haystack: string, needle: string, replacement: string): string {
+    const first = haystack.indexOf(needle);
+    if (first < 0 || haystack.indexOf(needle, first + 1) >= 0) {
+        throw new Error("sandbox-standards: an orient-core clause moved — update the image-toolchain variant beside it");
+    }
+    return haystack.slice(0, first) + replacement + haystack.slice(first + needle.length);
+}
+
+const imageToolchainOrientCorePrompt = replaceExactlyOnce(
+    replaceExactlyOnce(
+        sandboxOrientCorePrompt,
+        `Packages and reference
+data were staged onto read-only mounts by the host **before** this container
+started, and that is the whole of what exists.`,
+        `The packages of your farm and the reference
+data were staged onto read-only mounts by the host **before** this container
+started. An acquisition of a new package is a host action, done outside this
+sandbox.`,
+    ),
+    `- **Packages** — before importing a package you are not certain is present, look it
+  up with \`list_available_packages\`, narrowed to the packages you actually intend
+  to import. Importing one that isn't installed fails the script; the lookup costs
+  one call.`,
+    `- **Packages** — before importing a package you are not certain is present, look it
+  up with \`list_available_packages\`, narrowed to the packages you actually intend
+  to import. Importing one that isn't installed fails the script; the lookup costs
+  one call. If a package you need is absent, report it as missing — an acquisition
+  is a host action, and no install you retry can succeed.`,
+);
+
+/**
+ * The orient-core layer for one declared toolchain. `"image"` states that an
+ * acquisition is a host action and directs the agent to report a missing
+ * package. The absent field gives the legacy constant untouched.
+ */
+export function sandboxOrientCorePromptFor(toolchainSource: ToolchainSource | undefined): string {
+    return toolchainSource === "image" ? imageToolchainOrientCorePrompt : sandboxOrientCorePrompt;
+}
+
+/**
+ * The package-link layer — appended to the sandbox system prompt only when
+ * the embedder binds the `ExtendAnalysisFarm` seam. A composition-time
+ * constant, thus the prompt stays byte-identical across the steps of one
+ * composition.
+ */
+export const sandboxPackageLinkPrompt = `# Linking Packages
+
+The host keeps a pool of staged packages beside the farm of this analysis. The
+\`link_packages\` tool links a staged package into your farm — live, with no
+restart. It never installs or downloads anything.
+
+- After a failed import, call \`link_packages\` with the module name verbatim.
+- \`linked\` and \`present\` mean the import works now — run it again.
+- \`absent\` is a real answer: the pool does not hold the package. When
+  \`acquisitionPossible\` is true, report the package as missing so the host can
+  acquire it. Do not retry the link, and do not attempt an install.
+- \`collision\` is terminal for that package: the request resolves to two store
+  directories. Report it and continue without the package.
 `;
 
 export const sandboxAnalysisStepStandardsPrompt = `# Sandbox Analysis-Step Conventions

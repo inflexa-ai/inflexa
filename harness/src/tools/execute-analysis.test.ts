@@ -17,7 +17,7 @@ import type { RunLauncher } from "../execution/run-launcher.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { ExecuteAnalysisInput } from "../workflows/execute-analysis.js";
 import type { ToolContext } from "./define-tool.js";
-import { PlanNotFoundError, PlanValidationError, createExecuteAnalysisTool } from "./execute-analysis.js";
+import { PlanNotFoundError, PlanPackagesMissingError, PlanValidationError, createExecuteAnalysisTool } from "./execute-analysis.js";
 
 /** Records launches; never reaches the durability engine. */
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
@@ -520,5 +520,106 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         expect(second.runId).not.toBe(first.runId);
         expect(launches).toHaveLength(2);
         expect(routing.calls.count).toBe(2);
+    });
+});
+
+describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
+    const planWithPackages = {
+        analytical_narrative: "test plan",
+        steps: [
+            { ...makeStep("step-a"), packages: ["scanpy", "numpy==1.26.4"] },
+            { ...makeStep("step-b", ["step-a"]), packages: ["scanpy"] },
+        ],
+        created_at: "2026-01-01T00:00:00Z",
+    };
+
+    it("links the union of the step packages before the launch, and the launch proceeds", async () => {
+        setEnv();
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const seamCalls: Array<{ analysisId: string; requests: unknown[] }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: async (analysisId, requests) => {
+                seamCalls.push({ analysisId, requests: [...requests] });
+                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: r.version ?? "1.0.0" }));
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("the tool launches via the seam, never calls directly");
+            },
+        });
+
+        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap() as { status: string };
+
+        // One call, with the union: "scanpy" appears in two steps and links once.
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0]!.analysisId).toBe(ANALYSIS_ID);
+        expect(seamCalls[0]!.requests).toEqual([{ name: "scanpy" }, { name: "numpy", version: "1.26.4" }]);
+        expect(launches).toHaveLength(1);
+        expect(result.status).toBe("in_progress");
+    });
+
+    it("a pool miss refuses the launch with the missing names, and no run reserves", async () => {
+        setEnv();
+        const { pool, queries } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
+        });
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: async (_analysisId, requests) =>
+                requests.map((r) =>
+                    r.name === "scanpy"
+                        ? { kind: "absent" as const, name: r.name, acquisitionPossible: true }
+                        : { kind: "linked" as const, name: r.name, version: "1.0.0" },
+                ),
+            executeAnalysisWorkflow: async () => {
+                throw new Error("should not be called");
+            },
+        });
+
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(PlanPackagesMissingError);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/scanpy/);
+        // The message names no remedy command — the remedy belongs to the embedder.
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.not.toThrow(/inflexa/);
+        expect(launches).toHaveLength(0);
+        expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
+    });
+
+    it("a plan with no packages calls the seam not at all", async () => {
+        setEnv();
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        let seamCalled = false;
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: async () => {
+                seamCalled = true;
+                return [];
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        expect(seamCalled).toBe(false);
+        expect(launches).toHaveLength(1);
     });
 });

@@ -3,6 +3,7 @@
  * packages and reference datasets). Consumed by sandbox agents.
  */
 
+export * from "./link-packages.js";
 export * from "./list-available-packages.js";
 export * from "./list-available-refs.js";
 export * from "./report-blocker.js";

@@ -21,16 +21,16 @@ import type { Pool } from "pg";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { SandboxRef } from "../../sandbox/types.js";
+import type { ExtendAnalysisFarm, SandboxRef, ToolchainSource } from "../../sandbox/types.js";
 import type { Tool } from "../../tools/define-tool.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { ProvenanceCollector as LineageCollector } from "../../provenance/collector.js";
 
-import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
+import { sandboxOrientCorePromptFor, sandboxPackageLinkPrompt, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
 import { composeSystemPrompt } from "../system-prompt.js";
 
-// Sandbox-environment introspection.
-import { createListAvailablePackagesTool, createListAvailableRefsTool } from "../../tools/sandbox/index.js";
+// Sandbox-environment introspection, plus the farm-extension seam face.
+import { createLinkPackagesTool, createListAvailablePackagesTool, createListAvailableRefsTool } from "../../tools/sandbox/index.js";
 
 // Context7 docs (pure leaves).
 import { queryDocsTool, resolveLibraryIdTool } from "../../tools/research/context7-docs.js";
@@ -137,6 +137,18 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
      * agents that have no terminal status to declare (such as the data profiler).
      */
     readonly blockerHolder?: BlockerHolder;
+    /**
+     * The farm-extension seam of the embedder. When it is bound, every
+     * sandbox agent gets the `link_packages` tool in its always-on substrate,
+     * and the package-link prompt layer appends. Without it, neither exists.
+     */
+    readonly extendAnalysisFarm?: ExtendAnalysisFarm;
+    /**
+     * The declared toolchain owner. Keys the orient-core environment text.
+     * Absent keeps the legacy text, thus an old embedder keeps its cached
+     * prompt prefix.
+     */
+    readonly toolchainSource?: ToolchainSource;
 }
 
 /** Per-agent override for the prompt composition and tool surface. */
@@ -164,7 +176,10 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         throw new Error('createSandboxAgent: SandboxToolName "resolve_citation" requires a CitationResolver dependency.');
     }
     const registry: Record<SandboxToolName, Tool | undefined> = {
-        listAvailablePackages: createListAvailablePackagesTool({ ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}) }),
+        listAvailablePackages: createListAvailablePackagesTool({
+            ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
+            ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
+        }),
         listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
         scanInputs: createScanInputsTool({
             workspaceFs: deps.workspaceFs,
@@ -297,7 +312,14 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
  */
 export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body: string, opts: SandboxAgentPromptOptions = {}): AgentDefinition {
     const appendStandards = opts.appendAnalysisStepStandards ?? true;
-    const sandboxLayer = appendStandards ? [sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt] : [sandboxOrientCorePrompt];
+    // The layer order is fixed by the harness-sandbox-agents spec: the agent
+    // body, the orient core keyed on the declared toolchain, the package-link
+    // layer only when the seam is bound, then the step standards.
+    const sandboxLayer = [
+        sandboxOrientCorePromptFor(deps.toolchainSource),
+        ...(deps.extendAnalysisFarm ? [sandboxPackageLinkPrompt] : []),
+        ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : []),
+    ];
     const agentBody = [body, ...sandboxLayer].map((s) => s.trim()).join("\n\n");
 
     const systemPrompt = composeSystemPrompt(agentBody);
@@ -311,6 +333,10 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         // it has no fallback but to re-derive organism, dimensions, and format from the
         // raw bytes — so every sandbox agent gets it, whatever its meta declares.
         createInspectDataProfileTool(deps.pool),
+        // Always-on when the seam is bound, and never in the `meta.tools`
+        // allowlist — an allowlist entry would break an embedder that binds no
+        // seam (the harness-sandbox-agents spec).
+        ...(deps.extendAnalysisFarm ? [createLinkPackagesTool({ extendAnalysisFarm: deps.extendAnalysisFarm, analysisId: deps.step.analysisId })] : []),
         ...skillTools,
         ...resolveSandboxTools(deps, meta.tools),
         ...(deps.blockerHolder ? [createReportBlockerTool(deps.blockerHolder)] : []),

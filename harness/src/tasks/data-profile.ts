@@ -638,7 +638,8 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 embedding: deps.embedding,
                 model: deps.model,
                 skillsDir: deps.skillsDir,
-                ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}),
+                ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
+                ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
                 ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
                 bioKeys: deps.bioKeys,
                 step: {

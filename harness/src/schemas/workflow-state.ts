@@ -27,6 +27,18 @@ export const AnalysisStepSchema = z.object({
     constraints: z.array(z.string()).optional().describe("Requirements the sandbox agent must follow exactly — not suggestions."),
     acceptance_criteria: z.array(z.string()).describe("What the result must satisfy for the step to count as successful."),
     caveats: z.array(z.string()).optional().describe("Pitfalls the sandbox agent should watch for."),
+    // Optional on the persistence schema so historical plans (pre-packages)
+    // still parse on the read side. `PlanStepSchema` re-requires it for
+    // planner output. The briefing withholds it from the rendered task — the
+    // pre-launch link pass consumes it, and a step agent must not re-litigate it.
+    packages: z
+        .array(z.string())
+        .optional()
+        .describe(
+            'The packages this step imports, each as a requirement: a bare name ("scanpy") or a name with one exact version ("numpy==1.26.4"). ' +
+                "Never a path, a URL, or a store directory. An empty array means the step needs nothing beyond the baked toolchain. " +
+                "The set is not a promise of completeness — the execution agent can still link a missing package.",
+        ),
     depends_on: z
         .array(z.string())
         .describe("IDs of steps in this plan that must complete before this one runs. Empty when the step has no prerequisites. The graph must be acyclic."),

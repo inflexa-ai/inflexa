@@ -163,6 +163,17 @@ only once the run reaches it, which is the most expensive moment to learn it.
   absent reference: \`request_clarification\`, rather than plan a step that can
   only report failure.
 
+### The Packages of Each Step
+Every step carries a \`packages\` array — the packages its scripts import.
+
+- Name each package as a requirement: a bare name (\`"scanpy"\`), or a name with
+  one exact version (\`"numpy==1.26.4"\`). Never a path, a URL, or a store
+  directory — a location is an installer detail, and validation refuses it.
+- An empty array is valid: the step needs nothing beyond the baked toolchain.
+- The set is not a promise of completeness. The execution agent can still link a
+  missing package mid-step. Name what you know the step imports; do not pad the
+  list defensively.
+
 ### Resource Estimation
 ${resourceEstimationSection(resourcePolicy)}
 
@@ -304,6 +315,8 @@ question or data context explicitly supports them.
 ## Do NOT
 - Include data exploration steps (profiling is done at init)
 - Over-allocate resources (ground in actual file sizes)
+- Name a package by a path, a URL, or a store directory — a package entry is a
+  requirement (a name, or name==version)
 - Produce vague step descriptions
 - Ignore prior run results mentioned in context
 - Generate a plan without referencing specific data characteristics

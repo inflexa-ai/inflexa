@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { SOULExecutionCore, SOULIdentity, SOULConversationalPrompt } from "../../prompts/SOUL.js";
-import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
+import {
+    sandboxOrientCorePrompt,
+    sandboxOrientCorePromptFor,
+    sandboxPackageLinkPrompt,
+    sandboxAnalysisStepStandardsPrompt,
+} from "../../prompts/sandbox-standards.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SubmitExecBody } from "../../sandbox/types.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
@@ -232,5 +237,82 @@ describe("createSandboxAgent", () => {
         const def = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...meta, tools: [...BASE_SANDBOX_TOOLS, "pubmed", "pubmed"] }, body);
         const matches = def.tools.filter((t) => t.id === "pubmed");
         expect(matches).toHaveLength(1);
+    });
+});
+
+describe("createSandboxAgent — the farm-extension seam", () => {
+    const extendAnalysisFarm = async () => [];
+
+    it("a bound seam adds link_packages to the always-on substrate, and no meta names it", () => {
+        const bare = { ...meta, tools: [] as const };
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, bare, body);
+
+        expect(def.tools.map((t) => t.id)).toContain("link_packages");
+        expect(def.systemPrompt).toContain(sandboxPackageLinkPrompt.trim());
+    });
+
+    it("an unbound seam means no tool and no prompt layer, and the composition does not throw", () => {
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+
+        expect(def.tools.map((t) => t.id)).not.toContain("link_packages");
+        expect(def.systemPrompt).not.toContain(sandboxPackageLinkPrompt.trim());
+    });
+
+    it("the layer follows the seam, and each composition stays byte-stable across its own steps", () => {
+        const boundOne = createSandboxAgent({ ...makeFakeSandboxAgentDeps({ stepId: "s1" }), extendAnalysisFarm }, meta, body);
+        const boundTwo = createSandboxAgent({ ...makeFakeSandboxAgentDeps({ stepId: "s2" }), extendAnalysisFarm }, meta, body);
+        const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+
+        expect(boundTwo.systemPrompt).toBe(boundOne.systemPrompt);
+        expect(boundOne.systemPrompt).not.toBe(unbound.systemPrompt);
+    });
+
+    it("link_packages calls the seam with the analysis of the step and returns the outcomes verbatim", async () => {
+        const calls: Array<{ analysisId: string; names: string[] }> = [];
+        const def = createSandboxAgent(
+            {
+                ...makeFakeSandboxAgentDeps({ analysisId: "an-42" }),
+                extendAnalysisFarm: async (analysisId, requests) => {
+                    calls.push({ analysisId, names: requests.map((r) => r.name) });
+                    return [
+                        { kind: "linked", name: "scanpy", version: "1.10.0" },
+                        { kind: "absent", name: "nonesuch", acquisitionPossible: true },
+                    ];
+                },
+            },
+            meta,
+            body,
+        );
+        const tool = def.tools.find((t) => t.id === "link_packages")!;
+
+        const result = (await tool.execute({ packages: [{ name: "scanpy" }, { name: "nonesuch" }] }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(calls).toEqual([{ analysisId: "an-42", names: ["scanpy", "nonesuch"] }]);
+        expect(result).toEqual({
+            outcomes: [
+                { kind: "linked", name: "scanpy", version: "1.10.0" },
+                { kind: "absent", name: "nonesuch", acquisitionPossible: true },
+            ],
+        });
+    });
+});
+
+describe("createSandboxAgent — the toolchain keying of the orient core", () => {
+    it("the absent field keeps the legacy orient core byte-identical", () => {
+        expect(sandboxOrientCorePromptFor(undefined)).toBe(sandboxOrientCorePrompt);
+        expect(sandboxOrientCorePromptFor("store")).toBe(sandboxOrientCorePrompt);
+
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        expect(def.systemPrompt).toContain(sandboxOrientCorePrompt.trim());
+    });
+
+    it("the declared image toolchain states that an acquisition is a host action", () => {
+        const image = sandboxOrientCorePromptFor("image");
+        expect(image).not.toBe(sandboxOrientCorePrompt);
+        expect(image).toContain("An acquisition of a new package is a host action");
+        expect(image).toContain("report it as missing");
+
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), toolchainSource: "image" }, meta, body);
+        expect(def.systemPrompt).toContain("An acquisition of a new package is a host action");
     });
 });
