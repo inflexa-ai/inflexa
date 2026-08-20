@@ -21,7 +21,7 @@ The invoker gives three mounts:
   - the manifest directory (with warm/), at WARM_ROOT (default
     /opt/package-store)
 
-The invoker sources /usr/local/bin/inflexa-seed-caches and calls seed_caches
+The invoker sources /usr/local/lib/inflexa-seed-caches.sh and calls seed_caches
 first — the same code a sandbox runs — thus NUMBA_CACHE_DIR names the seeded
 writable copy before this program starts.
 
@@ -106,7 +106,7 @@ def main() -> int:
     cache_dir = os.environ.get("NUMBA_CACHE_DIR")
     if not cache_dir or not os.access(cache_dir, os.W_OK):
         log(f"NUMBA_CACHE_DIR names no writable directory ({cache_dir!r}). The "
-            f"invoker must source inflexa-seed-caches and call seed_caches first.")
+            f"invoker must source inflexa-seed-caches.sh and call seed_caches first.")
         return 2
     root = Path(cache_dir)
 

@@ -16,8 +16,8 @@ set -e
 # The seed of the prepared caches runs before the firewall path and before the
 # exec. It lives in a file of its own, because the cache check of the build
 # runs that same code while this script execs the server. Refer to
-# /usr/local/bin/inflexa-seed-caches.
-. /usr/local/bin/inflexa-seed-caches
+# /usr/local/lib/inflexa-seed-caches.sh.
+. /usr/local/lib/inflexa-seed-caches.sh
 seed_caches
 
 if [ "${SANDBOX_EGRESS_FIREWALL:-0}" = "1" ]; then

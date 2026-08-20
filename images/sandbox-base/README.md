@@ -33,10 +33,11 @@ local builds.
 |Path|Role|
 |-|-|
 |`Dockerfile`|Multi-stage build: compiles the server + provenance shim, builds the conda prefix and the Node tree in builder stages, then assembles the runtime image on `BASE_IMAGE`.|
+|`scripts/`|The manifest readers and the node load check. The builder stages run them in place of inline programs.|
 |`server/`|The Go `sandbox-server` (static binary, `CGO_ENABLED=0`) — HTTP exec protocol + signed results.|
 |`provenance/`|File-read tracking hooks: `provtrack.c` (LD_PRELOAD), `sitecustomize.py` (Python), `Rprofile.site` (R).|
 |`sandbox-entrypoint.sh`|Seeds the prepared caches, installs the poll-mode egress firewall, drops privileges, execs the server.|
-|`inflexa-seed-caches`|The `seed_caches` function. The entrypoint sources it, and the cache check of the build sources the same file.|
+|`inflexa-seed-caches.sh`|The `seed_caches` function, at `/usr/local/lib/` in the image. The entrypoint sources it, and the cache check of the build sources the same file.|
 
 ## Exec protocol
 
@@ -85,7 +86,7 @@ is indistinguishable from a pushed one.
 
 ## Entrypoint: the cache seed, then the firewall
 
-`sandbox-entrypoint.sh` sources `inflexa-seed-caches` and calls `seed_caches`
+`sandbox-entrypoint.sh` sources `inflexa-seed-caches.sh` and calls `seed_caches`
 before the firewall path and before the exec. When the read-write cache mount
 at `/mnt/libs/cache` is present, the seed does nothing — the env of the mount
 plan already points into it. Without the mount, the seed copies `numba-cache`

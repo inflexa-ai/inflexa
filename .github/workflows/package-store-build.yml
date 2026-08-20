@@ -341,7 +341,7 @@ jobs:
             --entrypoint /bin/sh \
             "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" -c '
               set -eu
-              . /usr/local/bin/inflexa-seed-caches
+              . /usr/local/lib/inflexa-seed-caches.sh
               seed_caches
               python3 /opt/warm-check.py'
 
