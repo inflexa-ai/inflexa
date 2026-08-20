@@ -7,6 +7,7 @@ import {
     queryRunsByAnalysis,
     queryStepsByRun,
     type CortexRunRow,
+    type DataProfileResult,
     type DataProfileStatus,
     type DbError,
     type Pool,
@@ -260,12 +261,171 @@ export function absTimeShort(iso: string | null): string {
 }
 
 /**
+ * A file count with the locale's digit grouping. A kind can hold thousands of files, and a bare
+ * `12000` reads as a different number at a glance than `12,000` does.
+ */
+function countText(n: number): string {
+    return n.toLocaleString();
+}
+
+/**
+ * How many files the profile covers, as far as the snapshot can establish it.
+ *
+ * `files.length` is NOT that number. `files` holds the individually notable singletons, capped at 50
+ * by the profiler's schema, while the contents of the dataset live in `kinds`. A tree of 2000 files
+ * grouped into 3 kinds therefore reported "2 files" — a total the row never held.
+ *
+ * `coverage.total` is the size of the scanned tree, which the harness computes from the file set
+ * rather than takes from the agent, thus it is the authority where it exists. The sum of the kind
+ * counts is the fallback on a pre-coverage row. The described-file count is the last resort, on a
+ * pre-kinds row that carries no other number at all.
+ */
+export function profileFileTotal(result: DataProfileResult): number {
+    if (result.coverage) return result.coverage.total;
+    if (result.kinds && result.kinds.length > 0) return result.kinds.reduce((sum, kind) => sum + kind.count, 0);
+    return result.files.length;
+}
+
+/** Push `label: value` when the value is a non-empty string, and nothing at all otherwise. */
+function pushField(lines: string[], label: string, value: string | null | undefined): void {
+    if (typeof value === "string" && value.trim().length > 0) lines.push(`${label}: ${value.trim()}`);
+}
+
+/**
+ * The subject block — what the data is ABOUT: the domain, the organism, and the identity of the
+ * sample. The profiler has recorded these since the fields existed, and no CLI surface showed them.
+ *
+ * An explicit `null` organism is a finding rather than a gap: the profiler looked, and no input
+ * identified one. Thus it renders a line, where an absent organism renders none. `tissue`,
+ * `cellType`, and `condition` carry no such documented distinction, so a null one stays silent
+ * instead of spending three lines on "none identified".
+ */
+function pushSubjectBlock(lines: string[], result: DataProfileResult): void {
+    const block: string[] = [];
+    const domain = [result.domain, result.subtype].filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+    if (domain.length > 0) block.push(`domain: ${domain.join(` ${GLYPHS.middot} `)}`);
+    if (result.organism === null) {
+        block.push("organism: none identified");
+    } else if (result.organism) {
+        const organism = result.organism;
+        block.push(`organism: ${organism.scientificName} (taxon ${organism.taxonId}, ${organism.source}, ${organism.confidence} confidence)`);
+        pushField(block, "organism notes", organism.notes);
+    }
+    pushField(block, "tissue", result.tissue);
+    pushField(block, "cell type", result.cellType);
+    pushField(block, "condition", result.condition);
+    if (result.accessions && result.accessions.length > 0) block.push(`accessions: ${result.accessions.join(", ")}`);
+    pushField(block, "design", result.experimentalDesign);
+    if (block.length === 0) return;
+    lines.push("");
+    for (const line of block) lines.push(line);
+}
+
+/**
+ * The structure block — the kinds, the axes, and the coverage. This is the contents of the dataset,
+ * which the `files` list stopped holding when the profiler started to group the tree.
+ *
+ * The heading of a kind carries the count and the pattern, because those two answer "how many, and
+ * which files". `memberRepresents` follows on its own line, because it is the claim about meaning
+ * that makes the set a kind. Coverage closes the block: it states the scanned total against the
+ * matched count, thus a profile of low coverage cannot read as a complete one.
+ */
+function pushStructureBlock(lines: string[], result: DataProfileResult): void {
+    const kinds = result.kinds ?? [];
+    if (kinds.length > 0) {
+        lines.push("");
+        lines.push(`kinds (${kinds.length}):`);
+        for (const kind of kinds) {
+            const facts = [`${countText(kind.count)} file${kind.count === 1 ? "" : "s"}`, kind.pathPattern];
+            if (kind.format) facts.push(kind.format);
+            lines.push(`  ${kind.name} ${GLYPHS.emDash} ${facts.join(` ${GLYPHS.middot} `)}`);
+            if (kind.memberRepresents.trim().length > 0) lines.push(`    one member: ${kind.memberRepresents.trim()}`);
+            if (kind.description.trim().length > 0) lines.push(`    ${kind.description.trim()}`);
+            if (kind.axisLabels && kind.axisLabels.length > 0) lines.push(`    varies by: ${kind.axisLabels.join(", ")}`);
+        }
+    }
+    const axes = result.axes ?? [];
+    if (axes.length > 0) {
+        lines.push("");
+        lines.push(`axes (${axes.length}):`);
+        for (const axis of axes) {
+            const examples = axis.exampleValues && axis.exampleValues.length > 0 ? ` (${axis.exampleValues.join(", ")})` : "";
+            lines.push(`  ${axis.label} ${GLYPHS.emDash} ${countText(axis.cardinality)} value${axis.cardinality === 1 ? "" : "s"}${examples}`);
+            if (axis.description && axis.description.trim().length > 0) lines.push(`    ${axis.description.trim()}`);
+        }
+    }
+    const coverage = result.coverage;
+    if (coverage) {
+        lines.push("");
+        lines.push(
+            `coverage: ${countText(coverage.matched)} of ${countText(coverage.total)} scanned files matched, ${countText(coverage.unmatched)} unmatched`,
+        );
+        if (coverage.unmatchedSample && coverage.unmatchedSample.length > 0) lines.push(`  unmatched: ${coverage.unmatchedSample.join(", ")}`);
+    }
+}
+
+/**
+ * The described-file block — the notable singletons, under a heading that says which files they are.
+ *
+ * The heading reads `described files`, never `files`. The list is a selection that the profiler made,
+ * and the bare noun claimed a total that the kinds hold. The facts of a file sit under its own line,
+ * because they identify that file and say nothing about the dataset.
+ */
+function pushFileBlock(lines: string[], result: DataProfileResult): void {
+    if (result.files.length === 0) return;
+    lines.push("");
+    lines.push(`described files (${result.files.length}):`);
+    for (const file of result.files) {
+        lines.push(`  ${file.path} ${GLYPHS.emDash} ${file.description}`);
+        const facts: string[] = [];
+        if (file.dataType) facts.push(file.dataType);
+        if (file.format) facts.push(file.format);
+        if (typeof file.rows === "number" || typeof file.cols === "number") {
+            const rows = typeof file.rows === "number" ? countText(file.rows) : "?";
+            const cols = typeof file.cols === "number" ? countText(file.cols) : "?";
+            facts.push(`${rows} ${GLYPHS.multiply} ${cols}`);
+        }
+        if (facts.length > 0) lines.push(`    ${facts.join(` ${GLYPHS.middot} `)}`);
+        if (file.tags && file.tags.length > 0) lines.push(`    tags: ${file.tags.join(", ")}`);
+        if (file.metrics) {
+            const metrics = Object.entries(file.metrics).map(([key, value]) => `${key}=${String(value)}`);
+            if (metrics.length > 0) lines.push(`    ${metrics.join(` ${GLYPHS.middot} `)}`);
+        }
+        for (const warning of file.warnings ?? []) lines.push(`    ${GLYPHS.warning} ${warning}`);
+    }
+}
+
+/**
+ * The quality block — the findings for the dataset as a whole, concerns first. A concern changes what
+ * the user does next, and a strength does not.
+ */
+function pushQualityBlock(lines: string[], result: DataProfileResult): void {
+    const quality = result.qualityAssessment;
+    if (!quality) return;
+    if (quality.concerns.length > 0) {
+        lines.push("");
+        lines.push(`concerns (${quality.concerns.length}):`);
+        for (const concern of quality.concerns) lines.push(`  ${GLYPHS.warning} ${concern}`);
+    }
+    if (quality.strengths.length > 0) {
+        lines.push("");
+        lines.push(`strengths (${quality.strengths.length}):`);
+        for (const strength of quality.strengths) lines.push(`  ${GLYPHS.check} ${strength}`);
+    }
+}
+
+/**
  * Compose the DATA PROFILE details view's lines from a {@link ProfileSnapshot}. Pure
  * (snapshot → string[]) so every kind is unit-testable: the degraded kinds each yield one placeholder
- * line, and `loaded` yields the ledger truth — a status line, the started/completed absolute local
- * times plus the run duration (or the elapsed-at-open age while a profile is still running), the error
- * (on failure), the summary split into lines, the per-file `path — description`, and the seed-input
- * count. Rendered verbatim by `ResultsDialog` (the design gallery drives it over a mock).
+ * line, and `loaded` yields the ledger truth in blocks — the lifecycle (status, the absolute local
+ * times, the duration or the live elapsed age, the usage, the error), the summary, the subject, the
+ * structure of the dataset, the described files, the quality findings, and the seed-input count.
+ * Rendered verbatim by `ResultsDialog` (the design gallery drives it over a mock).
+ *
+ * Every block after the lifecycle is optional. The row is read back with no parse, thus a snapshot
+ * written before a field existed simply lacks that field, and a block whose fields are all absent
+ * contributes NO lines rather than an empty heading. The dialog body scrolls, thus this composer
+ * emits each fact the row carries instead of a selection that fits one viewport.
  */
 export function profileDetailLines(snap: ProfileSnapshot): string[] {
     switch (snap.kind) {
@@ -313,11 +473,10 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
                     lines.push("");
                     for (const line of p.result.summary.split("\n")) lines.push(line);
                 }
-                if (p.result.files.length > 0) {
-                    lines.push("");
-                    lines.push(`files (${p.result.files.length}):`);
-                    for (const f of p.result.files) lines.push(`  ${f.path} ${GLYPHS.emDash} ${f.description}`);
-                }
+                pushSubjectBlock(lines, p.result);
+                pushStructureBlock(lines, p.result);
+                pushFileBlock(lines, p.result);
+                pushQualityBlock(lines, p.result);
             }
             // `seedInputFileIds` is the desired-parity set; fall back to the count the profile itself
             // covered when the seed set was not recorded (older rows) — the input signature on current

@@ -445,10 +445,60 @@ export const mockDataProfile: DataProfileStatus = {
     completedAt: Date.ago(4 * 60_000),
     result: {
         summary: "12 samples across 2 conditions; counts pass QC with no dropped libraries.",
+        // The two lists carry DIFFERENT things, and the exhibit must show both: `files` holds the
+        // notable singletons, `kinds` holds the contents of the dataset. A fixture with files alone
+        // renders a profile of 2 files, which is the reading the composer exists to prevent.
         files: [
-            { path: "data/counts.tsv", description: "gene-by-sample raw counts" },
-            { path: "data/meta.csv", description: "sample metadata (condition, batch)" },
+            {
+                path: "data/counts.tsv",
+                description: "gene-by-sample raw counts",
+                dataType: "count-matrix",
+                format: "TSV",
+                rows: 21_842,
+                cols: 12,
+                tags: ["counts", "primary"],
+                warnings: ["3 samples carry no batch label"],
+                metrics: { delimiter: "tab", normalizationState: "raw" },
+            },
+            { path: "data/meta.csv", description: "sample metadata (condition, batch)", dataType: "clinical-metadata", format: "CSV", rows: 12, cols: 5 },
         ],
+        kinds: [
+            {
+                name: "per-sample FASTQ",
+                memberRepresents: "one sequencing read pair of one sample",
+                description: "Paired-end reads, two files for each sample.",
+                count: 24,
+                pathPattern: "raw/*_R{1,2}.fastq.gz",
+                format: "FASTQ",
+                axisLabels: ["sample", "read mate"],
+            },
+            {
+                name: "per-sample QC report",
+                memberRepresents: "the FastQC report of one sample",
+                description: "One HTML report for each sample.",
+                count: 12,
+                pathPattern: "qc/*_fastqc.html",
+                format: "HTML",
+                axisLabels: ["sample"],
+            },
+        ],
+        axes: [
+            { label: "sample", cardinality: 12, exampleValues: ["S01", "S02", "S03"], description: "The 12 libraries of the experiment." },
+            { label: "read mate", cardinality: 2, exampleValues: ["R1", "R2"] },
+        ],
+        coverage: { matched: 36, unmatched: 2, total: 38, unmatchedSample: ["notes/lab-book.md", "notes/old-manifest.txt"] },
+        domain: "transcriptomics",
+        subtype: "bulk-rna-seq",
+        organism: { scientificName: "Homo sapiens", taxonId: "9606", source: "metadata", confidence: "high" },
+        tissue: "liver",
+        cellType: null,
+        condition: "NASH against control",
+        accessions: ["GSE185740"],
+        experimentalDesign: "12 samples, 2 conditions, 6 replicates for each condition, unpaired.",
+        qualityAssessment: {
+            concerns: ["3 samples carry no batch label", "One library holds half the reads of the others"],
+            strengths: ["Each sample has both read mates", "The metadata names each sample of the count matrix"],
+        },
         inputFileIds: ["mock-input-counts", "mock-input-meta"],
         profiledAt: Date.ago(4 * 60_000),
     },

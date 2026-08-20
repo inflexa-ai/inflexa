@@ -24,6 +24,7 @@ import {
     hasActiveWork,
     idTail,
     profileDetailLines,
+    profileFileTotal,
     profileSnapshot,
     refreshSidebarData,
     RUN_STATUS_TERMINAL,
@@ -994,7 +995,7 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
         expect(profileDetailLines({ kind: "unavailable" })).toEqual(["profile status unavailable"]);
     });
 
-    test("loaded completed → status, absolute times, duration, summary, per-file, seed count", () => {
+    test("loaded completed → status, absolute times, duration, summary, described files, seed count", () => {
         const lines = profileDetailLines(loaded());
         expect(lines[0]).toBe("status: completed");
         // Detail dialogs pin absolute local times — assert via the same toLocaleString the code path
@@ -1006,7 +1007,9 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
         expect(lines).toContain(`duration ${Date.formatDuration(5_000)}`);
         expect(lines).toContain("line one");
         expect(lines).toContain("line two");
-        expect(lines).toContain("files (2):");
+        // The heading names the SELECTION, never a bare "files": the list holds the notable
+        // singletons, and the contents of the dataset live in the kinds.
+        expect(lines).toContain("described files (2):");
         expect(lines.some((l) => l.includes("data/counts.tsv") && l.includes("raw counts"))).toBe(true);
         expect(lines.some((l) => l.includes("data/meta.csv") && l.includes("sample metadata"))).toBe(true);
         // seedInputFileIds (3) wins over the profiled inputFileIds count.
@@ -1458,5 +1461,139 @@ describe("refreshSidebarData — per-entity token figures", () => {
         expect(profileSnapshot().kind).toBe("loaded");
         expect(runsSnapshot().kind).toBe("loaded");
         expect(activeRunProgress().get("run-a")?.steps[0]?.usageFigure).toBeUndefined();
+    });
+});
+
+describe("profileFileTotal — the scanned total, never the described count", () => {
+    const base = { summary: "s", files: [{ path: "a.csv", description: "d" }], profiledAt: "2026-07-08T00:00:05.000Z" };
+
+    test("coverage wins, because the harness computes it from the scanned file set", () => {
+        expect(
+            profileFileTotal({
+                ...base,
+                coverage: { matched: 36, unmatched: 2, total: 38 },
+                kinds: [{ name: "k", memberRepresents: "one", description: "d", count: 12, pathPattern: "*.fastq" }],
+            }),
+        ).toBe(38);
+    });
+
+    test("the summed kind counts are the fallback on a pre-coverage row", () => {
+        expect(
+            profileFileTotal({
+                ...base,
+                kinds: [
+                    { name: "reads", memberRepresents: "one", description: "d", count: 24, pathPattern: "*.fastq" },
+                    { name: "reports", memberRepresents: "one", description: "d", count: 12, pathPattern: "*.html" },
+                ],
+            }),
+        ).toBe(36);
+    });
+
+    test("a pre-kinds row falls back to its described count, the only number it carries", () => {
+        expect(profileFileTotal(base)).toBe(1);
+    });
+});
+
+describe("profileDetailLines — the grouped profile's blocks", () => {
+    /** A loaded snapshot whose result carries every field the current profiler records. */
+    function rich(over: Partial<NonNullable<DataProfileStatus["result"]>> = {}): ProfileSnapshot {
+        return loaded({
+            result: {
+                summary: "12 samples across 2 conditions.",
+                files: [
+                    {
+                        path: "data/counts.tsv",
+                        description: "raw counts",
+                        dataType: "count-matrix",
+                        format: "TSV",
+                        rows: 21_842,
+                        cols: 12,
+                        tags: ["counts"],
+                        warnings: ["3 samples carry no batch label"],
+                        metrics: { delimiter: "tab" },
+                    },
+                ],
+                kinds: [
+                    {
+                        name: "per-sample FASTQ",
+                        memberRepresents: "one read pair of one sample",
+                        description: "Paired-end reads.",
+                        count: 24,
+                        pathPattern: "raw/*_R{1,2}.fastq.gz",
+                        format: "FASTQ",
+                        axisLabels: ["sample", "read mate"],
+                    },
+                ],
+                axes: [{ label: "sample", cardinality: 12, exampleValues: ["S01", "S02"], description: "The 12 libraries." }],
+                coverage: { matched: 36, unmatched: 2, total: 38, unmatchedSample: ["notes/lab-book.md"] },
+                domain: "transcriptomics",
+                subtype: "bulk-rna-seq",
+                organism: { scientificName: "Homo sapiens", taxonId: "9606", source: "metadata", confidence: "high" },
+                tissue: "liver",
+                cellType: null,
+                condition: "NASH against control",
+                accessions: ["GSE185740"],
+                experimentalDesign: "12 samples, 2 conditions.",
+                qualityAssessment: { concerns: ["one library is small"], strengths: ["each sample has both mates"] },
+                inputFileIds: ["i1", "i2"],
+                profiledAt: "2026-07-08T00:00:05.000Z",
+                ...over,
+            },
+        });
+    }
+
+    test("the subject block names the domain, the organism, and the sample's identity", () => {
+        const lines = profileDetailLines(rich());
+        expect(lines).toContain(`domain: transcriptomics ${GLYPHS.middot} bulk-rna-seq`);
+        expect(lines).toContain("organism: Homo sapiens (taxon 9606, metadata, high confidence)");
+        expect(lines).toContain("tissue: liver");
+        expect(lines).toContain("condition: NASH against control");
+        expect(lines).toContain("accessions: GSE185740");
+        expect(lines).toContain("design: 12 samples, 2 conditions.");
+        // A null tissue-like field is silent. Only the organism documents null as a finding.
+        expect(lines.some((l) => l.startsWith("cell type"))).toBe(false);
+    });
+
+    test("an explicit null organism reports the finding, and an absent one reports nothing", () => {
+        expect(profileDetailLines(rich({ organism: null }))).toContain("organism: none identified");
+        expect(profileDetailLines(rich({ organism: undefined })).some((l) => l.startsWith("organism"))).toBe(false);
+    });
+
+    test("the structure block carries each kind, its axes, and the coverage", () => {
+        const lines = profileDetailLines(rich());
+        expect(lines).toContain("kinds (1):");
+        expect(lines.some((l) => l.includes("per-sample FASTQ") && l.includes("24 files") && l.includes("raw/*_R{1,2}.fastq.gz"))).toBe(true);
+        expect(lines).toContain("    one member: one read pair of one sample");
+        expect(lines).toContain("    varies by: sample, read mate");
+        expect(lines).toContain("axes (1):");
+        expect(lines.some((l) => l.includes("sample") && l.includes("12 values") && l.includes("S01"))).toBe(true);
+        expect(lines).toContain("coverage: 36 of 38 scanned files matched, 2 unmatched");
+        expect(lines).toContain("  unmatched: notes/lab-book.md");
+    });
+
+    test("a described file carries its own facts under its line", () => {
+        const lines = profileDetailLines(rich());
+        expect(lines).toContain("described files (1):");
+        expect(lines.some((l) => l.includes("count-matrix") && l.includes("TSV") && l.includes("21,842"))).toBe(true);
+        expect(lines).toContain("    tags: counts");
+        expect(lines).toContain("    delimiter=tab");
+        expect(lines).toContain(`    ${GLYPHS.warning} 3 samples carry no batch label`);
+    });
+
+    test("the quality block puts the concerns before the strengths", () => {
+        const lines = profileDetailLines(rich());
+        const concerns = lines.indexOf("concerns (1):");
+        const strengths = lines.indexOf("strengths (1):");
+        expect(concerns).toBeGreaterThan(-1);
+        expect(strengths).toBeGreaterThan(concerns);
+    });
+
+    test("a pre-kinds row emits no empty heading for a block it does not carry", () => {
+        const lines = profileDetailLines(loaded());
+        for (const heading of ["kinds (0):", "axes (0):", "concerns (0):", "strengths (0):"]) {
+            expect(lines).not.toContain(heading);
+        }
+        expect(lines.some((l) => l.startsWith("coverage"))).toBe(false);
+        expect(lines.some((l) => l.startsWith("domain"))).toBe(false);
     });
 });

@@ -11,6 +11,7 @@ import { RunBlock } from "../components/run_block.tsx";
 import { ScrollPane } from "../components/scroll_pane.tsx";
 import {
     activeRunProgress,
+    profileFileTotal,
     profileSnapshot,
     runsSnapshot,
     absTime,
@@ -90,11 +91,22 @@ function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
                 case "running":
                     return { glyph: GLYPHS.warning, role: "warning", text: `profiling${GLYPHS.ellipsis}` };
                 case "completed": {
-                    const n = p.result?.files.length ?? 0;
+                    // The file count is the SCANNED TOTAL (`profileFileTotal`), not `files.length`. The
+                    // profiler groups a tree into kinds and describes at most 50 files individually, so
+                    // the length of that list is a selection, and the word "files" beside it read as a
+                    // total the row never held. The kind count rides beside it, because the two together
+                    // are what the profile covered: N files, grouped into M sets.
+                    const total = p.result ? profileFileTotal(p.result) : 0;
+                    const kinds = p.result?.kinds?.length ?? 0;
+                    const parts = [`${total.toLocaleString()} file${total === 1 ? "" : "s"}`];
+                    // A pre-kinds row carries no kinds at all, and a count of 0 there would assert that
+                    // the profiler found none. Thus the line keeps its original two-part form for it.
+                    if (kinds > 0) parts.push(`${kinds} kind${kinds === 1 ? "" : "s"}`);
                     // Absolute local completed time (not a compact relative age): a finished profile is a
                     // durable record read long after "8h ago" lost its anchor, so the rail matches the
                     // details dialog. It may soft-wrap on long locales — acceptable in the fixed-width rail.
-                    return { glyph: GLYPHS.check, role: "success", text: `${n} file${n === 1 ? "" : "s"} ${GLYPHS.middot} ${absTime(p.completedAt)}` };
+                    parts.push(absTime(p.completedAt));
+                    return { glyph: GLYPHS.check, role: "success", text: parts.join(` ${GLYPHS.middot} `) };
                 }
                 case "failed":
                     return { glyph: GLYPHS.cross, role: "error", text: firstLine(p.error) };

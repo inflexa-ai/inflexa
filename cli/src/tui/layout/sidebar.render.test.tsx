@@ -265,6 +265,32 @@ describe("Sidebar DATA PROFILE / RUNS live sections", () => {
         expect(frame).toContain("no runs");
     });
 
+    test("a grouped profile counts the scanned tree and its kinds, not the described files", async () => {
+        // The profiler describes 2 files individually and groups the other 36 into 2 kinds. The rail
+        // must read the SCANNED TOTAL: "2 files" here would name a selection and read as a total.
+        const grouped = completedProfile(2);
+        await refreshSidebarData(
+            "A",
+            seams(
+                {
+                    ...grouped,
+                    result: {
+                        ...grouped.result!,
+                        kinds: [
+                            { name: "reads", memberRepresents: "one read pair", description: "d", count: 24, pathPattern: "raw/*.fastq.gz" },
+                            { name: "reports", memberRepresents: "one report", description: "d", count: 12, pathPattern: "qc/*.html" },
+                        ],
+                        coverage: { matched: 36, unmatched: 2, total: 38 },
+                    },
+                },
+                [],
+            ),
+        );
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("38 files");
+        expect(frame).toContain("2 kinds");
+    });
+
     test("a running profile shows 'profiling…'", async () => {
         await refreshSidebarData("A", seams({ ...completedProfile(0), status: "running", result: null, completedAt: null }, []));
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
