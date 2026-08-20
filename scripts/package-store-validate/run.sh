@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Acceptance driver — run the validation suite
-# (scripts/lib-store-validate/validate.py) against a library store the way a
+# (scripts/package-store-validate/validate.py) against a library store the way a
 # user's sandbox actually consumes it, in one of two modes:
 #
 #   --image <ref>   Boot a published sandbox image directly (the OSS path). The
@@ -14,18 +14,18 @@
 # It is NON-GATING: it validates and reports, promoting nothing.
 #
 # Usage:
-#   scripts/lib-store-validate/run.sh [--no-validators] [--summary-md <file>] \
+#   scripts/package-store-validate/run.sh [--no-validators] [--summary-md <file>] \
 #       (--image <ref> | --store <path>)
 #
 #   (default)         import-all + per-library validators
 #   --no-validators   import-all only (quick core check)
 #   --summary-md F    write the markdown results table to host file F (rendered
-#                     into the CI step summary by lib-store-acceptance.sh)
+#                     into the CI step summary by package-store-acceptance.sh)
 #   --image REF       boot this baked image (no mount)
 #   --store PATH      store dir to mount (default: $INFLEXA_LIB_STORE or
 #                     $XDG_DATA_HOME/inflexa/libs)
 #
-# The suite reads /mnt/libs/current/packages.txt and validates exactly what it
+# The suite reads the farm inflexa.lock and the baked image fragment, and validates exactly what they
 # advertises — no hardcoded package list. Exits non-zero (fail loud) on any
 # failure so a maintainer sees a red status.
 
@@ -50,7 +50,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Optional: write the markdown results table out to a host file. Mount its dir
-# writable at /out and point validate.py at it via LIB_STORE_SUMMARY_MD; the
+# writable at /out and point validate.py at it via PACKAGE_STORE_SUMMARY_MD; the
 # array stays empty (a no-op in the docker run) when --summary-md is unset.
 SUMMARY_ARGS=()
 if [ -n "$SUMMARY_MD" ]; then
@@ -59,7 +59,7 @@ if [ -n "$SUMMARY_MD" ]; then
   # The container runs as the unprivileged sandbox user (uid 1000), so the bind
   # target must be group/other-writable or validate.py can't drop the table into it.
   chmod 0777 "$SUMMARY_DIR" 2>/dev/null || true
-  SUMMARY_ARGS=( -v "$SUMMARY_DIR:/out" -e LIB_STORE_SUMMARY_MD="/out/$(basename "$SUMMARY_MD")" )
+  SUMMARY_ARGS=( -v "$SUMMARY_DIR:/out" -e PACKAGE_STORE_SUMMARY_MD="/out/$(basename "$SUMMARY_MD")" )
 fi
 
 if [ -n "$BAKED_IMAGE" ]; then
@@ -73,26 +73,33 @@ if [ -n "$BAKED_IMAGE" ]; then
   # Without the override the probe dies before validate.py is ever reached.
   echo "Validating baked store inside $BAKED_IMAGE ..."
   docker run --rm --entrypoint "" \
-    -v "$SUITE_DIR:/opt/lib-store-validate:ro" \
+    -v "$SUITE_DIR:/opt/package-store-validate:ro" \
     -v "$VALIDATOR_DIR:/opt/lib-validator:ro" \
     --tmpfs /mnt/refs \
     -e LIB_VALIDATOR_DIR=/opt/lib-validator \
-    -e LIB_STORE_VERSION="${LIB_STORE_VERSION:-}" \
+    -e PACKAGE_STORE_VERSION="${PACKAGE_STORE_VERSION:-}" \
     "${SUMMARY_ARGS[@]}" \
     "$BAKED_IMAGE" \
-    python3 /opt/lib-store-validate/validate.py "${SUITE_ARGS[@]}"
+    python3 /opt/package-store-validate/validate.py "${SUITE_ARGS[@]}"
   exit $?
 fi
 
-if [ ! -d "$LIB_PATH/current" ]; then
-  echo "Error: library store not found at $LIB_PATH/current" >&2
+# The store carries no active-farm pointer. A farm is a property of the sandbox,
+# thus the invoker names the farm and binds it at the container path. The catalog
+# farm is what a published store brings, and it is what a consumer of the artifact
+# validates.
+FARM_NAME="${FARM_NAME:-catalog}"
+FARM_PATH="$LIB_PATH/farms/$FARM_NAME"
+
+if [ ! -d "$FARM_PATH" ]; then
+  echo "Error: no farm at $FARM_PATH" >&2
   echo "Pass --image <ref> to validate a baked image, or --store PATH for a mounted store." >&2
   exit 1
 fi
 
-echo "Validating store at $LIB_PATH/current in $MOUNT_IMAGE ..."
+echo "Validating farm $FARM_NAME of the store at $LIB_PATH in $MOUNT_IMAGE ..."
 
-# Managed path: mirror the runtime mount contract (harness lib-store spec):
+# Managed path: mirror the runtime mount contract (harness package-store spec):
 # read-only mount, R_LIBS_SITE / NODE_PATH / conda-bin PATH injected, PYTHONPATH
 # ABSENT (system Python resolves the store via sandbox-base's .pth file). A subset
 # of R subtrees present is harmless — nonexistent libpaths are ignored.
@@ -100,24 +107,34 @@ echo "Validating store at $LIB_PATH/current in $MOUNT_IMAGE ..."
 # A writable /mnt/refs stub stands in for the ref-store mount the runtime always
 # provides: some packages probe $CELLTYPIST_FOLDER=/mnt/refs/... at IMPORT
 # (celltypist mkdir(exist_ok=True)), so without the mountpoint import-all
-# false-fails on a ref-store dependency unrelated to lib-store loadability.
+# false-fails on a ref-store dependency unrelated to store loadability.
 #
-# The /mnt/libs/current/... paths below are CONTAINER-INTERNAL: they name where
+# The /mnt/libs/farm/... paths below are CONTAINER-INTERNAL: they name where
 # the store lives inside the image, independent of any host INFLEXA_LIB_ROOT, so
-# they are hardcoded rather than sourced from lib-store-common.sh's LIB_STORE_ROOT.
+# they are hardcoded rather than sourced from a host variable.
+#
+# PATH and NODE_PATH name a path in the IMAGE, never a path under /mnt/libs. The
+# image owns the conda track at /opt/conda and the Node track at /opt/node, and the
+# store mounts over /mnt/libs. A store-relative value here would remove the
+# command-line tools of the image, which is the same trap the harness mount plan
+# documents.
 #
 # --entrypoint "" for the same reason as the baked path above: MOUNT_IMAGE is
-# sandbox-base, which defines the ENTRYPOINT the sandbox images inherit.
+# sandbox-base, which defines its own ENTRYPOINT.
+# The farm bind nests inside the store bind, thus it comes AFTER it. The farm
+# shadows its mount point inside the store, and each farm link into
+# /mnt/libs/store resolves through the store bind.
 docker run --rm --entrypoint "" \
   -v "$LIB_PATH:/mnt/libs:ro" \
-  -v "$SUITE_DIR:/opt/lib-store-validate:ro" \
+  -v "$FARM_PATH:/mnt/libs/farm:ro" \
+  -v "$SUITE_DIR:/opt/package-store-validate:ro" \
   -v "$VALIDATOR_DIR:/opt/lib-validator:ro" \
   --tmpfs /mnt/refs \
-  -e R_LIBS_SITE="/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran" \
-  -e NODE_PATH="/mnt/libs/current/node/node_modules" \
-  -e PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin" \
+  -e R_LIBS_SITE="/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran" \
+  -e NODE_PATH="/opt/node/node_modules" \
+  -e PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin:/mnt/libs/farm/python/bin" \
   -e LIB_VALIDATOR_DIR=/opt/lib-validator \
-  -e LIB_STORE_VERSION="${LIB_STORE_VERSION:-}" \
+  -e PACKAGE_STORE_VERSION="${PACKAGE_STORE_VERSION:-}" \
   "${SUMMARY_ARGS[@]}" \
   "$MOUNT_IMAGE" \
-  python3 /opt/lib-store-validate/validate.py "${SUITE_ARGS[@]}"
+  python3 /opt/package-store-validate/validate.py "${SUITE_ARGS[@]}"

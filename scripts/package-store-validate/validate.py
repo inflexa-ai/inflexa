@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Acceptance validation suite — runs INSIDE a sandbox image with the library
-store at /mnt/libs/current (no network, runtime env only). The store is there
-either because it is baked into the image (the OSS path — a published
-sandbox-python/-r booted directly) or mounted read-only at /mnt/libs (the managed
-path).
+"""Acceptance validation suite — runs INSIDE the sandbox-base image with the
+library store at /mnt/libs/farm (no network, runtime env only). The store is
+there because the published store artifact is mounted read-only at /mnt/libs. No
+runtime image bakes a package set after the retirement of the variants, thus the
+mounted store is the one source of a library.
 
 It derives its work from packages.txt, not a hardcoded list, and runs two phases:
 
   1. import-all   import()/library()/require()/--version EVERY advertised package.
                   The advertised == loadable invariant (advertised ⊆ loadable):
-                  packages.txt must not LIE. Extra loadable-but-unadvertised
+                  the advertised inventory must not LIE. Extra loadable-but-unadvertised
                   packages are tolerated, not flagged.
   2. validators   the per-library smoke-test suite (lib-validator/run_all.py):
                   each covered library runs a real operation on synthetic data.
@@ -17,7 +17,7 @@ It derives its work from packages.txt, not a hardcoded list, and runs two phases
                   (its not-installed guard fires) is a skip.
 
 Acceptance is NON-GATING: it promotes nothing (the build already advanced
-`latest`). It reports a per-arch results table (written to $LIB_STORE_SUMMARY_MD
+`latest`). It reports a per-arch results table (written to $PACKAGE_STORE_SUMMARY_MD
 when set) and exits non-zero if anything is broken — a green/red status a
 maintainer reviews.
 """
@@ -29,15 +29,18 @@ import importlib.metadata as im
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-# Runtime mount contract path; INFLEXA_LIB_ROOT overrides to match the image's
-# baked env var, defaulting to the mount contract.
-STORE = Path(os.environ.get("INFLEXA_LIB_ROOT", "/mnt/libs/current"))
-PACKAGES_TXT = STORE / "packages.txt"
+# Runtime mount contract path of the farm; INFLEXA_FARM_ROOT overrides it.
+STORE = Path(os.environ.get("INFLEXA_FARM_ROOT", "/mnt/libs/farm"))
+# The one metadata file of a farm — the advertised inventory of the store tracks.
+FARM_LOCK = STORE / "inflexa.lock"
+# The baked inventory fragment of the image-owned tracks (conda + node).
+IMAGE_PACKAGES_TXT = Path("/opt/inflexa/image-packages.txt")
 # Where run.sh mounts scripts/lib-validator inside the container.
 LIB_VALIDATOR_DIR = Path(os.environ.get("LIB_VALIDATOR_DIR", "/opt/lib-validator"))
 
@@ -103,56 +106,194 @@ def parse_packages_txt(path: Path) -> dict[str, list[str]]:
     return out
 
 
+LOCK_TRACK_ECOSYSTEM = {
+    "python": "python",
+    "cran": "r",
+    "bioconductor": "r",
+    "github": "r",
+}
+
+
+def parse_inventory() -> dict[str, list[str]]:
+    """Return {ecosystem: [names]} from the farm lock plus the image fragment.
+
+    The farm advertises its store tracks through `inflexa.lock`, and the image
+    advertises its two owned tracks (conda + node) through the baked fragment.
+    An unknown lock track raises, for the same fail-loud reason a drifted
+    section header does."""
+    out: dict[str, list[str]] = {"r": [], "python": [], "node": [], "conda": []}
+    try:
+        lock = json.loads(FARM_LOCK.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ValueError(f"cannot read {FARM_LOCK}: {e}") from e
+    for pkg in lock.get("packages") or []:
+        track = pkg.get("track")
+        eco = LOCK_TRACK_ECOSYSTEM.get(track)
+        if eco is None:
+            raise ValueError(
+                f"unknown track {track!r} in {FARM_LOCK} (known: "
+                f"{sorted(LOCK_TRACK_ECOSYSTEM)}). A producer track drifted — "
+                f"update the mapping or fix the producer.")
+        if pkg.get("name"):
+            out[eco].append(str(pkg["name"]))
+    if IMAGE_PACKAGES_TXT.is_file():
+        fragment = parse_packages_txt(IMAGE_PACKAGES_TXT)
+        out["conda"] += fragment.get("conda", [])
+        out["node"] += fragment.get("node", [])
+    return out
+
+
 # --- Python import name derivation (mirrors the build's load check) ----------
+#
+# The import name of a distribution is not the distribution name. `protobuf`
+# imports as `google.protobuf`, `python-levenshtein` as `Levenshtein`, and each
+# `sphinxcontrib-*` dist as a member of the `sphinxcontrib` namespace. A swap of a
+# dash for an underscore in the dist name gives a wrong module and a false FAIL.
+#
+# `importlib.metadata.packages_distributions()` maps each real top-level module
+# onto the dist names that provide it. It reads the metadata of every dist on
+# `sys.path`, and the farm site-packages is on `sys.path` through the image .pth
+# file. Thus the map covers the store. The inverse of the map gives the true import
+# names of a dist, and not a guess from the dist name.
+
+def _norm_dist(name: str) -> str:
+    """Return the normalized form of a distribution name (PEP 503).
+
+    `packages_distributions()` reports the raw `Name` metadata of a dist. A lookup
+    must compare the normalized form, because a dash, an underscore, and a dot are
+    one separator in a distribution name."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _is_public_top_level(mod: str) -> bool:
+    """Report whether a name is a public top-level import name.
+
+    `packages_distributions()` derives some names from a file scan. Thus it can
+    report a scan artifact such as `__pycache__`, a private helper that starts with
+    an underscore, or a compiled mypyc module whose name starts with a digit. A
+    public import name is a valid identifier and does not start with an underscore.
+    This filter keeps the public names and drops the artifacts."""
+    return mod.isidentifier() and not mod.startswith("_")
+
+
+_MODULES_BY_DIST: dict[str, list[str]] | None = None
+
+
+def _modules_by_dist() -> dict[str, list[str]]:
+    """Build and cache the map {normalized dist name: [public top-level modules]}.
+
+    The map is the inverse of `packages_distributions()`. The scan runs one time,
+    because it reads the metadata of every dist on `sys.path`."""
+    global _MODULES_BY_DIST
+    if _MODULES_BY_DIST is None:
+        out: dict[str, set[str]] = {}
+        for module, dists in im.packages_distributions().items():
+            if not _is_public_top_level(module):
+                continue
+            for dist in dists:
+                out.setdefault(_norm_dist(dist), set()).add(module)
+        _MODULES_BY_DIST = {k: sorted(v) for k, v in out.items()}
+    return _MODULES_BY_DIST
+
 
 def modules_for(dist: str) -> list[str]:
+    """Return the public top-level modules that a distribution provides.
+
+    An empty list means the dist provides no importable module. A stub dist is one
+    such case (for example `python-levenshtein`, which only pulls in `Levenshtein`).
+    The caller treats an empty list as a skip, and not as a failure."""
+    return _modules_by_dist().get(_norm_dist(dist), [])
+
+
+# --- farm-backed store detection --------------------------------------------
+
+def find_store_dir(store_root: Path) -> Path | None:
+    """Return the content-addressed ``store/`` directory that backs a farm, or None.
+
+    A farm is a directory of symbolic links whose targets live in a sibling
+    ``store/`` directory. The root is ``/mnt/libs/farm``, which is a mount of the
+    farm of the analysis, or a farm path itself. Resolve the root, then walk up until
+    a ``store/`` directory appears beside it. A baked tree holds real package
+    directories and no such sibling, so it returns None."""
     try:
-        d = im.distribution(dist)
-    except im.PackageNotFoundError:
-        return []
-    txt = d.read_text("top_level.txt")
-    mods = [l.strip() for l in txt.splitlines() if l.strip() and not l.startswith("_")] if txt else []
-    if not mods:
-        seen = set()
-        for f in d.files or []:
-            parts = f.parts
-            if len(parts) == 1 and parts[0].endswith(".py") and not parts[0].startswith("_"):
-                seen.add(parts[0][:-3])
-            elif len(parts) >= 2 and parts[1] == "__init__.py":
-                top = parts[0]
-                if top and not top.startswith("_") and not top.endswith((".dist-info", ".data")):
-                    seen.add(top)
-        mods = sorted(seen)
-    if not mods:
-        # Namespace/meta dist (e.g. rpy2, whose code lives in the rpy2-rinterface /
-        # rpy2-robjects sub-dists): no top_level.txt and no own top-level module files,
-        # but the dist name itself is the importable namespace. Fall back to it — a
-        # genuinely-missing package then fails at the real import, not here.
-        mods = [dist.replace("-", "_")]
-    return mods
+        real = store_root.resolve()
+    except OSError:
+        return None
+    for base in (real, *real.parents):
+        cand = base / "store"
+        if cand.is_dir():
+            return cand.resolve()
+    return None
+
+
+def _loaded_from_store(mod, store_dir: Path) -> bool:
+    """Report whether an imported module resolves into the content store.
+
+    A farm link points a top-level name at a ``store/`` directory, so the real
+    path of a module the farm serves is under ``store_dir``. A module that
+    resolves elsewhere came from a baked or system location, not from the farm."""
+    paths = []
+    f = getattr(mod, "__file__", None)
+    if f:
+        paths.append(f)
+    for p in getattr(mod, "__path__", []) or []:
+        paths.append(p)
+    for p in paths:
+        try:
+            real = Path(p).resolve()
+        except OSError:
+            continue
+        if real == store_dir or store_dir in real.parents:
+            return True
+    return False
 
 
 # --- import-all (the invariant) ---------------------------------------------
 
-def check_python(names: list[str]) -> list[str]:
+def check_python(names: list[str], farm_store: Path | None = None) -> list[str]:
     failed = []
+    skipped = []
     for name in names:
-        mods = modules_for(name)
-        if not mods:
-            print(f"  FAIL python {name}: no import module resolvable on the store")
+        try:
+            im.distribution(name)
+        except im.PackageNotFoundError:
+            # Advertised, but its metadata is absent from the store. packages.txt
+            # names a dist the store does not carry — the lie the invariant catches.
+            print(f"  FAIL python {name}: no distribution metadata found on the store")
             failed.append(name)
             continue
-        last = ""
+        mods = modules_for(name)
+        if not mods:
+            # The dist is present but provides no importable module. A stub dist is
+            # one such case (for example python-levenshtein, which only pulls in
+            # Levenshtein). The dist advertises no module, thus a missing module is
+            # not a lie. Skip it with a reason, and do not count it as a failure.
+            print(f"  SKIP python {name}: provides no importable top-level module (stub dist)")
+            skipped.append(name)
+            continue
+        # Import every module the dist provides. A dist that advertises a module it
+        # cannot load is a lie, thus one failed module fails the dist.
         for mod in mods:
             try:
-                importlib.import_module(mod)
-                break
+                imported = importlib.import_module(mod)
             except Exception as e:  # noqa: BLE001
-                last = f"{mod}: {type(e).__name__}: {e}"
-        else:
-            print(f"  FAIL python {name}: {last}")
-            failed.append(name)
-    print(f"import-all python: {len(names) - len(failed)}/{len(names)} OK")
+                print(f"  FAIL python {name}: {mod}: {type(e).__name__}: {e}")
+                failed.append(name)
+                break
+            # In farm mode the invariant is stronger: an advertised package must load
+            # FROM the farm, not from a stray baked or system copy. A module that
+            # resolves outside the store means packages.txt names a package the farm
+            # does not actually serve.
+            if farm_store is not None and not _loaded_from_store(imported, farm_store):
+                src = getattr(imported, "__file__", "no __file__")
+                print(f"  FAIL python {name}: {mod} imported from outside the farm store ({src})")
+                failed.append(name)
+                break
+    ok = len(names) - len(failed) - len(skipped)
+    msg = f"import-all python: {ok}/{len(names)} OK"
+    if skipped:
+        msg += f" ({len(skipped)} skipped: {', '.join(skipped)})"
+    print(msg)
     return failed
 
 
@@ -189,17 +330,29 @@ def check_r(names: list[str]) -> list[str]:
     fpath = Path("/tmp/r_import_failures.txt")
     if fpath.exists():
         fpath.unlink()  # clear any stale file from a prior run before this loop appends
-    # Append each failure to the file INSIDE the loop (not once at the end). A native
-    # crash — a segfault, OOM, or R aborting — cannot be caught by tryCatch and loses
-    # every package after it; incremental appends preserve the failures seen so far so a
-    # crash still surfaces partial results. The Rscript EXIT STATUS is the separate,
-    # authoritative signal for "did the run complete cleanly at all".
+    # Load each advertised package with loadNamespace, and not with library. The
+    # invariant is that each advertised package loads. loadNamespace loads the
+    # namespace and the compiled code. Thus it catches a real load failure, for
+    # example rgl, whose .onLoad opens the graphics driver.
+    #
+    # library also attaches the package, and an attach puts the package on the shared
+    # search path. A package can scan that path when it attaches. conflicted is one
+    # such package. conflicted then fails when the other advertised packages attach at
+    # the same time, but that condition is not the invariant. loadNamespace tests each
+    # package on its own. It is the R form of the Python importlib.import_module check
+    # above.
+    #
+    # Append each failure to the file inside the loop, and not one time at the end. A
+    # native crash does not go through tryCatch, and it loses each package after it. A
+    # segfault, an out-of-memory error, or an R abort is such a crash. The incremental
+    # append keeps the failures seen so far. The Rscript exit status is the separate
+    # and authoritative signal for a clean run.
     script = (
         "args <- commandArgs(trailingOnly=TRUE);"
         "ff <- '/tmp/r_import_failures.txt';"
         "bad <- character(0);"
         "for (p in args) {"
-        "  ok <- tryCatch({ suppressPackageStartupMessages(library(p, character.only=TRUE)); TRUE },"
+        "  ok <- tryCatch({ suppressMessages(loadNamespace(p)); TRUE },"
         "                 error=function(e){ cat(sprintf('  FAIL R %s: %s\\n', p, conditionMessage(e))); FALSE });"
         "  if (!isTRUE(ok)) { bad <- c(bad, p); cat(paste0(p, '\\n'), file=ff, append=TRUE) }"
         "};"
@@ -305,34 +458,53 @@ def write_summary_md(path: Path, this_arch: str, version: str,
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="lib-store acceptance validation suite (non-gating)")
+    ap = argparse.ArgumentParser(description="package-store acceptance validation suite (non-gating)")
     ap.add_argument("--validators", dest="validators", action="store_true", default=True,
                     help=argparse.SUPPRESS)
     ap.add_argument("--no-validators", dest="validators", action="store_false",
                     help="import-all only (skip the per-library smoke-test suite) — quick local check")
+    ap.add_argument("--farm", action="store_true",
+                    help="validate a farm-backed store root: run import-all only, and confirm "
+                         "every advertised Python package loads from the farm's content store")
     args = ap.parse_args()
 
     if not PACKAGES_TXT.exists():
         print(f"ERROR: {PACKAGES_TXT} not found — is the store mounted?", file=sys.stderr)
         return 2
 
+    farm_store: Path | None = None
+    if args.farm:
+        # A farm has a sibling content store. Its absence means the root is a baked
+        # tree or an empty mount, so --farm cannot prove "loaded from the farm".
+        farm_store = find_store_dir(STORE)
+        if farm_store is None:
+            print(f"ERROR: --farm given, but {STORE} is not backed by a content store "
+                  f"(no sibling store/ directory found)", file=sys.stderr)
+            return 2
+        # The per-library smoke suite is a baked-image concern and its tree is not
+        # mounted for a farm. Import-all is the whole of the farm rule.
+        args.validators = False
+
     this_arch = arch()
     try:
-        pkgs = parse_packages_txt(PACKAGES_TXT)
+        pkgs = parse_inventory()
     except ValueError as e:
         # A drifted header or an unreadable store is a config/store problem, not a
         # package failure — surface the store-error exit code.
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
     advertised = {n for names in pkgs.values() for n in names}
-    print(f"=== lib-store validation ({this_arch}) — {len(advertised)} advertised packages ===")
+    mode = "farm-backed" if farm_store is not None else "baked tree"
+    print(f"=== package-store validation ({this_arch}, {mode}) — {len(advertised)} advertised packages ===")
+    if farm_store is not None:
+        print(f"    content store: {farm_store}")
 
     # 1. import-all == the invariant: every advertised package must be loadable.
-    #    One-way on purpose — packages.txt must not LIE; extra loadable packages
+    #    One-way on purpose — the advertised inventory must not LIE; extra loadable packages
     #    it does not advertise are tolerated (advertised ⊆ loadable).
     print("\n[1/2] import-all (the advertised == loadable invariant)")
     failures: dict[str, list[str]] = {}
-    failures["python"] = check_python(pkgs["python"])
+    failures["python"] = check_python(pkgs["python"], farm_store=farm_store)
     failures["node"] = check_node(pkgs["node"])
     failures["conda"] = check_conda(pkgs["conda"])
     failures["r"] = check_r(pkgs["r"])
@@ -370,10 +542,10 @@ def main() -> int:
             if r.get("status") in ("FAIL", "ERROR", "NO_INTERP"):
                 print(f"    {r['status']} {r['name']} ({r['lang']}): {r.get('detail', '')}")
 
-    summary_md = os.environ.get("LIB_STORE_SUMMARY_MD")
+    summary_md = os.environ.get("PACKAGE_STORE_SUMMARY_MD")
     if summary_md:
         try:
-            write_summary_md(Path(summary_md), this_arch, os.environ.get("LIB_STORE_VERSION", ""),
+            write_summary_md(Path(summary_md), this_arch, os.environ.get("PACKAGE_STORE_VERSION", ""),
                              pkgs, failures, val_payload, green)
         except OSError as e:
             print(f"  (could not write summary markdown to {summary_md}: {e})", file=sys.stderr)

@@ -2,29 +2,31 @@
 # Acceptance for one architecture — a NON-GATING validation. Obtain the store the
 # way it is actually consumed, run the validation suite against it, and render a
 # per-arch results table into the CI step summary. It promotes NOTHING: `latest`
-# was already advanced by the build (see scripts/lib-store-publish.sh). A red run
+# was already advanced by the build (see the build workflow). A red run
 # surfaces a failing status for a maintainer to review; it rolls nothing back.
 #
 # The store is obtained one of two ways (design.md "acceptance obtains the store
-# the way it is consumed"):
+# from the published store artifact"):
 #
-#   * baked image (the OSS path — the default): boot the published sandbox image
-#     for this arch (SANDBOX_IMAGE) directly, no mount. This is exactly what
-#     `inflexa sandbox pull` fetches and what OSS users run.
-#   * mounted tarballs (the managed path): pass --store <dir> pointing at an
-#     assembled tarball store to mount it read-only into sandbox-base instead.
+#   * mounted store artifact (the store path): pass --store <dir> pointing at a
+#     store extracted from the published store artifact, to mount it read-only into
+#     sandbox-base. This is the store a user pulls, thus it is the honest source for
+#     the import-all invariant.
+#   * baked image (SANDBOX_IMAGE, no mount): boot the published sandbox image
+#     directly. The one runtime image bakes no R library and no Python library,
+#     thus this route validates the image itself, not a package set.
 #
-# The extracted tarballs are cut FROM the published image, so validating the
-# image validates the same content the managed mount ships.
+# No runtime image bakes a package set after the retirement of the variants, thus a
+# store validation mounts the published store artifact.
 #
 # Runs from the repo root with Docker available.
 #
-# Usage: lib-store-acceptance.sh <amd64|arm64> <version> [--store <dir>]
+# Usage: package-store-acceptance.sh <amd64|arm64> <version> [--store <dir>]
 # Env:   SANDBOX_IMAGE  the published sandbox image ref for this arch (baked path)
 
 set -euo pipefail
 
-ARCH="${1:?usage: lib-store-acceptance.sh <amd64|arm64> <version> [--store <dir>]}"
+ARCH="${1:?usage: package-store-acceptance.sh <amd64|arm64> <version> [--store <dir>]}"
 VERSION="${2:?version}"
 shift 2 || true
 
@@ -40,20 +42,20 @@ ARCH_DIR="linux-$ARCH"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # The results table validate.py writes (via run.sh --summary-md); rendered into
-# the CI run summary below. LIB_STORE_VERSION labels the table header.
+# the CI run summary below. PACKAGE_STORE_VERSION labels the table header.
 SUMMARY_MD="${RUNNER_TEMP:-/tmp}/acceptance-$ARCH.md"
-export LIB_STORE_VERSION="$VERSION"
+export PACKAGE_STORE_VERSION="$VERSION"
 
 echo "::group::Acceptance — $ARCH_DIR @ $VERSION"
 
 RC=0
 if [ -n "$STORE_DIR" ]; then
   # Managed path: mount the assembled tarball store read-only into sandbox-base.
-  "$REPO_ROOT/scripts/lib-store-validate/run.sh" --summary-md "$SUMMARY_MD" --store "$STORE_DIR" || RC=$?
+  "$REPO_ROOT/scripts/package-store-validate/run.sh" --summary-md "$SUMMARY_MD" --store "$STORE_DIR" || RC=$?
 else
   # OSS path: boot the published image directly (baked store, no mount).
   : "${SANDBOX_IMAGE:?SANDBOX_IMAGE (published sandbox image ref for $ARCH) is required for the baked path}"
-  "$REPO_ROOT/scripts/lib-store-validate/run.sh" --summary-md "$SUMMARY_MD" --image "$SANDBOX_IMAGE" || RC=$?
+  "$REPO_ROOT/scripts/package-store-validate/run.sh" --summary-md "$SUMMARY_MD" --image "$SANDBOX_IMAGE" || RC=$?
 fi
 
 # Render the per-arch results table into the CI run summary (no-op locally where
