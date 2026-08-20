@@ -9,6 +9,7 @@ import {
     resolveWorkspacePath,
     stepWritePrefix,
     tailWritePrefix,
+    toAnalysisRootPath,
     toSandboxPath,
 } from "./paths.js";
 
@@ -300,5 +301,46 @@ describe("toSandboxPath", () => {
 
     it("throws when the host path escapes the workspace root", () => {
         expect(() => toSandboxPath(ROOT, ANALYSIS, resolvePath(SESSIONS, "analysis-002", "x"))).toThrow(/escapes the workspace root/);
+    });
+});
+
+describe("toAnalysisRootPath", () => {
+    it("roots a stored root-relative path", () => {
+        expect(toAnalysisRootPath(ANALYSIS, "data/inputs/x.csv")).toBe(`/${ANALYSIS}/data/inputs/x.csv`);
+        expect(toAnalysisRootPath(ANALYSIS, "")).toBe(`/${ANALYSIS}`);
+    });
+
+    it("is idempotent on a path that already carries the root", () => {
+        const rooted = `/${ANALYSIS}/data/inputs/x.csv`;
+        expect(toAnalysisRootPath(ANALYSIS, rooted)).toBe(rooted);
+        expect(toAnalysisRootPath(ANALYSIS, toAnalysisRootPath(ANALYSIS, "data/inputs/x.csv"))).toBe(rooted);
+        expect(toAnalysisRootPath(ANALYSIS, `/${ANALYSIS}`)).toBe(`/${ANALYSIS}`);
+    });
+
+    it("reads the near-misses a model writes as the same file", () => {
+        for (const written of ["/data/inputs/x.csv", "./data/inputs/x.csv", "data//inputs/x.csv", "  data/inputs/x.csv  ", "data/./inputs/x.csv"]) {
+            expect(toAnalysisRootPath(ANALYSIS, written)).toBe(`/${ANALYSIS}/data/inputs/x.csv`);
+        }
+    });
+
+    it("keeps the wildcard segments of a kind's glob", () => {
+        expect(toAnalysisRootPath(ANALYSIS, "data/inputs/vcf/*.vcf.gz")).toBe(`/${ANALYSIS}/data/inputs/vcf/*.vcf.gz`);
+    });
+
+    it("returns a path that climbs above the root unchanged, so the resolver rejects it", () => {
+        expect(toAnalysisRootPath(ANALYSIS, "../other/x.csv")).toBe("../other/x.csv");
+        expect(resolveWorkspacePath({ workspaceRoot: ROOT, analysisId: ANALYSIS, path: "../other/x.csv" }).kind).toBe("out_of_scope");
+    });
+
+    it("gives a path that resolves to the same file from inside a step frame", () => {
+        // The defect this guards: a stored root-relative path resolves against the
+        // step's working directory, which is not where the file is.
+        const stored = "data/inputs/x.csv";
+        const frameLocal = resolveWorkspacePath({ workspaceRoot: ROOT, analysisId: ANALYSIS, path: stored, workingDir: STEP_DIR });
+        expect(frameLocal.kind === "ok" && frameLocal.relative).not.toBe(stored.split("/").join(sep));
+
+        const rooted = resolveWorkspacePath({ workspaceRoot: ROOT, analysisId: ANALYSIS, path: toAnalysisRootPath(ANALYSIS, stored), workingDir: STEP_DIR });
+        expect(rooted.kind).toBe("ok");
+        if (rooted.kind === "ok") expect(rooted.relative).toBe(stored.split("/").join(sep));
     });
 });

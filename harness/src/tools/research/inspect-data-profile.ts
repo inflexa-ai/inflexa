@@ -19,6 +19,12 @@
  * Lifecycle states are data variants, not errors (the `defineTool` contract): a missing,
  * in-flight, failed, or stale profile is an ordinary, expected outcome the model must be
  * able to reason about, so each returns in the ok channel.
+ *
+ * Every path it serves is projected into the frame-independent `/{analysisId}/…`
+ * form. The record stores a path relative to the analysis root, and a step agent
+ * resolves a relative path against its own working directory — thus the stored
+ * form names a file that does not exist in the frame of the caller. The same
+ * projection guards the step briefing (`app/data-profile-orientation.ts`).
  */
 
 import { ok, type Result } from "neverthrow";
@@ -28,6 +34,7 @@ import { z } from "zod";
 import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { loadDataProfileStatus, type DataProfileFile, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
+import { toAnalysisRootPath } from "../../workspace/paths.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 
 /** Per-file records returned per page when the caller names none. */
@@ -162,6 +169,22 @@ function datasetFileCount(result: DataProfileResult): number | null {
     if (result.coverage) return result.coverage.total;
     if (result.kinds && result.kinds.length > 0) return result.kinds.reduce((sum, kind) => sum + kind.count, 0);
     return null;
+}
+
+/** Serve each per-file record with a path that resolves in the frame of the caller. */
+function rootFilePaths(files: readonly DataProfileFile[], analysisId: string): DataProfileFile[] {
+    return files.map((file) => ({ ...file, path: toAnalysisRootPath(analysisId, file.path) }));
+}
+
+/**
+ * Serve each kind with a glob that resolves in the frame of the caller.
+ *
+ * A `pathPattern` is a path with a wildcard segment, thus it takes the same
+ * projection as a file path. The wildcard characters survive it: the projection
+ * only re-roots the pattern.
+ */
+function rootKindPatterns(kinds: NonNullable<DataProfileResult["kinds"]>, analysisId: string): NonNullable<DataProfileResult["kinds"]> {
+    return kinds.map((kind) => ({ ...kind, pathPattern: toAnalysisRootPath(analysisId, kind.pathPattern) }));
 }
 
 /**
@@ -347,7 +370,7 @@ export function createInspectDataProfileTool(pool: Pool) {
                     ...envelope,
                     scope: "kinds",
                     available: true,
-                    kinds: result.kinds,
+                    kinds: rootKindPatterns(result.kinds, resourceId),
                     ...(result.axes ? { axes: result.axes } : {}),
                     ...(result.coverage ? { coverage: result.coverage } : {}),
                 });
@@ -366,7 +389,7 @@ export function createInspectDataProfileTool(pool: Pool) {
                 pageSize,
                 total,
                 hasMore: start + files.length < total,
-                files,
+                files: rootFilePaths(files, resourceId),
             });
         },
     });

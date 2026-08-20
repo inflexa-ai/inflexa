@@ -314,10 +314,12 @@ describe("scope: files — paged, with truncation always visible", () => {
 
         const out = await run({ scope: "files" });
         expect(out).toMatchObject({ scope: "files", page: 1, pageSize: 20, total: 2, hasMore: false });
+        // The record stores a root-relative path; the tool serves the rooted form,
+        // which resolves to the same file from any agent's working directory.
         expect(out).toMatchObject({
             files: [
                 {
-                    path: "data/inputs/f1/counts.csv",
+                    path: `/${ANALYSIS}/data/inputs/f1/counts.csv`,
                     description: "Raw count matrix",
                     dataType: "count-matrix",
                     format: "CSV",
@@ -327,7 +329,14 @@ describe("scope: files — paged, with truncation always visible", () => {
                     warnings: ["3 low-depth samples"],
                     metrics: { sparsity: 0.41 },
                 },
-                { path: "data/inputs/f2/metadata.csv", description: "Sample metadata", dataType: "clinical-metadata", format: "CSV", rows: 24, cols: 6 },
+                {
+                    path: `/${ANALYSIS}/data/inputs/f2/metadata.csv`,
+                    description: "Sample metadata",
+                    dataType: "clinical-metadata",
+                    format: "CSV",
+                    rows: 24,
+                    cols: 6,
+                },
             ],
         });
     });
@@ -343,7 +352,7 @@ describe("scope: files — paged, with truncation always visible", () => {
 
         const second = await run({ scope: "files", page: 2, pageSize: 10 });
         expect(second).toMatchObject({ page: 2, total: 25, hasMore: true });
-        expect((second as { files: { path: string }[] }).files[0]?.path).toBe("data/inputs/f10/counts.csv");
+        expect((second as { files: { path: string }[] }).files[0]?.path).toBe(`/${ANALYSIS}/data/inputs/f10/counts.csv`);
 
         // The last page holds the remainder and says so — no silent truncation anywhere.
         const third = await run({ scope: "files", page: 3, pageSize: 10 });
@@ -425,6 +434,11 @@ describe("scope: kinds", () => {
             coverage: { matched: 3510, unmatched: 3, total: 3513 },
         });
         expect((out as { kinds: unknown[] }).kinds).toHaveLength(2);
+        // A glob takes the same rooting as a file path, and its wildcard survives it.
+        expect((out as { kinds: { pathPattern: string }[] }).kinds.map((k) => k.pathPattern)).toEqual([
+            `/${ANALYSIS}/data/inputs/vcf/*.vcf.gz`,
+            `/${ANALYSIS}/data/inputs/tbi/*.tbi`,
+        ]);
     });
 
     it("reports the scope unavailable — not empty — for a pre-kinds snapshot", async () => {

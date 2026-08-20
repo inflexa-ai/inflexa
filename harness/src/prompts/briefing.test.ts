@@ -51,7 +51,7 @@ function handoff(overrides: Partial<UpstreamHandoff> = {}): UpstreamHandoff {
 }
 
 const WORKSPACE = {
-    analysisRoot: "/an-1",
+    analysisId: "an-1",
     workingDir: "/an-1/runs/run-1/T1S2",
 } as const;
 
@@ -117,15 +117,15 @@ describe("renderOrientation", () => {
     };
 
     it("carries the dataset identity when a profile exists", () => {
-        const rendered = renderOrientation(profile);
+        const rendered = renderOrientation(profile, "an-1");
         expect(rendered).toContain("transcriptomics");
         expect(rendered).toContain("Homo sapiens");
-        expect(rendered).toContain("data/inputs/counts.csv");
+        expect(rendered).toContain("/an-1/data/inputs/counts.csv");
     });
 
     it("omits the section cleanly when the analysis has no profile yet", () => {
-        expect(renderOrientation(null)).toBe("");
-        expect(renderOrientation(undefined)).toBe("");
+        expect(renderOrientation(null, "an-1")).toBe("");
+        expect(renderOrientation(undefined, "an-1")).toBe("");
     });
 
     it("bounds a pathological profile to the orientation budget", () => {
@@ -140,7 +140,7 @@ describe("renderOrientation", () => {
         };
         // The projection is hard-clamped; the section adds only its heading and
         // the fixed pointer at the pull-the-full-profile tool.
-        expect(renderOrientation(huge).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS + 200);
+        expect(renderOrientation(huge, "an-1").length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS + 200);
     });
 });
 

@@ -423,7 +423,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 `Profile the input data for this analysis: say what the dataset IS, so planning can proceed.`,
                 ``,
                 renderWorkspace({
-                    analysisRoot: `/${analysisId}`,
+                    analysisId,
                     workingDir: toSandboxPath(workspaceRoot, analysisId, profileWritePrefix),
                 }),
                 ``,
