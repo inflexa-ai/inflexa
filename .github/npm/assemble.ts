@@ -21,6 +21,25 @@ import { join } from "node:path";
 
 const DESCRIPTION = "Local-first AI agent for reproducible biological data analysis";
 const REPO_URL = "https://github.com/inflexa-ai/inflexa";
+const HOMEPAGE_URL = "https://inflexa.ai";
+
+// Only the wrapper carries the keywords: the five platform packages are
+// install-gated binary carriers, and the same terms on each of them puts five
+// near-identical results into one npm search.
+const KEYWORDS = [
+    "bioinformatics",
+    "computational-biology",
+    "ai-agent",
+    "agentic-ai",
+    "genomics",
+    "multi-omics",
+    "rna-seq",
+    "single-cell",
+    "reproducible-research",
+    "provenance",
+    "local-first",
+    "llm",
+];
 
 type Platform = {
     /** npm naming: process.platform-process.arch, the launcher's lookup key. */
@@ -70,7 +89,7 @@ for (const line of readFileSync(join(assetsDir, "SHA256SUMS"), "utf8").split("\n
 
 const shared = {
     license: "Apache-2.0",
-    homepage: REPO_URL,
+    homepage: HOMEPAGE_URL,
     repository: { type: "git", url: `git+${REPO_URL}.git` },
     publishConfig: { access: "public", registry: "https://registry.npmjs.org" },
 };
@@ -132,6 +151,7 @@ writeFileSync(
             name: "@inflexa-ai/inflexa",
             version,
             description: DESCRIPTION,
+            keywords: KEYWORDS,
             ...shared,
             bin: { inflexa: "bin/inflexa.js" },
             files: ["bin", "postinstall.js"],
