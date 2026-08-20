@@ -293,9 +293,15 @@ export async function setup(options: SetupOptions): Promise<void> {
     }
     const rt = readyResult.value;
 
-    // Read after the answers validate and the runtime probes: a run that dies there provisions nothing,
-    // so it has no step to continue from. A run that cannot prompt never offers, which is what leaves
-    // batch behavior unchanged.
+    // Read after the answers validate, the answered-embedding gate, and the runtime probes. Each of those
+    // sits outside the `try` that writes a checkpoint, so a run that dies in one records nothing.
+    //
+    // Only the embedding gate can provision before it fails: `--embeddings local` downloads a model and a
+    // runtime first. It stays uncovered anyway, because that gate fires only on an ANSWERED mode. An
+    // answered mode is a batch run, and a batch run never reaches the offer below, so no run could read
+    // the record it wrote.
+    //
+    // A run that cannot prompt never offers, which is what leaves batch behavior unchanged.
     const failedAt = readSetupState();
     const continueFrom = failedAt !== null && canPrompt ? await offerContinue(failedAt) : null;
 
