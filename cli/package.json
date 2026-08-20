@@ -1,6 +1,6 @@
 {
     "name": "inflexa",
-    "version": "0.16.1",
+    "version": "0.17.0",
     "description": "Local-first AI agent for reproducible biological data analysis",
     "keywords": [
         "bioinformatics",
@@ -38,7 +38,7 @@
     "dependencies": {
         "@clack/core": "1.4.3",
         "@clack/prompts": "^1.7.0",
-        "@inflexa-ai/harness": "0.26.3",
+        "@inflexa-ai/harness": "0.27.0",
         "@inflexa-ai/prov-kernel": "^0.5.0",
         "@inflexa-ai/tsprov": "0.5.1",
         "@opentelemetry/api": "^1.9.1",
