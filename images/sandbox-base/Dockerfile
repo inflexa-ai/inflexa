@@ -10,7 +10,7 @@
 #
 # Size: ~2.3GB on arm64 before the conda track and the Node track. The
 #       chromium layer is a measured 477MB (that section gives the reason).
-# Contains: R 4.6.0, Python 3.12, Node.js 20, the runtime system libraries,
+# Contains: R 4.6.0, Python 3.12, Node.js 24, the runtime system libraries,
 #           fonts, tools, chromium (static plotly export through kaleido),
 #           the bioconda command-line tools at /opt/conda, the Node packages
 #           at /opt/node, and sandbox-server (a static Go binary for HTTP
@@ -82,7 +82,7 @@ ARG TARGETARCH
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # micromamba, a deterministic binary from the official image.
-COPY --from=mambaorg/micromamba:2.5.0 /bin/micromamba /usr/local/bin/micromamba
+COPY --from=mambaorg/micromamba:2.9.0 /bin/micromamba /usr/local/bin/micromamba
 
 # The tool set is `common` plus the arch list of the manifest. An amd64-only
 # tool has no linux-aarch64 bioconda build. Strict channel priority prevents
@@ -148,7 +148,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # TODO(supply-chain): this pipes the NodeSource setup script into bash, thus
 # the script runs unpinned. The runtime stage records the same gap.
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -184,7 +184,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # GHCR then files the package under the repo, and the package inherits the
 # repo access. The description names the content.
 LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inflexa"
-LABEL org.opencontainers.image.description="Inflexa sandbox runtime — rocker/r-ver, system Python 3.12, Node.js 20, the bioconda command-line tools at /opt/conda, the Node packages at /opt/node, the sandbox server, and the provenance hooks. It bakes no R library and no Python library: the package store, mounted read-only at /mnt/libs, is the one source of a library."
+LABEL org.opencontainers.image.description="Inflexa sandbox runtime — rocker/r-ver, system Python 3.12, Node.js 24, the bioconda command-line tools at /opt/conda, the Node packages at /opt/node, the sandbox server, and the provenance hooks. It bakes no R library and no Python library: the package store, mounted read-only at /mnt/libs, is the one source of a library."
 
 # =============================================================================
 # Runtime system libraries (no -dev packages, no build toolchain)
@@ -252,14 +252,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV RGL_USE_NULL=TRUE
 
 # =============================================================================
-# Node.js 20
+# Node.js 24
 # =============================================================================
 
 # TODO(supply-chain): this pipes the NodeSource setup script into bash, thus
 # the script runs unpinned. A streamed script cannot pass a `sha256sum -c`
 # comparison. The hard fix: install the NodeSource apt key and the repo line
 # by hand, or a pinned nodejs .deb with a digest, in place of `| bash`.
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -267,8 +267,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # Python tools (uv + ruff)
 # =============================================================================
 
-ENV UV_VERSION=0.7.12
-ENV RUFF_VERSION=0.16.0
+ENV UV_VERSION=0.12.5
+ENV RUFF_VERSION=0.16.3
 # TODO(supply-chain): `| sh` runs the Astral installer before any control
 # sees it. UV_VERSION pins which uv installs, but the install.sh itself
 # arrives unpinned. The hard fix: download the versioned uv tarball, compare
@@ -282,15 +282,15 @@ RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
 # Tailwind CSS standalone CLI
 # =============================================================================
 
-ENV TAILWINDCSS_VERSION=v4.1.4
+ENV TAILWINDCSS_VERSION=v4.3.3
 ARG TARGETARCH
 # The SHA-256 sums come from the published sha256sums.txt of the release. The
 # comparison of the fetched binary closes the supply-chain gap of a bare
 # HTTPS download.
 RUN TW_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "linux-arm64" || echo "linux-x64") \
     && TW_SHA=$([ "$TARGETARCH" = "arm64" ] \
-         && echo "a14537ef51a99c1a55c3764b73b81681d84ff75197ad766f9a6628d610cf274f" \
-         || echo "0fa8bbb8beca7242f6455bf01bbe35d3083878f6308ec4a4cec30aed16bca46d") \
+         && echo "55fd0b241214eff3de1e8ee4f22796662f2d2e7a49bcfca7477cfd0bac398195" \
+         || echo "dc61b3ac6b8c9ca874c0cc4c57b2409791a64c5540404ca5f5367360babc313a") \
     && curl -sSL -o /usr/local/bin/tailwindcss \
        "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWINDCSS_VERSION}/tailwindcss-${TW_ARCH}" \
     && echo "${TW_SHA}  /usr/local/bin/tailwindcss" | sha256sum -c - \
