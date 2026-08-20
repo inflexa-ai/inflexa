@@ -1,10 +1,11 @@
-# All sandbox Dockerfiles are built with the repository root as their context,
-# so the root .dockerignore is the effective ignore file.
+# The two sandbox Dockerfiles are built with the repository root as their
+# context, so the root .dockerignore is the effective ignore file. droast
+# covers both: the runtime image (sandbox-base) and the network-enabled
+# builder (sandbox-provisioner).
 [[overrides]]
 paths = [
   "images/sandbox-base/Dockerfile",
-  "images/sandbox-python/Dockerfile",
-  "images/sandbox-python-r/Dockerfile",
+  "images/sandbox-provisioner/Dockerfile",
 ]
 skip = ["DF033"]
 
@@ -14,8 +15,9 @@ skip = ["DF033"]
 paths = ["images/sandbox-base/Dockerfile"]
 skip = ["DF058"]
 
-# These append to PATH inherited from the parent stage. Docker expands the old
-# value before applying the ENV assignment; droast treats that as self-reference.
+# The runtime stage appends to PATH inherited from the base image. Docker
+# expands the old value before applying the ENV assignment; droast treats
+# that as self-reference.
 [[overrides]]
-paths = ["images/sandbox-python/Dockerfile"]
+paths = ["images/sandbox-base/Dockerfile"]
 skip = ["DF062"]

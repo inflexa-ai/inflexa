@@ -2,41 +2,41 @@
 
 ## Overview
 
-The **lean base** of the three layered sandbox images. It bundles the language
-runtimes (R 4.6.0, Python 3.12, Node.js 20) plus a Go **sandbox-server** that is
-the in-container counterpart to the harness `SandboxClient`: the client submits
-work and receives results, while the server runs commands and POSTs HMAC-verified
-callbacks back to the host. See [`../../harness/CONTEXT.md`](../../harness/CONTEXT.md)
-and the [`sandbox-server`](../../harness/openspec/specs/sandbox-server/) /
-[`harness-sandbox-exec`](../../harness/openspec/specs/harness-sandbox-exec/) specs
-for the protocol.
+The **one runtime image** of every sandbox. It bundles the language runtimes
+(R 4.6.0, Python 3.12, Node.js 20), the bioconda command-line tools at
+`/opt/conda`, the Node packages at `/opt/node`, and Chromium. It also carries
+a Go **sandbox-server**, the in-container counterpart to the harness
+`SandboxClient`: the client submits work, and the server runs commands and
+serves or POSTs HMAC-verified results. See
+[`../../harness/CONTEXT.md`](../../harness/CONTEXT.md) and the
+[`sandbox-server`](../../harness/openspec/specs/sandbox-server/) /
+[`harness-sandbox-exec`](../../harness/openspec/specs/harness-sandbox-exec/)
+specs for the protocol.
 
-`sandbox-base` carries **no** analysis packages — its `/mnt/libs/current` is empty.
-The analysis libraries are added by the two images that layer on top of it:
+`sandbox-base` bakes **no** analysis package. The packages come from the
+**package store**, mounted read-only at `/mnt/libs`. The farm of the
+analysis mounts at `/mnt/libs/farm`, and its optional read-write cache at
+`/mnt/libs/cache`. The image advertises its two owned tracks (the conda
+tools and the Node packages) through the baked fragment at
+`/opt/inflexa/image-packages.txt`, which `list_available_packages` merges
+with the `inflexa.lock` of the mounted farm.
 
-- [`../sandbox-python`](../sandbox-python) — `FROM sandbox-base` + the Python
-  libraries, the bioconda CLI tools, and the Node package(s) (echarts).
-- [`../sandbox-python-r`](../sandbox-python-r) — `FROM sandbox-python` + the R
-  libraries.
-
-Base stays lean deliberately: it is the image the **managed** service pulls per
-node (a few hundred MB of conda tools would be a real cold-start tax), and it
-mounts the per-track tarballs read-only over its empty `/mnt/libs`. An **OSS
-user** instead runs `sandbox-python`/`sandbox-python-r` directly — the store is
-baked in, no mount. All three publish to GHCR
-(`ghcr.io/inflexa-ai/sandbox-{base,python,python-r}`) for `linux/amd64` and
-`linux/arm64` via
-[`.github/workflows/lib-store.yml`](../../.github/workflows/lib-store.yml). See
-[`../README.md`](../README.md) for the image ladder, the manifest, and how to
-extend or build the images.
+The sibling image, [`../sandbox-provisioner`](../sandbox-provisioner), is
+the network-enabled builder that writes the store. The two images build from
+one digest-pinned base and publish together
+([`.github/workflows/sandbox-images-build.yml`](../../.github/workflows/sandbox-images-build.yml)).
+See [`../README.md`](../README.md) for the store, the manifest, and the
+local builds.
 
 ## What's here
 
 |Path|Role|
 |-|-|
-|`Dockerfile`|Multi-stage build: compiles the server + provenance shim, then assembles the runtime image on `BASE_IMAGE`.|
-|`server/`|The Go `sandbox-server` (static binary, `CGO_ENABLED=0`) — HTTP exec protocol + signed callbacks.|
+|`Dockerfile`|Multi-stage build: compiles the server + provenance shim, builds the conda prefix and the Node tree in builder stages, then assembles the runtime image on `BASE_IMAGE`.|
+|`server/`|The Go `sandbox-server` (static binary, `CGO_ENABLED=0`) — HTTP exec protocol + signed results.|
 |`provenance/`|File-read tracking hooks: `provtrack.c` (LD_PRELOAD), `sitecustomize.py` (Python), `Rprofile.site` (R).|
+|`sandbox-entrypoint.sh`|Seeds the prepared caches, installs the poll-mode egress firewall, drops privileges, execs the server.|
+|`inflexa-seed-caches`|The `seed_caches` function. The entrypoint sources it, and the cache check of the build sources the same file.|
 
 ## Exec protocol
 
@@ -83,11 +83,22 @@ push that never lands.
 Either way the served result bytes carry the provenance frame, so a pulled result
 is indistinguishable from a pushed one.
 
+## Entrypoint: the cache seed, then the firewall
+
+`sandbox-entrypoint.sh` sources `inflexa-seed-caches` and calls `seed_caches`
+before the firewall path and before the exec. When the read-write cache mount
+at `/mnt/libs/cache` is present, the seed does nothing — the env of the mount
+plan already points into it. Without the mount, the seed copies `numba-cache`
+and `matplotlib_config` from the farm to writable paths under `/tmp`. The
+copy is necessary because numba selects a cache directory by a write probe,
+and it skips a read-only one. A missing cache degrades in silence: a cold
+cache costs time, not correctness.
+
 ## Egress firewall (Docker poll mode)
 
 In poll mode the sandbox needs no egress. The Docker backend sets
-`SANDBOX_EGRESS_FIREWALL=1` and grants `CAP_NET_ADMIN`; the image's root entrypoint
-(`sandbox-entrypoint.sh`) then installs, before the workload runs:
+`SANDBOX_EGRESS_FIREWALL=1` and grants `CAP_NET_ADMIN`; the image's root
+entrypoint then installs, before the workload runs:
 
 ```
 iptables -A OUTPUT -o lo -j ACCEPT
@@ -104,20 +115,22 @@ no gateway sidecar.
 
 ## Build
 
-Build from the **repo root** (the Dockerfile `COPY`s `images/sandbox-base/...`):
+Build from the **repo root** (the Dockerfile `COPY`s `images/sandbox-base/...`
+and the manifest):
 
 ```sh
 docker build -f images/sandbox-base/Dockerfile \
   --build-arg BASE_IMAGE=rocker/r-ver:4.6.0 \
-  -t inflexa-sandbox-base .
+  -t sandbox-base:local .
 ```
 
 `BASE_IMAGE` is an `ARG` and must match `base_image` in
-[`../lib-store-manifest.yaml`](../lib-store-manifest.yaml) — the sandbox runtime
-and the library store are built against the same R/Python.
-[`.github/workflows/lib-store.yml`](../../.github/workflows/lib-store.yml) builds
-and pushes this image (and the two that layer on it) to GHCR on every change to
-`images/**` or the manifest.
+[`../package-store/manifest.yaml`](../package-store/manifest.yaml) — the
+sandbox runtime and the package store build against the same R/Python.
+[`.github/workflows/sandbox-images-build.yml`](../../.github/workflows/sandbox-images-build.yml)
+builds and pushes this image and the provisioner to GHCR.
+[`../../scripts/sandbox-images-build-local.sh`](../../scripts/sandbox-images-build-local.sh)
+reproduces the pair locally.
 
 ## Contributing
 
@@ -125,6 +138,6 @@ and pushes this image (and the two that layer on it) to GHCR on every change to
 - **provenance/** — the LD_PRELOAD shim is compiled with
   `gcc -shared -fPIC -O2 -pthread -o provtrack.so provtrack.c -ldl`; the Python and
   R hooks load via `sitecustomize.py` and `R_PROFILE` respectively.
-- **Runtime R/Python packages do NOT belong in the Dockerfile.** They live in the
-  external lib store mounted read-only at `/mnt/libs`; keep the image to system
-  libraries and tooling only.
+- **Runtime R/Python packages do NOT belong in the Dockerfile.** They live in
+  the package store mounted read-only at `/mnt/libs`. Keep the image to the
+  system libraries, the two image-owned tracks, and the tooling.

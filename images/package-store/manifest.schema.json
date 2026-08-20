@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inflexa.ai/schemas/package-store-manifest.json",
+  "title": "package-store manifest",
+  "description": "The intent layer of the package-store build. An entry is a bare name with an optional inline pin, or an object with a name and its reason. A new entry takes the object form.",
+  "type": "object",
+  "required": ["base_image", "python", "r"],
+  "properties": {
+    "base_image": {
+      "type": "string",
+      "description": "The digest-pinned base image. The provisioner build asserts its own base against this value."
+    },
+    "r_version": { "type": "string" },
+    "python_version": { "type": "string" },
+    "python": {
+      "type": "object",
+      "required": ["pip"],
+      "properties": {
+        "pip": {
+          "type": "object",
+          "required": ["common"],
+          "properties": {
+            "common": { "$ref": "#/$defs/entryList" },
+            "amd64": { "$ref": "#/$defs/entryList" },
+            "arm64": { "$ref": "#/$defs/entryList" }
+          }
+        }
+      }
+    },
+    "r": {
+      "type": "object",
+      "properties": {
+        "cran": { "$ref": "#/$defs/entryList" },
+        "bioconductor": { "$ref": "#/$defs/entryList" },
+        "git": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["url", "commit"],
+            "properties": {
+              "url": { "type": "string" },
+              "commit": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "github": { "$ref": "#/$defs/entryList" }
+      }
+    },
+    "node": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "system_tools": {
+      "type": "object",
+      "required": ["common"],
+      "properties": {
+        "common": { "type": "array", "items": { "type": "string" } },
+        "amd64": { "type": "array", "items": { "type": "string" } },
+        "arm64": { "type": "array", "items": { "type": "string" } },
+        "binaries": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Manifest entry name to the executable name it installs, where the two differ."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "entryList": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "A bare name, with an optional inline constraint. The legacy form — a new entry takes the object form."
+          },
+          {
+            "type": "object",
+            "required": ["name", "reason"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "version": {
+                "type": "string",
+                "description": "One version constraint, in the syntax of the entry's resolver."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Why the catalog carries the package. Mandatory on the object form."
+              },
+              "warm": {
+                "type": "string",
+                "description": "The per-package warm script, relative to this manifest."
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
