@@ -27,6 +27,8 @@ export type AnswerOutcome = "applied" | "not_found" | "already_terminal";
 export interface PendingAsk {
     readonly id: string;
     readonly analysisId: string;
+    /** The person the ask went to, thus a host can route it to that person. */
+    readonly userId: string;
     readonly threadId: string | null;
     readonly title: string;
     readonly command: string;
@@ -44,6 +46,8 @@ export interface AskResolution {
 export interface AskRow {
     readonly id: string;
     readonly analysisId: string;
+    /** The person the ask goes to. An `always` keys its standing grant on this. */
+    readonly userId: string;
     readonly threadId: string | null;
     readonly title: string;
     readonly command: string;
@@ -58,9 +62,9 @@ export function insertPendingAsk(querier: Querier, row: AskRow): ResultAsync<voi
     return tryMutation("asks.insertPending", async () => {
         await querier.query({
             text: `INSERT INTO cortex_asks
-              (id, analysis_id, thread_id, title, command, detail, grant_key, status, created_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
-            values: [row.id, row.analysisId, row.threadId, row.title, row.command, row.detail, row.grantKey ?? row.command, row.createdAt],
+              (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, status, created_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)`,
+            values: [row.id, row.analysisId, row.userId, row.threadId, row.title, row.command, row.detail, row.grantKey ?? row.command, row.createdAt],
         });
     });
 }
@@ -74,11 +78,12 @@ export function insertGrantedAsk(querier: Querier, row: AskRow, resolvedAt: stri
     return tryMutation("asks.insertGranted", async () => {
         await querier.query({
             text: `INSERT INTO cortex_asks
-              (id, analysis_id, thread_id, title, command, detail, grant_key, status, reply, created_at, resolved_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, 'resolved', $8::jsonb, $9, $10)`,
+              (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, status, reply, created_at, resolved_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'resolved', $9::jsonb, $10, $11)`,
             values: [
                 row.id,
                 row.analysisId,
+                row.userId,
                 row.threadId,
                 row.title,
                 row.command,
@@ -92,12 +97,12 @@ export function insertGrantedAsk(querier: Querier, row: AskRow, resolvedAt: stri
     });
 }
 
-/** Does a standing grant cover `(analysisId, grantKey)` in this analysis? */
-export function selectGrant(querier: Querier, analysisId: string, grantKey: string): ResultAsync<boolean, DbError> {
+/** Does a standing grant cover `(analysisId, userId, grantKey)` for this person? */
+export function selectGrant(querier: Querier, analysisId: string, userId: string, grantKey: string): ResultAsync<boolean, DbError> {
     return tryQuery("asks.selectGrant", async () => {
         const result = await querier.query({
-            text: `SELECT 1 FROM cortex_ask_grants WHERE analysis_id = $1 AND grant_key = $2`,
-            values: [analysisId, grantKey],
+            text: `SELECT 1 FROM cortex_ask_grants WHERE analysis_id = $1 AND user_id = $2 AND grant_key = $3`,
+            values: [analysisId, userId, grantKey],
         });
         return (result.rowCount ?? 0) > 0;
     });
@@ -133,12 +138,13 @@ export function markAborted(querier: Querier, id: string, resolvedAt: string): R
 export function selectPending(querier: Querier): ResultAsync<PendingAsk[], DbError> {
     return tryQuery("asks.selectPending", async () => {
         const result = await querier.query({
-            text: `SELECT id, analysis_id, thread_id, title, command, detail, created_at
+            text: `SELECT id, analysis_id, COALESCE(user_id, '') AS user_id, thread_id, title, command, detail, created_at
               FROM cortex_asks WHERE status = 'pending' ORDER BY created_at ASC`,
         });
         return result.rows.map((row: Record<string, unknown>) => ({
             id: row.id as string,
             analysisId: row.analysis_id as string,
+            userId: row.user_id as string,
             threadId: (row.thread_id as string | null) ?? null,
             title: row.title as string,
             command: row.command as string,
@@ -184,7 +190,7 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
             client.query({
                 text: `UPDATE cortex_asks SET status = $1, reply = $2::jsonb, resolved_at = $3
                   WHERE id = $4 AND status = 'pending'
-                  RETURNING analysis_id, COALESCE(grant_key, command) AS grant_key`,
+                  RETURNING analysis_id, COALESCE(user_id, '') AS user_id, COALESCE(grant_key, command) AS grant_key`,
                 values: [status, JSON.stringify(reply), now, id],
             }),
         ).andThen((updated) => {
@@ -194,12 +200,16 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
             // caveat: every insert writes grant_key (command when the tool supplied
             // none), and the COALESCE above covers any pending row that predates
             // the column — `command` is NOT NULL, so the key can never be null.
-            const granted = updated.rows[0] as { analysis_id: string; grant_key: string };
+            // `user_id` reads the same way, and its COALESCE gives the empty string
+            // for a row that predates that column. Such a row is an orphan of a dead
+            // process, and the empty identity matches no real person, thus the grant
+            // it would write can never short-circuit a live ask.
+            const granted = updated.rows[0] as { analysis_id: string; user_id: string; grant_key: string };
             return tryMutation("asks.answer:grant", async () => {
                 await client.query({
-                    text: `INSERT INTO cortex_ask_grants (analysis_id, grant_key, created_at)
-                      VALUES ($1, $2, $3) ON CONFLICT (analysis_id, grant_key) DO NOTHING`,
-                    values: [granted.analysis_id, granted.grant_key, now],
+                    text: `INSERT INTO cortex_ask_grants (analysis_id, user_id, grant_key, created_at)
+                      VALUES ($1, $2, $3, $4) ON CONFLICT (analysis_id, user_id, grant_key) DO NOTHING`,
+                    values: [granted.analysis_id, granted.user_id, granted.grant_key, now],
                 });
             }).map<AnswerOutcome>(() => "applied");
         }),

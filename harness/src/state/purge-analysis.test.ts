@@ -154,12 +154,12 @@ describe("createAnalysisPurge", () => {
             values: [`plan-${analysisId}`, analysisId, now],
         });
         await rig.pool.query({
-            text: `INSERT INTO cortex_asks (id, analysis_id, title, command, grant_key, status, created_at)
-                   VALUES ($1, $2, 'run it', 'Rscript go.R', 'Rscript go.R', 'resolved', $3)`,
+            text: `INSERT INTO cortex_asks (id, analysis_id, user_id, title, command, grant_key, status, created_at)
+                   VALUES ($1, $2, 'user-1', 'run it', 'Rscript go.R', 'Rscript go.R', 'resolved', $3)`,
             values: [`ask-${analysisId}`, analysisId, now],
         });
         await rig.pool.query({
-            text: `INSERT INTO cortex_ask_grants (analysis_id, grant_key, created_at) VALUES ($1, 'Rscript go.R', $2)`,
+            text: `INSERT INTO cortex_ask_grants (analysis_id, user_id, grant_key, created_at) VALUES ($1, 'user-1', 'Rscript go.R', $2)`,
             values: [analysisId, now],
         });
 
