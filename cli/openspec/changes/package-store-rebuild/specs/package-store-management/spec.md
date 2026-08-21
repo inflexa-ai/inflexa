@@ -45,13 +45,18 @@ stops with an ask to the user.
 ### Requirement: Approved packages batch through the pending set
 
 An approved `store add` MUST enqueue into a host-side pending set, not start
-its own provisioner run. The flight MUST launch when the ask stack empties
-and no further ask arrives within a short grace, or on an explicit flush.
-The grace exists because the agent formulates the next ask between two
-approvals, and a flush in that gap would split one batch. One one-shot
-provisioner run MUST resolve the whole approved set. A direct terminal `store add` with an empty
-pending set flushes at once. One flight exists per normalized spec, and the
-flight concurrency cap stays configurable.
+its own provisioner run. The pending set MUST persist in the primary
+database, thus a crash loses no approved entry. The flight MUST launch when
+the agent turn ends, or on an explicit flush. The turn end is the true end
+of the asks: an approved add only enqueues, and no ask comes after the turn.
+A mid-turn grace timer is rejected. The formulation time of the agent has
+no bound, thus a timer would split one batch.
+
+One one-shot provisioner run MUST resolve the whole approved set. A direct
+terminal `store add` flushes the whole set at once. A flush can claim the
+entries that another live turn queued, and that split is accepted: each
+spec still reports through its own flight. One flight exists per normalized
+spec, and the flight concurrency cap stays configurable.
 
 #### Scenario: Three approvals share one run
 

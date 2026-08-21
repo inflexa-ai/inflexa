@@ -170,6 +170,14 @@ refusal, and the rest retries as one batch. No long-lived provisioner exists,
 because a daemon buys only the container start time. The CLI surface stays
 one package per `store add` call — bulk is queue behavior, not syntax.
 
+The flush grill (round 13) confirmed the trigger. An approved add only
+enqueues, thus the ask tool returns fast and no ask comes after the turn.
+A mid-turn grace timer is rejected, because the formulation time of the
+agent has no bound and a timer would split one batch. The set persists in
+the primary database, and a crash loses no entry. The queue drains at the
+next turn end or at a terminal add — no boot drain exists. A flush can
+claim the entries of another live turn, and that split is accepted.
+
 ## The vocabulary of the rebuild
 
 - **package store** — the host directory with the pool, the farms, and the
@@ -213,7 +221,8 @@ The two OpenSpec changes carry the later decisions, and the grill documents
 - `store reclaim` is `approval`. The command noun stays `inflexa sandbox`.
 - The image downloads are detached transfers everywhere, and no foreground
   pull exists. "Variant" leaves the vocabulary — the two images are roles.
-- The pending set flushes when the ask stack empties, with a short grace.
+- The pending set flushes at the end of the agent turn, or on an explicit
+  flush. Round 13 rejected the earlier short-grace idea — refer to decision 16.
 - A failed transfer row stays visible, with a push-to-retry and a palette
   entry. The answers-file form is `sandbox: true`.
 - The per-analysis cache design is confirmed: seed at farm creation, a
