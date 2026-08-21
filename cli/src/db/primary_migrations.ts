@@ -172,6 +172,123 @@ export const migrations: Migration[] = [
             CREATE INDEX idx_llm_usage_scope ON llm_usage(scope_kind, scope_id);
         `,
     },
+    {
+        // The detached transfer lifecycle of the package store: the runtime image, the
+        // provisioner image, and the catalog. One row per kind, and the KIND is the id —
+        // one transfer of a kind runs at a time, and "the transfer of that kind" is the
+        // whole identity of the row, so a minted id beside it would make two things that
+        // must agree about which row is current (the argument `llm_usage` makes for
+        // `record_key`).
+        //
+        // `state` names the whole lifecycle. `declined` records a setup answer of no,
+        // which starts no child; `canceled` records a transfer the user stopped. The
+        // difference is load-bearing: only the second has a partial tree to drop.
+        //
+        // The byte and layer totals are nullable, and absent stays distinguishable from
+        // zero: an image pull through the engine reports no byte total, and a catalog
+        // transfer reports exact ones the moment its manifest resolves. `digest` records
+        // what the last resolve saw (a manifest digest for the catalog, an image digest
+        // for an image), which is how a reader learns of an update without the network.
+        //
+        // `holder_pid` names the child while one runs. Liveness does NOT come from this
+        // column: the child holds an instance lock for its whole life, and a `running`
+        // row with no live lock holder reads as `failed` (see modules/libs/transfers.ts).
+        version: 4,
+        up: `
+            CREATE TABLE transfers (
+                id TEXT PRIMARY KEY CHECK (id IN ('runtime_image', 'provisioner_image', 'catalog')),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('pending', 'running', 'installed', 'failed', 'declined', 'canceled')),
+                bytes_transferred INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER,
+                layers_completed INTEGER NOT NULL DEFAULT 0,
+                total_layers INTEGER,
+                digest TEXT,
+                message TEXT,
+                holder_pid INTEGER
+            );
+        `,
+    },
+    {
+        // The acquisition flights of `inflexa store add`: one row for each live flight.
+        // A flight is the work of acquiring ONE normalized spec into the pool, and a
+        // second request for that spec subscribes to the flight rather than starting a
+        // second provisioner run.
+        //
+        // `id` IS the flight key — the ecosystem, the PEP 503 canonical name, and the
+        // specifier, joined. The key is the whole identity of the flight, and a
+        // single-column key lets the subscription table carry one foreign key. The three
+        // parts ride their own columns as well, because a reader renders the spec.
+        //
+        // ONLY the two live states are permitted. A finished flight is not a cache: the
+        // owner REMOVES the row when the flight ends, thus a failed acquisition leaves
+        // nothing that would dedup the next request for the same spec. The CHECK is what
+        // makes the reader's cast of the column sound.
+        //
+        // `holder_pid` is NOT NULL, because a row exists only while a process owns the
+        // flight. That pid is the liveness signal: a row whose holder is dead is debris
+        // from a killed process, and the next request sweeps it. A flight key is minted
+        // at runtime, thus a lock file for each key would carry no more truth than this
+        // column.
+        //
+        // A subscription is a reference row, not an entity, thus it carries no identity
+        // triple — the same exception `analysis_inputs` takes. `analysis_id` is
+        // nullable, because a plain `inflexa store add` in a terminal belongs to no
+        // analysis and has no farm to extend. SQLite treats each NULL as distinct in a
+        // UNIQUE constraint, so a partial index pair covers the two cases.
+        version: 5,
+        up: `
+            CREATE TABLE package_store_flights (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('queued', 'running')),
+                ecosystem TEXT CHECK (ecosystem IN ('python', 'r') OR ecosystem IS NULL),
+                name TEXT NOT NULL,
+                specifier TEXT NOT NULL,
+                progress TEXT,
+                holder_pid INTEGER NOT NULL
+            );
+            CREATE TABLE package_store_flight_subscriptions (
+                flight_id TEXT NOT NULL REFERENCES package_store_flights(id) ON DELETE CASCADE,
+                analysis_id TEXT REFERENCES analyses(id) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_ps_flight_subs_flight ON package_store_flight_subscriptions(flight_id);
+            CREATE UNIQUE INDEX uq_ps_flight_subs_analysis
+                ON package_store_flight_subscriptions(flight_id, analysis_id)
+                WHERE analysis_id IS NOT NULL;
+            CREATE UNIQUE INDEX uq_ps_flight_subs_host
+                ON package_store_flight_subscriptions(flight_id)
+                WHERE analysis_id IS NULL;
+        `,
+    },
+    {
+        // The pending set of `inflexa store add`. An approved add ENQUEUES here and
+        // starts no provisioner run of its own: the flush takes the whole set into one
+        // one-shot acquire run when the asks of the agent turn settle, or at once for a
+        // direct terminal add. The set is host state in the database, because each
+        // approved add runs as its own short-lived process (the run-inflexa subprocess)
+        // and an in-memory set would not survive it.
+        //
+        // `ecosystem` is nullable: an unqualified name searches both ecosystems inside
+        // the acquire run, and a name that both satisfy stops with the both-hit ask.
+        //
+        // `analysis_id` names the farm the add extends after the commit, and it clears
+        // when the analysis leaves: the acquisition into the POOL stays worth keeping,
+        // and only the farm work loses its target.
+        version: 6,
+        up: `
+            CREATE TABLE pending_store_adds (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                specifier TEXT NOT NULL,
+                ecosystem TEXT CHECK (ecosystem IN ('python', 'r') OR ecosystem IS NULL),
+                analysis_id TEXT REFERENCES analyses(id) ON DELETE SET NULL
+            );
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

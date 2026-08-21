@@ -82,7 +82,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -117,8 +117,11 @@ describe("runMigrations", () => {
             "idx_analyses_project",
             "idx_analysis_inputs_analysis",
             "idx_llm_usage_scope",
+            "idx_ps_flight_subs_flight",
             "uq_analysis_inputs_anchored",
             "uq_analysis_inputs_unanchored",
+            "uq_ps_flight_subs_analysis",
+            "uq_ps_flight_subs_host",
         ]);
         // Redundant against the set equality above, but names the chat indexes so a regression that
         // re-created one reads as exactly that rather than as an anonymous set mismatch.
@@ -194,7 +197,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {

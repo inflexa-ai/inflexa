@@ -2,6 +2,7 @@ import { randomUUIDv7 } from "bun";
 import { sep } from "node:path";
 import type { Result } from "neverthrow";
 import { tryMutation, withTransaction } from "./util.ts";
+import type { TransferKind } from "../modules/libs/transfers.ts";
 import type { DbError } from "./errors.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
@@ -317,5 +318,307 @@ export function updateAnalysisProvenance(id: string, provenance: string, chainHa
                  WHERE id = ?`,
             )
             .run(provenance, chainHash, signature, id).changes;
+    });
+}
+
+// --- Data model: the package-store transfers ---
+
+/**
+ * Begin a transfer run of one kind: reset every counter and write the starting state.
+ *
+ * Every counter resets here, because a run always begins with nothing transferred and the totals stay
+ * absent until the resolve. This is the write that leaves a terminal state: `failed`, `declined`, and
+ * `canceled` all move to `pending` through it, which is the retry the lifecycle permits.
+ *
+ * An upsert, because the very first run on a machine has no row and a retry rewrites the row it has.
+ */
+export function startTransferRun(kind: TransferKind, params: { state: "pending" | "running"; holderPid: number | null }): Result<void, DbError> {
+    const now = Date.now();
+    return tryMutation("startTransferRun", (conn) => {
+        conn.query(
+            `INSERT INTO transfers (
+                 id, created_at, updated_at, state, bytes_transferred, total_bytes,
+                 layers_completed, total_layers, digest, message, holder_pid
+             )
+             VALUES (?, ?, ?, ?, 0, NULL, 0, NULL, NULL, NULL, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                 updated_at = excluded.updated_at,
+                 state = excluded.state,
+                 bytes_transferred = 0,
+                 total_bytes = NULL,
+                 layers_completed = 0,
+                 total_layers = NULL,
+                 digest = NULL,
+                 message = NULL,
+                 holder_pid = excluded.holder_pid`,
+        ).run(kind, now, now, params.state, params.holderPid);
+    });
+}
+
+/**
+ * Record what the resolve of a transfer declares: its digest, and the exact totals when the source
+ * states them.
+ *
+ * Written ONE time for each run, at the moment the source resolves. A catalog manifest declares the
+ * size of every layer before the first byte arrives, so neither total is an estimate. An image pull
+ * declares no byte total, and the two totals then stay NULL.
+ *
+ * A pure UPDATE, never an insert. A resolve that finds the machine up to date must not mint a row for
+ * a kind that no transfer ever ran — such a kind reports "no transfer ran", which is the truth.
+ * Returns rows changed: `0` when there is no row to annotate.
+ */
+export function recordTransferResolve(
+    kind: TransferKind,
+    params: { digest: string; totalBytes: number | null; totalLayers: number | null },
+): Result<number, DbError> {
+    return tryMutation("recordTransferResolve", (conn) => {
+        return conn
+            .query("UPDATE transfers SET updated_at = ?, total_bytes = ?, total_layers = ?, digest = ? WHERE id = ?")
+            .run(Date.now(), params.totalBytes, params.totalLayers, params.digest, kind).changes;
+    });
+}
+
+/** Record how far the live transfer has moved. Returns rows changed — `0` when no run holds the row. */
+export function recordTransferProgress(kind: TransferKind, params: { bytesTransferred: number; layersCompleted: number }): Result<number, DbError> {
+    return tryMutation("recordTransferProgress", (conn) => {
+        return conn
+            .query("UPDATE transfers SET updated_at = ?, bytes_transferred = ?, layers_completed = ? WHERE id = ?")
+            .run(Date.now(), params.bytesTransferred, params.layersCompleted, kind).changes;
+    });
+}
+
+/**
+ * Settle a transfer in a terminal state, and release the holder.
+ *
+ * `holder_pid` clears here because the child is over in every one of the four cases, and a stale pid
+ * would name a process that a later cancel must not signal.
+ *
+ * An upsert, because `declined` records a setup answer of no on a machine that has no row yet.
+ */
+export function settleTransfer(
+    kind: TransferKind,
+    params: { state: "installed" | "failed" | "declined" | "canceled"; message: string | null },
+): Result<void, DbError> {
+    const now = Date.now();
+    return tryMutation("settleTransfer", (conn) => {
+        conn.query(
+            `INSERT INTO transfers (
+                 id, created_at, updated_at, state, bytes_transferred, total_bytes,
+                 layers_completed, total_layers, digest, message, holder_pid
+             )
+             VALUES (?, ?, ?, ?, 0, NULL, 0, NULL, NULL, ?, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                 updated_at = excluded.updated_at,
+                 state = excluded.state,
+                 message = excluded.message,
+                 holder_pid = NULL`,
+        ).run(kind, now, now, params.state, params.message);
+    });
+}
+
+// --- Data model: the package-store acquisition flights ---
+
+/**
+ * Claim the flight for one normalized spec, and report whether this process owns it.
+ *
+ * The insert IS the single-flight decision. `ON CONFLICT DO NOTHING` over the primary key makes it one
+ * atomic statement, thus two processes — and two calls inside one process — cannot both own the flight
+ * for a key. `true` means "this call owns the flight and must run the work"; `false` means "a flight is
+ * already live, thus subscribe to it".
+ *
+ * The row starts `queued`, never `running`: a slot under the concurrency cap is a second decision, and
+ * {@link promoteStoreFlight} makes it.
+ */
+export function claimStoreFlight(params: {
+    id: string;
+    ecosystem: "python" | "r" | null;
+    name: string;
+    specifier: string;
+    holderPid: number;
+}): Result<boolean, DbError> {
+    const now = Date.now();
+    return tryMutation("claimStoreFlight", (conn) => {
+        return (
+            conn
+                .query(
+                    `INSERT INTO package_store_flights (
+                     id, created_at, updated_at, state, ecosystem, name, specifier, progress, holder_pid
+                 )
+                 VALUES (?, ?, ?, 'queued', ?, ?, ?, NULL, ?)
+                 ON CONFLICT(id) DO NOTHING`,
+                )
+                .run(params.id, now, now, params.ecosystem, params.name, params.specifier, params.holderPid).changes === 1
+        );
+    });
+}
+
+/**
+ * Move a queued flight to `running`, but only while fewer than `cap` flights already run.
+ *
+ * The cap lives in the WHERE clause rather than in a read-then-decide pair, because two owners that each
+ * read the count and then wrote would both pass a cap of one. One statement is one write transaction, so
+ * the count and the promotion cannot straddle another writer. Returns rows changed: `0` means that every
+ * slot is taken, thus the caller waits and asks again.
+ */
+export function promoteStoreFlight(params: { id: string; cap: number }): Result<number, DbError> {
+    return tryMutation("promoteStoreFlight", (conn) => {
+        return conn
+            .query(
+                `UPDATE package_store_flights SET updated_at = ?, state = 'running'
+                 WHERE id = ? AND state = 'queued'
+                   AND (SELECT COUNT(*) FROM package_store_flights WHERE state = 'running') < ?`,
+            )
+            .run(Date.now(), params.id, params.cap).changes;
+    });
+}
+
+/** Record the newest provisioner line of a live flight, so a subscriber reports the same progress. Returns rows changed. */
+export function recordStoreFlightProgress(params: { id: string; progress: string }): Result<number, DbError> {
+    return tryMutation("recordStoreFlightProgress", (conn) => {
+        return conn.query("UPDATE package_store_flights SET updated_at = ?, progress = ? WHERE id = ?").run(Date.now(), params.progress, params.id).changes;
+    });
+}
+
+/**
+ * Remove a flight row, with its subscriptions.
+ *
+ * This is how a flight ends, in every outcome. A finished flight is not a cache: a row that survived a
+ * failure would dedup the next request for the same spec against work that never landed. The
+ * subscriptions go with it through the cascade. It is also the sweep of debris that a killed owner left.
+ */
+export function deleteStoreFlight(id: string): Result<number, DbError> {
+    return tryMutation("deleteStoreFlight", (conn) => {
+        return conn.query("DELETE FROM package_store_flights WHERE id = ?").run(id).changes;
+    });
+}
+
+/**
+ * Subscribe an analysis to a live flight, or record the terminal subscription that belongs to no analysis.
+ *
+ * `analysisId` of `null` is the plain `inflexa store add` in a terminal: it keeps the flight alive and it
+ * has no farm to extend. A second subscription of the same subscriber is a no-op, because a request that
+ * repeats must not make the flight outlive one cancel for each repeat.
+ */
+export function subscribeStoreFlight(params: { flightId: string; analysisId: string | null }): Result<number, DbError> {
+    return tryMutation("subscribeStoreFlight", (conn) => {
+        return conn
+            .query("INSERT OR IGNORE INTO package_store_flight_subscriptions (flight_id, analysis_id) VALUES (?, ?)")
+            .run(params.flightId, params.analysisId).changes;
+    });
+}
+
+/**
+ * Remove one subscription. Returns rows changed: `0` when that subscriber was not subscribed.
+ *
+ * A cancel removes one subscription and never the flight. The flight stops when the count reaches zero,
+ * and its owner is what reads that count — refer to `countStoreFlightSubscribers`.
+ *
+ * The two branches are one statement each rather than `analysis_id IS ?`, because SQLite compares a bound
+ * NULL with `=` as unknown, thus the terminal subscription would never match.
+ */
+export function unsubscribeStoreFlight(params: { flightId: string; analysisId: string | null }): Result<number, DbError> {
+    return tryMutation("unsubscribeStoreFlight", (conn) => {
+        return params.analysisId === null
+            ? conn.query("DELETE FROM package_store_flight_subscriptions WHERE flight_id = ? AND analysis_id IS NULL").run(params.flightId).changes
+            : conn.query("DELETE FROM package_store_flight_subscriptions WHERE flight_id = ? AND analysis_id = ?").run(params.flightId, params.analysisId)
+                  .changes;
+    });
+}
+
+// --- Data model: the pending set of `inflexa store add` ---
+
+/**
+ * Enqueue one approved add into the pending set.
+ *
+ * A repeat of one spec for one analysis stays one entry: the flush deduplicates by the flight key
+ * anyway, and the queue is a readout the surfaces render, thus a doubled line would only mislead.
+ * The dedup rides in the WHERE of the insert rather than a UNIQUE constraint, because `analysis_id`
+ * is nullable and the pair of partial indexes would outweigh a queue this small.
+ */
+export function enqueuePendingStoreAdd(params: {
+    name: string;
+    specifier: string;
+    ecosystem: "python" | "r" | null;
+    analysisId: string | null;
+}): Result<void, DbError> {
+    const now = Date.now();
+    return tryMutation("enqueuePendingStoreAdd", (conn) => {
+        const dup = (
+            params.analysisId === null
+                ? conn
+                      .query("SELECT COUNT(*) AS n FROM pending_store_adds WHERE name = ? AND specifier = ? AND ecosystem IS ? AND analysis_id IS NULL")
+                      .get(params.name, params.specifier, params.ecosystem)
+                : conn
+                      .query("SELECT COUNT(*) AS n FROM pending_store_adds WHERE name = ? AND specifier = ? AND ecosystem IS ? AND analysis_id = ?")
+                      .get(params.name, params.specifier, params.ecosystem, params.analysisId)
+        ) as { n: number } | null;
+        if ((dup?.n ?? 0) > 0) return;
+        conn.query("INSERT INTO pending_store_adds (id, created_at, name, specifier, ecosystem, analysis_id) VALUES (?, ?, ?, ?, ?, ?)").run(
+            randomUUIDv7(),
+            now,
+            params.name,
+            params.specifier,
+            params.ecosystem,
+            params.analysisId,
+        );
+    });
+}
+
+/**
+ * Take the whole pending set, atomically: read every entry and delete them in one transaction.
+ *
+ * The claim is what makes two flushers safe: the second one reads an empty set and runs nothing. An
+ * entry that arrives after the claim belongs to the next flush, which is exactly the batch boundary
+ * the grace protects.
+ */
+export function claimPendingStoreAdds(): Result<
+    { id: string; createdAt: number; name: string; specifier: string; ecosystem: "python" | "r" | null; analysisId: string | null }[],
+    DbError
+> {
+    return tryMutation("claimPendingStoreAdds", (conn) => {
+        const take = conn.transaction(() => {
+            const rows = conn.query("SELECT id, created_at, name, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id").all() as {
+                id: string;
+                created_at: number;
+                name: string;
+                specifier: string;
+                ecosystem: "python" | "r" | null;
+                analysis_id: string | null;
+            }[];
+            conn.query("DELETE FROM pending_store_adds").run();
+            return rows;
+        });
+        return take().map((r) => ({
+            id: r.id,
+            createdAt: r.created_at,
+            name: r.name,
+            specifier: r.specifier,
+            ecosystem: r.ecosystem,
+            analysisId: r.analysis_id,
+        }));
+    });
+}
+
+/**
+ * Move a whole batch of queued flights to `running`, but only while the count of OTHER live acquire
+ * runs stays under `cap`.
+ *
+ * The cap bounds concurrent provisioner RUNS, not rows: one flush promotes its whole batch as one
+ * run. The distinct holder pids of the running rows count the runs, and the batch's own pid is
+ * excluded so a retry of a half-promoted batch cannot block itself. One statement, so the count and
+ * the promotion cannot straddle another writer. Returns rows changed: fewer than the batch size
+ * means that every slot is taken, and the caller waits and asks again.
+ */
+export function promoteStoreFlightBatch(params: { ids: readonly string[]; holderPid: number; cap: number }): Result<number, DbError> {
+    return tryMutation("promoteStoreFlightBatch", (conn) => {
+        if (params.ids.length === 0) return 0;
+        const marks = params.ids.map(() => "?").join(", ");
+        return conn
+            .query(
+                `UPDATE package_store_flights SET updated_at = ?, state = 'running'
+                 WHERE id IN (${marks}) AND state = 'queued'
+                   AND (SELECT COUNT(DISTINCT holder_pid) FROM package_store_flights WHERE state = 'running' AND holder_pid != ?) < ?`,
+            )
+            .run(Date.now(), ...params.ids, params.holderPid, params.cap).changes;
     });
 }

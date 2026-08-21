@@ -57,6 +57,16 @@ const configSchema = z.object({
     //
     // `unknown` (never `any`) forces the owner to parse before use; and the key MUST be declared, because
     // zod strips unrecognized keys — without this line `readConfig().harness` would always be undefined.
+    // The package-store knobs. Typed inline (unlike `harness`) because the CLI owns
+    // this block whole and one field cannot fail siblings: `.catch` on the block
+    // falls back to "no override", which is the safe default for a tuning knob.
+    store: z
+        .object({
+            /** How many acquisition flights run at one time. */
+            flightConcurrency: z.number().int().min(1).max(8).optional(),
+        })
+        .optional()
+        .catch(undefined),
     harness: z.unknown().optional(),
     // The model connection block — the user-owned chat backend (see {@link modelsConfigSchema}).
     // Declared `unknown` and validated downstream by `resolveModelConnection` (modules/harness/config.ts)

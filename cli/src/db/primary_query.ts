@@ -12,6 +12,8 @@ import { type Result } from "neverthrow";
 // is dependency-free by construction, so this import costs nothing measurable. The barrel re-exports
 // the same constant; that export is the contract, this is the access path.
 import { DATA_PROFILE_RUN_LITERAL } from "@inflexa-ai/harness/contracts/data-profile.js";
+import type { StoreEcosystem, StoreFlightRow, StoreFlightStatus } from "../modules/libs/store_flight.ts";
+import type { TransferKind, TransferRow, TransferStatus } from "../modules/libs/transfers.ts";
 import type { DbError } from "./errors.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
@@ -741,5 +743,223 @@ export function listSessionUsageByAgent(analysisId: string, threadId: string): R
             )
             .all(ANALYSIS_SCOPE, analysisId, threadId) as (LlmUsageTotalsRow & { agent_id: string })[];
         return rows.map((r) => ({ agentId: r.agent_id, totals: llmUsageTotalsFromRow(r) }));
+    });
+}
+
+// --- Data model: the package-store transfers ---
+
+/**
+ * The columns of `transfers`, in the house order: identity, then core data. The table has no foreign
+ * key, and the id IS the transfer kind — one row per kind.
+ */
+const TRANSFER_COLS = "id, created_at, updated_at, state, bytes_transferred, total_bytes, layers_completed, total_layers, digest, message, holder_pid";
+
+/** A row of the columnar `transfers` table — one typed column per field, so a reader filters on the state in SQL. */
+type TransferDbRow = {
+    id: string;
+    created_at: number;
+    updated_at: number;
+    state: string;
+    bytes_transferred: number;
+    total_bytes: number | null;
+    layers_completed: number;
+    total_layers: number | null;
+    digest: string | null;
+    message: string | null;
+    holder_pid: number | null;
+};
+
+function transferFromRow(r: TransferDbRow): TransferRow {
+    return {
+        // Each of the two cast columns carries a CHECK constraint that names exactly the members of its
+        // union, thus SQLite refuses any other value and neither cast can widen.
+        id: r.id as TransferKind,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        state: r.state as TransferStatus,
+        bytesTransferred: r.bytes_transferred,
+        totalBytes: r.total_bytes,
+        layersCompleted: r.layers_completed,
+        totalLayers: r.total_layers,
+        digest: r.digest,
+        message: r.message,
+        holderPid: r.holder_pid,
+    };
+}
+
+/**
+ * The transfer row of one kind, or `null` when no transfer of that kind ever ran on this machine.
+ *
+ * Absence rides the ok channel, never the error channel: an image or a store can arrive by a route
+ * that wrote no row, and such a machine is completely usable. The read takes no lock — the database
+ * runs in WAL mode, thus this never blocks the live child.
+ */
+export function getTransfer(kind: TransferKind): Result<TransferRow | null, DbError> {
+    return tryQuery("getTransfer", (conn) => {
+        const row = conn.query(`SELECT ${TRANSFER_COLS} FROM transfers WHERE id = ?`).get(kind) as TransferDbRow | null;
+        return row ? transferFromRow(row) : null;
+    });
+}
+
+/** Every transfer row, in the fixed kind order. A kind with no row is simply absent. */
+export function listTransfers(): Result<TransferRow[], DbError> {
+    return tryQuery("listTransfers", (conn) => {
+        const rows = conn.query(`SELECT ${TRANSFER_COLS} FROM transfers ORDER BY id`).all() as TransferDbRow[];
+        return rows.map(transferFromRow);
+    });
+}
+
+// --- Data model: the package-store acquisition flights ---
+
+/** The columns of `package_store_flights`, in the house order: identity, then core data. The table has no foreign key. */
+const STORE_FLIGHT_COLS = "id, created_at, updated_at, state, ecosystem, name, specifier, progress, holder_pid";
+
+/** A row of the columnar `package_store_flights` table — one typed column for each field, so a reader filters on the state in SQL. */
+type StoreFlightDbRow = {
+    id: string;
+    created_at: number;
+    updated_at: number;
+    state: string;
+    ecosystem: string | null;
+    name: string;
+    specifier: string;
+    progress: string | null;
+    holder_pid: number;
+};
+
+function storeFlightFromRow(r: StoreFlightDbRow): StoreFlightRow {
+    return {
+        id: r.id,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        // Each of the two columns carries a CHECK constraint that names exactly the members of its union,
+        // thus SQLite refuses any other value and neither cast can widen.
+        state: r.state as StoreFlightStatus,
+        ecosystem: r.ecosystem as StoreEcosystem | null,
+        name: r.name,
+        specifier: r.specifier,
+        progress: r.progress,
+        holderPid: r.holder_pid,
+    };
+}
+
+/** One flight row, or `null` when no process owns a flight for that key. Absence rides the ok channel, because no flight is a normal state. */
+export function getStoreFlight(id: string): Result<StoreFlightRow | null, DbError> {
+    return tryQuery("getStoreFlight", (conn) => {
+        const row = conn.query(`SELECT ${STORE_FLIGHT_COLS} FROM package_store_flights WHERE id = ?`).get(id) as StoreFlightDbRow | null;
+        return row ? storeFlightFromRow(row) : null;
+    });
+}
+
+/** One flight row joined to one subscription of it, so the whole readout comes from a single query. */
+type StoreFlightWithSubscriberRow = StoreFlightDbRow & { analysis_id: string | null };
+
+/**
+ * Every flight row with the analyses subscribed to it, oldest flight first.
+ *
+ * ONE query with a LEFT JOIN, then a group in JS: the readout wants the two facts together, and a read
+ * of each flight and then of its subscriptions would be a round trip for each row. A LEFT JOIN keeps a
+ * flight whose only subscriber cancelled, which is exactly the state the owner is about to act on.
+ *
+ * A `null` analysis id is a subscription that belongs to no analysis — a plain `inflexa store add` in a
+ * terminal — and it is dropped from the named set rather than reported as an unnamed analysis.
+ */
+export function listStoreFlights(): Result<{ flight: StoreFlightRow; analysisIds: readonly string[] }[], DbError> {
+    return tryQuery("listStoreFlights", (conn) => {
+        const rows = conn
+            .query(
+                `SELECT ${STORE_FLIGHT_COLS.split(", ")
+                    .map((c) => `f.${c} AS ${c}`)
+                    .join(", ")}, s.analysis_id AS analysis_id
+                 FROM package_store_flights f
+                 LEFT JOIN package_store_flight_subscriptions s ON s.flight_id = f.id
+                 ORDER BY f.created_at, s.analysis_id`,
+            )
+            .all() as StoreFlightWithSubscriberRow[];
+        const grouped: { flight: StoreFlightRow; analysisIds: string[] }[] = [];
+        const byId = new Map<string, { flight: StoreFlightRow; analysisIds: string[] }>();
+        for (const row of rows) {
+            let entry = byId.get(row.id);
+            if (entry === undefined) {
+                entry = { flight: storeFlightFromRow(row), analysisIds: [] };
+                byId.set(row.id, entry);
+                grouped.push(entry);
+            }
+            if (row.analysis_id !== null) entry.analysisIds.push(row.analysis_id);
+        }
+        return grouped;
+    });
+}
+
+/** How many subscriptions a flight still carries. The owner stops the flight when this reaches zero. */
+export function countStoreFlightSubscribers(flightId: string): Result<number, DbError> {
+    return tryQuery("countStoreFlightSubscribers", (conn) => {
+        const row = conn.query("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions WHERE flight_id = ?").get(flightId) as { n: number } | null;
+        return row?.n ?? 0;
+    });
+}
+
+/**
+ * Whether one subscriber still holds a subscription to a flight.
+ *
+ * A subscriber that waits on somebody else's flight asks this: a cancel removed its own subscription
+ * while the flight goes on for another analysis, and only this answer separates that from the flight
+ * ending. The two branches are one statement each, because SQLite compares a bound NULL with `=` as
+ * unknown and the terminal subscription would never match.
+ */
+export function hasStoreFlightSubscriber(params: { flightId: string; analysisId: string | null }): Result<boolean, DbError> {
+    return tryQuery("hasStoreFlightSubscriber", (conn) => {
+        const row = (
+            params.analysisId === null
+                ? conn.query("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions WHERE flight_id = ? AND analysis_id IS NULL").get(params.flightId)
+                : conn
+                      .query("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions WHERE flight_id = ? AND analysis_id = ?")
+                      .get(params.flightId, params.analysisId)
+        ) as { n: number } | null;
+        return (row?.n ?? 0) > 0;
+    });
+}
+
+// --- Data model: the pending set of `inflexa store add` ---
+
+/** A row of the columnar `pending_store_adds` table. */
+type PendingStoreAddDbRow = {
+    id: string;
+    created_at: number;
+    name: string;
+    specifier: string;
+    ecosystem: string | null;
+    analysis_id: string | null;
+};
+
+/** One enqueued add of the pending set. */
+export type PendingStoreAdd = {
+    readonly id: string;
+    readonly createdAt: number;
+    /** The PEP 503 canonical distribution name. */
+    readonly name: string;
+    /** The exact-version specifier (`==<v>`), or an empty string for the newest. */
+    readonly specifier: string;
+    /** The ecosystem when the add named one, or `null` for a name the acquire run resolves. */
+    readonly ecosystem: StoreEcosystem | null;
+    /** The analysis whose farm the add extends after the commit, or `null` for a terminal add. */
+    readonly analysisId: string | null;
+};
+
+/** Every pending add, oldest first. The flush claims through the mutation layer, and this is the read the surfaces use. */
+export function listPendingStoreAdds(): Result<PendingStoreAdd[], DbError> {
+    return tryQuery("listPendingStoreAdds", (conn) => {
+        const rows = conn
+            .query("SELECT id, created_at, name, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id")
+            .all() as PendingStoreAddDbRow[];
+        return rows.map((r) => ({
+            id: r.id,
+            createdAt: r.created_at,
+            name: r.name,
+            specifier: r.specifier,
+            // The CHECK constraint names exactly the members of the union, thus the cast cannot widen.
+            ecosystem: r.ecosystem as StoreEcosystem | null,
+            analysisId: r.analysis_id,
+        }));
     });
 }
