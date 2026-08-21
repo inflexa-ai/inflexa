@@ -83,6 +83,6 @@ you read it. Do not cherry-pick a commit.
 
 ## 9. Sync
 
-- [ ] 9.1 Rename the spec folders (`lib-store` to `package-store`, `lib-store-build` to `package-store-build`) at sync
+- [x] 9.1 Rename the spec folders (`lib-store` to `package-store`, `lib-store-build` to `package-store-build`) at sync
 - [x] 9.2 Update the harness `CONTEXT.md` glossary with the package-store terms
-- [ ] 9.3 Record the two open decisions in the synced specs: the managed delivery, and the K8s node pin
+- [x] 9.3 Record the two open decisions in the synced specs: the managed delivery, and the K8s node pin
