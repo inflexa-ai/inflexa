@@ -1,0 +1,132 @@
+{
+    "by_name": {
+        "python": {
+            "airr-like": ["airr-like-2.0.0-00000000000ab002"],
+            "alpha": ["alpha-2.0.0-00000000000a2222", "alpha-1.2.0-000000000000aaaa"],
+            "beta": ["beta-0.4.1-000000000000bbbb"],
+            "delta": ["delta-0.9-000000000000dddd"],
+            "extradep": ["extradep-1.0.0-00000000000ex001"],
+            "gamma": ["gamma-3.0.0-000000000000cccc"],
+            "omega": ["omega-9.9-0000000000009999"],
+            "spectrum-like": ["spectrum-like-0.5.0-00000000000ab001"],
+            "typing-ext": ["typing-ext-4.9.0-00000000000eeeee"]
+        },
+        "r": {
+            "rpkga": ["rpkga-1.0-000000000000fff0"],
+            "rpkgb": ["rpkgb-2.1-000000000000fff1"]
+        }
+    },
+    "nodes": {
+        "airr-like-2.0.0-00000000000ab002": {
+            "edges": [],
+            "entry_points": [],
+            "imports": ["airrlike", "tests"],
+            "name": "airr-like",
+            "order": "0b",
+            "track": "python",
+            "version": "2.0.0"
+        },
+        "alpha-1.2.0-000000000000aaaa": {
+            "edges": [],
+            "entry_points": ["alpha-cli"],
+            "imports": ["alpha"],
+            "name": "alpha",
+            "order": "0b",
+            "track": "python",
+            "version": "1.2.0"
+        },
+        "alpha-2.0.0-00000000000a2222": {
+            "edges": [],
+            "entry_points": [],
+            "imports": ["alpha"],
+            "name": "alpha",
+            "order": "0a",
+            "track": "python",
+            "version": "2.0.0"
+        },
+        "beta-0.4.1-000000000000bbbb": {
+            "edges": ["alpha-1.2.0-000000000000aaaa"],
+            "entry_points": ["beta-run"],
+            "imports": ["beta", "nsroot"],
+            "name": "beta",
+            "order": "0b",
+            "track": "python",
+            "version": "0.4.1"
+        },
+        "delta-0.9-000000000000dddd": {
+            "edges": [],
+            "entry_points": [],
+            "imports": ["nsroot"],
+            "name": "delta",
+            "order": "0b",
+            "track": "python",
+            "version": "0.9"
+        },
+        "extradep-1.0.0-00000000000ex001": {
+            "edges": [],
+            "entry_points": [],
+            "imports": ["extradep"],
+            "name": "extradep",
+            "order": "0b",
+            "track": "python",
+            "version": "1.0.0"
+        },
+        "gamma-3.0.0-000000000000cccc": {
+            "edges": ["delta-0.9-000000000000dddd"],
+            "entry_points": [],
+            "imports": ["nsroot"],
+            "name": "gamma",
+            "order": "0b",
+            "track": "python",
+            "version": "3.0.0"
+        },
+        "omega-9.9-0000000000009999": {
+            "edges": [],
+            "entry_points": [],
+            "imports": ["omega"],
+            "name": "omega",
+            "order": "0b",
+            "track": "python",
+            "version": "9.9"
+        },
+        "rpkga-1.0-000000000000fff0": {
+            "edges": ["rpkgb-2.1-000000000000fff1"],
+            "entry_points": [],
+            "imports": ["Rpkga"],
+            "name": "rpkga",
+            "order": "0b",
+            "r_dir": "Rpkga",
+            "track": "r",
+            "version": "1.0"
+        },
+        "rpkgb-2.1-000000000000fff1": {
+            "edges": [],
+            "entry_points": [],
+            "imports": ["Rpkgb"],
+            "name": "rpkgb",
+            "order": "0b",
+            "r_dir": "Rpkgb",
+            "track": "r",
+            "version": "2.1"
+        },
+        "spectrum-like-0.5.0-00000000000ab001": {
+            "edges": [],
+            "entry_points": [],
+            "imports": ["speclike", "tests"],
+            "name": "spectrum-like",
+            "order": "0b",
+            "track": "python",
+            "version": "0.5.0"
+        },
+        "typing-ext-4.9.0-00000000000eeeee": {
+            "edges": [],
+            "entry_points": [],
+            "imports": ["typing_ext"],
+            "name": "typing-ext",
+            "order": "0b",
+            "track": "python",
+            "version": "4.9.0"
+        }
+    },
+    "version": 1
+}

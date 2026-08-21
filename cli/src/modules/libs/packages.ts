@@ -1,63 +1,43 @@
 /**
- * The sandbox image's package inventory, cached on the host.
+ * The baked image inventory fragment, cached on the host.
  *
- * `list_available_packages` reads `packages.txt` from the HOST filesystem. That works
- * when the host mounts the library store at the sandbox's own path — a managed
- * deployment does. The cli does not: the store is baked into the pulled image and no
- * `/mnt/libs` bind mount is ever created (see modules/libs/images.ts), so the file
- * exists only inside the image and a host-side read finds nothing. Agents were then
- * told the inventory was unknown on every call.
+ * The runtime image advertises its two image-owned tracks — the bioconda
+ * command-line tools and the Node packages — through a fragment baked at
+ * `/opt/inflexa/image-packages.txt`. `list_available_packages` merges that
+ * fragment with the farm `inflexa.lock` of the analysis. The host cannot see
+ * the container path, thus this module extracts the fragment one time for each
+ * image and caches it on the host.
  *
- * The image build stamps its own load-tested inventory onto the image as an OCI label
- * (scripts/lib-store-label-packages.sh). Reading it is `docker image inspect` — pure
- * metadata on an already-pulled image, so no container is created and no registry
- * client is needed. It is per-arch for free: the pulled image IS the host's arch, so
- * its label is the right list by construction (amd64 carries packages arm64 has no
- * build for, and R may be absent from arm64 entirely).
- *
- * The cache is keyed by image ID, so a refreshed `:latest` that resolves to a new
- * digest lands in a new directory and a stale inventory is never served.
+ * The farm side of the inventory needs no host work: the composer writes the
+ * lock of each farm, and the harness tool reads it by path.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { err, ok, type Result } from "neverthrow";
-
 import { capture, type ContainerRuntime } from "../../lib/container.ts";
-import { env } from "../../lib/env.ts";
+import { mkdirResult, writeFileResult } from "../../lib/fs.ts";
 
-/** The label the library-store build stamps the inventory into. */
-const PACKAGES_LABEL = "ai.inflexa.lib-store.packages";
-
-/** Why an inventory could not be resolved. Every case is non-fatal — the tool degrades to "unknown". */
-export type PackageInventoryError =
-    | { readonly type: "image_absent"; readonly image: string }
-    | { readonly type: "label_missing"; readonly image: string }
-    | { readonly type: "cache_write_failed"; readonly path: string; readonly cause: unknown };
+/** The container path of the baked inventory fragment inside the runtime image. */
+const IMAGE_PACKAGES_PATH = "/opt/inflexa/image-packages.txt";
 
 /**
- * Host path the inventory for `imageId` is cached at. Keyed by image ID rather than
- * tag: `:latest` moves, and serving the previous image's package list would be worse
- * than serving none, since the agent has no way to tell it is stale.
+ * Extract the runtime image's baked inventory fragment and cache it on the host, keyed by the local image
+ * digest. The function gives the host path of the cache file, or `null` when it cannot extract the
+ * fragment.
+ *
+ * The local image digest keys the cache. A cache hit reads the file and runs no container. A cache miss
+ * extracts the fragment with the entrypoint set to `cat`. A pull of a new image gives a new digest, thus
+ * the cache refreshes itself.
+ *
+ * `null` is a normal state, not an error. The tool then reports the farm tracks alone. A failed digest
+ * read, a non-zero exit, or a failed write each give `null`, so an extraction failure never fails the
+ * boot.
  */
-export function packagesCachePath(imageId: string): string {
-    // Image IDs arrive as `sha256:<hex>`; the algorithm prefix is not a path segment.
-    const key = imageId.replace(/^sha256:/, "").replace(/[^a-f0-9]/gi, "");
-    return join(env.libsDir, key, "packages.txt");
-}
-
-/**
- * Read the inventory label out of an already-pulled image and cache it, returning the
- * cached path. Re-reads the label on every call — it is a local metadata lookup, and
- * the write is idempotent, so this costs nothing over checking the cache first while
- * staying correct when the cache directory is wiped.
- */
-export async function cachePackageInventory(rt: ContainerRuntime, image: string): Promise<Result<string, PackageInventoryError>> {
-    // `capture` THROWS when the runtime binary is not on PATH (ENOENT from spawn) — it
-    // does not return a non-zero code. An absent container runtime is an ordinary state
-    // for a host that has not provisioned one yet, and the inventory is an enrichment,
-    // so the throw is bridged here rather than allowed to escape into the boot sequence.
+export async function imagePackagesFile(rt: ContainerRuntime, image: string, cacheDir: string): Promise<string | null> {
+    // `capture` THROWS when the runtime binary is not on PATH (ENOENT from spawn). An absent container
+    // runtime is an ordinary state for a host that has not provisioned one yet, and the fragment is an
+    // enrichment, so the throw is bridged here rather than allowed to escape into the boot sequence.
     const probe = async (args: string[]): Promise<{ code: number; stdout: string } | null> => {
         try {
             return await capture(rt, args);
@@ -66,35 +46,27 @@ export async function cachePackageInventory(rt: ContainerRuntime, image: string)
         }
     };
 
-    const idProbe = await probe(["image", "inspect", "--format", "{{.Id}}", image]);
-    if (idProbe === null || idProbe.code !== 0) return err({ type: "image_absent", image });
-    const imageId = idProbe.stdout.trim();
+    // The LOCAL image digest keys the cache. `image inspect --format {{.Id}}` gives it, and a non-zero
+    // exit means the image is absent from this runtime — then there is nothing to extract.
+    const inspected = await probe(["image", "inspect", "--format", "{{.Id}}", image]);
+    if (inspected === null || inspected.code !== 0) return null;
+    const digest = inspected.stdout.trim();
+    if (digest === "") return null;
 
-    // `index` (not `.Config.Labels.<key>`) because the key contains dots, which Go
-    // templates would otherwise parse as field traversal.
-    const labelProbe = await probe(["image", "inspect", "--format", `{{index .Config.Labels "${PACKAGES_LABEL}"}}`, image]);
-    const inventory = labelProbe !== null && labelProbe.code === 0 ? labelProbe.stdout : "";
-    // A missing label prints the Go zero value rather than failing the command.
-    if (inventory.trim() === "" || inventory.trim() === "<no value>") return err({ type: "label_missing", image });
+    // One cache file for each digest. The digest carries a colon (`sha256:...`), so replace each
+    // character that a file name cannot carry.
+    const cachePath = join(cacheDir, `${digest.replace(/[^A-Za-z0-9]+/g, "-")}.txt`);
+    if (existsSync(cachePath)) return cachePath;
 
-    const path = packagesCachePath(imageId);
-    try {
-        await mkdir(join(path, ".."), { recursive: true });
-        await writeFile(path, inventory, "utf-8");
-    } catch (cause) {
-        return err({ type: "cache_write_failed", path, cause });
-    }
-    return ok(path);
-}
+    // A cache miss extracts the fragment. A non-zero exit means the image has no fragment (an older
+    // image), and the fragment degrades to null.
+    const extracted = await probe(["run", "--rm", "--entrypoint", "cat", image, IMAGE_PACKAGES_PATH]);
+    if (extracted === null || extracted.code !== 0) return null;
 
-/**
- * The cached inventory path for the configured image, or null when there is none.
- *
- * Null is a normal state — no image pulled yet, an image built before the label
- * existed, an unreadable cache dir — and the harness tool reports the package set as
- * unknown rather than guessing. Never throws: a broken inventory must not stop a run.
- */
-export async function resolvePackagesFile(rt: ContainerRuntime, image: string): Promise<string | null> {
-    const cached = await cachePackageInventory(rt, image);
-    return cached.isOk() ? cached.value : null;
+    // A write failure degrades to null, exactly as an extraction failure does.
+    const dirMade = mkdirResult(cacheDir, "make the image-package cache directory");
+    if (dirMade.isErr()) return null;
+    const written = writeFileResult(cachePath, extracted.stdout, "write the image-package cache");
+    if (written.isErr()) return null;
+    return cachePath;
 }
