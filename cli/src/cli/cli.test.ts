@@ -102,13 +102,14 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
     });
 
-    test("`sandbox pull <variant>` reaches the pull handler, not the root --version", () => {
-        // An unknown variant is rejected by the sandbox-pull handler BEFORE any docker
-        // call, so this proves the subcommand routed there (not the root --version) without
-        // touching the container runtime or the network.
+    test("`sandbox pull` routes to its own handler, not the root --version", () => {
+        // `sandbox pull` takes no argument (one runtime image exists, thus no
+        // variant choice). Commander rejects the extra argument BEFORE any docker
+        // call, so this proves the subcommand routed there (not the root
+        // --version) without touching the container runtime or the network.
         const result = runCli(["sandbox", "pull", "definitely-not-a-variant"]);
-        expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain("Unknown variant");
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("too many arguments");
         // The root `--version` handler did NOT fire (it would print just the version).
         expect(result.stdout.trim()).not.toMatch(/^\d+\.\d+\.\d+$/);
     });

@@ -26,7 +26,7 @@ import { refreshOpenThread, resolveThreadId } from "./hooks/thread.ts";
 import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/conversation.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
-import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
+import { gatedForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
 import { absTime, absTimeShort, idTail, shortRunName, shortSessionId } from "./hooks/sidebar_live.ts";
 import { restoreActivityPanel } from "./hooks/activity_panel.ts";
 import { chatStatus } from "./hooks/status.ts";
@@ -35,6 +35,7 @@ import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
+import { env } from "../lib/env.ts";
 import { mkdirResult, rmResult, statResult, writeFileResult } from "../lib/fs.ts";
 import { str256, type Str256 } from "../lib/types.ts";
 import {
@@ -82,7 +83,7 @@ import type { Project } from "../types/project.ts";
 // co-located here as single-caller helpers; the reusable dialog shells live in `components/`.
 
 /** The categories a command groups under in the palette. A domain type, never a raw string. */
-export type CommandCategory = "Analysis" | "Session" | "Project" | "View" | "Provider" | "App";
+export type CommandCategory = "Analysis" | "Session" | "Project" | "View" | "Provider" | "Sandbox" | "App";
 
 /** A stable, dotted command id (e.g. `analysis.new`), decoupled from the display `title`. */
 export type CommandId = string;
@@ -140,11 +141,46 @@ async function workspaceBusyReason(analysisId: string): Promise<string | null> {
     // Nothing booted ⇒ no workflow in this process can hold the tree.
     if (!runtime) return null;
 
-    return (await queryActiveRunsByAnalysis(runtime.pool, analysisId)).match(
-        (runs) => (runs.length > 0 ? "a run is in flight" : null),
-        // Refuse rather than guess: an unreadable ledger cannot prove the workspace is idle.
-        () => "the run ledger is unreadable, so the workspace cannot be confirmed idle",
-    );
+    const active = await queryActiveRunsByAnalysis(runtime.pool, analysisId);
+    // Refuse rather than guess: an unreadable ledger cannot prove the workspace is idle.
+    if (active.isErr()) return "the run ledger is unreadable, so the workspace cannot be confirmed idle";
+    if (active.value.length === 0) return null;
+    // The hardened half of the gate (the farm-composition spec): a `running`
+    // ledger row blocks only while a LIVE workflow stands behind it. A crashed
+    // host leaves the row `running` for ever, while the durable status of its
+    // workflow settles terminal — thus the status table, not the ledger row, is
+    // the liveness record, and a stale row with a dead holder does not block
+    // the delete. No lease exists anywhere.
+    return (await anyLiveRunWorkflow(
+        runtime.pool,
+        active.value.map((run) => run.runId),
+    ))
+        ? "a run is in flight"
+        : null;
+}
+
+/**
+ * Whether any of `runIds` has a LIVE durable workflow — `PENDING` or
+ * `ENQUEUED` in the DBOS status table, for the run itself or one of its
+ * `runId-N` children. An unreadable status table reads as live, because the
+ * gate must refuse rather than guess.
+ */
+async function anyLiveRunWorkflow(pool: Pool, runIds: readonly string[]): Promise<boolean> {
+    if (runIds.length === 0) return false;
+    try {
+        const result = await pool.query<{ n: string }>({
+            text: `SELECT COUNT(*) AS n FROM dbos.workflow_status ws
+                     WHERE ws.status IN ('PENDING', 'ENQUEUED')
+                       AND EXISTS (
+                           SELECT 1 FROM unnest($1::text[]) AS r(id)
+                           WHERE ws.workflow_uuid = r.id OR ws.workflow_uuid LIKE r.id || '-%'
+                       )`,
+            values: [runIds],
+        });
+        return Number(result.rows[0]?.n ?? 0) > 0;
+    } catch {
+        return true;
+    }
 }
 
 /**
@@ -1501,6 +1537,13 @@ export type AnalysisDeleteSeams = {
     readonly purgeAnalysis: (pool: Pool, analysisId: string) => ResultAsync<AnalysisPurgeOutcome, DbError>;
     /** Delete the SQLite row; its input refs cascade. Real: {@link deleteAnalysis}. */
     readonly deleteAnalysis: typeof deleteAnalysis;
+    /**
+     * Remove the package farm of the analysis from the store. Runs after the row
+     * delete, and a failure is swallowed by the real seam: the orphan-farm reaper
+     * of `store reclaim` is the net for a farm this pass could not take. Real:
+     * `removeAnalysisFarm` over `env.packageStoreDir`.
+     */
+    readonly removeFarm: (analysisId: string) => Promise<void>;
     /** What is left to land on once the row is gone. Real: {@link listRecentAnalyses}. */
     readonly listRecentAnalyses: typeof listRecentAnalyses;
     /** Land the chat on a surviving analysis. Real: {@link openAnalysis}. */
@@ -1535,6 +1578,10 @@ const realAnalysisDeleteSeams: AnalysisDeleteSeams = {
     // can take back off (see {@link analysisPurgeFor}).
     purgeAnalysis: (pool, analysisId) => analysisPurgeFor(pool).purgeAnalysis(analysisId),
     deleteAnalysis,
+    removeFarm: async (analysisId) => {
+        const { removeAnalysisFarm } = await import("../modules/libs/composition.ts");
+        (await removeAnalysisFarm({ storeRoot: env.packageStoreDir, analysisId })).unwrapOr({ farmPath: "", removed: false });
+    },
     listRecentAnalyses,
     openAnalysis,
     notify,
@@ -1649,6 +1696,11 @@ export async function deleteAnalysisWith(
                 seams.notify({ kind: "warn", text: "Analysis not found." });
                 return;
             }
+            // The farm dies with its analysis (the farm-composition spec). The
+            // gate above already proved that no live work holds it, and the seam
+            // swallows a failure — the orphan-farm reaper of `store reclaim` is
+            // the net for a farm this pass could not take.
+            void seams.removeFarm(a.id);
             seams.notify({ kind: provenanceNote ? "warn" : "info", text: `Deleted analysis "${a.name}" — ${fate}${provenanceNote}` });
             const remaining = seams.listRecentAnalyses().match(
                 (as) => as,
@@ -2787,7 +2839,7 @@ export const commands: Command[] = [
                 notify({ kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` });
                 return;
             }
-            void driveForceReprofile(runtime, a, () => ctx.analysis?.id ?? null);
+            gatedForceReprofile(runtime, a, () => ctx.analysis?.id ?? null);
         },
     },
     {
@@ -2797,6 +2849,41 @@ export const commands: Command[] = [
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
         run: (ctx) => ctx.openDialog(() => <SetProjectDialog />),
+    },
+    {
+        // The palette half of the transfer retry (the package-store-transfers
+        // spec): the same detached children the setup and the commands start,
+        // never an in-app download.
+        id: "sandbox.redownload-images",
+        title: "Re-download sandbox images",
+        description: "Start the two detached image transfers (the runtime image and the provisioner image)",
+        category: "Sandbox",
+        run: async () => {
+            const { startImageTransfer } = await import("../modules/libs/transfers.ts");
+            let started = 0;
+            for (const kind of ["runtime_image", "provisioner_image"] as const) {
+                if (startImageTransfer(kind).isOk()) started += 1;
+            }
+            notify({ kind: "info", text: `${started} image transfer(s) started. Watch them in the sidebar.` });
+        },
+    },
+    {
+        id: "store.redownload-catalog",
+        title: "Re-download package catalog",
+        description: "Start the detached catalog transfer from GitHub Packages",
+        category: "Sandbox",
+        run: async () => {
+            const { startCatalogTransfer } = await import("../modules/libs/store_download.ts");
+            (await startCatalogTransfer({ storeRoot: env.packageStoreDir, update: false })).match(
+                (outcome) => {
+                    if (outcome.type === "started") notify({ kind: "info", text: "The catalog transfer started. Watch it in the sidebar." });
+                    else if (outcome.type === "already_running") notify({ kind: "info", text: "A catalog transfer is already running." });
+                    else if (outcome.type === "up_to_date") notify({ kind: "info", text: "The package store is up to date." });
+                    else notify({ kind: "info", text: "A newer catalog is available. Run `inflexa store download --update` to apply it." });
+                },
+                (error) => notify({ kind: "error", text: error.message }),
+            );
+        },
     },
     {
         id: "analysis.delete",

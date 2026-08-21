@@ -378,6 +378,14 @@ export async function setup(options: SetupOptions): Promise<void> {
             }
         }
 
+        // --- the three transfers ---
+        // Started at the START of setup, detached: the runtime image, the
+        // provisioner image, and the catalog. The user continues through the
+        // rest of the setup while the bytes move, and setup exits without a
+        // wait on them. The `--sandbox` answer is the ONE consent for all
+        // three, and nothing downloads without it.
+        await runTransfersSetup(answers.sandbox, canPrompt);
+
         currentStep = "auth";
         // Skipped as a UNIT: both halves persist their result to config, and the direct half has no silent
         // path — `collectDirectConnection` can only prompt — so a partial skip would ask for the endpoint,
@@ -751,19 +759,12 @@ export async function setup(options: SetupOptions): Promise<void> {
             return;
         }
 
-        currentStep = "sandbox";
-        // --- sandbox image ---
-        // Provision the sandbox image through the SAME handler as
-        // `inflexa sandbox pull` (design: one dogfooded path). A pull failure warns
-        // and continues — the image is an offer here, not a hard prerequisite
-        // (`inflexa profile` pulls it on demand if still missing).
-        await runSandboxImageSetup(answers.sandbox, asks("sandbox"));
-
         // A failed delete leaves a stale record, whose only cost is one offer to continue on the next run.
         clearSetupState().match(
             () => undefined,
             () => log.warn(`Could not clear the setup checkpoint at ${env.setupStatePath}. The next run may offer to continue from a finished step.`),
         );
+
 
         // Re-read rather than tracking "did THIS run configure embeddings": the closing hint is about the
         // MACHINE's state, and a backend left by the interactive picker above — or by an earlier run, which
@@ -785,46 +786,72 @@ export async function setup(options: SetupOptions): Promise<void> {
 }
 
 /**
- * Provision the sandbox image as part of `inflexa setup`. Reuses the `sandboxPull`
- * handler (never a second fetch path); a variant (`python` / `python-r`) selects the
- * image and `docker pull` resolves the host arch from the multi-arch manifest. The
- * image can be multiple GB, so pulling is gated on explicit consent — which the
- * three branches obtain three ways:
- *   - Answered variant: the ANSWER IS the consent (`--sandbox python` names a
- *     multi-GB download in as many words), so the pull runs with `yes: true` and no
- *     size confirmation — there is no terminal to confirm on in the run that
- *     motivates the answer, and re-asking a question already answered is how a
- *     batch provision hangs.
- *   - Unanswered on a run that may prompt: hand off to `sandboxPull` so it prompts
- *     the variant, confirms before the transfer, and streams progress.
- *   - Unanswered with no prompt available: do NOT auto-download — a headless run
- *     must never silently pull GBs. Print a hint to the explicit command and continue.
- * Every branch is non-fatal (decline, failure): the image is an offer here, not a
- * prerequisite — `inflexa profile` pulls it on demand if still missing.
+ * Start the three detached transfers as part of `inflexa setup`: the runtime
+ * image, the provisioner image, and the catalog.
+ *
+ * The `--sandbox` answer is the ONE consent for the three, and no size
+ * confirmation follows it — the answer names a multi-GB download in as many
+ * words. The four branches:
+ *   - A live transfer already runs: report it, and open no second consent — a
+ *     second setup never blocks on a transfer.
+ *   - Answered `true`: start the three children and continue at once.
+ *   - Answered `false`, or a prompted decline: write the `declined` state, thus
+ *     the app asks nothing at open and only a deliberate command retries.
+ *   - Unanswered under batch: skip with the pull-later hint — a headless run
+ *     must never silently pull gigabytes.
+ * Every branch is non-fatal: the downloads are an offer here, not a
+ * prerequisite, and the sandbox gate of the TUI names what is missing.
  */
-async function runSandboxImageSetup(answered: SetupAnswers["sandbox"], canPrompt: boolean): Promise<void> {
-    const variant = answerOf(answered);
-    if (!variant.answered && !canPrompt) {
-        note(
-            "Skipping the sandbox image — no variant was requested.\nRun `inflexa sandbox pull <python|python-r> --yes` to install it later.",
-            "Sandbox image",
-        );
+async function runTransfersSetup(answered: SetupAnswers["sandbox"], canPrompt: boolean): Promise<void> {
+    const { readTransferReports, startImageTransfer, TRANSFER_KINDS } = await import("../libs/transfers.ts");
+    const { startCatalogTransfer } = await import("../libs/store_download.ts");
+    const { settleTransfer } = await import("../../db/primary_mutation.ts");
+
+    // A second setup during a live transfer reports the run and opens no
+    // second consent, and it never waits.
+    const live = readTransferReports().filter((report) => report.live);
+    if (live.length > 0) {
+        note(`${live.length} transfer(s) are already running.\nRun \`inflexa sandbox status\` to watch them.`, "Downloads");
         return;
     }
 
-    // sandboxPull owns the variant prompt + size confirmation when left interactive.
-    const { sandboxPull } = await import("../libs/pull.ts");
-    (await sandboxPull(variant.answered ? { variant: variant.value, yes: true } : {})).match(
+    const answer = answerOf(answered);
+    let consent: boolean;
+    if (answer.answered) {
+        consent = answer.value;
+    } else if (!canPrompt) {
+        note(
+            "Skipping the downloads — no `--sandbox` answer was given.\nRun `inflexa sandbox pull` and `inflexa store download` to install them later.",
+            "Downloads",
+        );
+        return;
+    } else {
+        consent = await confirm("Download the sandbox images and the package catalog now? (multi-GB, runs in the background)");
+    }
+
+    if (!consent) {
+        for (const kind of TRANSFER_KINDS) settleTransfer(kind, { state: "declined", message: null }).unwrapOr(undefined);
+        log.info("Downloads declined. Run `inflexa sandbox pull` and `inflexa store download` later.");
+        return;
+    }
+
+    let started = 0;
+    for (const kind of ["runtime_image", "provisioner_image"] as const) {
+        startImageTransfer(kind).match(
+            () => {
+                started += 1;
+            },
+            (error) => log.warn(error.message),
+        );
+    }
+    (await startCatalogTransfer({ storeRoot: env.packageStoreDir, update: false })).match(
         (outcome) => {
-            if (outcome.type === "up_to_date") log.success(`Sandbox image already installed (${outcome.image}).`);
-            else if (outcome.type === "pulled") log.success(`Sandbox image installed (${outcome.image}).`);
-            else if (outcome.type === "declined") log.info("Sandbox image skipped. Run `inflexa sandbox pull` later to install it.");
+            if (outcome.type === "started" || outcome.type === "already_running") started += 1;
+            else log.info("The package store is already installed. Nothing to transfer.");
         },
-        (error) =>
-            error.type === "no_variant"
-                ? log.info(error.message)
-                : log.warn(`Sandbox image install failed: ${error.message}\n  You can retry later with \`inflexa sandbox pull\`.`),
+        (error) => log.warn(`The catalog transfer did not start: ${error.message}`),
     );
+    if (started > 0) log.success(`${started} transfer(s) started in the background. Run \`inflexa sandbox status\` to watch them.`);
 }
 
 /**

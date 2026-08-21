@@ -29,6 +29,7 @@ import {
     watchActivityPanel,
 } from "./hooks/activity_panel.ts";
 import { watchRunCompletions } from "./hooks/run_completion.ts";
+import { retryTerminalTransfers, watchTransfers } from "./hooks/sandbox_gate.tsx";
 import { commands, openParentSession, openReportSession } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
@@ -508,6 +509,11 @@ export function App(props: AppProps) {
     // deliberately not a second timer) and its dismissal expiry. Under App's reactive owner.
     watchActivityPanel();
 
+    // Mirror the three detached transfers and the live acquisition flights into
+    // the gate signals the sidebar renders. A poll, because the writers are
+    // other processes. Under App's reactive owner.
+    watchTransfers();
+
     // Announce every run that reaches a terminal status: a toast now, and a durable outcome record on
     // the analysis thread queued behind whatever else is writing it. Deliberately independent of the
     // sidebar and the activity panel — either may be hidden when a run lands.
@@ -839,6 +845,22 @@ export function App(props: AppProps) {
             { chord: leaderSeq("n"), run: () => runCommandById("analysis.new"), desc: "New analysis", group: "Analysis" },
             { chord: leaderSeq("d"), run: openProfile, desc: "Data profile", group: "Analysis" },
             { chord: leaderSeq("r"), run: openRuns, desc: "Runs", group: "Analysis" },
+            // The retry of a transfer row: the sidebar renders a terminal
+            // failure row, and this key starts that transfer again through the
+            // same detached children. The palette carries the same retry.
+            {
+                chord: leaderSeq("t"),
+                run: () =>
+                    void retryTerminalTransfers().then((started) =>
+                        notify(
+                            started > 0
+                                ? { kind: "info", text: `${started} transfer(s) started again.` }
+                                : { kind: "info", text: "No failed transfer to retry." },
+                        ),
+                    ),
+                desc: "Retry failed transfers",
+                group: "App",
+            },
             { chord: leaderSeq("s"), run: () => runCommandById("session.switch"), desc: "Switch session", group: "Session" },
             // The pair walks between a conversation and the report session it spawned — one chord back to
             // the parent, the other forward to a child. `leaderKeybind` and not `leaderSeq`, which takes a

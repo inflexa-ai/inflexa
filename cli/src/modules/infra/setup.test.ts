@@ -36,7 +36,8 @@ import { type PostgresConnection } from "./postgres_types.ts";
 import { answerSpelling, type AnswerKey, type AnswerValueKey, type SetupAnswerFlags } from "./setup_answers.ts";
 import * as compose from "./compose.ts";
 import * as embeddingSetup from "../embedding/setup.ts";
-import * as sandboxPullModule from "../libs/pull.ts";
+import * as transfersModule from "../libs/transfers.ts";
+import * as storeDownloadModule from "../libs/store_download.ts";
 import * as refsCommands from "../refs/commands.ts";
 import * as refsStore from "../refs/store.ts";
 import { detectedMachine, writeAgentModel, type ResolvedModelConnection } from "../harness/config.ts";
@@ -1729,17 +1730,17 @@ describe("setup() — batch orchestration", () => {
             expect(refsStep.mock.calls[0]![0].selection).toEqual({ ids: [CATALOG_ID] });
         });
 
-        test("a valid id list lets the run continue — the answered sandbox pull still happens", async () => {
-            const pull = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
-                ok({ type: "pulled" as const, variant: "python" as const, image: "ghcr.io/x/sandbox-python:latest" }),
-            );
-            spies.push(pull);
+        test("a valid id list lets the run continue — the answered transfers still start", async () => {
+            const imageStart = spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 }));
+            const catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(async () => ok({ type: "started" as const, pid: 4243 }));
+            spies.push(imageStart, catalogStart);
 
-            await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: "python" }));
+            await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: true }));
 
             expect(process.exitCode).toBe(0);
             expect(refsStep.mock.calls[0]![0].selection).toEqual({ ids: [CATALOG_ID, OTHER_CATALOG_ID] });
-            expect(pull.mock.calls[0]![0]).toEqual({ variant: "python", yes: true });
+            expect(imageStart.mock.calls.map((call) => call[0])).toEqual(["runtime_image", "provisioner_image"]);
+            expect(catalogStart).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -1841,17 +1842,17 @@ describe("setup() — batch orchestration", () => {
         expect(firstReady).not.toHaveBeenCalled();
     });
 
-    test("an answered sandbox variant pulls without a size confirmation", async () => {
-        const pull = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
-            ok({ type: "pulled" as const, variant: "python" as const, image: "ghcr.io/x/sandbox-python:latest" }),
-        );
-        spies.push(pull);
+    test("an answered `--sandbox` starts the three transfers without a confirmation", async () => {
+        const imageStart = spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 }));
+        const catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(async () => ok({ type: "started" as const, pid: 4243 }));
+        spies.push(imageStart, catalogStart);
 
-        await runSetup(batch({ sandbox: "python" }));
+        await runSetup(batch({ sandbox: true }));
 
         expect(process.exitCode).toBe(0);
-        // The ANSWER is the multi-GB consent, so `yes` rides the call and no confirm is reached.
-        expect(pull.mock.calls[0]![0]).toEqual({ variant: "python", yes: true });
+        // The ANSWER is the one multi-GB consent for the three, so no confirm is reached.
+        expect(imageStart.mock.calls.map((call) => call[0])).toEqual(["runtime_image", "provisioner_image"]);
+        expect(catalogStart).toHaveBeenCalledTimes(1);
     });
 
     test("an answered resource share persists the machine-relative absolute budget", async () => {
@@ -1914,7 +1915,7 @@ describe("setup() — batch orchestration", () => {
                     // The first option is each of these selects' documented default ("infer", "cliproxy").
                     return options[0]!.value;
                 }),
-                spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () => ok({ type: "declined" as const })),
+                spyOn(cliPrompts, "confirm").mockImplementation(async () => false),
             );
             // The interactive default-model step lists models off the proxy; every route 404s, so the
             // candidate list is empty and the optional manual-entry fallback is declined by the seam above.
@@ -2002,17 +2003,18 @@ describe("setup() — batch orchestration", () => {
     // instead of argv — because an answer can be dropped on one path while landing on the other.
     describe("every answer reaches its destination", () => {
         let answersDir: string;
-        let pullStep: ReturnType<typeof spyOn<typeof sandboxPullModule, "sandboxPull">>;
+        let imageStart: ReturnType<typeof spyOn<typeof transfersModule, "startImageTransfer">>;
+        let catalogStart: ReturnType<typeof spyOn<typeof storeDownloadModule, "startCatalogTransfer">>;
         let composeWriter: ReturnType<typeof spyOn<typeof compose, "writeComposeFile">>;
 
         beforeEach(() => {
             answersDir = mkdtempSync(join(tmpdir(), "inflexa-answers-"));
-            pullStep = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
-                ok({ type: "pulled" as const, variant: "python-r" as const, image: "ghcr.io/x/sandbox-python-r:latest" }),
-            );
+            imageStart = spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 }));
+            catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(async () => ok({ type: "started" as const, pid: 4243 }));
             composeWriter = spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined));
             spies.push(
-                pullStep,
+                imageStart,
+                catalogStart,
                 composeWriter,
                 spyOn(compose, "composeAvailable").mockImplementation(async () => true),
                 spyOn(container, "ensureReady").mockImplementation(async () => ok(undefined)),
@@ -2042,7 +2044,8 @@ describe("setup() — batch orchestration", () => {
                 harness: config.harness as { resourceLimits?: { budget?: unknown } } | undefined,
                 embedding: embedStep.mock.calls[0]?.[1],
                 refs: refsStep.mock.calls[0]?.[0].selection,
-                sandbox: pullStep.mock.calls[0]?.[0],
+                /** Which transfer children the sandbox answer started: the two image kinds, and whether the catalog start ran. */
+                sandbox: { images: imageStart.mock.calls.map((call) => call[0]), catalog: catalogStart.mock.calls.length > 0 },
                 /** The connection handed to the compose writer — the run's own resolution, whatever was persisted. */
                 compose: composeWriter.mock.calls[0]?.[0],
             };
@@ -2258,10 +2261,10 @@ describe("setup() — batch orchestration", () => {
                 },
             },
             sandbox: {
-                flags: { sandbox: "python-r" },
+                flags: { sandbox: true },
                 effect: (run) => {
-                    // The ANSWER is the multi-GB consent, so the pull carries `yes` and reaches no confirm.
-                    expect(run.sandbox).toEqual({ variant: "python-r", yes: true });
+                    // The ANSWER is the one multi-GB consent for the three transfers.
+                    expect(run.sandbox).toEqual({ images: ["runtime_image", "provisioner_image"], catalog: true });
                 },
             },
             runtime: {

@@ -4,7 +4,6 @@ import { z } from "zod";
 
 import { runtimeIds } from "../../lib/container.ts";
 import { EMBEDDING_API_KEY_VAR, isReservedPostgresPort, reservedPostgresPorts, resolveEmbeddingApiKey } from "../../lib/env.ts";
-import { SANDBOX_VARIANTS } from "../libs/images.ts";
 import { type ConnectionMode } from "./compose.ts";
 
 // The setup ANSWERS layer: one schema for every interactive decision point of `inflexa setup`, two
@@ -221,8 +220,8 @@ export const setupAnswersSchema = z.strictObject({
             }),
         )
         .optional(),
-    /** The sandbox image variant to pull. The answer IS the multi-GB consent. */
-    sandbox: z.enum(SANDBOX_VARIANTS).optional(),
+    /** The one consent for the three transfers: the two images and the catalog. The answer IS the multi-GB consent. */
+    sandbox: z.boolean().optional(),
     /** Pins the container runtime as a hard gate — given-but-dead is an error, never a silent fallback. */
     runtime: z.enum(runtimeIds).optional(),
 });
@@ -814,8 +813,8 @@ export type SetupAnswerFlags = {
     readonly embeddingsGguf?: string;
     /** `--refs recommended|all|<id,…>`. */
     readonly refs?: string;
-    /** `--sandbox python|python-r`. */
-    readonly sandbox?: string;
+    /** `--sandbox` — a bare flag; the answer is the one consent for the three transfers. */
+    readonly sandbox?: boolean;
     /** `--runtime docker|podman`. */
     readonly runtime?: string;
 };

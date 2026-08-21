@@ -316,7 +316,7 @@ describe("watchProfileParity — live input-mutation edge", () => {
         const h = watchHarness();
         const dispose = mountWatch(wsMut("A"), h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver); // edge 1 fires once at ready
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver); // edge 1 fires once at ready
             h.drives.length = 0; // isolate the bus edge from the boot edge
 
             emitInput("prov.input_added", "A");
@@ -337,7 +337,7 @@ describe("watchProfileParity — live input-mutation edge", () => {
         const h = watchHarness();
         const dispose = mountWatch(wsMut("A"), h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
             expect(h.causes).toEqual(["open"]);
 
             emitInput("prov.input_added", "A");
@@ -352,7 +352,7 @@ describe("watchProfileParity — live input-mutation edge", () => {
         const h = watchHarness();
         const dispose = mountWatch(wsMut("A"), h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
             h.drives.length = 0;
 
             emitInput("prov.input_added", "A");
@@ -372,7 +372,7 @@ describe("watchProfileParity — live input-mutation edge", () => {
         const h = watchHarness();
         const dispose = mountWatch(wsMut("A"), h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
             h.drives.length = 0;
             emitInput("prov.input_added", "B"); // not the open analysis
             expect(h.scheduled).toHaveLength(0);
@@ -397,7 +397,7 @@ describe("watchProfileParity — live input-mutation edge", () => {
         const ws = wsMut("A");
         const dispose = mountWatch(ws, h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
             h.drives.length = 0;
 
             emitInput("prov.input_added", "A");
@@ -420,7 +420,7 @@ describe("watchProfileParity — run-terminal edge", () => {
         const h = watchHarness();
         const dispose = mountWatch(wsMut("A"), h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
             h.drives.length = 0; // ignore the boot edge
 
             await refreshSidebarData("A", refreshSeams(profileStatus({ status: "running" })));
@@ -440,7 +440,7 @@ describe("watchProfileParity — run-terminal edge", () => {
         const ws = wsMut("A");
         const dispose = mountWatch(ws, h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
             h.drives.length = 0;
 
             await refreshSidebarData("A", refreshSeams(profileStatus({ status: "running" })));
@@ -458,7 +458,7 @@ describe("watchProfileParity — run-terminal edge", () => {
         const h = watchHarness();
         const dispose = mountWatch(wsMut("A"), h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
             h.drives.length = 0; // ignore the boot edge
 
             await refreshSidebarData("A", refreshSeams(profileStatus({ status: "running" })));
@@ -475,7 +475,7 @@ describe("watchProfileParity — run-terminal edge", () => {
         const h = watchHarness();
         const dispose = mountWatch(wsMut("A"), h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
             h.drives.length = 0;
             await refreshSidebarData("A", refreshSeams(profileStatus({ status: "completed", completedAt: "2026-07-08T00:00:05.000Z" })));
             expect(h.drives).toEqual([]); // no running→completed transition, no drive
@@ -493,7 +493,7 @@ describe("watchProfileParity — run-terminal edge", () => {
         const ws = wsMut("A");
         const dispose = mountWatch(ws, h.seams);
         try {
-            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            await startHarnessBoot({} as ResolvedHarnessConfig, undefined, readyDriver);
             h.drives.length = 0; // ignore the boot edge
 
             // A's profile is running — records prev = { running, A }.

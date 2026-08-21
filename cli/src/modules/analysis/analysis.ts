@@ -8,7 +8,9 @@ import type { DbError } from "../../db/errors.ts";
 import { findAnalysesByRef, listAnalysesByAnchor, listAnalysesByProject, listAnalysisInputs, listAnalyses } from "../../db/primary_query.ts";
 import { insertAnalysis, insertAnalysisInput, deleteAnalysisInput, renameAnalysis } from "../../db/primary_mutation.ts";
 import { currentUserActor } from "../prov/prov.ts";
+import { makeEmptyFarm } from "../libs/composition.ts";
 import { Bus } from "../../lib/bus.ts";
+import { env } from "../../lib/env.ts";
 import { renameResult } from "../../lib/fs.ts";
 import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
 import { findMarkerUpwards, isDirWritable } from "../anchor/marker.ts";
@@ -237,6 +239,12 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, Work
                             analysisId: created.id,
                             actor: currentUserActor(),
                         });
+                        // The farm is made WITH the analysis, empty, and its cache seeds
+                        // from the catalog (the farm-composition spec). Fire-and-forget,
+                        // because a farm failure must not fail the creation: the failure
+                        // records on the gate channel, and the farm resolver heals a
+                        // missing farm at the first sandbox action.
+                        void makeEmptyFarm({ storeRoot: env.packageStoreDir, analysisId: created.id });
                         return ok(created);
                     })
                     .andThen((created) => (inputPaths.length > 0 ? addInputs(created.id, inputPaths, opts.cwd).map(() => created) : ok(created)))

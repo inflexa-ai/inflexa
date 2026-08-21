@@ -59,15 +59,16 @@ export type BootDriver = typeof bootHarnessRuntime;
  *
  * Idempotent while in flight or settled-ready: a call whose current phase is already `booting` or
  * `ready` is a no-op, so the launcher may fire it once post-render (fire-and-forget) without
- * guarding against a double-open. `driver` is injected only by tests.
+ * guarding against a double-open. `analysisId` names the open analysis, thus the composition can
+ * point the package inventory at the farm of that analysis. `driver` is injected only by tests.
  */
-export async function startHarnessBoot(config: ResolvedHarnessConfig, driver: BootDriver = bootHarnessRuntime): Promise<void> {
+export async function startHarnessBoot(config: ResolvedHarnessConfig, analysisId: string | undefined, driver: BootDriver = bootHarnessRuntime): Promise<void> {
     const phase = state().phase;
     // Synchronous up to the `setState` below (no `await` before it), so a second call within the
     // same JS turn already observes `booting` — the guard needs no extra in-flight flag.
     if (phase === "booting" || phase === "ready") return;
     setState({ phase: "booting" });
-    const result = await driver({ config });
+    const result = await driver({ config, ...(analysisId === undefined ? {} : { analysisId }) });
     result.match(
         (rt) => {
             runtime = rt;
