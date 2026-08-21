@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { env } from "./env.ts";
@@ -23,9 +23,54 @@ const heldKeys = new Set<string>();
 /** Outcome of an acquire attempt. `acquired:false` is an expected, non-error branch (the resource is live elsewhere) — not a thrown failure — so it is a plain union, not a neverthrow `Result`. */
 export type LockOutcome = { acquired: true } | { acquired: false; holderPid: number };
 
+/**
+ * Advisory-lock key for the embedded harness runtime. A fixed sentinel — not an analysis id — because
+ * the lock guards the single per-machine DBOS engine (executor "local"), not any one analysis. It never
+ * collides with an analysis lock, because analysis ids are UUIDv7.
+ *
+ * It lives here rather than beside the runtime because a live runtime is a fact other commands must read.
+ * A command that must not disturb a live sandbox reads the lock, and it must not import the harness
+ * runtime module to learn the key.
+ */
+export const HARNESS_RUNTIME_LOCK_KEY = "harness-runtime";
+
+/**
+ * Advisory-lock key family of the detached transfer children — the runtime image, the provisioner
+ * image, and the catalog download. The kind of the transfer follows the prefix.
+ *
+ * Each key does two jobs at one time. It gives single-flight: a start that finds the lock held starts
+ * no second child of that kind. It also gives liveness: the child holds the key for its whole life,
+ * thus a row that reports `running` with no live holder reads as `failed`. A killed child writes no
+ * failure row, and this is the only sound signal that needs no heartbeat and no clock.
+ */
+export const TRANSFER_LOCK_KEY_PREFIX = "package-store-transfer-";
+
+/**
+ * Advisory-lock key for a reclamation of the package store.
+ *
+ * A reclamation is exclusive against the acquisition flights and the farm compositions: it waits for
+ * zero live linkers, and it blocks a new one while it scans and deletes. This key is that block. A
+ * linker yields while a live process holds it, thus a reclaim never frees a store directory that a
+ * linker is about to reference.
+ */
+export const PACKAGE_STORE_RECLAIM_LOCK_KEY = "package-store-reclaim";
+
+/**
+ * Advisory-lock key for the store-level metadata of the package store — the dependency graph
+ * `deps.json` at the store root.
+ *
+ * Two writers touch that record. A download with `--update` replaces the graph of the old catalog with
+ * the graph of the new one. A flight commit appends the nodes that it acquired. The two must not
+ * interleave, thus each takes this key for the write and releases it after.
+ */
+export const PACKAGE_STORE_METADATA_LOCK_KEY = "package-store-metadata";
+
+/** The extension of every lock file, which is what turns a file name of the lock directory back into a key. */
+const LOCK_SUFFIX = ".lock";
+
 /** Absolute path of a lock file for `key`. Exported for the unit test, which seeds and inspects it directly. */
 export function instanceLockPath(key: string): string {
-    return join(env.locksDir, `${key}.lock`);
+    return join(env.locksDir, `${key}${LOCK_SUFFIX}`);
 }
 
 /** Read the holding pid from a lock file, or null if it is missing or its contents aren't a finite integer (a truncated/corrupt write counts as no live holder, so it gets reclaimed). */
@@ -43,8 +88,13 @@ function readHolderPid(path: string): number | null {
  * existence. ESRCH is the one unambiguous "dead" answer; EPERM (exists but owned by another user) and
  * any other error are treated as ALIVE, because the dangerous direction is declaring a live holder
  * dead (that would let two instances share the resource). When in doubt, keep the lock.
+ *
+ * Exported for the second holder-of-record in the codebase: an acquisition flight records its owner pid
+ * on its own row rather than in a lock file, because a flight key is minted at runtime and a file for
+ * each key would carry no more truth than that column. The probe must stay ONE implementation, so that
+ * "dead" means the same thing to a lock file and to a row.
  */
-function isPidAlive(pid: number): boolean {
+export function isPidAlive(pid: number): boolean {
     try {
         process.kill(pid, 0);
         return true;
@@ -101,6 +151,65 @@ export function acquireInstanceLock(key: string): LockOutcome {
         getLogger("lock").warn({ err: cause, key }, "lock reclaim failed; proceeding without lock");
         return { acquired: true };
     }
+}
+
+/**
+ * The pid of the LIVE process that holds `key`'s lock, or `null` when nothing live holds it.
+ *
+ * READ-ONLY, and that is the whole point. {@link acquireInstanceLock} reclaims a lock whose holder is
+ * dead and it writes this process's pid, thus a reader that used it to answer "is a downloader live"
+ * would take the lock and refuse the next real downloader. This probe writes nothing and creates
+ * nothing.
+ *
+ * It reuses the two facts the acquire path already establishes: the lock path of a key, and the pid
+ * test. A dead or corrupt holder answers `null`, exactly as it reads to a contender.
+ */
+export function instanceLockHolder(key: string): number | null {
+    const pid = readHolderPid(instanceLockPath(key));
+    return pid !== null && isPidAlive(pid) ? pid : null;
+}
+
+/** One live hold of an instance lock: the key, and the process that holds it. */
+export type InstanceLockHold = { readonly key: string; readonly pid: number };
+
+/**
+ * Each LIVE hold of a lock key that starts with `prefix`, with a sweep of each record a dead process
+ * left behind.
+ *
+ * {@link instanceLockHolder} answers one key that its caller already names. This answers a FAMILY of
+ * keys, for a reader that must wait for whatever holds them right now: the reclamation of the package
+ * store waits for each live farm composition, and a composition mints its key from an analysis id that
+ * the reclamation never learns.
+ *
+ * The sweep is what makes the liveness of the holder the signal, rather than the record. A hard kill
+ * (SIGKILL) leaves the lock file, thus a reader that counted files would wait for a process that is
+ * gone. The sweep runs through {@link acquireInstanceLock} and {@link releaseInstanceLock}, and never
+ * through a bare delete: acquire is the one writer that reclaims a dead lock, and it re-creates the file
+ * exclusively, thus a contender that reclaimed the same file one moment earlier keeps it. A bare delete
+ * would remove the lock of that live contender.
+ */
+export function liveInstanceLockHolds(prefix: string): readonly InstanceLockHold[] {
+    let names: string[];
+    try {
+        names = readdirSync(env.locksDir);
+    } catch {
+        return []; // No lock directory (or none readable) means that nothing holds a lock.
+    }
+
+    const live: InstanceLockHold[] = [];
+    for (const name of names.sort()) {
+        if (!name.startsWith(prefix) || !name.endsWith(LOCK_SUFFIX)) continue;
+        const key = name.slice(0, name.length - LOCK_SUFFIX.length);
+        const pid = readHolderPid(instanceLockPath(key));
+        if (pid !== null && isPidAlive(pid)) {
+            live.push({ key, pid });
+            continue;
+        }
+        // A dead or corrupt holder is debris. The acquire reclaims it, and the release then removes the
+        // file, because this process owns it at that point.
+        if (acquireInstanceLock(key).acquired) releaseInstanceLock(key);
+    }
+    return live;
 }
 
 /**

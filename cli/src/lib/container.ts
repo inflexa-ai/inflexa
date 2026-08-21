@@ -41,6 +41,8 @@ export type ContainerRuntime = {
      * Docker uses the bare `host:container` form.
      */
     mountArg(host: string, ctr: string): string;
+    /** A read-only bind of a host directory. The store mounts through this in the sandbox-image runs, because a check must not write the store. */
+    mountArgRo(host: string, ctr: string): string;
 };
 
 /** The supported runtimes, keyed by id. */
@@ -54,6 +56,9 @@ export const runtimes: Record<ContainerRuntimeId, ContainerRuntime> = {
         mountArg(host: string, ctr: string): string {
             return `${host}:${ctr}`;
         },
+        mountArgRo(host: string, ctr: string): string {
+            return `${host}:${ctr}:ro`;
+        },
     },
     podman: {
         id: "podman",
@@ -64,6 +69,9 @@ export const runtimes: Record<ContainerRuntimeId, ContainerRuntime> = {
             "Podman is installed but not ready.\n  On macOS, start the Podman machine (`podman machine start`); on Linux, ensure rootless Podman is configured, then re-run.",
         mountArg(host: string, ctr: string): string {
             return `${host}:${ctr}:z`;
+        },
+        mountArgRo(host: string, ctr: string): string {
+            return `${host}:${ctr}:ro,z`;
         },
     },
 };
@@ -85,6 +93,61 @@ export async function capture(rt: ContainerRuntime, args: string[]): Promise<Cap
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     const code = await proc.exited;
     return { code, stdout, stderr };
+}
+
+/**
+ * Run a container command, delivering each output line to `onLine` as it lands, and capture both
+ * streams whole.
+ *
+ * `onLine` is a notification, never a control channel. A caller that must not let a failing observer
+ * abort a run in flight wraps it before it reaches here (the reference-store installer's `reportProgress`
+ * pattern); this function does not guard the callback itself.
+ *
+ * `signal` is the control channel, and it is the ONLY one: an aborted signal kills the child, both pumps
+ * then reach end of stream, and the run reports the exit code that the signal produced. A caller that
+ * must stop work in flight — an acquisition flight whose last subscriber cancelled — needs a handle on
+ * the process, and only this function holds one.
+ */
+export async function stream(rt: ContainerRuntime, args: string[], onLine: (line: string) => void, signal?: AbortSignal): Promise<CaptureResult> {
+    const proc = Bun.spawn({ cmd: [rt.bin, ...args], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    // A signal that was already aborted kills the child at once, because `addEventListener` fires for a
+    // later abort only and the caller asked for no work.
+    const onAbort = (): void => proc.kill();
+    if (signal?.aborted === true) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    const captured = { stdout: "", stderr: "" };
+    // Read a piped stream to end, splitting on newlines so the observer sees whole lines. `stream: true`
+    // decoding keeps a multi-byte character that straddles two chunks intact.
+    const pump = async (readable: ReadableStream<Uint8Array>, key: "stdout" | "stderr"): Promise<void> => {
+        const reader = readable.getReader();
+        const decoder = new TextDecoder();
+        let pending = "";
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            pending += decoder.decode(value, { stream: true });
+            let newline = pending.indexOf("\n");
+            while (newline !== -1) {
+                const line = pending.slice(0, newline);
+                pending = pending.slice(newline + 1);
+                captured[key] += `${line}\n`;
+                onLine(line);
+                newline = pending.indexOf("\n");
+            }
+        }
+        // A final line with no trailing newline still counts.
+        if (pending !== "") {
+            captured[key] += pending;
+            onLine(pending);
+        }
+    };
+    try {
+        await Promise.all([pump(proc.stdout, "stdout"), pump(proc.stderr, "stderr")]);
+        const code = await proc.exited;
+        return { code, stdout: captured.stdout, stderr: captured.stderr };
+    } finally {
+        signal?.removeEventListener("abort", onAbort);
+    }
 }
 
 /** Run a container command with inherited stdio (pull progress, interactive login). */
