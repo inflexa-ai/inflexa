@@ -51,6 +51,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
             env: { backend: "docker", namespace: "" },
             cortexBaseUrl: "http://host.docker.internal:1",
             image: "img",
+            farmSource: { kind: "fixed", location: { farmPath: "/tmp/farm" } },
             resourceLimits: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 },
             resolveWorkspaceRoot,
         }),
@@ -66,7 +67,9 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         sandboxEmitters: createSwappableSandboxEmitters(`${modelProvider}/${sandboxModel}`),
         skillsDir: "/tmp/skills",
         refStorePath: "/tmp/refs",
-        packagesFile: null,
+        farmLockFile: null,
+        imagePackagesFile: null,
+        extendAnalysisFarm: async () => [],
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };
 }

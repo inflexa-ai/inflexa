@@ -49,10 +49,12 @@ import {
 
 import { describeCause } from "../../../lib/cause.ts";
 import { fail, dieOn, failViaShutdown, type Spinner } from "../../../lib/cli.ts";
+import { env } from "../../../lib/env.ts";
 import { shutdown } from "../../../lib/shutdown.ts";
 import { listAnalysisInputs } from "../../../db/primary_query.ts";
 import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../../analysis/context.ts";
 import { workspaceDataDir } from "../../analysis/output.ts";
+import { linkPackagesIntoFarm } from "../../libs/composition.ts";
 import { ensureSandboxImage } from "../../libs/pull.ts";
 import { stageInputs } from "../../staging/staging.ts";
 import { resolveHarnessConfig } from "../config.ts";
@@ -389,7 +391,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
-    const bootResult = await bootHarnessRuntime({ config: cfg });
+    const bootResult = await bootHarnessRuntime({ config: cfg, analysisId: analysis.id });
     const runtime = bootResult.match(
         (r) => r,
         (e) => {
@@ -398,6 +400,37 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
         },
     );
     s.stop(`Runtime ready — model ${runtime.sandbox.model}`);
+
+    // Link the packages of the plan into the farm BEFORE the launch — the same
+    // pre-launch pass the chat's `execute_analysis` tool runs. The replay path
+    // launches the workflow directly, thus nothing else runs the pass here. A
+    // pool miss refuses the launch, and the text names the exact remedy command
+    // (the harness error deliberately names none, because a managed host has no
+    // `inflexa` binary — the CLI wrapper owns the command).
+    const planPackages = [...new Set(intake.plan.steps.flatMap((step) => step.packages ?? []))];
+    if (planPackages.length > 0) {
+        s.start(`Linking ${planPackages.length} plan package(s) into the farm`);
+        const outcomes = await linkPackagesIntoFarm(
+            env.packageStoreDir,
+            analysis.id,
+            planPackages.map((entry) => {
+                const split = entry.indexOf("==");
+                return split < 0 ? { name: entry.trim() } : { name: entry.slice(0, split).trim(), version: entry.slice(split + 2).trim() };
+            }),
+        );
+        const missing = outcomes.filter((o) => o.kind === "absent").map((o) => o.name);
+        const collided = outcomes.filter((o) => o.kind === "collision").map((o) => o.name);
+        if (missing.length > 0 || collided.length > 0) {
+            s.error("The packages of this plan cannot link");
+            const remedy = missing.map((name) => `  inflexa store add ${name}`).join("\n");
+            const lines = [
+                missing.length > 0 ? `The pool does not hold: ${missing.join(", ")}. Add each one first:\n${remedy}` : null,
+                collided.length > 0 ? `A collision refused: ${collided.join(", ")} — name the ecosystem or the version.` : null,
+            ].filter((line): line is string => line !== null);
+            fail(lines.join("\n"));
+        }
+        s.stop(`Linked ${planPackages.length} plan package(s)`);
+    }
 
     s.start("Staging inputs");
     const staged = (await stageInputs(analysis.id, workspaceDataRoot)).match(

@@ -55,7 +55,7 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
-    const bootResult = await bootHarnessRuntime({ config: cfg });
+    const bootResult = await bootHarnessRuntime({ config: cfg, analysisId: analysis.id });
     const runtime = bootResult.match(
         (r) => r,
         (e) => {

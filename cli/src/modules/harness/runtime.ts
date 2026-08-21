@@ -44,11 +44,12 @@ import { ensureRuntime, readConfig } from "../../lib/config.ts";
 import { resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
 import { env, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialSource } from "../../lib/credential.ts";
-import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
+import { acquireInstanceLock, HARNESS_RUNTIME_LOCK_KEY, releaseInstanceLock } from "../../lib/lock.ts";
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
-import { resolvePackagesFile } from "../libs/packages.ts";
+import { analysisFarmPath, linkPackagesIntoFarm, resolveAnalysisFarm } from "../libs/composition.ts";
+import { imagePackagesFile } from "../libs/packages.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
@@ -354,8 +355,8 @@ export type ResolvedSandboxEngine = {
 /**
  * Pin the container runtime and resolve the Docker-API socket the sandbox client
  * dials for it. `ensureRuntime` probes and may PIN on first use — sanctioned here
- * because boot is a deliberate trigger, the same class as `ensureSandboxImage`'s
- * image pre-pull, and it never prompts. The resolved socket is per-boot state (the
+ * because boot is a deliberate trigger, the same class as a `sandbox pull`
+ * transfer, and it never prompts. The resolved socket is per-boot state (the
  * macOS compat socket moves across machine restarts), so it is returned, never
  * persisted.
  */
@@ -385,7 +386,7 @@ export type BootSeams = {
      * no runtime binary on PATH must boot regardless — the inventory is an enrichment,
      * never a prerequisite.
      */
-    readonly resolvePackages: (rt: ContainerRuntime, image: string) => Promise<string | null>;
+    readonly resolveImagePackages: (rt: ContainerRuntime, image: string) => Promise<string | null>;
     readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
     /** Construct the sandbox client — a seam so boot tests can inspect the engine config it is wired with. */
     readonly createSandbox: typeof createSandboxClient;
@@ -434,7 +435,7 @@ export type BootSeams = {
 
 const realSeams: BootSeams = {
     resolveSandboxEngine: resolveSandboxEngineOnce,
-    resolvePackages: resolvePackagesFile,
+    resolveImagePackages: (rt, image) => imagePackagesFile(rt, image, env.libsDir),
     ensurePostgres: ensurePostgresReady,
     createSandbox: createSandboxClient,
     startIngress: () => startExecIngress(),
@@ -450,14 +451,6 @@ const realSeams: BootSeams = {
     registerNotificationSweep,
     probeEmbedding: probeEmbeddingProvider,
 };
-
-/**
- * Advisory-lock key for the embedded runtime (see `lib/lock.ts`). A fixed
- * sentinel — not an analysis id — because the lock guards the single per-machine
- * DBOS engine (executor "local"), not any one analysis. Never collides with an
- * analysis lock: analysis ids are UUIDv7.
- */
-const RUNTIME_LOCK_KEY = "harness-runtime";
 
 /**
  * Result transport for local sandboxes. The CLI is a poll-mode embedder: the
@@ -496,7 +489,7 @@ export function __resetHarnessRuntimeForTest(): void {
  * {@link bootHarnessRuntimeOnce}.
  */
 export function bootHarnessRuntime(
-    options: { seams?: Partial<BootSeams>; config?: ResolvedHarnessConfig; connection?: ResolvedModelConnection } = {},
+    options: { seams?: Partial<BootSeams>; config?: ResolvedHarnessConfig; connection?: ResolvedModelConnection; analysisId?: string } = {},
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     if (active) return Promise.resolve(ok(active));
     if (booting) return booting;
@@ -504,6 +497,7 @@ export function bootHarnessRuntime(
         { ...realSeams, ...options.seams },
         options.config ?? resolveHarnessConfig(),
         options.connection ?? resolveModelConnection(),
+        options.analysisId,
     );
     booting = attempt;
     void attempt.finally(() => {
@@ -608,6 +602,7 @@ async function bootHarnessRuntimeOnce(
     seams: BootSeams,
     cfg: ResolvedHarnessConfig,
     connection: ResolvedModelConnection,
+    analysisId?: string,
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     const logger = harnessLogger("harness");
 
@@ -744,9 +739,9 @@ async function bootHarnessRuntimeOnce(
     // client will dial, BEFORE Postgres (which is provisioned on that same runtime)
     // and every durable side effect. A stopped podman machine then fails boot for
     // free with an actionable message instead of surfacing as an opaque dockerode
-    // ECONNREFUSED mid-run. `ensureSandboxImage` already pulled the image through
-    // this same pin, so resolving the socket here makes pull and create target ONE
-    // engine by construction.
+    // ECONNREFUSED mid-run. The image transfers and the `ensureSandboxImage` gate
+    // resolve the engine through this same pin, so pull, gate, and create target
+    // ONE engine by construction.
     const engineResult = await seams.resolveSandboxEngine();
     if (engineResult.isErr()) return err({ type: "sandbox_engine_unresolved", message: engineResult.error.message });
     const { runtime: pinnedRuntime, socketPath: engineSocketPath } = engineResult.value;
@@ -755,19 +750,24 @@ async function bootHarnessRuntimeOnce(
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
     const conn = pgResult.value;
 
-    // Extract the image's package inventory onto the host. The cli never bind-mounts the
-    // library store — it is baked into the image — so this cached copy is the ONLY thing
-    // `list_available_packages` can read; without it every agent is told the installed set
-    // is unknown. `ensureSandboxImage` has already pulled through this same pin, so the
-    // image is present.
+    // Extract the baked image inventory fragment onto the host. The fragment lists the
+    // two image-owned tracks — the bioconda command-line tools and the Node packages —
+    // and `list_available_packages` merges it with the farm lock of the analysis.
     //
     // Deliberately AFTER the prereq gates: it spawns a container-runtime probe, and a boot
     // that is about to fail on Postgres must not pay for it. A null result is non-fatal —
-    // the inventory is an enrichment, never a prerequisite.
-    const packagesFile = await seams.resolvePackages(pinnedRuntime, cfg.sandboxImage);
-    if (packagesFile === null) {
-        logger.warn("no sandbox package inventory — agents will be told the installed package set is unknown", { image: cfg.sandboxImage });
+    // the fragment is an enrichment, never a prerequisite.
+    const imagePackages = await seams.resolveImagePackages(pinnedRuntime, cfg.sandboxImage);
+    if (imagePackages === null) {
+        logger.warn("no image inventory fragment — the package list carries the farm tracks alone", { image: cfg.sandboxImage });
     }
+
+    // The `inflexa.lock` of the open analysis's farm — the inventory of what a sandbox
+    // of THIS process can import. One analysis opens per process (the instance lock
+    // holds that), thus one static path serves the whole boot. The tool re-reads the
+    // file per call, so a farm that grows mid-session reaches the next call unchanged.
+    // A boot with no analysis (a probe) carries none, and the inventory reads unknown.
+    const farmLockFile = analysisId === undefined ? null : join(analysisFarmPath(env.packageStoreDir, analysisId), "inflexa.lock");
 
     // The local CLI is a POLL-mode embedder: the host polls the sandbox for
     // results, the sandbox initiates nothing, and there is no callback listener to
@@ -788,7 +788,7 @@ async function bootHarnessRuntimeOnce(
     // crash recovery (a killed run resumes on the next boot), so we exclude
     // concurrent runtimes with an advisory lock rather than randomizing the id; a
     // hard-killed prior holder's lock is reclaimed by pid, so it never wedges boot.
-    const lock = acquireInstanceLock(RUNTIME_LOCK_KEY);
+    const lock = acquireInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
     if (!lock.acquired) {
         ingress.stop();
         return err({ type: "runtime_already_active", holderPid: lock.holderPid });
@@ -933,12 +933,25 @@ async function bootHarnessRuntimeOnce(
             // Empty in poll mode (the no-op ingress advertises no URL); the sandbox
             // never dials out, so the harness ignores it.
             cortexBaseUrl: ingress.cortexBaseUrl,
-            // The sandbox image bakes the library store at /mnt/libs/current, so
-            // the local path creates no `/mnt/libs` bind mount and forces no
-            // container platform (the multi-arch image resolves the host arch at
-            // pull time). Managed still mounts the tarballs via its PVC — that
-            // lives in infra/harness config, not here.
+            // The runtime image bakes no R library and no Python library (the multi-arch
+            // image resolves the host arch at pull time, so no container platform is
+            // forced). The packages come from the store binds below.
             image: cfg.sandboxImage,
+            // The store root passes for EVERY sandbox, exactly as `refStorePath` below
+            // does. No configuration value suppresses it: a sandbox with no store mounted
+            // can import nothing, thus there is no state in which withholding the root is
+            // correct. The root is the fixed CLI-owned `env.packageStoreDir`, so the
+            // store commands write where boot reads. The harness bind-mounts it read-only
+            // at `/mnt/libs`, and it re-checks the store at every sandbox creation.
+            libStorePath: env.packageStoreDir,
+            // The farm-source seam: the harness learns the farm of a sandbox only
+            // through this call, at every `createSandbox`. The resolver heals a missing
+            // farm as an empty one, thus a store that arrived after the analysis still
+            // serves its next sandbox with no restart.
+            farmSource: { kind: "per-analysis", resolve: (id) => resolveAnalysisFarm(env.packageStoreDir, id) },
+            // The published image owns the interpreters, conda, and Node. The declared
+            // value keys the resolver env and the orient-core prompt text of the harness.
+            toolchainSource: "image",
             // Pass the configured store location unconditionally: the sandbox backend
             // re-checks this path's existence at every sandbox creation and mounts it
             // only when it is a real directory then. So a store installed mid-session
@@ -1042,7 +1055,14 @@ async function bootHarnessRuntimeOnce(
             sandboxEmitters: emitters,
             skillsDir: cfg.skillsDir,
             refStorePath: env.refsDir,
-            packagesFile,
+            farmLockFile,
+            imagePackagesFile: imagePackages,
+            // The farm-extension seam, which gives each sandbox agent the `link_packages`
+            // tool. It links from the pool of the same store root that `farmSource`
+            // reads, thus a step reaches a package that the plan did not name. It
+            // acquires nothing: this call runs in the harness host process, and an
+            // acquisition is a host action behind its own approval.
+            extendAnalysisFarm: (id, requests) => linkPackagesIntoFarm(env.packageStoreDir, id, requests),
             bioKeys: cfg.bioKeys,
         };
 
@@ -1077,7 +1097,8 @@ async function bootHarnessRuntimeOnce(
                 embedding,
                 skillsDir: cfg.skillsDir,
                 refStorePath: env.refsDir,
-                ...(packagesFile ? { packagesFile } : {}),
+                ...(farmLockFile ? { farmLockFile } : {}),
+                ...(imagePackages ? { imagePackagesFile: imagePackages } : {}),
             },
         };
         // The conversation agent's dep surface minus the three fields
@@ -1108,9 +1129,15 @@ async function bootHarnessRuntimeOnce(
             // Gives the planner reference discovery over the same store the sandbox
             // mounts, so a plan can name what this install actually holds.
             refStorePath: env.refsDir,
-            // Same manifest the sandbox agents read. Without it, answering "is this package
-            // installed?" would otherwise cost a durable analysis run just to import one name.
-            ...(packagesFile ? { packagesFile } : {}),
+            // The same inventory the sandbox agents read. Without it, answering "is this
+            // package installed?" would otherwise cost a durable analysis run just to
+            // import one name.
+            ...(farmLockFile ? { farmLockFile } : {}),
+            ...(imagePackages ? { imagePackagesFile: imagePackages } : {}),
+            // The link seam of the conversation side: the pre-launch pass of
+            // `execute_analysis` links the packages of the plan through it, and the
+            // `link_packages` tool of the agent exists because it is bound.
+            extendAnalysisFarm: (id, requests) => linkPackagesIntoFarm(env.packageStoreDir, id, requests),
             chrome: {},
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove
@@ -1255,7 +1282,7 @@ async function bootHarnessRuntimeOnce(
             // controller (its bus subscription + gauge) and release the machine-wide
             // runtime lock so the next boot can acquire it.
             clearAgentSwitch();
-            releaseInstanceLock(RUNTIME_LOCK_KEY);
+            releaseInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
             active = null;
         });
 
@@ -1270,7 +1297,7 @@ async function bootHarnessRuntimeOnce(
         // `installAgentSwitch` may have run before the throw (it precedes `launch`); detach it so a failed
         // boot leaves no dangling bus subscription behind.
         clearAgentSwitch();
-        releaseInstanceLock(RUNTIME_LOCK_KEY);
+        releaseInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
         return err({ type: "runtime_boot_failed", cause });
     }
 }

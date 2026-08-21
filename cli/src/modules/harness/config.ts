@@ -5,7 +5,7 @@ import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/
 import { type Result } from "neverthrow";
 import { modelsConfigSchema, readConfig, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
-import { DEFAULT_SANDBOX_IMAGE } from "../libs/images.ts";
+import { SANDBOX_IMAGE } from "../libs/images.ts";
 
 /**
  * Shape of the `harness` config key. Lives here (not in lib/config.ts) so the harness feature owns
@@ -158,7 +158,7 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
             github: cfg?.bioKeys?.github,
             semanticScholar: cfg?.bioKeys?.semanticScholar,
         },
-        sandboxImage: cfg?.sandboxImage ?? DEFAULT_SANDBOX_IMAGE,
+        sandboxImage: cfg?.sandboxImage ?? SANDBOX_IMAGE,
         resourcePolicy,
         // The default is channel-aware (env.adminPort, from stackPorts) so a dev harness runtime and an
         // installed prod harness runtime resolve to different admin ports and never contend for the admin

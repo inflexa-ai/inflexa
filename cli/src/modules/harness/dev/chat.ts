@@ -111,7 +111,7 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
-    const runtime = (await bootHarnessRuntime({ config: cfg })).match(
+    const runtime = (await bootHarnessRuntime({ config: cfg, analysisId: analysis.id })).match(
         (r) => r,
         (e) => {
             s.error("Harness runtime boot failed");
