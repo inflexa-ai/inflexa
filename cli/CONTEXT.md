@@ -42,8 +42,12 @@ command actions, and its logic-local types.
 - **`infra/`** — the container stack. `setup`, `up`, and `down` provision
   CLIProxyAPI and Postgres with pgvector, through a generated Docker Compose
   file.
-- **`libs/`** — the published sandbox image variants (the GHCR refs), and the
-  `sandbox pull` and `status` actions.
+- **`libs/`** — the package store on the host: the content-addressed pool, the
+  per-analysis farms, the acquisition flights with the pending set, the detached
+  transfers, and the catalog download. It also carries the references of the two
+  images (`sandbox-base`, `sandbox-provisioner`) and the `store` and `sandbox`
+  command actions. The vocabulary of the store is in the harness
+  [`CONTEXT.md`](../harness/CONTEXT.md).
 - **`project/`** — the project CRUD command actions (`project new` and
   `project ls`).
 - **`prov/`** — the provenance recorder. It is a bus subscriber that builds,

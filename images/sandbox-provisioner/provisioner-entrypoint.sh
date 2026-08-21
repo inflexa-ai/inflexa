@@ -26,17 +26,15 @@ if [ -n "${INFLEXA_EGRESS_ALLOW:-}" ]; then
     iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
     iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 
-    OLD_IFS=$IFS
-    IFS=','
-    for host in $INFLEXA_EGRESS_ALLOW; do
-        host=$(echo "$host" | tr -d ' ')
+    # Keep IFS at its default: the inner loop splits the one-address-per-line
+    # getent output, and a multi-address host breaks under IFS=','.
+    for host in $(printf '%s' "$INFLEXA_EGRESS_ALLOW" | tr ',' ' '); do
         [ -n "$host" ] || continue
         for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
             iptables -A OUTPUT -d "$ip" -p tcp --dport 443 -j ACCEPT
             iptables -A OUTPUT -d "$ip" -p tcp --dport 80 -j ACCEPT
         done
     done
-    IFS=$OLD_IFS
 
     iptables -P OUTPUT DROP
     if [ -f /proc/net/if_inet6 ]; then
