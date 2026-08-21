@@ -435,6 +435,11 @@ COPY --from=node-builder /opt/node /opt/node
 # complete package list.
 COPY --from=conda-builder /tmp/conda.packages.txt /opt/inflexa/conda.packages.txt
 COPY --from=node-builder /tmp/node.packages.txt /opt/inflexa/node.packages.txt
+# The load check of the package store rides the image that it proves. The
+# acquisition flight of the host runs it against an acquire report, with the
+# store mounted read-only and no network. The check must run in THIS image,
+# because the sandbox is what loads the packages later.
+COPY images/package-store/load-check.py /opt/inflexa/load-check.py
 RUN cat /opt/inflexa/conda.packages.txt /opt/inflexa/node.packages.txt \
       > /opt/inflexa/image-packages.txt \
     && chmod -R a+rX /opt/inflexa
