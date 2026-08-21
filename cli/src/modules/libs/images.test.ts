@@ -1,51 +1,41 @@
 import { describe, expect, test } from "bun:test";
 
-import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, parseVariant, variantImage, variantOfImage } from "./images.ts";
+import { isPublishedSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
 
-describe("variantImage", () => {
-    test("builds the GHCR reference for each variant", () => {
-        expect(variantImage("python")).toBe("ghcr.io/inflexa-ai/sandbox-python:latest");
-        expect(variantImage("python-r")).toBe("ghcr.io/inflexa-ai/sandbox-python-r:latest");
-    });
-
-    test("DEFAULT_SANDBOX_IMAGE is the full python-r stack", () => {
-        expect(DEFAULT_SANDBOX_IMAGE).toBe(variantImage("python-r"));
+describe("SANDBOX_IMAGE", () => {
+    test("is the one published runtime image at its moving tag", () => {
+        expect(SANDBOX_IMAGE).toBe("ghcr.io/inflexa-ai/sandbox-base:latest");
     });
 });
 
-describe("parseVariant", () => {
-    test("accepts the known variants", () => {
-        expect(parseVariant("python")).toBe("python");
-        expect(parseVariant("python-r")).toBe("python-r");
+describe("provisionerImageFor", () => {
+    test("swaps the basename and keeps the registry and the tag", () => {
+        expect(provisionerImageFor("ghcr.io/inflexa-ai/sandbox-base:latest")).toBe("ghcr.io/inflexa-ai/sandbox-provisioner:latest");
+        expect(provisionerImageFor("ghcr.io/inflexa-ai/sandbox-base:v12")).toBe("ghcr.io/inflexa-ai/sandbox-provisioner:v12");
     });
 
-    test("rejects unknown or absent values", () => {
-        expect(parseVariant("r")).toBeNull();
-        expect(parseVariant("PYTHON")).toBeNull();
-        expect(parseVariant(undefined)).toBeNull();
+    test("keeps a digest reference whole", () => {
+        expect(provisionerImageFor("ghcr.io/inflexa-ai/sandbox-base@sha256:deadbeef")).toBe("ghcr.io/inflexa-ai/sandbox-provisioner@sha256:deadbeef");
     });
 
-    test("every SANDBOX_VARIANTS entry round-trips", () => {
-        for (const v of SANDBOX_VARIANTS) expect(parseVariant(v)).toBe(v);
+    test("a bare local reference swaps too", () => {
+        expect(provisionerImageFor("sandbox-base:local")).toBe("sandbox-provisioner:local");
+    });
+
+    test("a custom basename takes the pair convention", () => {
+        expect(provisionerImageFor("my-registry/my-sandbox:latest")).toBe("my-registry/my-sandbox-provisioner:latest");
     });
 });
 
-describe("variantOfImage", () => {
-    test("recognizes the published variant tags", () => {
-        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python:latest")).toBe("python");
-        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python-r:latest")).toBe("python-r");
+describe("isPublishedSandboxImage", () => {
+    test("recognizes the published repository at any tag or digest", () => {
+        expect(isPublishedSandboxImage("ghcr.io/inflexa-ai/sandbox-base")).toBe(true);
+        expect(isPublishedSandboxImage("ghcr.io/inflexa-ai/sandbox-base:latest")).toBe(true);
+        expect(isPublishedSandboxImage("ghcr.io/inflexa-ai/sandbox-base@sha256:deadbeef")).toBe(true);
     });
 
-    test("does not misread sandbox-python-r as sandbox-python (longest match first)", () => {
-        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python-r:20260706-abc")).toBe("python-r");
-    });
-
-    test("matches a digest-pinned reference", () => {
-        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python@sha256:deadbeef")).toBe("python");
-    });
-
-    test("returns null for a custom / non-published image", () => {
-        expect(variantOfImage("sandbox-base:latest")).toBeNull();
-        expect(variantOfImage("my-registry/my-sandbox:latest")).toBeNull();
+    test("refuses a custom image", () => {
+        expect(isPublishedSandboxImage("sandbox-base:latest")).toBe(false);
+        expect(isPublishedSandboxImage("my-registry/my-sandbox:latest")).toBe(false);
     });
 });

@@ -1,63 +1,36 @@
 /**
- * The sandbox image, end to end: the `inflexa sandbox` command actions (pull, status), the config
- * write that records the chosen image, and the pre-flight gate that a launch passes through.
+ * The sandbox images at the command surface: `inflexa sandbox pull`, `inflexa
+ * sandbox status`, `inflexa sandbox remove`, and the pre-flight gate of the dev
+ * commands.
  *
- * Two entry points reach the registry, and each one owns a different question. `sandboxPull` is the
- * DELIBERATE provisioning path — the `sandbox pull` command and the `inflexa setup` wizard both
- * funnel through it, and it re-pulls a moving `:latest` so it doubles as the upgrade path.
- * `ensureSandboxImage` is the IMPLICIT one — a launch asking only whether the configured image is
- * here, and pulling it when it is not. Both live here so neither can drift from the variant naming
- * and the presence read they share.
+ * NO foreground image pull exists anywhere. `sandbox pull` starts the two
+ * detached image transfers — the runtime image and the provisioner image — and
+ * returns at once with the status pointer. A moving `:latest` refreshes through
+ * the same transfers, thus the command doubles as the upgrade path. The
+ * transfer children live in `modules/libs/transfers.ts`.
  *
- * The model: the user picks an image VARIANT (`python` | `python-r`), the CLI
- * `docker pull`s `ghcr.io/inflexa-ai/sandbox-<variant>`, and records it as
- * `harness.sandboxImage` so sandboxes launch on the baked image — no local store
- * directory, no `/mnt/libs` bind mount, and no arch-forcing (a multi-arch manifest
- * resolves the host architecture automatically). The per-track tarballs are managed-only
- * (mounted by infra, not this CLI).
+ * The pre-flight of a dev-channel command REFUSES an absent image with the
+ * pull hint, and it starts nothing: the transfer lifecycle is the one download
+ * mechanism, and a gate that downloaded would hide a multi-GB transfer behind
+ * a command that promised something else.
  */
 
-import { isCancel, log, select as clackSelect } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
 
-import { confirm, fail } from "../../lib/cli.ts";
-import { ensureRuntime, readConfig, selectedRuntime, writeConfig } from "../../lib/config.ts";
-import { capture, firstReadyRuntime, inherit, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
-import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, VARIANT_DESCRIPTIONS, VARIANT_LABELS, variantImage, variantOfImage, type SandboxVariant } from "./images.ts";
-import { resolvePackagesFile } from "./packages.ts";
-
-/** Flags accepted by `inflexa sandbox pull` (and reused by setup). */
-export type PullOptions = {
-    /** The image variant to pull; when absent, prompt interactively. */
-    readonly variant?: SandboxVariant;
-    /** Skip the pull-size confirmation (also implied non-interactively). */
-    readonly yes?: boolean;
-    /** Suppress the streamed pull progress — used when a caller owns its own spinner. */
-    readonly quiet?: boolean;
-};
-
-/** The result of a pull, for the caller to report. */
-export type PullOutcome =
-    | { readonly type: "up_to_date"; readonly variant: SandboxVariant; readonly image: string }
-    | { readonly type: "pulled"; readonly variant: SandboxVariant; readonly image: string }
-    | { readonly type: "declined" };
-
-/**
- * A pull failed. Each variant names one stage (runtime readiness → variant choice
- * → docker pull → config write); the message is user-facing and the optional
- * `cause` carries the underlying throw for logs.
- */
-export type PullError =
-    | { readonly type: "runtime_unavailable"; readonly message: string }
-    | { readonly type: "no_variant"; readonly message: string }
-    | { readonly type: "pull_failed"; readonly message: string; readonly cause?: unknown }
-    | { readonly type: "config_write_failed"; readonly message: string; readonly cause?: unknown };
+import { fail } from "../../lib/cli.ts";
+import { ensureRuntime, readConfig, selectedRuntime } from "../../lib/config.ts";
+import { capture, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
+import { env } from "../../lib/env.ts";
+import { isPublishedSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
+import { inspectStoreContent } from "./store_download.ts";
+import { readTransferReports, startImageTransfer, type TransferReport } from "./transfers.ts";
 
 /**
  * The configured sandbox image from the raw config's opaque `harness` block,
- * defaulting to {@link DEFAULT_SANDBOX_IMAGE}. Reads the raw config (not
- * `resolveHarnessConfig`) so this module does not import modules/harness — keeping
- * the dependency one-directional (harness config → this module for the default).
+ * defaulting to {@link SANDBOX_IMAGE}. Reads the raw config (not
+ * `resolveHarnessConfig`) so this module does not import modules/harness —
+ * keeping the dependency one-directional (harness config → this module for the
+ * default).
  */
 export function configuredSandboxImage(): string {
     // `harness` is declared `unknown` in the config schema (validated downstream in
@@ -67,175 +40,154 @@ export function configuredSandboxImage(): string {
         const img = (harness as Record<string, unknown>).sandboxImage;
         if (typeof img === "string" && img.trim() !== "") return img;
     }
-    return DEFAULT_SANDBOX_IMAGE;
-}
-
-/**
- * Record `image` as `harness.sandboxImage`, preserving the rest of the opaque
- * `harness` block. The block is `unknown` in the config schema, so we shallow-merge
- * onto whatever object is there (or a fresh one).
- */
-function configureSandboxImage(image: string): Result<void, PullError> {
-    const cfg = readConfig();
-    const harness = typeof cfg.harness === "object" && cfg.harness !== null ? (cfg.harness as Record<string, unknown>) : {};
-    return writeConfig({ ...cfg, harness: { ...harness, sandboxImage: image } }).mapErr((e) => ({
-        type: "config_write_failed",
-        message: `Could not record the sandbox image in config.json: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`,
-        cause: e.cause,
-    }));
+    return SANDBOX_IMAGE;
 }
 
 /** Whether `rt` already has `image` locally. */
 async function imagePresent(rt: ContainerRuntime, image: string): Promise<boolean> {
-    return (await capture(rt, ["image", "inspect", image])).code === 0;
+    try {
+        return (await capture(rt, ["image", "inspect", image])).code === 0;
+    } catch {
+        return false;
+    }
 }
 
+/** An image the engine does not hold, with the one message that names the remedy. */
+export type ImageAbsentError = { readonly type: "image_absent"; readonly image: string; readonly message: string };
+
 /**
- * Whether `image` is a MOVING reference — a `:latest` tag or no tag at all (which
- * the runtime treats as `:latest`). A moving ref must be re-pulled even when it is
- * present locally, because a newer remote digest can hide behind the same tag; an
- * immutable ref (a pinned `:<version>` tag or an `@sha256:` digest) that is present
- * is already authoritative and needs no pull. The last path segment carries the
- * tag, so a registry `host:port/` prefix never confuses the check.
+ * Whether the engine holds `image`, as a Result the store and check runs gate
+ * on. An absent PUBLISHED image names `inflexa sandbox pull` as the remedy. An
+ * absent CUSTOM image cannot be pulled, so the message names the build instead.
+ * Nothing here pulls: the transfer lifecycle is the one download mechanism.
  */
-export function isMovingTag(image: string): boolean {
-    if (image.includes("@")) return false; // digest pin — immutable
-    const lastSegment = image.slice(image.lastIndexOf("/") + 1);
-    const colon = lastSegment.indexOf(":");
-    const tag = colon === -1 ? "latest" : lastSegment.slice(colon + 1);
-    return tag === "latest";
+export async function ensureImagePresent(rt: ContainerRuntime, image: string): Promise<Result<void, ImageAbsentError>> {
+    if (await imagePresent(rt, image)) return ok(undefined);
+    if (isPublishedSandboxImage(image) || image === provisionerImageFor(configuredSandboxImage())) {
+        return err({
+            type: "image_absent",
+            image,
+            message: `The image "${image}" is not installed. Run \`inflexa sandbox pull\` to download it, and \`inflexa sandbox status\` to watch it.`,
+        });
+    }
+    return err({
+        type: "image_absent",
+        image,
+        message: `The image "${image}" is not installed, and it is not a published image, thus no registry can supply it. Build it locally, or set \`harness.sandboxImage\` to a published \`ghcr.io/inflexa-ai/sandbox-base\` tag.`,
+    });
 }
 
 /**
- * Pre-flight gate: the configured sandbox image must be present before a command stages anything.
- * After staging it is too late to find out. A missing PUBLISHED variant is pulled from GHCR (offered
- * and confirmed on a TTY, pulled directly otherwise). A missing CUSTOM local tag cannot be pulled, so
- * this names the build command instead. Never a silent dead-end.
+ * Pre-flight gate of the dev-channel commands: the configured sandbox image
+ * must be present before a command stages anything, because after staging it is
+ * too late to find out. The gate REFUSES an absent image with the pull hint and
+ * starts no transfer.
  *
- * A present image short-circuits, which is the deliberate difference from {@link sandboxPull}. That
- * one re-pulls a moving `:latest` even when it is present, because it doubles as the upgrade path. A
- * gate that downloaded on every launch would be a tax on every launch.
- *
- * This is the one function here that exits the process through `fail` instead of giving a `Result`.
- * Every caller is a CLI entry point at a pre-flight gate with nothing to recover to: with no sandbox
- * image the command cannot run at all, so a `Result` would buy each caller one `match` that ends in
- * this same exit. {@link sandboxPull} keeps its `Result` because a declined pull is a state the setup
- * wizard genuinely continues past.
+ * This is the one function here that exits the process through `fail` instead
+ * of giving a `Result`. Every caller is a CLI entry point at a pre-flight gate
+ * with nothing to recover to: with no sandbox image the command cannot run at
+ * all, so a `Result` would buy each caller one `match` that ends in this same
+ * exit.
  */
 export async function ensureSandboxImage(image: string): Promise<void> {
     const rtResult = await ensureRuntime();
     if (rtResult.isErr()) fail(rtResult.error.message);
-    const rt = rtResult.value;
-    if (await imagePresent(rt, image)) return;
+    const present = await ensureImagePresent(rtResult.value, image);
+    if (present.isErr()) fail(present.error.message);
+}
 
-    const variant = variantOfImage(image);
-    if (variant === null) {
-        // A custom local tag (a user's `FROM` image) — we cannot pull it.
-        fail(
-            [
-                `Sandbox image "${image}" not found in ${rt.id}.`,
-                `Build it locally (e.g. \`${rt.bin} build -f images/sandbox-python-r/Dockerfile -t ${image} .\`),`,
-                "or set `harness.sandboxImage` to a published `ghcr.io/inflexa-ai/sandbox-*` tag and run `inflexa sandbox pull`.",
-            ].join("\n"),
+/** `inflexa sandbox pull` — start the two detached image transfers and return at once. */
+export async function sandboxPull(): Promise<void> {
+    const kinds = ["runtime_image", "provisioner_image"] as const;
+    for (const kind of kinds) {
+        const label = kind === "runtime_image" ? "runtime image" : "provisioner image";
+        startImageTransfer(kind).match(
+            (start) => {
+                if (start.type === "started") console.log(`The ${label} transfer runs in the background (pid ${start.pid}).`);
+                else console.log(`A ${label} transfer is already running (pid ${start.report.holderPid ?? "unknown"}).`);
+            },
+            (error) => {
+                console.error(`  ${error.message}`);
+                process.exitCode = 1;
+            },
         );
     }
-
-    // Published variant: offer + pull. The image is genuinely required to launch a
-    // sandbox, so a decline is an actionable stop, not a silent dead-end.
-    if (process.stdin.isTTY) {
-        console.log(`\n  Sandbox image "${image}" (${variant}) is not installed.`);
-        const proceed = await confirm("Pull it from GitHub Packages now? (may be a multi-GB download)");
-        if (!proceed) fail("A sandbox image is required to run a profile. Run `inflexa sandbox pull` and retry.");
-    } else {
-        console.log(`  Sandbox image "${image}" not present — pulling ${variant} from GitHub Packages…`);
-    }
-    const code = await inherit(rt, ["pull", image]);
-    if (code !== 0) fail(`Failed to pull ${image} (\`${rt.bin} pull\` exited ${code}). Check your network and that ghcr.io is reachable.`);
+    console.log("Run `inflexa sandbox status` to watch the transfers.");
 }
 
 /**
- * Provision the sandbox image. Resolves a variant (prompting interactively when
- * none is given), `docker pull`s the multi-arch image from GHCR, and records it as
- * `harness.sandboxImage`. Because the variant resolves to a moving `:latest` ref,
- * a pull always refreshes to the current remote digest — even when the image is
- * present locally — so `sandbox pull` doubles as the image-upgrade path (a present
- * image transfers only changed layers, so no size prompt). An immutable pinned ref
- * that is already present short-circuits to `up_to_date` with nothing on the wire.
+ * `inflexa sandbox remove` — remove the two images from the engine, and touch
+ * no store and no farm. The agent policy of the command is `blocked`, because
+ * an agent must not delete multi-GB assets of the user.
  */
-export async function sandboxPull(opts: PullOptions = {}): Promise<Result<PullOutcome, PullError>> {
-    const interactive = !opts.quiet && process.stdin.isTTY;
-
+export async function sandboxRemove(): Promise<void> {
     const rtResult = await ensureRuntime();
-    if (rtResult.isErr()) return err({ type: "runtime_unavailable", message: rtResult.error.message });
+    if (rtResult.isErr()) fail(rtResult.error.message);
     const rt = rtResult.value;
-
-    // Resolve the variant: an explicit choice, else an interactive prompt. A
-    // non-interactive run without a variant cannot proceed (no way to choose).
-    let variant = opts.variant ?? null;
-    if (variant === null) {
-        if (!interactive) {
-            return err({
-                type: "no_variant",
-                message: "No image variant given. Run `inflexa sandbox pull <python|python-r> --yes` on a non-interactive terminal.",
-            });
+    const sandboxImage = configuredSandboxImage();
+    for (const image of [sandboxImage, provisionerImageFor(sandboxImage)]) {
+        if (!(await imagePresent(rt, image))) {
+            console.log(`  ${image} is not installed. Nothing to remove.`);
+            continue;
         }
-        const chosen = await clackSelect({
-            message: "Which sandbox image?",
-            options: SANDBOX_VARIANTS.map((v) => ({ value: v, label: VARIANT_LABELS[v], hint: VARIANT_DESCRIPTIONS[v] })),
-        });
-        if (isCancel(chosen)) return ok({ type: "declined" });
-        variant = chosen;
+        const removed = await capture(rt, ["rmi", image]).catch(() => ({ code: 1, stdout: "", stderr: "spawn failed" }));
+        if (removed.code === 0) console.log(`  Removed ${image}.`);
+        else {
+            console.error(`  Could not remove ${image} (\`${rt.bin} rmi\` exited ${removed.code}). A container can still use it.`);
+            process.exitCode = 1;
+        }
     }
-    const image = variantImage(variant);
-    const present = await imagePresent(rt, image);
-
-    // An IMMUTABLE ref that is already present is authoritative — record the config
-    // and pull nothing. A MOVING `:latest` ref falls through to the pull below even
-    // when present, so `sandbox pull` refreshes to the current remote digest.
-    if (present && !isMovingTag(image)) {
-        const configured = configureSandboxImage(image);
-        if (configured.isErr()) return err(configured.error);
-        return ok({ type: "up_to_date", variant, image });
-    }
-
-    // The size confirmation is only for the FIRST (absent) pull — a multi-GB
-    // download. Refreshing a present `:latest` transfers only changed layers (often
-    // nothing), so it runs without the prompt.
-    if (!present && interactive && !opts.yes) {
-        const proceed = await confirm(`Pull the ${variant} sandbox image (${image})? This may be a multi-GB download.`);
-        if (!proceed) return ok({ type: "declined" });
-    }
-
-    // Stream progress interactively; capture (buffered) when a caller owns the UI.
-    if (!opts.quiet) log.info(`${present ? "Refreshing" : "Pulling"} ${image} …`);
-    const code = opts.quiet ? (await capture(rt, ["pull", image])).code : await inherit(rt, ["pull", image]);
-    if (code !== 0) {
-        return err({
-            type: "pull_failed",
-            message: `\`${rt.bin} pull ${image}\` exited ${code}. Check your network and that GitHub Packages (ghcr.io) is reachable.`,
-        });
-    }
-
-    const configured = configureSandboxImage(image);
-    if (configured.isErr()) return err(configured.error);
-    // Cache the image's package inventory while the image is definitely present. A
-    // failure here is not a failed pull: the harness reports the package set as
-    // unknown and the run proceeds, so it must not turn a good pull into an error.
-    if ((await resolvePackagesFile(rt, image)) === null && !opts.quiet) {
-        log.warn(`${image} carries no package inventory — agents will be told the installed set is unknown.`);
-    }
-    return ok({ type: "pulled", variant, image });
+    console.log("The package store is untouched. Run `inflexa sandbox pull` to download the images again.");
 }
 
-// --- status ------------------------------------------------------------------
+/** One line of the transfer block of the status, or `null` for a kind with nothing to report. */
+function describeTransferLine(report: TransferReport): string | null {
+    const label = report.kind === "runtime_image" ? "runtime image" : report.kind === "provisioner_image" ? "provisioner image" : "catalog";
+    switch (report.state) {
+        case null:
+            return null;
+        case "pending":
+            return `  Transfer ${label}: starting`;
+        case "running": {
+            const row = report.row;
+            const meter = row !== null && row.totalBytes !== null ? ` — ${formatBytes(row.bytesTransferred)} of ${formatBytes(row.totalBytes)}` : "";
+            return `  Transfer ${label}: running${meter}`;
+        }
+        case "installed":
+            return report.row?.message === null || report.row?.message === undefined ? null : `  Transfer ${label}: ${report.row.message}`;
+        case "failed":
+            return `  Transfer ${label}: failed${report.row?.message ? ` — ${report.row.message}` : ""}`;
+        case "declined":
+            return `  Transfer ${label}: declined — run \`inflexa ${report.kind === "catalog" ? "store download" : "sandbox pull"}\` to start it`;
+        case "canceled":
+            return `  Transfer ${label}: canceled — run \`inflexa ${report.kind === "catalog" ? "store download" : "sandbox pull"}\` to start again`;
+        default: {
+            const unreachable: never = report.state;
+            throw new Error(`unhandled transfer state: ${JSON.stringify(unreachable)}`);
+        }
+    }
+}
 
-/** `inflexa sandbox status` — configured variant, GHCR reference, local presence, digest. */
+/** Render a byte count in the largest unit that keeps it readable. */
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KiB", "MiB", "GiB", "TiB"];
+    let value = bytes / 1024;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    return `${value.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * `inflexa sandbox status` — the two images (the reference, the presence, the
+ * local digest of each), the live transfer states, and the store summary.
+ */
 export async function sandboxStatus(): Promise<void> {
-    const image = configuredSandboxImage();
-    const variant = variantOfImage(image);
-
-    console.log(`  Image    ${image}`);
-    console.log(`  Variant  ${variant ?? "(custom — not a published sandbox-python/-r image)"}`);
+    const sandboxImage = configuredSandboxImage();
+    const provisionerImage = provisionerImageFor(sandboxImage);
 
     // Status is a read-only diagnostic: use the selected runtime, or detect a ready
     // one WITHOUT pinning it — a passive inspection must not write config (that is
@@ -246,18 +198,31 @@ export async function sandboxStatus(): Promise<void> {
             (detected) => detected,
             () => null,
         );
-    if (rt === null) {
-        console.log("  Present  unknown — no container runtime available (start Docker or Podman)");
-        return;
+
+    for (const [label, image] of [
+        ["Runtime", sandboxImage],
+        ["Provisioner", provisionerImage],
+    ] as const) {
+        console.log(`  ${label}  ${image}`);
+        if (rt === null) {
+            console.log("    Present  unknown — no container runtime available (start Docker or Podman)");
+            continue;
+        }
+        const inspect = await capture(rt, ["image", "inspect", "--format", "{{.Id}}", image]).catch(() => ({ code: 1, stdout: "", stderr: "" }));
+        if (inspect.code === 0) {
+            console.log("    Present  yes");
+            console.log(`    Digest   ${inspect.stdout.trim()}`);
+        } else {
+            console.log("    Present  no — run `inflexa sandbox pull` to download it");
+        }
     }
 
-    // `--format {{.Id}}` prints the local image digest; a non-zero exit means absent.
-    const inspect = await capture(rt, ["image", "inspect", "--format", "{{.Id}}", image]);
-    if (inspect.code === 0) {
-        console.log(`  Present  yes`);
-        console.log(`  Digest   ${inspect.stdout.trim()}`);
-    } else {
-        console.log(`  Present  no`);
-        console.log(`  Run \`inflexa sandbox pull${variant ? ` ${variant}` : ""}\` to download it.`);
+    for (const report of readTransferReports()) {
+        const line = describeTransferLine(report);
+        if (line !== null) console.log(line);
     }
+
+    const content = await inspectStoreContent(env.packageStoreDir);
+    console.log(`  Store    ${env.packageStoreDir}`);
+    console.log(`    State  ${content}${content === "missing" ? " — run `inflexa store download` to obtain the catalog" : ""}`);
 }
