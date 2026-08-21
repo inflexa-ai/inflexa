@@ -47,10 +47,13 @@ RUN declared="$(grep -E '^base_image:' /tmp/package-store-manifest.yaml \
 # transitive package that a later change removes. iptables backs the egress
 # allowlist of the entrypoint.
 # The jags/libuv/libprotobuf/libglpk runtime .so set mirrors sandbox-base so R
-# packages that dlopen them at library() time load in the provisioner too (pak
-# installs most system libraries itself from each package's SystemRequirements).
+# packages that dlopen them at library() time load in the provisioner too. pak
+# cannot apt-get a system requirement under the egress allowlist, thus the dev
+# headers of the compiled R packages bake here: glpk for igraph, gmp and mpfr
+# for symengine and gmp, GL and GLU for rgl, protobuf for otelsdk.
 COPY images/install-build-toolchain.sh /tmp/install-build-toolchain.sh
-RUN bash /tmp/install-build-toolchain.sh python3-yaml python3-packaging iptables jags libuv1t64 libprotobuf32t64 libglpk40
+RUN bash /tmp/install-build-toolchain.sh python3-yaml python3-packaging iptables jags libuv1t64 libprotobuf32t64 libglpk40 \
+      libglpk-dev libgmp-dev libmpfr-dev libgl1-mesa-dev libglu1-mesa-dev libprotobuf-dev protobuf-compiler
 
 # Pinned to sandbox-base's uv so resolution and wheel selection are identical to
 # what the runtime image environment expects.
@@ -77,6 +80,12 @@ COPY images/sandbox-provisioner/base-packages.json /usr/local/bin/base-packages.
 COPY images/sandbox-provisioner/provisioner-entrypoint.sh /usr/local/bin/provisioner-entrypoint.sh
 RUN chmod +x /usr/local/bin/provision /usr/local/bin/emit_deps.py \
       /usr/local/bin/provisioner-entrypoint.sh
+
+# pak must not run apt: the egress allowlist blocks the apt hosts, and this
+# image already bakes the system libraries that the R builds want. The name
+# `PKG_SYSREQS` is the one the vendored pkgdepends reads, and the env form
+# inherits into the pak subprocess.
+ENV PKG_SYSREQS=false
 
 # Attach the published package to the repo, the same as sandbox-base. GHCR reads
 # this label to link the new package to the repository. A linked package takes

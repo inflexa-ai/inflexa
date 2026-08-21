@@ -186,17 +186,34 @@ No answer — flag or file key — SHALL carry a MODEL or EMBEDDING secret. The 
 
 ### Requirement: The sandbox image and resource allowance are answerable
 
-`--sandbox python|python-r` (file: `sandbox`) SHALL answer the sandbox-image variant; the answer IS the multi-GB consent, and the pull runs without a size confirmation. Absent an answer, batch setup SHALL skip the image (with the existing pull-later hint) — it is never downloaded implicitly. `resources.sharePct` (flag `--resource-share <pct>`, 1–100) SHALL answer the machine-allowance question as a percentage — portable across heterogeneous fleets — persisted as the absolute budget computed from the detected machine, exactly as the wizard's prompt persists it.
+`--sandbox` (file: `sandbox`, a boolean — `sandbox: true`) MUST be a bare
+flag: the answer IS the one consent for the three transfers — the runtime image, the provisioner image,
+and the catalog — and no size confirmation follows. The transfers start at
+the START of setup, detached, thus the user continues through the setup
+while they run. Setup MUST exit without a wait on them. Absent an answer,
+batch setup skips the transfers with the pull-later hint — nothing
+downloads implicitly. A decline writes the `declined` state, thus the app
+asks nothing at open. A second setup during a live transfer reports the run
+and opens no second consent. `resources.sharePct` (flag `--resource-share
+<pct>`, 1-100) answers the machine-allowance question as a percentage. The
+value persists as the absolute budget computed from the detected machine,
+exactly as the wizard's prompt persists it.
 
-#### Scenario: A sandbox answer pulls without confirmation
+#### Scenario: The sandbox answer starts three detached transfers
 
-- **WHEN** `setup --yes --sandbox python` runs with the image absent locally
-- **THEN** the image is pulled with no size prompt and recorded as `harness.sandboxImage`
+- **WHEN** `setup --yes --sandbox` runs with nothing present
+- **THEN** the three transfers start detached at the start of setup, and setup completes without a wait
 
 #### Scenario: No sandbox answer downloads nothing
 
 - **WHEN** `setup --yes` runs without `--sandbox`
-- **THEN** no image is pulled and the pull-later hint is printed
+- **THEN** no transfer starts and the pull-later hint is printed
+
+#### Scenario: A second setup never blocks
+
+- **GIVEN** a live catalog transfer
+- **WHEN** `inflexa setup` runs again
+- **THEN** it reports the live transfer, opens no second consent, and completes
 
 #### Scenario: The resource share persists machine-relative absolutes
 
