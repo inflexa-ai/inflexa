@@ -46,7 +46,7 @@ describe("boot store transitions", () => {
     });
 
     test("booting is published synchronously, then ready stashes the handle + model", async () => {
-        const pending = startHarnessBoot(cfg, readyDriver("claude-test"));
+        const pending = startHarnessBoot(cfg, undefined, readyDriver("claude-test"));
         // startHarnessBoot sets `booting` before its first await, so the transition is observable
         // without awaiting the driver — this is what the status bar / animation mount on.
         expect(bootState().phase).toBe("booting");
@@ -60,7 +60,7 @@ describe("boot store transitions", () => {
 
     test("a boot failure publishes the actionable describeBootError message, no handle", async () => {
         const e: HarnessBootError = { type: "runtime_already_active", holderPid: 4821 };
-        await startHarnessBoot(cfg, failDriver(e));
+        await startHarnessBoot(cfg, undefined, failDriver(e));
 
         const settled = bootState();
         expect(settled.phase).toBe("failed");
@@ -90,10 +90,10 @@ describe("boot store transitions", () => {
             return ok(fakeRuntime("should-not-happen"));
         };
 
-        const pending = startHarnessBoot(cfg, firstDriver);
+        const pending = startHarnessBoot(cfg, undefined, firstDriver);
         expect(bootState().phase).toBe("booting");
 
-        await startHarnessBoot(cfg, secondDriver); // no-op: already booting
+        await startHarnessBoot(cfg, undefined, secondDriver); // no-op: already booting
         expect(secondCalls).toBe(0);
         expect(firstCalls).toBe(1);
 
@@ -105,7 +105,7 @@ describe("boot store transitions", () => {
     });
 
     test("a second call while ready is a no-op (the ready model + handle are unchanged)", async () => {
-        await startHarnessBoot(cfg, readyDriver("claude-a"));
+        await startHarnessBoot(cfg, undefined, readyDriver("claude-a"));
         expect(bootState().phase).toBe("ready");
 
         let called = 0;
@@ -113,7 +113,7 @@ describe("boot store transitions", () => {
             called += 1;
             return ok(fakeRuntime("claude-b"));
         };
-        await startHarnessBoot(cfg, rebootDriver);
+        await startHarnessBoot(cfg, undefined, rebootDriver);
         expect(called).toBe(0);
 
         const settled = bootState();
@@ -168,7 +168,7 @@ describe("agent-models store (watchAgentModels)", () => {
         });
         try {
             expect(agentModels().current).toEqual({ conversation: "", sandbox: "", utility: "" });
-            await startHarnessBoot(cfg, readyDriver("claude-opus-4-8"));
+            await startHarnessBoot(cfg, undefined, readyDriver("claude-opus-4-8"));
             expect(agentModels().current).toEqual({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" });
         } finally {
             dispose();
@@ -183,7 +183,7 @@ describe("agent-models store (watchAgentModels)", () => {
             watchAgentModels();
         });
         try {
-            await startHarnessBoot(cfg, readyDriver("claude-opus-4-8"));
+            await startHarnessBoot(cfg, undefined, readyDriver("claude-opus-4-8"));
 
             // Idle → the sandbox swap applies immediately and the store follows.
             requestAgentModelChange("sandbox", "claude-haiku-4-5");

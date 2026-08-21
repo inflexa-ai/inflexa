@@ -26,6 +26,8 @@ import { agentModels, bootState } from "../hooks/boot.ts";
 import { chatStatus } from "../hooks/status.ts";
 import type { ChatStatus } from "../hooks/status.ts";
 import { notify } from "../hooks/notice.ts";
+import { storeFlightLines, transferLabel, transferReports, type StoreFlightLine } from "../hooks/sandbox_gate.tsx";
+import type { TransferReport } from "../../modules/libs/transfers.ts";
 import { openThread } from "../hooks/thread.ts";
 import { writeClipboard } from "../../lib/clipboard.ts";
 import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
@@ -72,6 +74,92 @@ type LiveLine = { glyph: string | null; role: keyof ThemeColors; text: string };
 function firstLine(error: string | null): string {
     const line = (error ?? "").split("\n", 1)[0]?.trim() ?? "";
     return line.length > 0 ? line : "failed";
+}
+
+/** How many meter cells the transfer bar carries, in the notation of the RUNS progress embed. */
+const TRANSFER_BAR_CELLS = 16;
+
+/**
+ * One row per transfer the rail must show (the package-store-transfers spec):
+ * a LIVE transfer renders its kind, its state, and a meter when the source
+ * declares totals; a terminal FAILURE stays visible with a short hint; a
+ * completed transfer renders NOTHING — a "ready" line that everyone has is
+ * noise, and the row disappears. `declined` and `canceled` stay visible too,
+ * because each names a retry the user still owes a decision on.
+ */
+function transferLinesOf(reports: readonly TransferReport[]): LiveLine[] {
+    const lines: LiveLine[] = [];
+    for (const report of reports) {
+        const label = transferLabel(report.kind);
+        switch (report.state) {
+            case null:
+            case "installed":
+                break;
+            case "pending":
+                lines.push({ glyph: GLYPHS.warning, role: "warning", text: `${label} starting${GLYPHS.ellipsis}` });
+                break;
+            case "running": {
+                const row = report.row;
+                const meter =
+                    row !== null && row.totalBytes !== null && row.totalBytes > 0 ? ` ${Math.round((row.bytesTransferred / row.totalBytes) * 100)}%` : "";
+                lines.push({ glyph: GLYPHS.warning, role: "warning", text: `${label} downloading${meter}` });
+                break;
+            }
+            case "failed":
+                lines.push({ glyph: GLYPHS.cross, role: "error", text: `${label} failed ${GLYPHS.middot} ${retryHint(report.kind)}` });
+                break;
+            case "declined":
+                lines.push({ glyph: GLYPHS.circleHollow, role: "fgSubtle", text: `${label} declined ${GLYPHS.middot} ${retryHint(report.kind)}` });
+                break;
+            case "canceled":
+                lines.push({ glyph: GLYPHS.circleHollow, role: "fgSubtle", text: `${label} canceled ${GLYPHS.middot} ${retryHint(report.kind)}` });
+                break;
+            default: {
+                const unreachable: never = report.state;
+                throw new Error(`unhandled transfer state: ${JSON.stringify(unreachable)}`);
+            }
+        }
+    }
+    return lines;
+}
+
+/** The rail-budget retry hint of one transfer kind. The full command rides the gate refusal and `sandbox status`. */
+function retryHint(kind: TransferReport["kind"]): string {
+    return kind === "catalog" ? "store download" : "sandbox pull";
+}
+
+/**
+ * The transfer meter of the running catalog, or `null` when nothing declares
+ * exact totals. The same notation as the RUNS progress embed: `GLYPHS.bar`
+ * cells, the filled ones in `success` and the empty ones in the `fgSubtle`
+ * decoration tier. A partly-done transfer is clamped to `[1, cells − 1]`, so a
+ * transfer in flight never paints as fully filled or fully empty.
+ */
+function transferMeterOf(reports: readonly TransferReport[]): { filled: string; empty: string } | null {
+    const running = reports.find((report) => report.state === "running" && report.row !== null && report.row.totalBytes !== null && report.row.totalBytes > 0);
+    const row = running?.row;
+    if (row === undefined || row === null || row.totalBytes === null) return null;
+    const proportional = Math.round((row.bytesTransferred / row.totalBytes) * TRANSFER_BAR_CELLS);
+    const partial = row.bytesTransferred > 0 && row.bytesTransferred < row.totalBytes;
+    const filled = partial ? Math.min(TRANSFER_BAR_CELLS - 1, Math.max(1, proportional)) : Math.min(TRANSFER_BAR_CELLS, Math.max(0, proportional));
+    return { filled: GLYPHS.bar.repeat(filled), empty: GLYPHS.bar.repeat(TRANSFER_BAR_CELLS - filled) };
+}
+
+/** How much of a flight spec the rail carries. Past this the line wraps and it costs the rail a second row. */
+const FLIGHT_SPEC_CHARS = 24;
+
+/**
+ * One line for each live acquisition flight. The line carries the spec and the
+ * state, and a count follows the state when more than one analysis subscribes.
+ * The rail is narrow, thus the spec clamps and `inflexa store ls` carries the
+ * full record.
+ */
+function flightLinesOf(flights: readonly StoreFlightLine[]): LiveLine[] {
+    return flights.map((flight) => ({
+        glyph: GLYPHS.warning,
+        role: "warning" as const,
+        text: `${flight.spec.length <= FLIGHT_SPEC_CHARS ? flight.spec : `${flight.spec.slice(0, FLIGHT_SPEC_CHARS)}${GLYPHS.ellipsis}`} ${flight.state}${flight.subscribers > 1 ? ` (${flight.subscribers})` : ""}`,
+    }));
 }
 
 /** Map a {@link ProfileSnapshot} to its display line: muted placeholders, warn "profiling…", success count+age, error one-liner. */
@@ -563,6 +651,13 @@ export function Sidebar(props: SidebarProps) {
         return snap.kind === "loaded" ? (snap.usageByRun ?? new Map()) : new Map();
     });
 
+    // The transfer rows and the flight rows ride the gate store's poll: memos,
+    // not bare accessors, because a row and its meter must describe the SAME
+    // read — two independent calls could straddle a poll tick and disagree.
+    const transferLines = createMemo(() => transferLinesOf(transferReports()));
+    const transferMeter = createMemo(() => transferMeterOf(transferReports()));
+    const flightRows = createMemo(() => flightLinesOf(storeFlightLines()));
+
     // DATA PROFILE / RUNS live data comes from the module store (see `hooks/sidebar_live.ts`), which
     // `App` refreshes on lifecycle edges + a bounded poll. The sidebar only reads the snapshots.
     const profileLine = createMemo(() => profileLineOf(profileSnapshot()));
@@ -682,6 +777,40 @@ export function Sidebar(props: SidebarProps) {
                         {ws.project ? ` ${GLYPHS.middot} proj: ${ws.project.name}` : ""}
                     </text>
                 </Section>
+
+                {/* TRANSFERS: one row per live or terminal transfer, plus the live
+                    acquisition flights. The whole section disappears when nothing
+                    moves and nothing failed — a completed transfer leaves no row
+                    behind (the package-store-transfers spec). The retry rides
+                    `<leader>t` and the command palette, never the gate. */}
+                <Show when={transferLines().length > 0 || flightRows().length > 0}>
+                    <Section label="TRANSFERS">
+                        <For each={transferLines()}>
+                            {(line) => (
+                                <text>
+                                    {line.glyph !== null ? <Fg role={line.role}>{`${line.glyph} `}</Fg> : null}
+                                    <Fg role="fgMuted">{line.text}</Fg>
+                                </text>
+                            )}
+                        </For>
+                        <Show when={transferMeter()} keyed>
+                            {(meter: { filled: string; empty: string }) => (
+                                <text>
+                                    <Fg role="success">{meter.filled}</Fg>
+                                    <Fg role="fgSubtle">{meter.empty}</Fg>
+                                </text>
+                            )}
+                        </Show>
+                        <For each={flightRows()}>
+                            {(line) => (
+                                <text>
+                                    {line.glyph !== null ? <Fg role={line.role}>{`${line.glyph} `}</Fg> : null}
+                                    <Fg role="fgMuted">{line.text}</Fg>
+                                </text>
+                            )}
+                        </For>
+                    </Section>
+                </Show>
 
                 <Section label="DATA PROFILE" onActivate={props.onOpenProfile}>
                     {/* The profile's spend belongs HERE and nowhere else in the rail: its calls carry no

@@ -11,6 +11,7 @@ import {
     type ProfileParityOutcome,
 } from "../../modules/harness/profile_trigger.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
+import { listAnalysisInputs } from "../../db/primary_query.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -114,7 +115,7 @@ export type ParityWatchSeams = {
 };
 
 const realParityWatchSeams: ParityWatchSeams = {
-    drive: (runtime, analysis, currentAnalysisId, cause) => void driveProfileParity(runtime, analysis, currentAnalysisId, cause),
+    drive: (runtime, analysis, currentAnalysisId, cause) => gatedProfileParity(runtime, analysis, currentAnalysisId, cause),
     schedule: (fn, ms) => {
         const handle = setTimeout(fn, ms);
         // A half-elapsed debounce must never keep the process alive (matters for tests + clean shutdown).
@@ -122,6 +123,71 @@ const realParityWatchSeams: ParityWatchSeams = {
         return () => clearTimeout(handle);
     },
 };
+
+/**
+ * The prerequisite gate for one analysis: `ready` when a sandbox may start, `blocked` when the
+ * transfers did not complete or the store cannot serve one. Injectable so the composition runs
+ * offline in a test.
+ */
+export type SandboxGate = (analysis: Analysis) => Promise<"ready" | "blocked">;
+
+const realSandboxGate: SandboxGate = async (analysis) => {
+    // A cheap ledger read: an analysis with no inputs profiles nothing, so it needs no store and no image.
+    const hasInputs = listAnalysisInputs(analysis.id).match(
+        (inputs) => inputs.length > 0,
+        () => false,
+    );
+    if (!hasInputs) return "ready";
+    const { awaitSandboxReady } = await import("./sandbox_gate.tsx");
+    return awaitSandboxReady();
+};
+
+/** The effectful seams of a gated drive, injectable so the gating decision is unit-tested without the real gate. */
+export type GatedDriveSeams = {
+    readonly gate: SandboxGate;
+    readonly drive: (runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null, cause: ProfileDriveCause) => void;
+};
+
+const realGatedParitySeams: GatedDriveSeams = {
+    gate: realSandboxGate,
+    drive: (runtime, analysis, currentAnalysisId, cause) => void driveProfileParity(runtime, analysis, currentAnalysisId, cause),
+};
+
+const realGatedForceSeams: GatedDriveSeams = {
+    gate: realSandboxGate,
+    drive: (runtime, analysis, currentAnalysisId) => void driveForceReprofile(runtime, analysis, currentAnalysisId),
+};
+
+/**
+ * Auto-parity behind the sandbox gate: hold the drive while the transfers move, then run
+ * {@link driveProfileParity}. A blocked gate refuses the drive with its reason already reported, so
+ * no sandbox starts against an empty store. The chat itself stays open — only this sandbox-making
+ * action waits (the package-store-transfers spec).
+ */
+export function gatedProfileParity(
+    runtime: HarnessRuntime,
+    analysis: Analysis,
+    currentAnalysisId: () => string | null,
+    cause: ProfileDriveCause,
+    seams: GatedDriveSeams = realGatedParitySeams,
+): void {
+    void seams.gate(analysis).then((verdict) => {
+        // A swap during the wait is caught again by `driveProfileParity`'s own guards.
+        if (verdict === "ready") seams.drive(runtime, analysis, currentAnalysisId, cause);
+    });
+}
+
+/** The deliberate re-profile behind the same gate — the force twin of {@link gatedProfileParity}. */
+export function gatedForceReprofile(
+    runtime: HarnessRuntime,
+    analysis: Analysis,
+    currentAnalysisId: () => string | null,
+    seams: GatedDriveSeams = realGatedForceSeams,
+): void {
+    void seams.gate(analysis).then((verdict) => {
+        if (verdict === "ready") seams.drive(runtime, analysis, currentAnalysisId, "inputs_changed");
+    });
+}
 
 /**
  * Reactively keep the data profile at managed parity. Wires three edges, all fire-and-forget

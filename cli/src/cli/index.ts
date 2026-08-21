@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import pkg from "../../package.json";
 import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc, updateEnvDoc, type EnvDocEntry } from "../lib/env.ts";
@@ -642,8 +642,8 @@ export function buildProgram(): Command {
             .option("--embeddings-gguf <path>", "Local embeddings only: path to your own GGUF model file instead of the built-in one")
             .option("--refs <ids>", "Reference data to download: recommended|all|<comma-separated dataset ids>. The value is the download consent")
             .option(
-                "--sandbox <variant>",
-                "Sandbox image variant to pull: python|python-r. The value is the multi-GB download consent; nothing is pulled without it",
+                "--sandbox",
+                "Start the three detached transfers (the two sandbox images and the package catalog). The flag is the multi-GB consent; nothing downloads without it",
             )
             .option(
                 "--runtime <runtime>",
@@ -760,50 +760,161 @@ export function buildProgram(): Command {
         runRefsPath();
     });
 
-    // The sandbox image: pull a variant (python | python-r) and inspect it. The
-    // pulled image bakes the R/Python/conda/node packages at `/mnt/libs/current`, so
-    // sandboxes launch on it with no local store and no `/mnt/libs` bind mount.
-    // Nested subcommands (à la `project`), each lazy-importing the handler.
-    const sandbox = cli.command("sandbox").description("Manage the sandbox image (R/Python/conda/node packages baked in)");
+    // The sandbox images: the one runtime image and the derived provisioner
+    // image. No variant exists, and no foreground pull exists anywhere — `pull`
+    // starts the two detached transfer children and returns at once.
+    const sandbox = cli.command("sandbox").description("Manage the sandbox images (the runtime image and the provisioner image)");
 
-    // Stays `approval` (not `auto`): `pull` downloads an image and writes the sandbox config.
+    // `approval` (not `auto`): `pull` starts multi-GB downloads. The hidden
+    // `--run-transfer <kind>` is the detached child re-invoking itself; the
+    // spelling is pinned against `IMAGE_TRANSFER_FLAG` by the transfer tests.
     registerAction(
         sandbox
             .command("pull")
-            .description("Pull a sandbox image (python | python-r) from GitHub Packages and configure sandboxes to use it")
-            .argument("[variant]", "Image variant: python or python-r (prompted when omitted)")
-            .option("--yes", "Skip the download confirmation"),
+            .description("Start the two detached image transfers (the runtime image and the provisioner image) and return at once")
+            .addOption(new Option("--run-transfer <kind>").hideHelp()),
         { kind: "approval" },
-        async (variant: string | undefined, options: { yes?: boolean }) => {
-            const { sandboxPull } = await import("../modules/libs/pull.ts");
-            const { parseVariant } = await import("../modules/libs/images.ts");
-            if (variant !== undefined && parseVariant(variant) === null) {
-                console.error(`\n  Unknown variant "${variant}". Choose one of: python, python-r.\n`);
-                process.exitCode = 1;
+        async (options: { runTransfer?: string }) => {
+            if (options.runTransfer !== undefined) {
+                if (options.runTransfer !== "runtime_image" && options.runTransfer !== "provisioner_image") {
+                    process.exitCode = 1;
+                    return;
+                }
+                const { runImageTransfer } = await import("../modules/libs/transfers.ts");
+                await runImageTransfer(options.runTransfer);
                 return;
             }
-            const result = await sandboxPull({ variant: parseVariant(variant) ?? undefined, yes: options.yes });
-            result.match(
-                (outcome) => {
-                    if (outcome.type === "up_to_date") console.log(`Sandbox image up to date (${outcome.image}).`);
-                    else if (outcome.type === "pulled") console.log(`Sandbox image ready: ${outcome.image}.`);
-                    else if (outcome.type === "declined") console.log("Cancelled — nothing pulled.");
-                },
-                (error) => {
-                    console.error(`\n  Sandbox image pull failed: ${error.message}\n`);
-                    process.exitCode = 1;
-                },
-            );
+            const { sandboxPull } = await import("../modules/libs/pull.ts");
+            await sandboxPull();
         },
     );
 
     // Read-only diagnostic: must not write config (pull.ts); runtime `image inspect` is a query subprocess.
     registerAction(
-        sandbox.command("status").description("Show the configured sandbox image variant, its GHCR reference, and whether it is present locally"),
+        sandbox.command("status").description("Show the two images, the live transfer states, and the package-store summary"),
         { kind: "auto", safeFlags: [] },
         async () => {
             const { sandboxStatus } = await import("../modules/libs/pull.ts");
             await sandboxStatus();
+        },
+    );
+
+    // `blocked`: an agent must not delete multi-GB assets of the user.
+    registerAction(
+        sandbox.command("remove").description("Remove the runtime image and the provisioner image from the engine; the store and the farms stay"),
+        { kind: "blocked", reason: "Removing the sandbox images deletes multi-GB assets of the user; only the user runs it." },
+        async () => {
+            const { sandboxRemove } = await import("../modules/libs/pull.ts");
+            await sandboxRemove();
+        },
+    );
+
+    // The package store: the pool, the farms, and the catalog. The policies
+    // come from the package-store-management spec: `add` and `download` are
+    // `approval`, `ls` is `auto`, `link` is `auto` with `analysis` safe, and
+    // `reclaim` is `approval`. No `store use` and no `store verify` exist.
+    const store = cli.command("store").description("Manage the host package store (the pool, the per-analysis farms, and the catalog)");
+
+    // The hidden flags: `--queued` is the agent route (enqueue, no flush), and
+    // `--run-flush` is the detached flush child. Their spellings are pinned by
+    // the store tests against STORE_QUEUED_FLAG / STORE_FLUSH_FLAG.
+    registerAction(
+        store
+            .command("add")
+            .description("Acquire one package into the package pool (PyPI, CRAN, or Bioconductor), behind an approval")
+            .argument("[package]", "The one package to acquire")
+            .option("--version <version>", "One exact version (the newest otherwise)")
+            .option("--lang <ecosystem>", "The ecosystem: python or r (both searched otherwise)")
+            .option("--analysis <ref>", "Extend the farm of this analysis after the commit (id or name)")
+            .addOption(new Option("--queued").hideHelp())
+            .addOption(new Option("--run-flush").hideHelp()),
+        { kind: "approval" },
+        async (pkg: string | undefined, options: { version?: string; lang?: string; analysis?: string; queued?: boolean; runFlush?: boolean }) => {
+            const { runStoreAdd } = await import("../modules/libs/store.ts");
+            if (options.lang !== undefined && options.lang !== "python" && options.lang !== "r") {
+                console.error(`\n  Unknown ecosystem "${options.lang}". Choose python or r.\n`);
+                process.exitCode = 1;
+                return;
+            }
+            await runStoreAdd(pkg, {
+                version: options.version ?? null,
+                lang: options.lang ?? null,
+                analysis: options.analysis === undefined ? null : options.analysis,
+                queued: options.queued,
+                runFlush: options.runFlush,
+            });
+        },
+    );
+
+    // `auto` with `analysis` safe: a link writes symbolic links into the farm
+    // of the named analysis and nothing else, and the pool decides what can
+    // link. `--lang` is NOT safe: it is new, and only the user widens the set.
+    registerAction(
+        store
+            .command("link")
+            .description("Link packages the pool already holds into the farm of one analysis (no download, no container)")
+            .argument("<packages...>", "The packages to link (name, or name==version)")
+            .option("--analysis <ref>", "The analysis whose farm gains the links (id or name)")
+            .option("--lang <ecosystem>", "The ecosystem: python or r (asked on a both-hit otherwise)"),
+        { kind: "auto", safeFlags: ["analysis"] },
+        async (packages: string[], options: { analysis?: string; lang?: string }) => {
+            const { runStoreLink } = await import("../modules/libs/store.ts");
+            if (options.lang !== undefined && options.lang !== "python" && options.lang !== "r") {
+                console.error(`\n  Unknown ecosystem "${options.lang}". Choose python or r.\n`);
+                process.exitCode = 1;
+                return;
+            }
+            await runStoreLink(packages, {
+                analysis: options.analysis === undefined ? null : options.analysis,
+                lang: options.lang ?? null,
+            });
+        },
+    );
+
+    // Read-only: the packages, the farms, the flights, the queue, the disk.
+    registerAction(
+        store.command("ls").description("List the packages, the farms, the live flights, and the disk use of the package store"),
+        { kind: "auto", safeFlags: [] },
+        async () => {
+            const { runStoreLs } = await import("../modules/libs/store.ts");
+            await runStoreLs();
+        },
+    );
+
+    // `approval`: the catalog download moves gigabytes. The hidden
+    // `--run-transfer` is the detached child; the spelling is pinned against
+    // CATALOG_TRANSFER_FLAG by the download tests.
+    registerAction(
+        store
+            .command("download")
+            .description("Start the detached catalog transfer from GitHub Packages, or report why none is necessary")
+            .option("--update", "Apply a moved catalog tag (replaces the dependency graph whole)")
+            .addOption(new Option("--run-transfer").hideHelp()),
+        { kind: "approval" },
+        async (options: { update?: boolean; runTransfer?: boolean }) => {
+            const { runStoreDownload } = await import("../modules/libs/store.ts");
+            await runStoreDownload({ update: options.update, runTransfer: options.runTransfer });
+        },
+    );
+
+    // `approval`: a cancel stops a transfer the user started and drops its
+    // partial staged tree.
+    registerAction(
+        store.command("cancel").description("Stop the live catalog transfer and remove the partial staged tree; installed content stays"),
+        { kind: "approval" },
+        async () => {
+            const { runStoreCancel } = await import("../modules/libs/store.ts");
+            await runStoreCancel();
+        },
+    );
+
+    // `approval`: the reclaim deletes pool content that no farm references.
+    registerAction(
+        store.command("reclaim").description("Remove store content that no farm references, after a preview inside the exclusivity window"),
+        { kind: "approval" },
+        async () => {
+            const { runStoreReclaim } = await import("../modules/libs/store.ts");
+            await runStoreReclaim();
         },
     );
 

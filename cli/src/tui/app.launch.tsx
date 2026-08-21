@@ -12,7 +12,6 @@ import { shutdown } from "../lib/shutdown.ts";
 import type { IdOrName } from "../lib/types.ts";
 import { resolveHarnessConfig, resolveModelConnection } from "../modules/harness/config.ts";
 import { describeBootError } from "../modules/harness/runtime.ts";
-import { ensureSandboxImage } from "../modules/libs/pull.ts";
 import { startHarnessBoot } from "./hooks/boot.ts";
 import { notify } from "./hooks/notice.ts";
 import { ConfirmDialog } from "./components/dialog/confirm_dialog.tsx";
@@ -46,15 +45,14 @@ async function renderChat(target: ChatTarget): Promise<void> {
     await ensureProxyReadyOrExit(connection.mode);
 
     // Harness pre-flight gates that need normal stdio — resolved once here and reused by the
-    // post-render boot below, so the model/image/policy are computed a single time. The config gate
+    // post-render boot below, so the model/policy are computed a single time. The config gate
     // mirrors `inflexa profile`: a bad `harness` field must surface as its real problem, not a
-    // misleading downstream boot error (resolveHarnessConfig collapses every field to a default on a
-    // config error, so a later image check would inspect the wrong tag). `ensureSandboxImage` is
-    // INTERACTIVE (confirm/pull a multi-GB image), so its prompt has to run on normal stdio, before
-    // render() takes the terminal — never inside the alternate screen.
+    // misleading downstream boot error (resolveHarnessConfig collapses every field to a default on
+    // a config error). The sandbox-image gate is NOT part of this preamble (the chat-wiring spec):
+    // the app renders at once — a transfer can still be moving the image — and the wait surfaces at
+    // the first sandbox-making action, through the gate of the TUI.
     const cfg = resolveHarnessConfig();
     if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
-    await ensureSandboxImage(cfg.sandboxImage);
 
     // Claim the analysis before the alternate screen takes over, so a conflict surfaces as a plain
     // stderr line and a clean exit — no flash of TUI. Acquiring here (not in the headless resolvers)
@@ -103,7 +101,7 @@ async function renderChat(target: ChatTarget): Promise<void> {
     // so it runs async behind the boot animation with the input gated — hooks/boot.ts drives the
     // boot-state store the App reads. Reached ONLY from renderChat: the passive
     // bare-`inflexa`-resolves-to-nothing path returns before renderChat and boots nothing (no-litter).
-    void startHarnessBoot(cfg);
+    void startHarnessBoot(cfg, target.analysis.id);
 }
 
 /**
