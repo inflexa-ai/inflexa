@@ -9,6 +9,7 @@ import {
     type CoreWorkflowDeps,
     type EmbeddingProvider,
     type ExecuteAnalysisDeps,
+    type ExtendAnalysisFarm,
     type Logger,
     type Pool,
     type ResolveWorkspaceRoot,
@@ -101,12 +102,24 @@ export type RunEngineComposition = {
      */
     readonly refStorePath: string;
     /**
-     * Host path of the sandbox image's extracted `packages.txt`, or null when none could
-     * be read. Null is a normal state (no image pulled, or an image built before the
-     * inventory label existed) and the harness reports the installed set as unknown —
-     * the cli never bind-mounts the store, so there is no path to fall back to.
+     * Host path of the open analysis's farm `inflexa.lock`, or null when the boot
+     * carried no analysis. The tool re-reads the file per call, thus a farm that a
+     * link extended mid-session answers the next call. Null makes the farm tracks
+     * read as unknown, and the image fragment still merges.
      */
-    readonly packagesFile: string | null;
+    readonly farmLockFile: string | null;
+    /**
+     * Host path of the cached image inventory fragment, or null when none could be
+     * extracted. Null is a normal state (no image pulled yet), and the inventory
+     * then carries the farm tracks alone.
+     */
+    readonly imagePackagesFile: string | null;
+    /**
+     * The farm-extension seam realization. Bound here so the sandbox agents, the
+     * conversation agent, and the pre-launch link pass of `execute_analysis` all
+     * link through ONE seam against one store root.
+     */
+    readonly extendAnalysisFarm: ExtendAnalysisFarm;
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
     readonly bioKeys: ResolvedHarnessConfig["bioKeys"];
 };
@@ -137,7 +150,9 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         model: comp.sandbox.model,
         skillsDir: comp.skillsDir,
         refStorePath: comp.refStorePath,
-        ...(comp.packagesFile ? { packagesFile: comp.packagesFile } : {}),
+        ...(comp.farmLockFile ? { farmLockFile: comp.farmLockFile } : {}),
+        ...(comp.imagePackagesFile ? { imagePackagesFile: comp.imagePackagesFile } : {}),
+        extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
         blockerHolder: ctx.blockerHolder,
         step: {

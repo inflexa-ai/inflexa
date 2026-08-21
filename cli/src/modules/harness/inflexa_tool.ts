@@ -448,7 +448,14 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             "A read-only command can still escalate to an approval when an option outside its known-safe set rides along, " +
             "so being asked is normal and never a sign the command was the wrong one. " +
             describeCommandSurface() +
-            " Captured stdout, stderr, and exit code come back to you; a non-zero exit is a real answer about what happened, not a tool failure.",
+            " Captured stdout, stderr, and exit code come back to you; a non-zero exit is a real answer about what happened, not a tool failure. " +
+            "THE PACKAGE FLOW, after a plan is made: write the plan's package list to the user, mark each package the pool does not hold " +
+            "(`list_available_packages` answers that), and then ask for each missing one with its own gated " +
+            '["store", "add", "<name>"] call — one package per call, `--version <v>` when the plan pins one, `--lang python|r` when the name is ambiguous. ' +
+            "Each approved add ENQUEUES; the acquisitions run as one batch when this turn settles, so do not wait for bytes between asks. " +
+            "Invite a swap: the user can name a different package in place of a proposed one, and then you revise the plan toward it and do not ask for the replaced one again. " +
+            "A declined ask is guidance, never an error: propose an alternative or replan, and never send the same ask again. " +
+            "A run refusal that names missing packages means the pool does not hold them yet — `inflexa store add <name>` is the remedy to propose.",
         inputSchema: z.object({
             argv: z
                 .array(z.string())
@@ -522,7 +529,24 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             }
 
             // Introspection and an approved action both reach here and run the same way.
-            const cmd = resolveInvocation(c.argv, { isDevelopment, execPath, scriptPath });
+            //
+            // The agent route of `store add` rides the hidden `--queued` flag (the
+            // package-store-management spec): the approved call ENQUEUES into the
+            // pending set and returns at once, and the chat flushes the batch of
+            // the turn as ONE provisioner run when the asks settle. The flag is
+            // appended HERE, never by the model — it is invisible to the approval
+            // prompt because it changes no effect the user consents to (the same
+            // acquisition runs either way, only batched). The `--analysis` of the
+            // chat's own analysis is appended when the model named none, from the
+            // TRUSTED session scope — the same rationale as the cwd below.
+            let argv = c.argv;
+            if (argv[0] === "store" && argv[1] === "add" && !argv.includes("--run-flush")) {
+                const scoped = ctx.session.scope;
+                const extra = ["--queued"];
+                if (!argv.includes("--analysis") && scoped.kind === "analysis") extra.push("--analysis", scoped.analysisId);
+                argv = [...argv, ...extra];
+            }
+            const cmd = resolveInvocation(argv, { isDevelopment, execPath, scriptPath });
             // Run the child in the analysis's own folder, so a command that resolves its target from the
             // working directory lands on the chat's analysis rather than wherever this process happens to
             // have been started — the two differ after `inflexa resume`, an `--analysis` launch, or a
