@@ -141,10 +141,12 @@ export async function generateStepSummaryAndWrite(
 /**
  * Reconcile the manifest against disk (drop phantoms, rehash) and register the
  * survivors with the local ledger + the injected `ArtifactRegistry`. Fail-fast
- * (see the artifact-manifest spec): a non-zero `externalFailed` is a persistent rejection that
- * orphans real outputs, so it throws with the per-file detail (the OSS
- * filesystem registry returns `externalFailed: 0`, so it never trips). Returns
- * the reconciled manifest.
+ * (see the artifact-manifest spec): `externalFailed` counts only the terminal
+ * rejections — a rejected output whose bytes exist nowhere but the step tree,
+ * plus anything rejected as a consequence of one — so a non-zero count means
+ * real outputs went unregistered, and it throws with the per-file detail (the
+ * OSS filesystem registry returns `externalFailed: 0`, so it never trips).
+ * Returns the reconciled manifest.
  */
 export async function reconcileAndRegisterStepArtifacts(
     deps: PostStepPipelineDeps,
@@ -180,12 +182,19 @@ export async function reconcileAndRegisterStepArtifacts(
         deps.logger,
     );
     if (reg.externalFailed > 0) {
-        const wholeActivityFailed = reg.externalRegistered === 0;
+        // The registry commits per leaf and per activity, so accepted and rejected
+        // rows arriving together is ordinary and `externalRegistered` is what
+        // genuinely landed. Zero of it means this batch registered nothing at all:
+        // no row carries an `artifact_id`, so the byte-sync that follows selects
+        // none of them and every output stays local-only. That reads as a payload-
+        // or credential-shaped rejection rather than a per-file one, so it rides on
+        // the message and as its own field.
+        const noneRegistered = reg.externalRegistered === 0;
         const detail = reg.failureDetails.map((f) => `${f.path}: ${f.error}`).join("\n  ");
         const msg =
             `[post-step.reconcile] external registration failed for ${input.stepId}: ` +
-            `${reg.externalFailed} row(s) rejected, ${reg.externalRegistered}/${reg.localCount} local artifact(s) registered` +
-            (wholeActivityFailed ? " (WHOLE ACTIVITY ROLLED BACK — outputs orphaned)" : "") +
+            `${reg.externalFailed} terminal rejection(s), ${reg.externalRegistered}/${reg.localCount} local artifact(s) registered` +
+            (noneRegistered ? " (nothing in this batch registered)" : "") +
             (detail ? `\n  ${detail}` : "");
         // Logged as fields as well as thrown: the throw reaches `failStep` as one
         // opaque string, so the per-path rejections are only queryable from here.
@@ -197,7 +206,7 @@ export async function reconcileAndRegisterStepArtifacts(
             externalFailed: reg.externalFailed,
             externalRegistered: reg.externalRegistered,
             localCount: reg.localCount,
-            wholeActivityFailed,
+            noneRegistered,
             failures: reg.failureDetails,
         });
         throw new Error(msg);
