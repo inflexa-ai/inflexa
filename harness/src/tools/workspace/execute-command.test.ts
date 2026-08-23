@@ -4,6 +4,7 @@ import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { CreateSandboxMeta, ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 import { createExecuteCommandTool } from "./execute-command.js";
+import { EXEC_STREAM_BYTE_CAP } from "./result-bounds.js";
 
 const DEFAULT_CWD = "/analysis-001/runs/run-abc/step1";
 
@@ -173,7 +174,10 @@ describe("execute_command tool", () => {
     });
 
     it("truncates oversize stdout while leaving exit/duration/timedOut intact", async () => {
-        const big = "x".repeat(9000);
+        // Derived from the cap, not a literal: a fixed size silently stops being
+        // oversize the moment the cap is raised, and the test then asserts
+        // truncation of something that was never truncated.
+        const big = "x".repeat(EXEC_STREAM_BYTE_CAP + 1000);
         const client = makeFakeClient({
             result: {
                 execId: "",

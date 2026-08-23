@@ -24,6 +24,7 @@ import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.j
 import { tryMutation } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { clearSandboxRef, setSandboxRef } from "../state/index.js";
+import { capExecStreams, EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import { awaitExec, type AwaitExecOptions } from "./await-exec.js";
 import type { SandboxClient } from "./client.js";
 import { createDockerSandboxOps } from "./docker-client.js";
@@ -57,6 +58,13 @@ export interface CreateSandboxClientConfig {
     transport?: SandboxTransport;
     /** Default sandbox-base image when the workflow doesn't override per-step. */
     image: string;
+    /**
+     * Per-stream retention budget sent with every exec, so the sandbox drops
+     * output past it instead of shipping it. Defaults to `EXEC_STREAM_BYTE_CAP`,
+     * the same value the host truncates to on receipt — sending more than the
+     * host will keep buys nothing.
+     */
+    execStreamByteCap?: number;
     /** Cluster resource ceilings; every sandbox request is clamped to these. */
     resourceLimits: ResourceLimits;
     /** K8s namespace; only used by the k8s backend. */
@@ -264,8 +272,21 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             const resources = clampResources(meta.resources, config.resourceLimits);
             return unwrapOrThrow(await ops.createSandbox({ ...meta, resources }, identity));
         },
-        submitExec: async (ref, body) => submitExec(ref, body, config.submitDeps),
-        awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, composeAwaitOptions(config.awaitOptions, transport, isAlive)),
+        submitExec: async (ref, body) =>
+            submitExec(ref, body, {
+                ...config.submitDeps,
+                execStreamByteCap: config.submitDeps?.execStreamByteCap ?? config.execStreamByteCap,
+            }),
+        // The one place an ExecResult crosses from the wire into the process, so
+        // the cap lands here rather than at each consumer. Every downstream use —
+        // tool results, workflow return values, durable step outputs — is bounded
+        // by construction, including against a sandbox image that predates the
+        // retention budget and still returns whole streams.
+        awaitExec: async (ref, execId, emit, deadline) =>
+            capExecStreams(
+                await awaitExec(ref, execId, emit, deadline, composeAwaitOptions(config.awaitOptions, transport, isAlive)),
+                config.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP,
+            ),
         isAlive,
         isAliveById: async (sandboxId) => unwrapOrThrow(await ops.isAliveById(sandboxId)),
         teardown,

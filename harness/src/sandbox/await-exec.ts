@@ -57,6 +57,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
+import { digestBody } from "./digest.js";
 import { signCallback, verifyCallback } from "./hmac.js";
 import { createEscalationPolicy, probeLiveness, syntheticFailureReason, syntheticFailureResult } from "./liveness.js";
 import {
@@ -322,13 +323,16 @@ export async function awaitExecCallback(
         }
 
         // Verify against the exact bytes sandbox-server signed. The route
-        // preserves them as `payloadRaw`; the JSON.stringify fallback exists
-        // only for messages persisted before that field was added — re-
-        // serializing diverges from Go's HTML-escaping encoder.
-        const bodyBytes = Buffer.from(msg.payloadRaw ?? JSON.stringify(msg.payload), "utf8");
+        // reduces them to `payloadDigest` at ingress — the signature covers that
+        // digest, so it is all verification needs and the message never carries
+        // a second copy of the body. `payloadRaw` is the superseded form, and
+        // the JSON.stringify fallback covers messages persisted before either
+        // field existed — re-serializing diverges from Go's HTML-escaping
+        // encoder, so it is a last resort, not a normal path.
+        const bodyDigest = msg.payloadDigest ?? digestBody(Buffer.from(msg.payloadRaw ?? JSON.stringify(msg.payload), "utf8"));
         const result = verifyCallback({
             execId,
-            body: bodyBytes,
+            bodyDigest,
             signature: msg.signature,
             timestamp: msg.timestamp,
             secret: callbackSecret,
