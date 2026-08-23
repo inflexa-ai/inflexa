@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // maxExecBodyBytes caps how much of a POST /exec body the server will buffer.
@@ -27,12 +28,18 @@ import (
 const maxExecBodyBytes = 16 << 20
 
 // execSubmitRequest is the new submit-and-return body for POST /exec.
+// StdoutByteCap/StderrByteCap bound how much of each stream is retained and
+// returned. Absent or 0 means unbounded, which is what a host that predates the
+// field sends — the host caps on receipt either way, so an old host talking to a
+// new server behaves exactly as before.
 type execSubmitRequest struct {
 	Command        []string          `json:"command"`
 	ExecID         string            `json:"execId"`
 	Cwd            string            `json:"cwd,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 	TimeoutSeconds int               `json:"timeoutSeconds,omitempty"`
+	StdoutByteCap  int               `json:"stdoutByteCap,omitempty"`
+	StderrByteCap  int               `json:"stderrByteCap,omitempty"`
 }
 
 type execSubmitResponse struct {
@@ -51,13 +58,17 @@ type eventPayload struct {
 
 // completionPayload is the body POSTed to /sandbox/:execId/complete.
 type completionPayload struct {
-	ExecID     string             `json:"execId"`
-	ExitCode   int                `json:"exitCode"`
-	Stdout     string             `json:"stdout"`
-	Stderr     string             `json:"stderr"`
-	DurationMs int64              `json:"durationMs"`
-	TimedOut   bool               `json:"timedOut,omitempty"`
-	Provenance *provenancePayload `json:"provenance,omitempty"`
+	ExecID           string             `json:"execId"`
+	ExitCode         int                `json:"exitCode"`
+	Stdout           string             `json:"stdout"`
+	Stderr           string             `json:"stderr"`
+	StdoutTruncated  bool               `json:"stdoutTruncated,omitempty"`
+	StderrTruncated  bool               `json:"stderrTruncated,omitempty"`
+	StdoutTotalBytes int64              `json:"stdoutTotalBytes,omitempty"`
+	StderrTotalBytes int64              `json:"stderrTotalBytes,omitempty"`
+	DurationMs       int64              `json:"durationMs"`
+	TimedOut         bool               `json:"timedOut,omitempty"`
+	Provenance       *provenancePayload `json:"provenance,omitempty"`
 }
 
 type provenancePayload struct {
@@ -201,8 +212,8 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 
 	stderrBuf := newStderrRingBuffer()
 	var stderrBufMu sync.Mutex
-	stdoutBuilder := &capturingBuilder{}
-	stderrBuilder := &capturingBuilder{}
+	stdoutBuilder := &capturingBuilder{byteCap: req.StdoutByteCap}
+	stderrBuilder := &capturingBuilder{byteCap: req.StderrByteCap}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -243,17 +254,25 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 
 	stdout := stdoutBuilder.String()
 	stderr := stderrBuilder.String()
+	stdoutTruncated := stdoutBuilder.truncated()
+	stderrTruncated := stderrBuilder.truncated()
+	stdoutTotal := stdoutBuilder.totalBytes()
+	stderrTotal := stderrBuilder.totalBytes()
 
 	status := execStatusCompleted
 	if exitCode != 0 {
 		status = execStatusFailed
 	}
 	e.table.complete(req.ExecID, status, &execResult{
-		ExitCode:   exitCode,
-		Stdout:     stdout,
-		Stderr:     stderr,
-		DurationMs: durationMs,
-		TimedOut:   timedOut,
+		ExitCode:         exitCode,
+		Stdout:           stdout,
+		Stderr:           stderr,
+		StdoutTruncated:  stdoutTruncated,
+		StderrTruncated:  stderrTruncated,
+		StdoutTotalBytes: stdoutTotal,
+		StderrTotalBytes: stderrTotal,
+		DurationMs:       durationMs,
+		TimedOut:         timedOut,
 	})
 
 	now := nowRFC3339()
@@ -274,13 +293,17 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 	}
 
 	e.postCompletion(req.ExecID, completionPayload{
-		ExecID:     req.ExecID,
-		ExitCode:   exitCode,
-		Stdout:     stdout,
-		Stderr:     stderr,
-		DurationMs: durationMs,
-		TimedOut:   timedOut,
-		Provenance: prov,
+		ExecID:           req.ExecID,
+		ExitCode:         exitCode,
+		Stdout:           stdout,
+		Stderr:           stderr,
+		StdoutTruncated:  stdoutTruncated,
+		StderrTruncated:  stderrTruncated,
+		StdoutTotalBytes: stdoutTotal,
+		StderrTotalBytes: stderrTotal,
+		DurationMs:       durationMs,
+		TimedOut:         timedOut,
+		Provenance:       prov,
 	})
 }
 
@@ -494,21 +517,74 @@ func buildCommand(ctx context.Context, req execSubmitRequest) *exec.Cmd {
 }
 
 // capturingBuilder is a goroutine-safe in-memory accumulator for stdout/stderr.
+//
+// Retention is bounded by byteCap: bytes past it are counted and dropped rather
+// than buffered, so a command that writes a whole dataset to stdout costs the
+// cap rather than the dataset. total keeps the true size, which is what lets a
+// caller tell "printed nothing" apart from "printed more than we kept". A
+// byteCap of 0 retains everything.
 type capturingBuilder struct {
-	mu  sync.Mutex
-	buf strings.Builder
+	mu      sync.Mutex
+	buf     strings.Builder
+	byteCap int
+	total   int64
 }
 
 func (c *capturingBuilder) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.buf.Write(p)
+	written := len(p)
+	c.total += int64(written)
+	if c.byteCap <= 0 {
+		return c.buf.Write(p)
+	}
+	if room := c.byteCap - c.buf.Len(); room > 0 {
+		if len(p) > room {
+			p = p[:room]
+		}
+		if _, err := c.buf.Write(p); err != nil {
+			return 0, err
+		}
+	}
+	// Report the whole write as accepted. A short count with no error is an
+	// io.Writer contract violation that surfaces in callers as io.ErrShortWrite,
+	// and the pipe reader is not the party that fails when retention runs out.
+	return written, nil
 }
 
 func (c *capturingBuilder) String() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.buf.String()
+	return trimPartialRune(c.buf.String())
+}
+
+// totalBytes is what the command produced, retained or not.
+func (c *capturingBuilder) totalBytes() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.total
+}
+
+// truncated reports whether anything was dropped.
+func (c *capturingBuilder) truncated() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.byteCap > 0 && c.total > int64(c.buf.Len())
+}
+
+// trimPartialRune drops a trailing partial UTF-8 sequence. The cap lands on a
+// byte boundary, which can fall mid-rune; the remainder would otherwise reach
+// the host as U+FFFD.
+func trimPartialRune(s string) string {
+	if s == "" || utf8.ValidString(s) {
+		return s
+	}
+	for i := len(s) - 1; i >= 0 && i > len(s)-utf8.UTFMax-1; i-- {
+		if utf8.RuneStart(s[i]) && utf8.ValidString(s[:i]) {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 // capturePipe reads a sub-process pipe line-by-line into builder, emits the

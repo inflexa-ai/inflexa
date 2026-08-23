@@ -26,11 +26,15 @@ const completedEntryTTL = time.Hour
 const eventRingCapacity = 256
 
 type execResult struct {
-	ExitCode   int    `json:"exitCode"`
-	Stdout     string `json:"stdout"`
-	Stderr     string `json:"stderr"`
-	DurationMs int64  `json:"durationMs"`
-	TimedOut   bool   `json:"timedOut,omitempty"`
+	ExitCode         int    `json:"exitCode"`
+	Stdout           string `json:"stdout"`
+	Stderr           string `json:"stderr"`
+	StdoutTruncated  bool   `json:"stdoutTruncated,omitempty"`
+	StderrTruncated  bool   `json:"stderrTruncated,omitempty"`
+	StdoutTotalBytes int64  `json:"stdoutTotalBytes,omitempty"`
+	StderrTotalBytes int64  `json:"stderrTotalBytes,omitempty"`
+	DurationMs       int64  `json:"durationMs"`
+	TimedOut         bool   `json:"timedOut,omitempty"`
 }
 
 // ringEvent is one buffered progress event: the exact event-payload bytes plus

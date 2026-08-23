@@ -111,6 +111,19 @@ export const ExecResultSchema = z.object({
     stderr: z.string().default(""),
     durationMs: z.number().nullable(),
     timedOut: z.boolean().default(false),
+    /**
+     * Set when sandbox-server dropped output past the per-stream cap it was
+     * given. The total is what the command actually produced, which is what
+     * separates "printed nothing" from "printed more than we kept" — without it
+     * a capped stream and an empty one are indistinguishable downstream.
+     *
+     * Optional because a sandbox image that pre-dates the cap omits both, and
+     * because the watchdog's synthetic failures carry neither.
+     */
+    stdoutTruncated: z.boolean().optional(),
+    stderrTruncated: z.boolean().optional(),
+    stdoutTotalBytes: z.number().int().nonnegative().optional(),
+    stderrTotalBytes: z.number().int().nonnegative().optional(),
     /** Set when the watchdog synthesises a completion for a dead sandbox. */
     syntheticFailure: z
         .object({
@@ -131,15 +144,21 @@ export type ExecResult = z.infer<typeof ExecResultSchema>;
  * a non-null `signature` and `timestamp`; the in-process watchdog uses a
  * `null` signature + a `synthetic-failure` payload (see `await-exec.ts`).
  *
- * `payloadRaw` is the exact bytes sandbox-server POSTed — sandbox-server's
- * HMAC signs the raw body, and Go's `encoding/json` HTML-escapes `<`, `>`,
- * `&` by default, so verifying against a JS re-serialization of the parsed
- * payload would diverge for any output containing those characters
- * (common in bioinformatics: FASTA headers, shell stderr, command pipelines).
- * Optional only for back-compat with messages that pre-date this field.
+ * `payloadDigest` is the hex SHA-256 of the exact bytes sandbox-server POSTed.
+ * The HMAC signs that digest rather than the body itself, so the digest is all
+ * verification needs — and carrying it instead of the bytes keeps the message
+ * from holding a second copy of a payload that can be arbitrarily large.
+ * Re-serializing the parsed payload would not do: Go's `encoding/json`
+ * HTML-escapes `<`, `>`, `&` by default, so a JS re-serialization diverges for
+ * any output containing those characters (common in bioinformatics: FASTA
+ * headers, shell stderr, command pipelines).
+ *
+ * `payloadRaw` is the superseded form, kept optional so messages already in
+ * flight or persisted still verify.
  */
 export const ExecEventMessageSchema = z.object({
     payload: z.unknown(),
+    payloadDigest: z.string().optional(),
     payloadRaw: z.string().optional(),
     signature: z.string().nullable(),
     timestamp: z.number().int().nullable(),
@@ -213,6 +232,14 @@ export interface SubmitExecBody {
     cwd?: string;
     env?: Record<string, string>;
     timeoutSeconds?: number;
+    /**
+     * Per-stream retention budget for the sandbox. Omitting them leaves the
+     * sandbox unbounded, which is how a server that pre-dates the fields
+     * behaves; the host caps on receipt regardless, so the difference is how
+     * many bytes cross the wire, not what the caller ends up with.
+     */
+    stdoutByteCap?: number;
+    stderrByteCap?: number;
 }
 
 /** Step-meta passed to `createSandbox` — what the registry row needs. */

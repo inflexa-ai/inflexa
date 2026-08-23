@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import { verifyCallback } from "./hmac.js";
 import { submitExec } from "./submit-exec.js";
 import type { SandboxRef } from "./types.js";
@@ -56,7 +57,33 @@ describe("submitExec", () => {
         expect(JSON.parse(calls[0]!.init!.body as string)).toEqual({
             command: ["echo", "hi"],
             execId: "wf-1:s-a:fn-0",
+            stdoutByteCap: EXEC_STREAM_BYTE_CAP,
+            stderrByteCap: EXEC_STREAM_BYTE_CAP,
         });
+    });
+
+    test("sends the configured retention budget instead of the default when given one", async () => {
+        const { fn, calls } = fetchResponding([{ status: 202, body: { execId: "wf-1:s-a:fn-0", status: "started" } }]);
+
+        await submitExec(REF, { command: ["echo", "hi"], execId: "wf-1:s-a:fn-0" }, { fetch: fn, runStep: (w) => w(), execStreamByteCap: 1234 });
+
+        const body = JSON.parse(calls[0]!.init!.body as string) as Record<string, unknown>;
+        expect(body.stdoutByteCap).toBe(1234);
+        expect(body.stderrByteCap).toBe(1234);
+    });
+
+    test("an explicit per-body cap wins over the configured default", async () => {
+        const { fn, calls } = fetchResponding([{ status: 202, body: { execId: "wf-1:s-a:fn-0", status: "started" } }]);
+
+        await submitExec(
+            REF,
+            { command: ["echo", "hi"], execId: "wf-1:s-a:fn-0", stdoutByteCap: 7, stderrByteCap: 9 },
+            { fetch: fn, runStep: (w) => w(), execStreamByteCap: 1234 },
+        );
+
+        const body = JSON.parse(calls[0]!.init!.body as string) as Record<string, unknown>;
+        expect(body.stdoutByteCap).toBe(7);
+        expect(body.stderrByteCap).toBe(9);
     });
 
     test("signs the exact bytes it POSTs, so sandbox-server's inbound check passes", async () => {

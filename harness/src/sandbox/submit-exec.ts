@@ -19,6 +19,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
+import { EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import { signCallback } from "./hmac.js";
 import type { SandboxRef, SubmitExecBody } from "./types.js";
 
@@ -27,6 +28,11 @@ export interface SubmitExecDeps {
     fetch?: typeof fetch;
     /** Injected for tests. Defaults to `DBOS.runStep`. */
     runStep?: <T>(fn: () => Promise<T>, config: { name: string }) => Promise<T>;
+    /**
+     * Per-stream retention budget to send when the body does not carry one.
+     * Defaults to `EXEC_STREAM_BYTE_CAP`.
+     */
+    execStreamByteCap?: number;
 }
 
 const SUBMIT_HTTP_TIMEOUT_MS = 30_000;
@@ -76,7 +82,16 @@ export async function submitExec(ref: SandboxRef, body: SubmitExecBody, deps: Su
     const fetchImpl = deps.fetch ?? fetch;
     const runStep = deps.runStep ?? (<T>(fn: () => Promise<T>, c: { name: string }) => DBOS.runStep(fn, c));
 
-    await runStep(() => postExec(fetchImpl, ref, body), {
+    // Every exec in the process funnels through here, so this is where the
+    // retention budget is attached rather than at each of the callers that build
+    // a body. Applied before signing, since the signature covers these bytes.
+    const capped: SubmitExecBody = {
+        ...body,
+        stdoutByteCap: body.stdoutByteCap ?? deps.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP,
+        stderrByteCap: body.stderrByteCap ?? deps.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP,
+    };
+
+    await runStep(() => postExec(fetchImpl, ref, capped), {
         name: `sandbox.submit-exec.${body.execId}`,
     });
 }
