@@ -6,9 +6,10 @@
  *    before `generateFileMetadata` runs. Verify: cached LLM result returns
  *    on replay (no re-issued API call), next `durableStep` runs forward."
  *
- * Test 10.13 — per-step sync, non-fatal + idempotent on recovery:
- *   "Runs inline in the child; failure logged as warning, step still
- *    reports complete; idempotent on DBOS recovery."
+ * Test 10.13 — per-step sync, sequenced after registration + idempotent:
+ *   "Runs inline in the child; a registration rejection still attempts it and
+ *    its own failure is logged as a warning rather than displacing the
+ *    registration error; idempotent on DBOS recovery."
  *
  * Pattern — DBOS-determinism-safe chaos:
  *
@@ -166,40 +167,58 @@ const threeStepMirror = DBOS.registerWorkflow(
     { name: "three-step-mirror" },
 );
 
-// ── 10.13 — non-fatal sync (safeRun swallows throw) ────────────────────
+// ── 10.13 — sync attempted after a registration rejection ───────────────
 
-let nonFatalSyncCalls = 0;
-let nonFatalPostSyncCalls = 0;
+const REGISTRATION_REJECTION = "external registration failed: 1 row(s) rejected";
+const SYNC_UNREACHABLE = "artifact store reachability lost";
 
-const nonFatalSyncMirror = DBOS.registerWorkflow(
-    async (): Promise<{ syncCalls: number; postSyncCalls: number }> => {
-        // Mirror of `deps.artifactRegistry.sync(...)` wrapped by the body's
-        // fail-fast try/catch.
-        // In production, `safeRun` swallows any throw and the body proceeds.
+let rejectionRegisterCalls = 0;
+let rejectionSyncCalls = 0;
+let rejectionMarkFailedCalls = 0;
+
+/** Stands in for `deps.artifactRegistry.sync`, which throws on a persistent failure. */
+async function unreachableSync(): Promise<void> {
+    rejectionSyncCalls += 1;
+    throw new Error(SYNC_UNREACHABLE);
+}
+
+const registrationRejectionMirror = DBOS.registerWorkflow(
+    async (): Promise<never> => {
+        // Mirror of `sandbox-step`'s lineage-attestation block. Registration and
+        // the byte-sync are sequenced independently: a registration rejection
+        // still attempts the sync (otherwise the rows that DID register are left
+        // with `artifact_id` set and `file_id` NULL — bytes never uploaded), a
+        // throw from that sync is warn-logged and swallowed, and the REGISTRATION
+        // error is what fails the step.
+        //
+        // Neither operation is `DBOS.runStep`-wrapped in the body, so neither is
+        // mirrored as one here. `failStep`'s `mark-failed-attestation` is the
+        // block's only checkpoint, and the test below reads the recorded step
+        // list to assert the added sync attempt took no function id.
         try {
+            rejectionRegisterCalls += 1;
+            throw new Error(REGISTRATION_REJECTION);
+        } catch (registrationErr) {
+            try {
+                await unreachableSync();
+            } catch (syncErr) {
+                // This body mirrors `sandbox-step`'s; keep it on the seam so the mirror
+                // stays faithful (and silent) rather than printing during the run.
+                silentLogger
+                    .named("mirror")
+                    .named("post-step.sync")
+                    .warn("failed after a registration rejection (non-fatal)", silentLogger.errorFields(syncErr));
+            }
             await DBOS.runStep(
                 async () => {
-                    nonFatalSyncCalls += 1;
-                    throw new Error("artifact store reachability lost");
+                    rejectionMarkFailedCalls += 1;
                 },
-                { name: "post-step.sync" },
+                { name: "mark-failed-attestation" },
             );
-        } catch (err) {
-            // This body mirrors `sandbox-step`'s; keep it on the seam so the mirror
-            // stays faithful (and silent) rather than printing during the run.
-            silentLogger.named("mirror").warn("post-step.sync failed (non-fatal)", silentLogger.errorFields(err));
+            throw registrationErr;
         }
-
-        await DBOS.runStep(
-            async () => {
-                nonFatalPostSyncCalls += 1;
-            },
-            { name: "post-step.vector-index" },
-        );
-
-        return { syncCalls: nonFatalSyncCalls, postSyncCalls: nonFatalPostSyncCalls };
     },
-    { name: "non-fatal-sync-mirror" },
+    { name: "registration-rejection-mirror" },
 );
 
 // ── 10.13 — idempotent sync (no replay re-fire) ─────────────────────────
@@ -342,25 +361,35 @@ describe("Integration test 10.6 — chaos recovery", () => {
     });
 });
 
-describe("Integration test 10.13 — per-step sync (non-fatal + idempotent)", () => {
-    it("sync failure is logged but the workflow still reaches SUCCESS", async () => {
-        nonFatalSyncCalls = 0;
-        nonFatalPostSyncCalls = 0;
+describe("Integration test 10.13 — per-step sync (registration rejection + idempotent)", () => {
+    it("a registration rejection still attempts the sync, and is the error the workflow fails with", async () => {
+        rejectionRegisterCalls = 0;
+        rejectionSyncCalls = 0;
+        rejectionMarkFailedCalls = 0;
 
-        const wfId = rig.nextWorkflowId("sync-fail-");
-        const handle = await DBOS.startWorkflow(nonFatalSyncMirror, {
+        const wfId = rig.nextWorkflowId("reg-reject-");
+        const handle = await DBOS.startWorkflow(registrationRejectionMirror, {
             workflowID: wfId,
         })();
+        handle.getResult().catch(() => {});
+        const status = await waitForTerminal(wfId);
 
-        const result = await handle.getResult();
+        expect(status?.status).toBe("ERROR");
+        expect(rejectionRegisterCalls).toBe(1);
+        // The load-bearing assertion: registration throwing does not skip the
+        // byte-sync. Skipping it is what strands rows registered-but-byteless.
+        expect(rejectionSyncCalls).toBe(1);
+        expect(rejectionMarkFailedCalls).toBe(1);
 
-        expect(nonFatalSyncCalls).toBe(1);
-        expect(result.syncCalls).toBe(1);
-        expect(nonFatalPostSyncCalls).toBe(1);
-        expect(result.postSyncCalls).toBe(1);
+        // The sync's own failure does not displace the registration rejection.
+        const err = status?.error as Error | undefined;
+        expect(err?.message).toContain(REGISTRATION_REJECTION);
+        expect(err?.message).not.toContain(SYNC_UNREACHABLE);
 
-        const status = await DBOS.getWorkflowStatus(wfId);
-        expect(status?.status).toBe("SUCCESS");
+        // The sync attempt is a bare await, so it takes no DBOS function id: the
+        // block's checkpoint sequence is what it would be without it.
+        const steps = await DBOS.listWorkflowSteps(wfId);
+        expect(steps?.map((s) => s.name)).toEqual(["mark-failed-attestation"]);
     });
 
     it("sync is NOT re-fired on DBOS recovery (cached step result returns)", async () => {

@@ -31,8 +31,17 @@ mount does not establish that — it bounds what *this* step writes, while every
 sibling has its own directory mounted read-write over the same host inodes and
 mutates it freely. This makes the registered hash equal `sha256sum` of
 the bytes the sync target receives at upload time. The reconcile/register/sync
-stages are pulled out of the best-effort net: a registry rejection is
-**terminal** — it fails the step loudly rather than orphaning real outputs green.
+stages are pulled out of the best-effort net, and inside that net **severity
+follows what a rejection puts at risk**. An external registry commits per leaf
+and per activity rather than per batch, so a result carrying accepted and
+rejected rows together is an ordinary outcome, not an error. A rejected
+**output** orphans bytes that exist nowhere but the step tree, so it is
+**terminal** — it fails the step loudly rather than finishing green — and so is
+any rejection cascaded from a real one. A rejection of a file that no activity
+references registers nothing, so it orphans nothing: it is logged with its path
+and reason, and the step continues. Byte sync is attempted whatever registration
+returned, because it uploads exactly the rows registration accepted, while a
+registration error remains the cause the step fails on.
 
 A ref that cannot be hashed is dropped from lineage, whatever put it out of
 reach: a **directory** (e.g. `ls` of a mount), a read **resolving outside the
@@ -212,6 +221,24 @@ paths the local upsert owns. It SHALL return `{ localCount, externalRegistered,
 externalFailed, failureDetails }`. When the artifacts array is empty it SHALL
 return all-zero counts immediately and SHALL NOT call the registry.
 
+The registry's outcome is partial by contract — it commits per leaf and per
+activity, with no batch-wide rollback — so `registered` and `failed` arriving
+together describes a normal registration. `failed` SHALL carry every per-path
+rejection the registry reported, each with its path and the registry's reason.
+`failedCount`, surfaced as `externalFailed`, SHALL count only the **terminal**
+rejections: a rejected artifact whose bytes exist nowhere but the step tree, and
+any rejection cascaded from one — a row the registry rejected as a consequence
+of a genuine failure. A rejection of a file that no activity in the payload
+references SHALL NOT be counted, because it registers nothing and so puts no
+bytes at risk.
+
+An uncounted rejection SHALL still be surfaced: when `failedCount` is zero and
+`failed` is non-empty, `registerStepArtifacts` SHALL log a warn record naming
+each rejected path and the registry's reason for it. Not counting a rejection
+decides only that it is not worth failing a step over; it is never licence to
+drop it silently, because that record is the only place a reader can check the
+verdict against what the registry actually said.
+
 #### Scenario: Successful registration
 
 - **WHEN** `registerStepArtifacts` is called with 3 reconciled artifacts
@@ -219,8 +246,13 @@ return all-zero counts immediately and SHALL NOT call the registry.
 
 #### Scenario: External registration partially fails
 
-- **WHEN** the registry returns some entries in `failed`
-- **THEN** accepted artifacts get their `artifact_id` stored, rejected ones retain `artifact_id = NULL`, and `externalFailed` reflects the rejection count
+- **WHEN** the registry returns some of the step's outputs in `failed`
+- **THEN** accepted artifacts get their `artifact_id` stored, rejected ones retain `artifact_id = NULL`, and `externalFailed` reflects the count of terminal rejections
+
+#### Scenario: A rejection that nothing references is surfaced, not counted
+
+- **WHEN** the registry accepts every row except a file that no activity in the payload references
+- **THEN** `failed` carries that path with the registry's reason, a warn record names the path and that reason, and `externalFailed` is `0`
 
 #### Scenario: Empty artifact list short-circuits
 
@@ -229,15 +261,26 @@ return all-zero counts immediately and SHALL NOT call the registry.
 
 ### Requirement: Integrity stages fail-fast; enrichment stages degrade
 
-`reconcileAndRegisterStepArtifacts` SHALL reconcile, then register, then
-`ArtifactRegistry.sync` the step's artifacts, and SHALL treat the whole sequence
-as fail-fast: a non-zero `externalFailed` SHALL throw with the
-per-file failure detail, and the sandbox-step body SHALL tear down the sandbox,
-mark the step failed, and re-raise so the parent's fail-fast cascade fires. The
-OSS `createNoopArtifactRegistry` returns `externalFailed: 0` and never trips
-this. The enrichment stages — file-metadata generation, step-summary generation,
-and vector indexing — SHALL run under `safeRun`/`safeRunValue` so any single
-failure degrades without failing the step.
+`reconcileAndRegisterStepArtifacts` SHALL reconcile, then register, and the
+sandbox-step body SHALL then `ArtifactRegistry.sync` the step's artifacts. The
+sequence is fail-fast: a non-zero `externalFailed` SHALL throw with the per-file
+failure detail, and the sandbox-step body SHALL tear down the sandbox, mark the
+step failed, and re-raise so the parent's fail-fast cascade fires.
+
+Byte sync SHALL be attempted whatever registration returned, including when
+registration threw. Sync is defined over the rows registration accepted
+(`artifact_id IS NOT NULL AND file_id IS NULL`), so attempting it after a throw
+uploads exactly those rows and reaches nothing that was rejected — whereas
+skipping it leaves every accepted artifact registered and never uploaded,
+orphaned by the very throw raised to prevent orphaning. A registration error
+SHALL remain the surfaced cause: a sync failure that follows one SHALL be logged
+with its own detail and SHALL NOT replace the registration error the step fails
+on. The OSS `createNoopArtifactRegistry` returns `externalFailed: 0` and never
+trips this.
+
+The enrichment stages — file-metadata generation, step-summary generation, and
+vector indexing — SHALL run under `safeRun`/`safeRunValue` so any single failure
+degrades without failing the step.
 
 Within the vector-index stage, degradation SHALL be per-item: each surviving
 file description and the step summary SHALL be embedded and upserted under its
@@ -250,10 +293,22 @@ summary carrying the counts of items indexed and items failed — a partial inde
 returns fewer search hits rather than an error, so the logged counts are the
 only signal that degradation occurred.
 
-#### Scenario: Registry rejection fails the step
+#### Scenario: An output rejection fails the step
 
 - **WHEN** `reconcileAndRegisterStepArtifacts` gets `externalFailed > 0` from registration
 - **THEN** it throws with the per-file detail and the step is marked failed
+
+#### Scenario: A rejection that orphans nothing does not fail the step
+
+- **GIVEN** a step whose outputs all registered and whose only rejection is a file no activity references
+- **WHEN** `reconcileAndRegisterStepArtifacts` runs
+- **THEN** `externalFailed` is `0`, the rejection is logged with its path and reason, and the step completes with its artifacts synced
+
+#### Scenario: Registered bytes sync even when registration throws
+
+- **GIVEN** registration that accepted most of the step's artifacts and threw on a rejected output
+- **WHEN** the sandbox-step body handles the throw
+- **THEN** `ArtifactRegistry.sync` is still attempted, the accepted rows are uploaded, and the step fails with the registration error as its cause
 
 #### Scenario: A degraded enrichment stage does not fail the step
 
