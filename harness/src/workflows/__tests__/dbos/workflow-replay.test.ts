@@ -221,20 +221,43 @@ const registrationRejectionMirror = DBOS.registerWorkflow(
     { name: "registration-rejection-mirror" },
 );
 
-// ── 10.13 — idempotent sync (no replay re-fire) ─────────────────────────
+// ── 10.13 — a replayed sync moves no bytes ──────────────────────────────
 
-let idempotentSyncCalls = 0;
-let idempotentSyncArgs: string[] = [];
+/** One `cortex_artifacts` row, cut down to the columns the sync selection reads. */
+interface LedgerRow {
+    path: string;
+    role: string;
+    artifactId: string | null;
+    fileId: string | null;
+}
+
+let syncLedger: LedgerRow[] = [];
+let syncCalls = 0;
+/** Rows uploaded by each `syncStepArtifacts` invocation, in call order. */
+let syncUploads: number[] = [];
+
+/**
+ * Stands in for `deps.artifactRegistry.sync`, over the selection the harness
+ * hands it: `queryUnsyncedStepArtifacts` returns step-output rows with
+ * `artifact_id IS NOT NULL AND file_id IS NULL`. A row is therefore in the
+ * queue only until an upload stamps it with a `file_id`; a row the registry
+ * rejected never enters it at all, having no `artifact_id`.
+ */
+async function syncStepArtifacts(): Promise<void> {
+    syncCalls += 1;
+    const unsynced = syncLedger.filter((r) => r.role === "step_output" && r.artifactId !== null && r.fileId === null);
+    for (const row of unsynced) row.fileId = `file-${row.path}`;
+    syncUploads.push(unsynced.length);
+}
 
 const idempotentSyncMirror = DBOS.registerWorkflow(
-    async (input: { stepId: string }): Promise<{ syncCalls: number; tail: string }> => {
-        await DBOS.runStep(
-            async () => {
-                idempotentSyncCalls += 1;
-                idempotentSyncArgs.push(input.stepId);
-            },
-            { name: "post-step.sync" },
-        );
+    async (): Promise<{ uploads: number[]; tail: string }> => {
+        // A bare await, as in `sandbox-step`: the sync takes no DBOS function id,
+        // so replay re-executes it rather than replaying a cached result. What
+        // keeps the second pass from re-uploading is the selection it runs over —
+        // the first pass gave every row it uploaded a `file_id`, and a row
+        // carrying one is no longer unsynced.
+        await syncStepArtifacts();
 
         // Unconditional cancel — see threeStepMirror's note on DBOS's
         // determinism requirement for step sequences across replay.
@@ -242,7 +265,7 @@ const idempotentSyncMirror = DBOS.registerWorkflow(
 
         const tail = await DBOS.runStep(async () => "tail-ok", { name: "post-step.tail" });
 
-        return { syncCalls: idempotentSyncCalls, tail };
+        return { uploads: [...syncUploads], tail };
     },
     { name: "idempotent-sync-mirror" },
 );
@@ -392,31 +415,49 @@ describe("Integration test 10.13 — per-step sync (registration rejection + ide
         expect(steps?.map((s) => s.name)).toEqual(["mark-failed-attestation"]);
     });
 
-    it("sync is NOT re-fired on DBOS recovery (cached step result returns)", async () => {
-        idempotentSyncCalls = 0;
-        idempotentSyncArgs = [];
+    it("a replayed sync re-runs and uploads nothing — the unsynced selection skips rows that already carry a file_id", async () => {
+        syncCalls = 0;
+        syncUploads = [];
+        syncLedger = [
+            { path: "output/results.csv", role: "step_output", artifactId: "art-1", fileId: null },
+            { path: "figures/volcano.png", role: "step_output", artifactId: "art-2", fileId: null },
+            // Rejected by the registry: no `artifact_id`, so never selected.
+            { path: "logs/run.log", role: "step_output", artifactId: null, fileId: null },
+            // A data input, born-synced — outside the step-output selection.
+            { path: "data/expr.csv", role: "input", artifactId: "art-0", fileId: "file-0" },
+        ];
 
         const wfId = rig.nextWorkflowId("sync-idem-");
 
         const handle1 = await DBOS.startWorkflow(idempotentSyncMirror, {
             workflowID: wfId,
-        })({ stepId: "step-A" });
+        })();
         handle1.getResult().catch(() => {});
         const status1 = await waitForTerminal(wfId);
         expect(status1?.status).toBe("CANCELLED");
 
-        expect(idempotentSyncCalls).toBe(1);
-        expect(idempotentSyncArgs).toEqual(["step-A"]);
+        expect(syncCalls).toBe(1);
+        expect(syncUploads).toEqual([2]);
 
-        const handle2 = await DBOS.resumeWorkflow<{ syncCalls: number; tail: string }>(wfId);
+        const handle2 = await DBOS.resumeWorkflow<{ uploads: number[]; tail: string }>(wfId);
         const result = await handle2.getResult();
 
-        // Sync's closure did NOT run on replay — counter still 1, args
-        // array still has only the original invocation.
-        expect(idempotentSyncCalls).toBe(1);
-        expect(idempotentSyncArgs).toEqual(["step-A"]);
+        // The bare await DOES re-run on replay — it holds no cached result to
+        // return — and the load-bearing assertion is that it moves no bytes:
+        // both registered rows were stamped with a `file_id` on the first pass.
+        expect(syncCalls).toBe(2);
+        expect(result.uploads).toEqual([2, 0]);
+
+        // The rejected row is still byteless and the born-synced input untouched.
+        expect(syncLedger.find((r) => r.path === "logs/run.log")?.fileId).toBeNull();
+        expect(syncLedger.find((r) => r.path === "data/expr.csv")?.fileId).toBe("file-0");
         expect(result.tail).toBe("tail-ok");
-        expect(result.syncCalls).toBe(1);
+
+        // No checkpoint is spent on the sync: it never appears in the recorded
+        // step list, so the body's function-ID sequence is what it would be
+        // without it.
+        const steps = await DBOS.listWorkflowSteps(wfId);
+        expect(steps?.map((s) => s.name)).not.toContain("post-step.sync");
 
         const status2 = await DBOS.getWorkflowStatus(wfId);
         expect(status2?.status).toBe("SUCCESS");
