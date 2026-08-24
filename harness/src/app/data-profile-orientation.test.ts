@@ -169,13 +169,13 @@ describe("buildDataProfileOrientation", () => {
 describe("a snapshot of the kinds era", () => {
     const STRUCTURED: DataProfileResult = {
         ...RICH,
-        files: [{ path: "data/inputs/meta/samplesheet.csv", description: "Clinical annotations for all 800 subjects", format: "CSV" }],
+        files: [{ path: "data/inputs/meta/samplesheet.csv", description: "Clinical annotations for all 120 subjects", format: "CSV" }],
         kinds: [
             {
                 name: "per-patient variant calls",
                 memberRepresents: "one patient's somatic variant calls",
                 description: "HaplotypeCaller VCFs.",
-                count: 800,
+                count: 120,
                 pathPattern: "data/inputs/vcf/*.vcf.gz",
                 format: "VCF",
                 axisLabels: ["patient"],
@@ -184,28 +184,29 @@ describe("a snapshot of the kinds era", () => {
                 name: "variant indexes",
                 memberRepresents: "the tabix index of one patient's calls",
                 description: "Tabix indexes.",
-                count: 1168,
+                count: 200,
                 pathPattern: "data/inputs/tbi/*.tbi",
                 format: "TBI",
                 axisLabels: ["patient"],
             },
         ],
-        axes: [{ label: "patient", cardinality: 800 }],
-        coverage: { matched: 2339, unmatched: 1, total: 2340 },
-        inputSignature: { count: 2340, digest: "abc" },
+        axes: [{ label: "patient", cardinality: 120 }],
+        coverage: { matched: 319, unmatched: 1, total: 320 },
+        inputSignature: { count: 320, digest: "abc" },
     };
 
     it("renders its kinds as groups, before the notable files", () => {
         const text = buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID);
         expect(text).toContain("Groups (2):");
-        expect(text).toContain("per-patient variant calls (800x, VCF) — one patient's somatic variant calls");
-        expect(text).toContain("Dimensions: patient (800)");
+        expect(text).toContain("per-patient variant calls (120x, VCF) — one patient's somatic variant calls");
+        expect(text).toContain("Dimensions (1):");
+        expect(text).toContain("- patient: 120");
         expect(text.indexOf("Groups (")).toBeLessThan(text.indexOf("Notable files"));
     });
 
     it("censuses what its era recorded, naming the coverage shortfall rather than a quarantine it never had", () => {
         const text = buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID);
-        expect(text).toContain("Census: 2340 files in 2 groups · 1 matching no kind");
+        expect(text).toContain("Census: 320 files in 2 groups · 1 matching no kind");
         expect(text).not.toContain("quarantined");
     });
 
@@ -288,8 +289,10 @@ describe("a snapshot resolved into groups", () => {
         const text = buildDataProfileOrientation(RESOLVED, ANALYSIS_ID);
         expect(text).toContain("Census: 82 files in 2 groups · 2 unclassified · 1 quarantined");
         expect(text).toContain("Groups (2):");
-        expect(text).toContain("per-subject calls (40x, VCF) — one subject's small-variant calls");
-        expect(text).toContain("Dimensions: subject (40)");
+        expect(text).toContain("- per-subject calls (40x, VCF, variant-calls) — one subject's small-variant calls");
+        expect(text).toContain("- unclassified (2x, txt, unclassified) — one file no operation claimed");
+        expect(text).toContain("Dimensions (1):");
+        expect(text).toContain("- subject: 40 · e.g. 001");
     });
 
     it("puts the census in the header, above every structured section", () => {
@@ -298,9 +301,9 @@ describe("a snapshot resolved into groups", () => {
         expect(lines[1]).toStartWith("Census: ");
     });
 
-    it("orders identity, census, groups, dimensions, design, then caveats", () => {
+    it("orders identity, census, groups, dimensions, notable files, design, then caveats", () => {
         const text = buildDataProfileOrientation(RESOLVED, ANALYSIS_ID);
-        const order = ["Dataset: ", "Census: ", "Groups (", "Dimensions: ", "Design: ", "Caveats: "].map((marker) => text.indexOf(marker));
+        const order = ["Dataset: ", "Census: ", "Groups (", "Dimensions (", "Notable files (", "Design: ", "Caveats: "].map((marker) => text.indexOf(marker));
         expect(order.every((index) => index >= 0)).toBe(true);
         expect(order).toEqual([...order].sort((a, b) => a - b));
     });
@@ -333,13 +336,149 @@ describe("a snapshot resolved into groups", () => {
         const text = buildDataProfileOrientation(verbose, ANALYSIS_ID);
 
         expect(text).toContain("Census: 82 files in 2 groups");
-        expect(text).toContain("per-subject calls (40x, VCF)");
-        expect(text).toContain("unclassified (2x, txt)");
-        expect(text).toContain("Dimensions: subject (40)");
+        expect(text).toContain("- per-subject calls (40x, VCF, variant-calls)");
+        expect(text).toContain("- unclassified (2x, txt, unclassified)");
+        expect(text).toContain("- subject: 40 · e.g. 001");
         // Two caps hold the prose down: per item, and as a share of the whole rendering.
         const caveats = text.split("\n").find((line) => line.startsWith("Caveats: "))!;
-        expect(caveats).toContain("(+18 more)");
-        expect(caveats.length).toBeLessThanOrEqual(Math.floor(DATA_PROFILE_ORIENTATION_MAX_CHARS * 0.25) + 40);
+        expect(caveats).toContain("(+17 more)");
+        expect(caveats.length).toBeLessThanOrEqual(Math.floor(DATA_PROFILE_ORIENTATION_MAX_CHARS * 0.25));
+        expect(text.split("\n").find((line) => line.startsWith("Design: "))!.length).toBe(208);
+    });
+});
+
+/** One slotted group, so a profile of any group count is a repetition of the same shape. */
+function measurementGroup(index: number, annotations = 0) {
+    return {
+        id: `measurement-group-${index}`,
+        name: `measurement group ${index}`,
+        memberRepresents: `one subject's paired measurement files for batch ${index}, including the companion index and the checksum sidecar`,
+        description: `Batch ${index} measurements.`,
+        role: "data",
+        category: "other",
+        categoryLabel: "measurements",
+        count: 10,
+        fileCount: 20,
+        totalBytes: 1024,
+        displayPattern: `data/inputs/b${index}/<arm>/<id>.csv`,
+        formats: [{ format: "CSV", count: 10 }],
+        slots: [
+            {
+                id: `set-${index}.slot-0`,
+                location: "directory" as const,
+                index: 0,
+                tokenClass: "token",
+                distinctValues: 2,
+                sampleValues: ["control", "treated"],
+            },
+            { id: `set-${index}.slot-1`, location: "name" as const, index: 1, tokenClass: "digits-fixed", distinctValues: 10, sampleValues: ["001", "002"] },
+        ],
+        memberAnnotations: Array.from({ length: annotations }, (_, i) => ({
+            path: `data/inputs/b${index}/control/${i}.csv`,
+            note: `Batch ${index} member ${i} carries a duplicated header row.`,
+        })),
+    };
+}
+
+function measurementProfile(groups: number, annotationsPerGroup = 0): DataProfileResult {
+    return {
+        ...RICH,
+        files: undefined,
+        experimentalDesign: "Eight arms, each with paired baseline and endpoint draws, randomised within site and sequenced across three batches. ".repeat(4),
+        caveats: Array.from({ length: 5 }, (_, i) => `caveat ${i}: ${"c".repeat(300)}`),
+        groups: Array.from({ length: groups }, (_, i) => measurementGroup(i, i < 3 ? annotationsPerGroup : 0)),
+        dimensions: [
+            {
+                label: "subject",
+                category: "subject",
+                scope: "biological",
+                nestsUnder: { dimension: "site", evidence: "one directory per site" },
+                observations: [
+                    {
+                        kind: "slot",
+                        groupIds: ["measurement-group-0"],
+                        slotId: "set-0.slot-1",
+                        tokenClass: "digits-fixed",
+                        cardinality: 80,
+                        sampleValues: ["001"],
+                    },
+                ],
+            },
+        ],
+        partition: {
+            scannedFiles: groups * 20,
+            keptFiles: groups * 20,
+            keptMembers: groups * 10,
+            groups,
+            unclassifiedMembers: 0,
+            unclassifiedFiles: 0,
+            quarantine: { count: 0, totalBytes: 0, reasons: [], sample: [] },
+        },
+    };
+}
+
+describe("a profile whose structure is the point", () => {
+    it("renders all sixteen groups with their slots, and clamps only the prose", () => {
+        const text = buildDataProfileOrientation(measurementProfile(16), ANALYSIS_ID);
+        const lines = text.split("\n");
+
+        expect(text.length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
+        expect(text).toContain("Groups (16):");
+        expect(lines.filter((line) => line.startsWith("- measurement group ")).length).toBe(16);
+        expect(lines.filter((line) => line.startsWith("  slots: ")).length).toBe(16);
+        expect(text).toContain(
+            "- measurement group 7 (10x, CSV, measurements) — one subject's paired measurement files for batch 7, including the companion index and the…",
+        );
+        expect(text).toContain("  slots: dir0 token ×2 (control, treated) · name1 digits-fixed ×10");
+        expect(text).toContain("- subject: 80 · nests under site · e.g. 001");
+        expect(text).not.toContain("… trimmed to fit");
+    });
+
+    it("ends the design note with an ellipsis rather than a severed word", () => {
+        const design = buildDataProfileOrientation(measurementProfile(16), ANALYSIS_ID)
+            .split("\n")
+            .find((line) => line.startsWith("Design: "))!;
+
+        expect(design.startsWith("Design: Eight arms, each with paired baseline and endpoint draws")).toBe(true);
+        expect(design.endsWith("…")).toBe(true);
+        expect(design.length).toBe(208);
+    });
+
+    it("counts the groups it could not fit rather than trailing off", () => {
+        const text = buildDataProfileOrientation(measurementProfile(44), ANALYSIS_ID);
+        const rendered = text.split("\n").filter((line) => line.startsWith("- measurement group ")).length;
+
+        expect(text.length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
+        expect(text).toContain("Groups (44):");
+        expect(rendered).toBeGreaterThan(16);
+        expect(rendered).toBeLessThan(44);
+        expect(text).toContain(`…and ${44 - rendered} more groups`);
+        expect(text.endsWith("\n… trimmed to fit")).toBe(true);
+    });
+
+    it("serves the annotated members as notable files, capped and counted", () => {
+        const text = buildDataProfileOrientation(measurementProfile(16, 10), ANALYSIS_ID);
+
+        expect(text).toContain("Notable files (8 of 30):");
+        expect(text).toContain("- /an-1/data/inputs/b0/control/0.csv — Batch 0 member 0 carries a duplicated header row.");
+        expect(text.split("\n").filter((line) => line.startsWith("- /an-1/")).length).toBe(8);
+    });
+
+    it("drops the notable files before the groups when the budget is short, and says so", () => {
+        const text = buildDataProfileOrientation(measurementProfile(16, 10), ANALYSIS_ID, 1200);
+
+        expect(text.length).toBeLessThanOrEqual(1200);
+        expect(text).toContain("- measurement group 0 (10x, CSV, measurements)");
+        expect(text).not.toContain("Notable files");
+        expect(text.endsWith("\n… trimmed to fit")).toBe(true);
+    });
+
+    it("keeps the census at every budget, and never overruns one", () => {
+        for (const budget of [300, 900, 2400, DATA_PROFILE_ORIENTATION_MAX_CHARS]) {
+            const text = buildDataProfileOrientation(measurementProfile(44), ANALYSIS_ID, budget);
+            expect(text.length).toBeLessThanOrEqual(budget);
+            expect(text).toContain("Census: 880 files in 44 groups");
+        }
     });
 });
 

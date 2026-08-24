@@ -61,6 +61,12 @@ A submission that fails resolution SHALL be returned to the live agent once with
 resolution errors, and repair SHALL be a full resubmit — the agent replaces the whole
 operation list; the body SHALL NOT merge a partial correction into a prior submission.
 
+A tree the scan kept nothing of SHALL NOT reach the agent at all. There is no menu to
+author against and no file to describe, so a sandbox and a model pass would buy an empty
+submission; the body SHALL complete on the census it already holds — zero groups against
+the full quarantine accounting with its reasons — and consumers SHALL read that as a
+structure record reporting no groups, never as an analysis that was never profiled.
+
 #### Scenario: Membership is computed, not declared
 
 - **WHEN** the agent submits a `use` of a detected set
@@ -76,6 +82,12 @@ operation list; the body SHALL NOT merge a partial correction into a prior submi
 
 - **WHEN** the agent reaches a terminal state without ever calling `submit_profile`, including the salvage continuation
 - **THEN** the body fails the profile with an error and revokes the run authorization
+
+#### Scenario: A wholly quarantined tree needs no agent at all
+
+- **GIVEN** staged inputs the scan quarantines in full
+- **THEN** the body SHALL complete the profile with no groups and the full quarantine accounting, provisioning no sandbox and calling no model
+- **AND** `inspect_data_profile` SHALL serve its structure scope as available rather than reporting the profile carries none
 
 ### Requirement: The profiler's output is bounded by the menu, not by file count
 
@@ -119,7 +131,11 @@ not recall.
 Index entry text SHALL be composed deterministically from the group's submitted meaning
 and description, the dimension's observations, and the member's annotation. No index entry
 requires a model call. The index SHALL remain a pure projection, rebuildable from the tree
-and the persisted profile.
+and the persisted profile — so indexing SHALL REPLACE rather than merge: the entries the
+profile's own tiers hold are cleared before the rebuild, because an upsert keyed by entry
+id leaves a renamed group, a dropped dimension, and a de-annotated member searchable
+forever. The clearing SHALL be scoped to the tiers a profile writes; step outputs,
+summaries, and syntheses SHALL be untouched.
 
 Embedding and upsert SHALL be batched. The embedding and vector-store interfaces accept
 arrays, and issuing one request per entry makes indexing cost scale as a network round
@@ -130,6 +146,13 @@ trip per entry.
 - **WHEN** the body indexes a resolved profile with groups, dimensions, and member annotations
 - **THEN** it SHALL write group entries, dimension entries, and one entry per annotated member
 - **AND** SHALL NOT write entries for unannotated members
+
+#### Scenario: A renamed group leaves no stale entry
+
+- **GIVEN** an indexed profile
+- **WHEN** the analysis is re-profiled and a group's name changes
+- **THEN** the index SHALL hold the new group's entry and not the old one
+- **AND** the step-output, summary, and synthesis entries SHALL remain
 
 #### Scenario: Existing input searches keep working
 
@@ -288,8 +311,17 @@ resolution error returned for repair, not resolved by precedence. Files no opera
 claims survive the repair round SHALL be swept into a visible `unclassified` group —
 membership is exhaustive by construction, and the sweep is reported, never silent.
 
+Past the last repair round there is no agent left to return an overlap to. A file still
+claimed by more than one operation SHALL then be removed from EVERY claimant and swept
+into `unclassified`, and the count and a bounded sample of such files SHALL be recorded in
+the accounting and in the monitoring event. It SHALL NOT be awarded to one claimant by
+precedence, and SHALL NOT be counted twice. The partition therefore holds at every round,
+whatever the submission: no kept file is claimed by two groups, and none is left out.
+
 The accounting SHALL be derived, never declared: kept equals the sum over groups
 including `unclassified`; quarantined files are accounted separately with their reasons.
+When the scan's walk stopped at its file ceiling, the accounting SHALL say so — every
+figure it carries is then a figure over part of the tree.
 
 The partition is what makes downstream consumption sound: a planner reading groups can
 trust that the groups are the dataset, an index built from groups reaches every kept
@@ -301,6 +333,13 @@ census.
 - **WHEN** two submitted operations claim the same file
 - **THEN** resolution SHALL fail with an error naming the overlap
 - **AND** the body SHALL return it to the agent for the repair round
+
+#### Scenario: A still-contested file on the last round is swept, not awarded
+
+- **GIVEN** a repaired submission whose operations still claim the same file twice
+- **WHEN** resolution completes
+- **THEN** that file SHALL belong to `unclassified` and to neither claimant
+- **AND** the accounting SHALL report how many files were contested, with example paths
 
 #### Scenario: Unclaimed residue sweeps visibly
 
@@ -322,7 +361,10 @@ NOT exist without evidence. Observation kinds:
 - **Slot observation** — bound to a scanner slot; cardinality and values are computed,
   not asserted. Slot bindings SHALL be the **only** way a group links to a dimension:
   there is no freehand "group varies by X" field, so a per-subject dimension attached to
-  a group whose template has no such slot is unwritable.
+  a group whose template has no such slot is unwritable. The binding SHALL be persisted
+  in terms that outlive the scan that made it — the addressed set's template plus the
+  slot's position within it — so it can be re-resolved and its numbers recomputed against
+  a later scan (see the data-profile-rerun spec).
 - **Column observation** — names the file and column the agent read; dataset-scoped by
   construction.
 - **Document observation** — cites the metadata document or mapping file.
@@ -330,7 +372,12 @@ NOT exist without evidence. Observation kinds:
 Cross-source identity overlap SHALL be recorded only as a performed measurement —
 `checked: { matched, of }` — and the field SHALL be absent when no check was performed. A
 boolean claim of no-overlap is unrepresentable, because it asserts an exhaustive check
-that never happened.
+that never happened. Two slots the SCAN itself linked as one identity SHALL NOT be
+compared this way: the scan already matched them member by member and counted the
+disagreements, while their recorded values differ textually wherever affix recovery
+stripped literal text from one side. Comparing them would persist a claim of total
+disjointness over a one-to-one correspondence. The scan's own link and its mismatch count
+SHALL be carried on the observation instead, and `checked` SHALL stay absent.
 
 There SHALL be no single canonical cardinality. Observations that disagree — metadata
 describing one count, files existing for another — both stand, and the reconciliation
@@ -353,6 +400,13 @@ structure or a mapping file.
 - **WHEN** the agent records both observations
 - **THEN** the profile SHALL carry both numbers and a reconciliation note with the delta
 - **AND** SHALL NOT carry a single resolved subject count
+
+#### Scenario: A scanner-linked pair is not measured as if it were two sources
+
+- **GIVEN** a set whose directory slot and stem slot the scan linked as one identity
+- **WHEN** a dimension observes both
+- **THEN** the profile SHALL carry the scan's link and its mismatch count
+- **AND** SHALL NOT carry a `checked` measurement over their recorded value sets
 
 #### Scenario: An unchecked overlap is absent, not false
 
@@ -377,10 +431,15 @@ the vocabulary the agent is shown and the vocabulary the validator enforces cann
 diverge. Hosts SHALL NOT extend the vocabulary.
 
 Category enums SHALL be closed with an `other` escape carrying a free label, so a dataset
-outside the catalogue is representable without diluting the catalogue. Each completed
-profile SHALL emit one structured log event carrying the monitoring counters — `other`
-usage, unclassified size, probe not-founds, repair rounds — because those counters are
-how the catalogue's fit is measured against real use.
+outside the catalogue is representable without diluting the catalogue. A dimension's scope
+is derived from its category and is never the agent's to assert — except under `other`,
+which is by definition outside the catalogue and has nothing to derive from: there the
+agent MAY declare the scope, defaulting to technical. Each completed profile SHALL emit one
+structured log event carrying the monitoring counters — `other` usage, unclassified size,
+contested files, probe not-founds, repair rounds — because those counters are how the
+catalogue's fit is measured against real use. **Every** completed profile emits one,
+including a profile that completed over an empty manifest or a wholly quarantined tree: a
+completion nobody counted is a completion the monitoring cannot see.
 
 #### Scenario: An unknown category is refused
 
@@ -395,15 +454,43 @@ how the catalogue's fit is measured against real use.
 #### Scenario: A profile emits its monitoring event
 
 - **WHEN** a profile completes
-- **THEN** one structured log event SHALL carry the `other`-usage, unclassified, probe-not-found, and repair-round counters
+- **THEN** one structured log event SHALL carry the `other`-usage, unclassified, contested, probe-not-found, and repair-round counters
+- **AND** it SHALL be emitted for a profile that completed with nothing to group as well
 
 ### Requirement: The rendered orientation leads with structure, not prose
 
 The orientation rendered from the profile SHALL put the file census in its header —
-kept-file count, group count, unclassified count, quarantined count — where no clamp can
-remove it. Section order SHALL be identity, census, groups, dimensions (with side-by-side
-observation numbers), experimental design, then caveats. Caveats SHALL be capped per item
-and as a share of the whole rendering, so structured facts are never crowded out by prose.
+kept-file count, group count, unclassified count, quarantined count, and whether the scan
+covered the whole tree — where no clamp can remove it. Section order SHALL be identity,
+census, groups, dimensions, the individually annotated members, experimental design, then
+caveats.
+
+**Every** group SHALL render, one line each: its name, its member count, its format
+census, its category, and what one member represents. A group SHALL be elided only when
+one line apiece already exceeds the whole budget, and the count of groups that did not fit
+SHALL then be stated outright. The rendering SHALL NOT carry a fixed cap on how many groups
+it will show: the submission schema already bounds what an agent may author, so a cap here
+would discard resolved structure to make room for prose about it.
+
+Each group whose members vary SHALL be followed by a compact line naming its slots — where
+each slot sits, its token class, how many distinct values it takes, and those values inline
+while the slot is categorical enough for them to mean something. Slots are how an execution
+agent addresses an individual file, so they ride with the group rather than being left to a
+follow-up tool call.
+
+Dimensions SHALL render one line each with their observation cardinalities side by side and
+any nesting relation. The individually annotated members SHALL render as notable files —
+path and annotation — on a bounded count that states the true total.
+
+Prose SHALL render last and SHALL be the only thing a clamp may cut. Caveats SHALL be
+capped per item and as a share of the whole rendering. Structured lines are reserved
+first — header, groups with their slots, dimensions, notable files — and the design note
+and caveats take whatever budget remains.
+
+The section budgets SHALL compose rather than stack: sections are fitted in order against
+the budget that remains, a structured entry is dropped whole rather than cut mid-line, and
+whatever the budget removed SHALL be marked. A rendering that silently lost a section reads
+as a profile that never had one.
 
 #### Scenario: The census survives the clamp
 
@@ -413,7 +500,23 @@ and as a share of the whole rendering, so structured facts are never crowded out
 
 #### Scenario: Prose cannot crowd out structure
 
-- **GIVEN** a profile with long caveats
+- **GIVEN** a profile with many groups, a long design note, and long caveats
 - **WHEN** the orientation renders
-- **THEN** the caveats SHALL be capped per item and in total share
-- **AND** the groups and dimensions sections SHALL render in full before any prose expands
+- **THEN** every group SHALL render on its own line, each followed by its slots
+- **AND** the caveats SHALL be capped per item and in total share
+- **AND** the design note and the caveats SHALL be the only sections a clamp cut
+
+#### Scenario: Slots ride with the group they belong to
+
+- **GIVEN** a group whose members vary at a directory slot and a filename slot
+- **WHEN** the orientation renders
+- **THEN** the line after that group SHALL name both slots with their token classes and distinct counts
+- **AND** a categorical slot's values SHALL appear inline
+
+#### Scenario: What the budget removed is marked
+
+- **GIVEN** a profile with more structure and prose than the budget holds
+- **WHEN** the orientation renders
+- **THEN** no rendered line SHALL be cut mid-word by the budget
+- **AND** the rendering SHALL carry a marker saying something was removed
+- **AND** an elided group tail SHALL state how many groups did not fit

@@ -239,8 +239,8 @@ Naming a slot is not the same as promoting a dimension. Technical single-set slo
 shards, callers, lanes, read pairs — stay on the set. A value that is CONSTANT across the
 dataset is not a dimension; it belongs in the identity fields of Stage 1.
 
-Where two sources disagree on a count, record both observations and a \`reconciliation\`
-carrying the delta. Do not pick a winner: there is no single canonical cardinality.
+Where two sources disagree on a count, record both observations and a \`reconciliations\`
+entry carrying the delta. Do not pick a winner: there is no single canonical cardinality.
 
 ### The probe list — the only dimensions you go looking for
 

@@ -156,7 +156,10 @@ known-ambiguous category: default dimension, documented.
   working), dimension entries with observation summaries. Rejected: no per-file tier
   (makes the observed searchability gap permanent) and indexing every member
   (floods the index with synthetic near-duplicates). Invariant kept: the index is a
-  pure projection, rebuildable from tree + persisted profile.
+  pure projection, rebuildable from tree + persisted profile — which makes re-indexing
+  a REPLACE: the profile's own tiers are deleted before the rebuild, because an
+  id-keyed upsert leaves a renamed group's entry behind forever. The delete surface is
+  narrow by metadata type, so a writer cannot reach another tier's rows.
 - **Orientation: census in header, structured before prose, prose double-capped.**
   The partition makes coverage a census, not a warning — it joins the header line
   (`N files in K groups · U unclassified · Q quarantined`) and can never be clamped
@@ -191,6 +194,33 @@ known-ambiguous category: default dimension, documented.
 - **Machine findings and agent caveats never mix**: computed facts (companion gaps,
   incomplete crossings, reconciliation deltas) live in structured fields; `caveats`
   is agent-authored only.
+- **A contested file is swept, never awarded.** Overlapping operations stay a repair error
+  while a repair round remains. On the LAST round there is nobody to hand the error to, so
+  the file is removed from EVERY claimant and sweeps into `unclassified`, recorded as a
+  machine finding (contested count + example paths) and in the monitoring event. Rejected:
+  first-claimant precedence (the thing the partition exists to forbid, and it would have
+  been invisible) and hard failure (one overlap blocks a profile that gates planning).
+  The partition arithmetic therefore holds unconditionally, at every round.
+- **The unclassified sweep is carried in the recipe as explicit paths**, bounded, deviating
+  from the thin-ledger rule that membership is not persisted. Without it every replay
+  re-derives the residue as unclaimed, so a byte-identical tree re-absorbs as PARTIAL and
+  wakes the agent to re-judge files it already declined to judge — defeating the zero-delta
+  case absorption exists for. Past the bound the step records a prefix and says so; that
+  profile's replays wake the agent, which is the honest outcome for a sweep that large.
+- **Dimension slot bindings are template-keyed, and recomputed on replay.** A slot
+  observation persists `(pathTemplate, slot position)` alongside the display-only scan
+  slot id; an absorb re-resolves the binding against the fresh scan and recomputes
+  cardinality and values. Slot ids are per-scan ephemera — after a set-order flip the same
+  id names a different slot, and carrying the observation verbatim would persist a stale
+  cardinality under a slot it never measured. A binding that no longer resolves strands the
+  recipe. Non-slot observations (column, document) are agent citations and still carry
+  verbatim.
+- **Two slots the scanner itself linked are never intersected.** `sameAsSlot` means the
+  scan matched the two positions member by member and counted the disagreements. Affix
+  recovery strips literal text off one side, so an exact value-set intersection over them
+  reports `matched: 0` — a claim of total disjointness over a one-to-one correspondence.
+  The observation carries the scanner's link and its mismatch count instead, and `checked`
+  stays absent, because the value-set comparison was not a measurement worth performing.
 - **Monitoring is one structured log event per completed profile**: counts of
   `other` usage, unclassified size, probe not-founds, repair rounds.
 - **Vocabulary is package-owned and versioned with the harness; no host extension.**
