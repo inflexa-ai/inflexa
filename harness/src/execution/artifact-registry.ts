@@ -62,6 +62,17 @@ export interface ExternalRegistrationResult {
      * back a whole batch (`failed` then carries one summary entry).
      */
     failedCount: number;
+    /**
+     * Rejections the registry judged non-terminal and deliberately kept out of
+     * `failed`/`failedCount`: rows it never attempted, so nothing registered and
+     * no bytes are at risk. Reported rather than dropped — excluding a rejection
+     * decides only that it is not worth failing a step over, never that it goes
+     * unrecorded. Keeping them out of `failed` is what lets the fail-fast message
+     * list only the paths that actually cost the step something; surfacing them
+     * here is what keeps the registry's verdict checkable against what the
+     * external system actually said.
+     */
+    notCounted?: ReadonlyArray<{ path: string; error: string }>;
 }
 
 export interface ArtifactRegistry {
