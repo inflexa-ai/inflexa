@@ -1,3 +1,11 @@
+## RENAMED Requirements
+- FROM: `### Requirement: The scan reports filename structure as evidence, not as a conclusion`
+- TO: `### Requirement: The scan mines templates over the full relative path`
+- FROM: `### Requirement: Token correspondence across shapes is reported with evidence`
+- TO: `### Requirement: Token correspondence across sets is reported with evidence`
+- FROM: `### Requirement: The manifest is both injected and callable`
+- TO: `### Requirement: The menu is both injected and callable`
+
 ## MODIFIED Requirements
 
 ### Requirement: The scan reports observations; the agent decides the grouping
