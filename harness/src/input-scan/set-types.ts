@@ -197,6 +197,8 @@ export interface DetectedSets {
     readonly quarantine: QuarantineSummary;
     readonly sets: readonly DetectedSet[];
     readonly leftovers: LeftoverFiles;
+    /** Complete leftover membership. Host-side, for the same reason as {@link DetectedSet.members}. */
+    readonly leftoverMembers: readonly MemberFile[];
     readonly readout: ReadoutSelection;
     /**
      * Complete value sets, keyed by slot id. Host-side only: completeness arithmetic,
@@ -204,4 +206,11 @@ export interface DetectedSets {
      * rendered or persisted carries {@link SetSlot.sampleValues}.
      */
     readonly slotValues: ReadonlyMap<string, readonly string[]>;
+    /**
+     * Per slot id, the value each member of that slot's set carries, aligned to
+     * {@link DetectedSet.members}. Host-side only, and the material a split resolves
+     * against: partitioning a set by one of its slots is a lookup here, never a
+     * re-tokenisation of the member's name.
+     */
+    readonly memberSlotValues: ReadonlyMap<string, readonly string[]>;
 }

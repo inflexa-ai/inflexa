@@ -43,17 +43,55 @@ export type { TokenUsageRollup } from "./usage.js";
 export { DATA_PROFILE_RUN_LITERAL } from "./data-profile.js";
 export type {
     DataProfileAxis,
+    DataProfileChecked,
+    DataProfileCompanionCompleteness,
     DataProfileCoverage,
+    DataProfileDimension,
     DataProfileFile,
+    DataProfileGroup,
+    DataProfileGroupSlot,
     DataProfileInputFile,
     DataProfileInputSignature,
     DataProfileKind,
     DataProfileLifecycleStatus,
+    DataProfileMemberAnnotation,
+    DataProfileObservation,
     DataProfileOrganism,
+    DataProfilePartition,
+    DataProfileProbeReport,
     DataProfileQualityAssessment,
+    DataProfileQuarantine,
+    DataProfileRecipeStep,
     DataProfileResult,
     DataProfileSubjectSource,
 } from "./data-profile.js";
+export {
+    DIMENSION_CATEGORIES,
+    DIMENSION_CATEGORY_IDS,
+    DIMENSION_PROBE_IDS,
+    DIMENSION_PROBES,
+    GROUP_CATEGORIES,
+    GROUP_CATEGORY_IDS,
+    GROUP_ROLE_IDS,
+    GROUP_ROLES,
+    PROBE_OUTCOME_IDS,
+    dimensionCategoryEntry,
+    dimensionScope,
+    groupCategoryEntry,
+} from "./profile-vocabulary.js";
+export type {
+    DimensionCategory,
+    DimensionCategoryEntry,
+    DimensionProbe,
+    DimensionProbeEntry,
+    DimensionScope,
+    DimensionTreatment,
+    GroupCategory,
+    GroupCategoryEntry,
+    GroupRole,
+    GroupRoleEntry,
+    ProbeOutcome,
+} from "./profile-vocabulary.js";
 export type { TextPart, ToolCallPart, CortexPart, CortexMessage } from "./message.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./part-registry.js";
 export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./part-registry.js";

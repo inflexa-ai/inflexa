@@ -9,10 +9,29 @@ export { KNOWN_EXTENSIONS, MAGIC_PREFIX_BYTES, detectFormat, extensionChain, inn
 export { detectSets, type DetectSetsOptions } from "./detect-sets.js";
 export { type ClusterEvidence, type ContentSimilarity } from "./clustering.js";
 export { MAX_SAMPLE_VALUES, MAX_SHAPES, nameStem, observeShapes, tokenizeStem, type ObservedShapes } from "./shapes.js";
-export { MAX_SCANNED_FILES, buildManifest, renderInputScanManifest, scanInputTree, type ScanInputTreeArgs } from "./scan.js";
-export { MEMBERS_DECODED_PER_SHAPE, SANDBOX_CONTAINER_FORMATS, enrichShapes, type EnrichShapesArgs } from "./enrich.js";
+export { MAX_SCANNED_FILES, buildManifest, formatBytes, renderInputScanManifest, scanInputTree, type ScanInputTreeArgs } from "./scan.js";
+export {
+    MAX_CORRESPONDENCES,
+    MAX_CORRESPONDENCE_SAMPLE,
+    MAX_MENU_SETS,
+    buildCorrespondences,
+    buildSetMenu,
+    renderSetMenu,
+    type SetMenu,
+    type SlotCorrespondence,
+    type UnlistedSets,
+} from "./menu.js";
+export { readoutTargets, selectReadouts, type ReadoutTarget } from "./readout-budget.js";
+export {
+    MEMBERS_DECODED_PER_SHAPE,
+    SANDBOX_CONTAINER_FORMATS,
+    enrichShapes,
+    readHeaders,
+    type EnrichShapesArgs,
+    type ReadHeadersArgs,
+    type ReadoutTargetSpec,
+} from "./enrich.js";
 export { READOUT_PREFIX_BYTES, READOUT_TEXT_BYTES, readPrefix, type PrefixReadout, type ReadoutFields } from "./readout.js";
-export { computeCoverage, type ProfileCoverage } from "./coverage.js";
 export type {
     FileShape,
     FormatCount,

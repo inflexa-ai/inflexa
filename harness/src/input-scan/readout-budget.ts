@@ -10,7 +10,14 @@
  * caller.
  */
 
-import type { DetectedSet, MemberFile, ReadoutSelection, SetRepresentative } from "./set-types.js";
+import type { DetectedSet, DetectedSets, MemberFile, ReadoutSelection, SetRepresentative } from "./set-types.js";
+
+/** A file the selection named, with what the scan already knows about its bytes. */
+export interface ReadoutTarget {
+    readonly path: string;
+    readonly format: string;
+    readonly wrapper?: string;
+}
 
 /** The member a set is best read through: the first non-empty one, by path order. */
 function representativeOf(set: DetectedSet): string | undefined {
@@ -28,4 +35,25 @@ export function selectReadouts(sets: readonly DetectedSet[], leftovers: readonly
         representatives,
         individual: [...leftovers].map((file) => file.path).sort((a, b) => a.localeCompare(b, "en")),
     };
+}
+
+/**
+ * The selection as readout targets. The format the scan detected rides along, so the
+ * reader picks a decoder without re-sniffing bytes it already sniffed.
+ */
+export function readoutTargets(detected: DetectedSets): ReadoutTarget[] {
+    const members = new Map<string, MemberFile>();
+    for (const set of detected.sets) for (const member of set.members) members.set(member.path, member);
+    for (const member of detected.leftoverMembers) members.set(member.path, member);
+
+    const paths = [...detected.readout.representatives.map((entry) => entry.path), ...detected.readout.individual];
+    const targets: ReadoutTarget[] = [];
+    const seen = new Set<string>();
+    for (const path of paths) {
+        const member = members.get(path);
+        if (!member || seen.has(path)) continue;
+        seen.add(path);
+        targets.push({ path, format: member.format, ...(member.wrapper ? { wrapper: member.wrapper } : {}) });
+    }
+    return targets;
 }

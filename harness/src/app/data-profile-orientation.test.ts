@@ -166,7 +166,7 @@ describe("buildDataProfileOrientation", () => {
     });
 });
 
-describe("a dataset described by kinds", () => {
+describe("a snapshot of the kinds era", () => {
     const STRUCTURED: DataProfileResult = {
         ...RICH,
         files: [{ path: "data/inputs/meta/samplesheet.csv", description: "Clinical annotations for all 1171 subjects", format: "CSV" }],
@@ -195,12 +195,12 @@ describe("a dataset described by kinds", () => {
         inputSignature: { count: 2340, digest: "abc" },
     };
 
-    it("renders the kinds before the notable files", () => {
+    it("renders its kinds as groups, before the notable files", () => {
         const text = buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID);
-        expect(text).toContain("Kinds (2, 2339 files):");
+        expect(text).toContain("Groups (2, 2339 files):");
         expect(text).toContain("per-patient variant calls (1171x, VCF) — one patient's somatic variant calls");
-        expect(text).toContain("Axes: patient (1171)");
-        expect(text.indexOf("Kinds (")).toBeLessThan(text.indexOf("Notable files"));
+        expect(text).toContain("Dimensions: patient (1171)");
+        expect(text.indexOf("Groups (")).toBeLessThan(text.indexOf("Notable files"));
     });
 
     it("names a coverage shortfall rather than implying the kinds cover everything", () => {
@@ -211,10 +211,94 @@ describe("a dataset described by kinds", () => {
         expect(buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
     });
 
-    it("falls back to the file list for a snapshot written before kinds existed", () => {
+    it("falls back to the file list for a snapshot written before any structure existed", () => {
         const text = buildDataProfileOrientation(RICH, ANALYSIS_ID);
-        expect(text).not.toContain("Kinds (");
+        expect(text).not.toContain("Groups (");
         expect(text).toContain("Files (2):");
+    });
+});
+
+describe("a snapshot resolved into groups", () => {
+    const RESOLVED: DataProfileResult = {
+        ...RICH,
+        files: undefined,
+        caveats: ["batch is confounded with arm"],
+        groups: [
+            {
+                id: "per-subject-calls",
+                name: "per-subject calls",
+                memberRepresents: "one subject's small-variant calls",
+                description: "Small-variant calls, one file per subject.",
+                role: "data",
+                category: "variant-calls",
+                count: 40,
+                fileCount: 80,
+                totalBytes: 4096,
+                displayPattern: "data/inputs/vcf/<id>.vcf.gz",
+                formats: [{ format: "VCF", count: 40 }],
+                memberAnnotations: [{ path: "data/inputs/vcf/S001.vcf.gz", note: "Only member with a contig header." }],
+            },
+            {
+                id: "unclassified",
+                name: "unclassified",
+                memberRepresents: "one file no operation claimed",
+                description: "Swept residue.",
+                role: "data",
+                category: "other",
+                categoryLabel: "unclassified",
+                count: 2,
+                fileCount: 2,
+                totalBytes: 20,
+                displayPattern: "data/inputs",
+                formats: [{ format: "txt", count: 2 }],
+                unclassified: true,
+            },
+        ],
+        dimensions: [
+            {
+                label: "subject",
+                category: "subject",
+                scope: "biological",
+                observations: [
+                    {
+                        kind: "slot",
+                        groupIds: ["per-subject-calls"],
+                        slotId: "set-1.slot-1",
+                        tokenClass: "digits-fixed",
+                        cardinality: 40,
+                        sampleValues: ["001"],
+                    },
+                ],
+            },
+        ],
+        partition: {
+            scannedFiles: 83,
+            keptFiles: 82,
+            keptMembers: 42,
+            groups: 2,
+            unclassifiedMembers: 2,
+            unclassifiedFiles: 2,
+            quarantine: { count: 1, totalBytes: 5, reasons: [{ reason: "os-junk", count: 1 }], sample: ["data/inputs/.DS_Store"] },
+        },
+    };
+
+    it("renders the resolved groups, the dimensions, and the unclassified count", () => {
+        const text = buildDataProfileOrientation(RESOLVED, ANALYSIS_ID);
+        expect(text).toContain("Groups (2, 82 files):");
+        expect(text).toContain("per-subject calls (40x, VCF) — one subject's small-variant calls");
+        expect(text).toContain("Dimensions: subject (40)");
+        expect(text).toContain("Unclassified: 2 of 82 kept files");
+    });
+
+    it("serves an annotated member as a notable file, and the agent's caveats as concerns", () => {
+        const text = buildDataProfileOrientation(RESOLVED, ANALYSIS_ID);
+        expect(text).toContain("Notable files (1):");
+        expect(text).toContain("Only member with a contig header.");
+        expect(text).toContain("batch is confounded with arm");
+    });
+
+    it("stays within the character budget", () => {
+        expect(buildDataProfileOrientation(RESOLVED, ANALYSIS_ID).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
     });
 });
 

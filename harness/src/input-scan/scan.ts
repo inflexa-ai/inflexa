@@ -117,7 +117,7 @@ export async function scanInputTree(args: ScanInputTreeArgs): Promise<InputScan>
     return buildManifest(args.root, files, truncated, limit);
 }
 
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     const units = ["KB", "MB", "GB", "TB"];
     let value = bytes / 1024;

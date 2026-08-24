@@ -1,33 +1,31 @@
 /**
  * The profile's vector index, as a pure projection.
  *
- * The index is a function of the scan crossed with the submitted kinds: for each kind,
- * one entry; for each entity, one entry templated from the kinds it participates in and
- * its own axis value. It has no persisted representation of its own and nothing derives
- * from it, so it can be rebuilt at any time by re-running the scan and reading `kinds`
- * off the existing profile — no model call, no re-profile. Improving the template,
- * adding a tier, or folding in entity attributes later are all re-projections.
+ * The index is a function of the scan crossed with the resolved groups: for each group,
+ * one entry; for each entity, one entry templated from the groups it participates in and
+ * its own dimension value. It has no persisted representation of its own and nothing
+ * derives from it, so it can be rebuilt at any time by re-running the scan and reading the
+ * existing profile — no model call, no re-profile.
  *
  * Two tiers, because they answer different queries. A query naming a KIND of data
- * ("variant calls") wants one result carrying the set's count and path pattern; a
+ * ("variant calls") wants one result carrying the group's count and display pattern; a
  * per-entity tier would return five arbitrary subjects out of thousands of
- * indistinguishable ones. A query naming an ENTITY ("PT0421") wants that entity. A
- * per-file tier adds nothing: a file is identified by its kind and its entity, and its
- * path is on the filesystem.
+ * indistinguishable ones. A query naming an ENTITY wants that entity.
  *
- * `type: "input"` keeps its existing meaning for the entity tier, so searches written
- * against it keep matching; `type: "input-kind"` is additive. Renaming `"input"` would
- * have silently broken existing search on every new analysis.
+ * `type: "input"` keeps its existing meaning for the entity tier and `type: "input-kind"`
+ * its meaning for the group tier, so searches written against either keep matching
+ * whichever era wrote the profile they read.
  */
 
+import type { ProfileDimensionView, ProfileGroupView } from "../app/data-profile-view.js";
 import type { InputScan } from "../input-scan/types.js";
-import type { DataProfileAxis, DataProfileFile, DataProfileKind } from "../state/data-profile.js";
+import type { DataProfileFile } from "../state/data-profile.js";
 
 /** Entity entries built per analysis. Past this the entity tier is a liability, not a search aid. */
 export const MAX_ENTITY_ENTRIES = 20_000;
 
-/** Kind names named in one entity's entry text. */
-const MAX_KINDS_IN_ENTITY_TEXT = 6;
+/** Group names named in one entity's entry text. */
+const MAX_GROUPS_IN_ENTITY_TEXT = 6;
 
 export interface ProfileIndexEntry {
     readonly id: string;
@@ -37,11 +35,11 @@ export interface ProfileIndexEntry {
 
 export interface BuildProfileIndexArgs {
     readonly analysisId: string;
-    readonly kinds: readonly DataProfileKind[];
-    readonly axes?: readonly DataProfileAxis[];
+    readonly groups: readonly ProfileGroupView[];
+    readonly dimensions?: readonly ProfileDimensionView[];
     /** The scan the profile was taken against — the source of the entity value set. */
     readonly scan?: InputScan;
-    /** Individually described files, indexed only when there are no kinds to index. */
+    /** Individually described files, indexed only when there are no groups to index. */
     readonly files?: readonly DataProfileFile[];
 }
 
@@ -77,37 +75,37 @@ function entityValues(scan: InputScan | undefined): { values: string[]; distinct
 }
 
 /**
- * The axis label for an entity set. The agent labels axes; the scan counts values, so
- * the axis whose cardinality matches the observed set is the one the agent was naming.
- * With no match the entries still index under a neutral label rather than not at all.
+ * The dimension label for an entity set. The agent labels dimensions; the scan counts
+ * values, so the dimension whose cardinality matches the observed set is the one the
+ * agent was naming. With no match the entries still index under a neutral label rather
+ * than not at all.
  */
-function entityAxisLabel(axes: readonly DataProfileAxis[] | undefined, distinct: number): string {
-    if (!axes || axes.length === 0) return "entity";
-    const exact = axes.find((axis) => axis.cardinality === distinct);
+function entityDimensionLabel(dimensions: readonly ProfileDimensionView[] | undefined, distinct: number): string {
+    if (!dimensions || dimensions.length === 0) return "entity";
+    const exact = dimensions.find((dimension) => dimension.cardinalities.includes(distinct));
     if (exact) return exact.label;
-    const widest = [...axes].sort((a, b) => b.cardinality - a.cardinality)[0];
+    const widest = [...dimensions].sort((a, b) => Math.max(0, ...b.cardinalities) - Math.max(0, ...a.cardinalities))[0];
     return widest?.label ?? "entity";
 }
 
-function kindEntry(analysisId: string, kind: DataProfileKind): ProfileIndexEntry {
-    const facts = [`${kind.count} files`, kind.format, kind.pathPattern].filter((f): f is string => Boolean(f)).join(", ");
+function groupEntry(analysisId: string, group: ProfileGroupView): ProfileIndexEntry {
+    const facts = [`${group.count} files`, group.format, group.pattern].filter((f): f is string => Boolean(f)).join(", ");
     return {
-        id: `/${analysisId}/kind/${slug(kind.name)}`,
-        text: `${kind.name} — ${kind.description} One member is ${kind.memberRepresents}. (${facts})`,
+        id: `/${analysisId}/kind/${slug(group.name)}`,
+        text: `${group.name} — ${group.description} One member is ${group.memberRepresents}. (${facts})`,
         metadata: {
             type: "input-kind",
-            kind: kind.name,
-            pathPattern: kind.pathPattern,
-            count: kind.count,
-            ...(kind.format ? { format: kind.format } : {}),
-            ...(kind.axisLabels ? { axisLabels: kind.axisLabels } : {}),
+            kind: group.name,
+            pathPattern: group.pattern,
+            count: group.count,
+            ...(group.format ? { format: group.format } : {}),
         },
     };
 }
 
-function entityEntry(analysisId: string, label: string, value: string, kinds: readonly DataProfileKind[]): ProfileIndexEntry {
-    const named = kinds.slice(0, MAX_KINDS_IN_ENTITY_TEXT);
-    const carried = named.map((kind) => `${kind.name} (${kind.memberRepresents})`).join("; ");
+function entityEntry(analysisId: string, label: string, value: string, groups: readonly ProfileGroupView[]): ProfileIndexEntry {
+    const named = groups.slice(0, MAX_GROUPS_IN_ENTITY_TEXT);
+    const carried = named.map((group) => `${group.name} (${group.memberRepresents})`).join("; ");
     return {
         id: `/${analysisId}/entity/${encodeURIComponent(value)}`,
         text: `${label} ${value} — input data for this ${label}: ${carried}.`,
@@ -115,12 +113,12 @@ function entityEntry(analysisId: string, label: string, value: string, kinds: re
             type: "input",
             entity: value,
             axis: label,
-            kinds: named.map((kind) => kind.name),
+            kinds: named.map((group) => group.name),
         },
     };
 }
 
-/** A file entry, for the degenerate case where a profile submitted no kinds at all. */
+/** A file entry, for the degenerate case where a profile resolved to no groups at all. */
 function fileEntry(analysisId: string, file: DataProfileFile): ProfileIndexEntry {
     return {
         id: `/${analysisId}/${file.path}`,
@@ -140,20 +138,20 @@ function fileEntry(analysisId: string, file: DataProfileFile): ProfileIndexEntry
  * indexing costs no LLM tokens whatever the dataset's size.
  */
 export function buildProfileIndexEntries(args: BuildProfileIndexArgs): ProfileIndexEntry[] {
-    const { analysisId, kinds, axes, scan, files } = args;
+    const { analysisId, groups, dimensions, scan, files } = args;
 
-    if (kinds.length === 0) {
-        // No kinds is a degenerate profile, but the notable files it did describe stay
+    if (groups.length === 0) {
+        // No groups is a degenerate profile, but the notable files it did describe stay
         // discoverable — the same losslessness the per-file fallback description had.
         return (files ?? []).map((file) => fileEntry(analysisId, file));
     }
 
-    const entries = kinds.map((kind) => kindEntry(analysisId, kind));
+    const entries = groups.map((group) => groupEntry(analysisId, group));
 
     const { values, distinct } = entityValues(scan);
     if (values.length > 1 && values.length <= MAX_ENTITY_ENTRIES) {
-        const label = entityAxisLabel(axes, distinct);
-        for (const value of values) entries.push(entityEntry(analysisId, label, value, kinds));
+        const label = entityDimensionLabel(dimensions, distinct);
+        for (const value of values) entries.push(entityEntry(analysisId, label, value, groups));
     }
 
     return entries;

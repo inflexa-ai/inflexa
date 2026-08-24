@@ -20,7 +20,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { randomUUID } from "node:crypto";
-import { ok } from "neverthrow";
+import { ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 
 import { forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
@@ -36,7 +36,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import { defineTool } from "../tools/define-tool.js";
+import { defineTool, type ToolError } from "../tools/define-tool.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { renderWorkspace } from "../prompts/briefing.js";
@@ -49,13 +49,18 @@ import { estimateDataProfileResources } from "../sandbox/estimate-data-profile-r
 import { generateExecutionId } from "../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import { createVectorStore } from "../state/vector-store.js";
-import { ProfilerOutputSchema, type ProfilerOutput } from "../schemas/data-profile-schemas.js";
+import { ProfileSubmissionSchema, type ProfileSubmission } from "../schemas/data-profile-schemas.js";
 import { computeInputSignature } from "../execution/input-signature.js";
-import { computeCoverage } from "../input-scan/coverage.js";
-import { enrichShapes } from "../input-scan/enrich.js";
-import { renderInputScanManifest, scanInputTree } from "../input-scan/scan.js";
+import { readHeaders } from "../input-scan/enrich.js";
+import { detectSets } from "../input-scan/detect-sets.js";
+import { buildSetMenu, renderSetMenu, type SetMenu } from "../input-scan/menu.js";
+import { readoutTargets } from "../input-scan/readout-budget.js";
+import type { DetectedSets } from "../input-scan/set-types.js";
+import { scanInputTree } from "../input-scan/scan.js";
 import type { InputScan } from "../input-scan/types.js";
+import { profileDimensions, profileFileRecords, profileGroups } from "../app/data-profile-view.js";
 import { buildProfileIndexEntries } from "./data-profile-index.js";
+import { formatResolutionErrors, resolveProfileSubmission, type ProfileResolution } from "./data-profile-resolve.js";
 import {
     completeDataProfile,
     failDataProfile,
@@ -65,7 +70,6 @@ import {
     tryRerunDataProfile,
     tryStartDataProfile,
     upsertArtifacts,
-    type DataProfileCoverage,
     type DataProfileResult,
 } from "../state/index.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "./data-profile-activity.js";
@@ -86,6 +90,16 @@ const DEFAULT_DEADLINE_MS = 1_200_000;
 
 /** Index entries embedded and upserted per round trip. */
 const INDEX_BATCH_SIZE = 256;
+
+/**
+ * Submissions the tool accepts: the first, plus one repair.
+ *
+ * The repair is a FULL resubmit — the agent replaces the whole operation list and nothing
+ * is merged into the prior attempt. Past it the resolution stands as it resolved: an
+ * operation that still does not resolve produces no group, and its members land in the
+ * visible `unclassified` group rather than blocking a profile that gates planning.
+ */
+const MAX_SUBMIT_ROUNDS = 2;
 
 /** Where the embedder stages this analysis's inputs (see the data-profile-init spec). */
 const STAGED_INPUT_ROOT = "data/inputs";
@@ -176,63 +190,43 @@ function inputArtifactPath(f: StagedInput): string {
  * the reading a consumer must already tolerate.
  */
 export function buildDataProfileResult(
-    profile: ProfilerOutput,
+    submission: ProfileSubmission,
+    resolution: ProfileResolution,
     stagedInputs: readonly StagedInput[],
     profiledAt: string,
-    coverage?: DataProfileCoverage,
 ): DataProfileResult {
     return {
-        summary: profile.analysisSummary,
-        files: profile.files.map((f) => ({
-            path: f.path,
-            description: f.description,
-            dataType: f.dataType,
-            format: f.format,
-            rows: f.rows,
-            cols: f.cols,
-            tags: f.tags,
-            warnings: f.warnings,
-            metrics: f.metrics,
-        })),
-        kinds: profile.kinds.map((k) => ({
-            name: k.name,
-            memberRepresents: k.memberRepresents,
-            description: k.description,
-            count: k.count,
-            pathPattern: k.pathPattern,
-            format: k.format,
-            axisLabels: k.axisLabels,
-        })),
-        axes: profile.axes?.map((a) => ({
-            label: a.label,
-            cardinality: a.cardinality,
-            exampleValues: a.exampleValues,
-            description: a.description,
-        })),
+        summary: submission.analysisSummary,
+        groups: resolution.groups.map(({ memberPaths, ...group }) => {
+            void memberPaths;
+            return group;
+        }),
+        dimensions: [...resolution.dimensions],
+        probes: [...resolution.probes],
+        partition: resolution.partition,
+        recipe: [...resolution.recipe],
+        caveats: submission.caveats,
         inputSignature: computeInputSignature(stagedInputs),
-        coverage,
         profiledAt,
-        domain: profile.domain,
-        subtype: profile.subtype,
-        organism: profile.organism,
-        tissue: profile.tissue,
-        cellType: profile.cellType,
-        condition: profile.condition,
-        accessions: profile.accessions,
-        experimentalDesign: profile.experimentalDesign,
-        qualityAssessment: profile.qualityAssessment,
+        domain: submission.domain,
+        subtype: submission.subtype,
+        organism: submission.organism,
+        tissue: submission.tissue,
+        cellType: submission.cellType,
+        condition: submission.condition,
+        accessions: submission.accessions,
+        experimentalDesign: submission.experimentalDesign,
     };
 }
 
 /**
- * Walk the staged tree and enrich its shapes with a header readout.
+ * Walk the staged tree, detect its sets, and read one header per set.
  *
- * The walk, the shape observation, and every prefix-sufficient readout run in this
- * process over the workspace read seam; only a footer-indexed container reaches into
- * the sandbox, and only once per shape. A readout that fails is logged and dropped: it
- * is enrichment, and a manifest without it still carries every structural observation
- * the agent's grouping rests on, so failing the profile over it would trade the whole
- * capability for a nicety.
+ * The walk, the set detection, and every prefix-sufficient readout run in this process
+ * over the workspace read seam; only a footer-indexed container reaches into the sandbox,
+ * and only once per set. A readout that fails is logged and dropped: it is enrichment,
+ * and a menu without it still carries every structural observation the agent's grouping
+ * rests on, so failing the profile over it would trade the whole capability for a nicety.
  */
 async function runInputScan(args: {
     readonly session: RunSession;
@@ -242,13 +236,14 @@ async function runInputScan(args: {
     readonly execId: string;
     readonly deadlineMs: number;
     readonly logger: Logger;
-}): Promise<InputScan> {
+}): Promise<{ scan: InputScan; detected: DetectedSets; menu: SetMenu }> {
     const { session, deps, analysisId, sandbox, execId, deadlineMs, logger } = args;
     const scan = await scanInputTree({ session, fs: deps.workspaceFs, root: STAGED_INPUT_ROOT });
-    if (scan.manifest.shapes.length === 0) return scan;
+    const detected = detectSets(scan.files);
+
     try {
-        const shapes = await enrichShapes({
-            shapes: scan.manifest.shapes,
+        const headers = await readHeaders({
+            targets: readoutTargets(detected),
             session,
             fs: deps.workspaceFs,
             sandboxClient: deps.sandboxClient,
@@ -258,10 +253,10 @@ async function runInputScan(args: {
             deadlineMs,
             emit: async () => {},
         });
-        return { ...scan, manifest: { ...scan.manifest, shapes } };
+        return { scan, detected, menu: buildSetMenu(detected, headers) };
     } catch (err) {
         logger.warn("input-scan header readout failed (non-fatal)", logger.errorFields(err));
-        return scan;
+        return { scan, detected, menu: buildSetMenu(detected) };
     }
 }
 
@@ -398,10 +393,9 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // The deterministic scan, before the agent's first turn. It is always needed
             // and its result does not depend on agent judgement, so spending an agent turn
             // to request it would be waste — and a briefing carrying one line per input
-            // file consumes context that carries no structure (~270 KB of bare paths for
-            // the tree that motivated this, against ~2 KB of shapes).
+            // file consumes context that carries no structure.
             await activity.scanning();
-            const scan = await runInputScan({
+            const { scan, detected, menu } = await runInputScan({
                 session: childSession,
                 deps,
                 analysisId,
@@ -411,9 +405,12 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 logger,
             });
             logger.info("input scan complete", {
-                files: scan.manifest.fileCount,
-                shapes: scan.manifest.shapes.length,
-                unstructured: scan.manifest.unstructured.count,
+                files: detected.fileCount,
+                kept: detected.keptFileCount,
+                sets: detected.sets.length,
+                listedSets: menu.sets.length,
+                leftovers: detected.leftovers.memberCount,
+                quarantined: detected.quarantine.count,
                 truncated: scan.manifest.truncated,
             });
 
@@ -432,11 +429,12 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 ``,
                 `CRITICAL: File and directory paths may contain spaces. You MUST always double-quote paths in shell commands (e.g. head "/${analysisId}/data/inputs/My Folder/file.csv"). Unquoted paths with spaces will silently break commands.`,
                 ``,
-                renderInputScanManifest(scan.manifest),
+                renderSetMenu(menu, STAGED_INPUT_ROOT),
                 ``,
-                `Decide the dataset's kinds from these observations — you may split a shape, span several shapes, or`,
-                `label an axis the scan did not observe. Inspect ONE example file per kind where a description needs`,
-                `content the scan did not capture, then call \`submit_profile\` once.`,
+                `Author the dataset's groups as operations on this menu: \`use\` a set, \`split\` one by a slot or by a`,
+                `value mapping, \`merge\` several, or \`group\` explicit paths the scan left over. Membership and counts`,
+                `are computed from your operations — you do not state them. Inspect ONE example file per group where a`,
+                `description needs content the scan did not capture, then call \`submit_profile\` once.`,
             ].join("\n");
 
             const sandboxAgentDeps: SandboxAgentDeps = {
@@ -466,16 +464,40 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 },
             };
 
-            let capturedProfile: ProfilerOutput | null = null;
+            let accepted: { submission: ProfileSubmission; resolution: ProfileResolution } | null = null;
+            let rounds = 0;
+            type SubmitOutcome =
+                | { readonly status: "needs_repair"; readonly detail: string }
+                | {
+                      readonly status: "accepted";
+                      readonly groups: number;
+                      readonly keptFiles: number;
+                      readonly unclassifiedFiles: number;
+                      readonly unresolvedOperations: number;
+                  };
             const submitProfileTool = defineTool({
                 id: "submit_profile",
                 description:
-                    "Submit the profiling results. Call this tool once after completing " + "all profiling work — it validates and records your findings.",
-                inputSchema: ProfilerOutputSchema,
+                    "Submit the profiling results. Call this tool once after completing all profiling work — it resolves your " +
+                    "operations against the scan, computes every group's membership and counts, and records the profile. " +
+                    "A submission whose operations do not resolve, or that leaves kept files unclaimed, comes back once with " +
+                    "the errors; the repair is a FULL resubmit of the whole operation list.",
+                inputSchema: ProfileSubmissionSchema,
                 describeCall: "none",
-                execute: async (input) => {
-                    capturedProfile = input;
-                    return ok({ status: "accepted" });
+                execute: async (input): Promise<Result<SubmitOutcome, ToolError>> => {
+                    rounds++;
+                    const resolution = resolveProfileSubmission(input, detected, menu);
+                    if (rounds < MAX_SUBMIT_ROUNDS && (resolution.errors.length > 0 || resolution.unclaimed.length > 0)) {
+                        return ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) });
+                    }
+                    accepted = { submission: input, resolution };
+                    return ok({
+                        status: "accepted",
+                        groups: resolution.groups.length,
+                        keptFiles: resolution.partition.keptFiles,
+                        unclassifiedFiles: resolution.partition.unclassifiedFiles,
+                        unresolvedOperations: resolution.errors.length,
+                    });
                 },
             });
 
@@ -510,53 +532,42 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                         if (event.type === "tool-started") await activity.forTool(event.name, event.input, resolveDetail);
                     },
                     runStep: durableStep,
-                    resolved: () => capturedProfile !== null,
+                    resolved: () => accepted !== null,
                     usageRecorder: deps.usageRecorder,
                 },
                 {
                     tools: [submitProfileTool],
                     nudge:
                         "You stopped without calling submit_profile, so no profile was " +
-                        "recorded. Call submit_profile now with the kinds this dataset is " +
-                        "made of, the axes that vary across them, and any individually " +
-                        "notable files — base it on the scan and the work you already did.",
+                        "recorded. Call submit_profile now with your operations on the menu, " +
+                        "what each resulting group means, and the dimensions you saw with " +
+                        "their observations — base it on the scan and the work you already did.",
                 },
             );
 
-            if (!capturedProfile) {
+            if (!accepted) {
                 throw new Error("Data profiling failed: agent did not call submit_profile");
             }
-            const profilerData = capturedProfile as ProfilerOutput;
+            const { submission, resolution } = accepted as { submission: ProfileSubmission; resolution: ProfileResolution };
 
-            // 4. Index into vector store — one entry per kind, one per entity, none per file.
+            // 4. Index into vector store — one entry per group, one per entity, none per file.
             //
             // Reported as `indexing`, not `persisting`: the contract defines `persisting` as step
             // bytes uploading to an artifact store, and a profile uploads nothing — its durable
             // products are this vector index and the ledger row.
             await activity.indexing();
 
-            const profileRecord = buildDataProfileResult(
-                profilerData,
-                stagedInputs,
-                new Date().toISOString(),
-                // Coverage measures the PROFILE, not the scan: the agent's own patterns are
-                // matched against the scanned tree, so a profile whose kinds leave most of
-                // the tree unmatched is visibly incomplete instead of reading as fresh.
-                computeCoverage(
-                    scan.files.map((f) => f.path),
-                    profilerData.kinds.map((kind) => kind.pathPattern),
-                ),
-            );
+            const profileRecord = buildDataProfileResult(submission, resolution, stagedInputs, new Date().toISOString());
 
             await ensureSearchIndex(deps.pool, analysisId, deps.embedding.dimensions);
             const vectorStore = createVectorStore(deps.pool);
             const indexName = searchIndexName(analysisId);
             const entries = buildProfileIndexEntries({
                 analysisId,
-                kinds: profileRecord.kinds ?? [],
-                ...(profileRecord.axes ? { axes: profileRecord.axes } : {}),
+                groups: profileGroups(profileRecord),
+                dimensions: profileDimensions(profileRecord),
                 scan,
-                files: profileRecord.files,
+                files: profileFileRecords(profileRecord),
             });
 
             // Batched: both interfaces already take arrays, and one round trip per entry is
@@ -581,17 +592,21 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
             logger.info("indexed profile", {
                 entries: entries.length,
-                kinds: profileRecord.kinds?.length ?? 0,
+                groups: resolution.groups.length,
                 stagedCount: stagedInputs.length,
             });
 
-            if (profileRecord.coverage && profileRecord.coverage.unmatched > 0) {
-                logger.warn("profile kinds do not cover the scanned tree", {
-                    matched: profileRecord.coverage.matched,
-                    unmatched: profileRecord.coverage.unmatched,
-                    total: profileRecord.coverage.total,
-                });
-            }
+            // The catalogue's fit against real use is measured from these counters, so they
+            // are emitted once per completed profile whether or not anything went wrong.
+            logger.info("profile monitoring", {
+                repairRounds: rounds - 1,
+                unresolvedOperations: resolution.errors.length,
+                unclassifiedFiles: resolution.partition.unclassifiedFiles,
+                keptFiles: resolution.partition.keptFiles,
+                otherGroupCategories: resolution.groups.filter((group) => group.category === "other" && !group.unclassified).length,
+                otherDimensionCategories: resolution.dimensions.filter((dimension) => dimension.category === "other").length,
+                probeNotFound: resolution.probes.filter((probe) => probe.outcome === "not-found").length,
+            });
 
             // 5. Complete — store the FULL profiler finding plus the input signature for
             // staleness detection. The scratch tree is gone; this row is all that survives.

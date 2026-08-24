@@ -80,10 +80,14 @@ export interface DataProfileFile {
     metrics?: Record<string, string | number | boolean>;
 }
 
-/** Dataset-wide quality findings the profiler recorded. */
+/**
+ * Dataset-wide quality findings, on rows of the era that recorded them. Superseded by
+ * `caveats`, which is agent-authored prose and nothing else; `strengths` is not written
+ * any more, because nothing ever consumed it.
+ */
 export interface DataProfileQualityAssessment {
     concerns: string[];
-    strengths: string[];
+    strengths?: string[];
 }
 
 /**
@@ -117,6 +121,211 @@ export interface DataProfileAxis {
     cardinality: number;
     exampleValues?: string[];
     description?: string;
+}
+
+// ── The resolved profile ───────────────────────────────────────────────────
+//
+// A GROUP is what the agent declared a set of files to BE; a DIMENSION is a dataset-level
+// thing that varies. Both are the agent's judgement. Everything numeric here is the
+// resolution's: membership, counts, slot cardinalities, and companion completeness are
+// computed from the scan, so no field below was asserted by a model.
+
+/**
+ * A varying position in a group's display template, as the scan observed it.
+ *
+ * `sampleValues` is bounded and the record carries nothing wider: a full value
+ * enumeration would put the file set back in the row this record exists to keep out of
+ * it. The id is scan-scoped — it names the slot within the scan that produced this
+ * profile, and a dimension's slot observation refers to it.
+ */
+export interface DataProfileGroupSlot {
+    id: string;
+    location: "directory" | "name";
+    index: number;
+    tokenClass: string;
+    distinctValues: number;
+    sampleValues: string[];
+    /** The slot this one repeats — one token in both a directory segment and the stem is ONE identity. */
+    sameAsSlot?: string;
+}
+
+/** A member the agent wrote about individually. Never exhaustive — that is the filesystem's job. */
+export interface DataProfileMemberAnnotation {
+    path: string;
+    note: string;
+}
+
+/**
+ * Companion coverage across a group, computed per member.
+ *
+ * A machine finding, deliberately structured rather than folded into `caveats`: an
+ * average hides the one member whose index is missing, and that is the member a
+ * downstream step fails on.
+ */
+export interface DataProfileCompanionCompleteness {
+    expectedCompanions: string[];
+    completeMembers: number;
+    incompleteMembers: number;
+    incompleteSample: { path: string; missingCompanions: string[] }[];
+}
+
+/**
+ * One declared group — a claim about MEANING, resolved to a membership.
+ *
+ * `count` counts logical members (a data file and its companions count once); `fileCount`
+ * counts the files behind them, and it is `fileCount` that the partition accounting sums.
+ * `displayPattern` is the scanner's own template and is display-only: no agent authored
+ * it, and nothing computes membership from it.
+ */
+export interface DataProfileGroup {
+    /** Stable within the profile, derived from the group's name. */
+    id: string;
+    name: string;
+    /** What ONE member represents. The grouping decision, stated apart from the description. */
+    memberRepresents: string;
+    description: string;
+    role: string;
+    category: string;
+    /** What the group actually is, when `category` is `other`. */
+    categoryLabel?: string;
+    subtype?: string;
+    /** Why the agent overrode a pre-suggestion, or chose an arguable category. */
+    categoryReason?: string;
+    /** Why this group was split off, or why these sets are one group. */
+    reason?: string;
+    count: number;
+    fileCount: number;
+    totalBytes: number;
+    /** The scanner template the members instantiate. Display-only. */
+    displayPattern: string;
+    formats: { format: string; count: number }[];
+    slots?: DataProfileGroupSlot[];
+    memberAnnotations?: DataProfileMemberAnnotation[];
+    completeness?: DataProfileCompanionCompleteness;
+    /** True for the swept residue — files no operation claimed. Visible by construction. */
+    unclassified?: boolean;
+}
+
+/** A measurement that was actually performed. Absent means unchecked, never "no overlap". */
+export interface DataProfileChecked {
+    matched: number;
+    of: number;
+}
+
+/**
+ * One evidenced sighting of a dimension.
+ *
+ * A slot observation binds to a scanner slot, and its cardinality and values are computed
+ * from the scan rather than asserted; `groupIds` are the groups that carry that slot,
+ * derived from the operations. Slot bindings are the only link between a group and a
+ * dimension.
+ */
+export type DataProfileObservation =
+    | {
+          kind: "slot";
+          groupIds: string[];
+          slotId: string;
+          tokenClass: string;
+          cardinality: number;
+          sampleValues: string[];
+          checked?: DataProfileChecked;
+          checkedAgainst?: string;
+          note?: string;
+      }
+    | {
+          kind: "column";
+          path: string;
+          column: string;
+          exampleValues: string[];
+          distinctValues?: number;
+          checked?: DataProfileChecked;
+          checkedAgainst?: string;
+          note?: string;
+      }
+    | {
+          kind: "document";
+          path: string;
+          citation: string;
+          statesCardinality?: number;
+          checked?: DataProfileChecked;
+          checkedAgainst?: string;
+          note?: string;
+      };
+
+/**
+ * A dataset-level thing that varies, with the evidence it was seen in.
+ *
+ * There is no canonical cardinality: observations that disagree both stand, and
+ * `reconciliations` carries the delta. A renderer shows the numbers side by side.
+ */
+export interface DataProfileDimension {
+    label: string;
+    category: string;
+    categoryLabel?: string;
+    /** Derived from the category, never agent-authored. */
+    scope: "biological" | "technical";
+    description?: string;
+    observations: DataProfileObservation[];
+    reconciliations?: { note: string; delta?: number }[];
+    nestsUnder?: { dimension: string; evidence: string };
+    /** Why the dataset deviates from the category's default treatment. */
+    treatmentReason?: string;
+}
+
+/** What the agent found when it looked for one of the standard dimensions. */
+export interface DataProfileProbeReport {
+    probe: string;
+    outcome: "found" | "not-found" | "found-but-constant" | "attested";
+    dimension?: string;
+    searched?: string[];
+    reason?: string;
+    value?: string;
+    evidence?: string;
+    citation?: string;
+    path?: string;
+}
+
+/** Files the scan removed before structure was observed, with why. */
+export interface DataProfileQuarantine {
+    count: number;
+    totalBytes: number;
+    reasons: { reason: string; count: number }[];
+    sample: string[];
+}
+
+/**
+ * The census, derived rather than declared.
+ *
+ * `keptFiles` equals the sum of every group's `fileCount`, `unclassified` included.
+ * Quarantined files are accounted separately, with their reasons. That the numbers sum
+ * is what turns "how much did the profile cover" from a question into a fact.
+ */
+export interface DataProfilePartition {
+    scannedFiles: number;
+    keptFiles: number;
+    keptMembers: number;
+    groups: number;
+    unclassifiedMembers: number;
+    unclassifiedFiles: number;
+    quarantine: DataProfileQuarantine;
+}
+
+/**
+ * One operation, keyed to the scanner TEMPLATES it addressed rather than the menu ids.
+ *
+ * Menu ids are per-scan ephemera; templates survive a re-scan, so the recipe can be
+ * re-resolved against a changed tree.
+ */
+export interface DataProfileRecipeStep {
+    op: "use" | "split" | "merge" | "group";
+    /** The templates this step addressed. Empty for an explicit path grouping. */
+    templates: string[];
+    /** Position of the split slot within the addressed set's slots. */
+    slotIndex?: number;
+    /** Slot values each resulting group claimed, for a value-mapped split. */
+    valueMapping?: { groupId: string; values: string[] }[];
+    paths?: string[];
+    groupIds: string[];
 }
 
 /**
@@ -173,20 +382,38 @@ export interface DataProfileInputFile {
  * It does NOT carry a record per input file. The workspace filesystem is the
  * authoritative file list — listing, grep, and the vector index all read the live tree —
  * so a copy here would be a stale duplicate on a row detoasted by every reader,
- * including the planner's, which reads a few hundred characters of it. `files` holds the
- * individually notable inputs; `kinds` holds the dataset's structure.
+ * including the planner's, which reads a few hundred characters of it. `groups` holds the
+ * dataset's structure, and the members an agent wrote about individually ride on the
+ * group they belong to.
+ *
+ * The writer emits `groups` and `dimensions`; `kinds`, `axes`, `files`, `coverage`, and
+ * `qualityAssessment` are what earlier eras wrote and stay readable. There is no version
+ * field: optionality is the compatibility mechanism, and a discriminator would be a
+ * second mechanism answering the same question.
  */
 export interface DataProfileResult {
     summary: string;
-    /** Individually described files — notable singletons, not the dataset's contents. */
-    files: DataProfileFile[];
-    /** The repeating sets the tree was grouped into. Absent on a pre-kinds snapshot. */
+    /** The resolved groups the tree partitions into, `unclassified` included. */
+    groups?: DataProfileGroup[];
+    /** What varies across the dataset, each with its observations. */
+    dimensions?: DataProfileDimension[];
+    /** One outcome per standard dimension the agent was asked to look for. */
+    probes?: DataProfileProbeReport[];
+    /** The census. Derived at resolution — kept equals the sum over groups. */
+    partition?: DataProfilePartition;
+    /** The operations that produced the groups, keyed to scanner templates. */
+    recipe?: DataProfileRecipeStep[];
+    /** What a planner must know, in the agent's words. Machine findings live in the structured fields. */
+    caveats?: string[];
+    /** Individually described files — notable singletons on a pre-groups snapshot. */
+    files?: DataProfileFile[];
+    /** The repeating sets the tree was grouped into, on a snapshot of the kinds era. */
     kinds?: DataProfileKind[];
-    /** What varies across those sets. Absent for the same reason as `kinds`. */
+    /** What varies across those sets, on a snapshot of the same era. */
     axes?: DataProfileAxis[];
     /** The drift comparand. Preferred over `inputFileIds`, which it replaces. */
     inputSignature?: DataProfileInputSignature;
-    /** How much of the scanned tree the kinds describe. Absent on pre-coverage snapshots. */
+    /** How much of the scanned tree the kinds describe, on a snapshot of the kinds era. Superseded by `partition`. */
     coverage?: DataProfileCoverage;
     /** The legacy identity-list comparand, on rows written before the signature existed. */
     inputFileIds?: string[];
@@ -212,6 +439,7 @@ export interface DataProfileResult {
     accessions?: string[];
     /** Conditions, groups, comparisons, replicates, pairing. */
     experimentalDesign?: string;
+    /** Dataset-wide findings, on a snapshot of the era that recorded them. Superseded by `caveats`. */
     qualityAssessment?: DataProfileQualityAssessment;
 }
 

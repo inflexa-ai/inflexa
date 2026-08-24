@@ -59,6 +59,8 @@ export interface DraftSlot {
     readonly sampleValues: readonly string[];
     /** The complete value set — bounded projection is `sampleValues`. */
     readonly values: readonly string[];
+    /** The value each member carries, aligned to the order the raw values arrived in. */
+    readonly memberValues: readonly string[];
     sameAs?: number;
     crossCheckMismatches?: number;
 }
@@ -330,7 +332,8 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
         prefix = "";
         suffix = "";
     }
-    const cores = distinct.map((value) => value.slice(prefix.length, suffix ? value.length - suffix.length : undefined));
+    const strip = (value: string): string => value.slice(prefix.length, suffix ? value.length - suffix.length : undefined);
+    const cores = distinct.map(strip);
     const observed = classifyValues(cores);
     const sorted = [...cores].sort((a, b) => a.localeCompare(b, "en"));
     return {
@@ -345,6 +348,7 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
         distinctValues: distinct.length,
         sampleValues: sorted.slice(0, MAX_SLOT_SAMPLE_VALUES),
         values: cores,
+        memberValues: rawValues.map(strip),
     };
 }
 

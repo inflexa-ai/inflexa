@@ -31,6 +31,7 @@ import { ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
+import { profileCaveats, profileDatasetFileCount, profileFileRecords, profileGroups } from "../../app/data-profile-view.js";
 import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { loadDataProfileStatus, type DataProfileFile, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
@@ -67,7 +68,8 @@ interface OverviewOutput extends ProfileEnvelope {
     readonly cellType?: string | null;
     readonly condition?: string | null;
     readonly experimentalDesign?: string;
-    readonly qualityAssessment?: DataProfileResult["qualityAssessment"];
+    /** Dataset-wide findings the agent wrote, from whichever field the snapshot carries them in. */
+    readonly caveats?: string[];
     readonly accessions?: string[];
     /** How many per-file records `scope:"files"` would page through — NOT the dataset's size. */
     readonly describedFileCount: number;
@@ -79,21 +81,30 @@ interface OverviewOutput extends ProfileEnvelope {
      * eight files.
      */
     readonly datasetFileCount: number | null;
-    /** How many kinds `scope:"kinds"` would return; `null` on a pre-kinds snapshot. */
+    /** How many groups `scope:"kinds"` would return; `null` on a snapshot that carries no structure. */
     readonly kindCount: number | null;
     /** Present when the two counts differ — says where the rest of the dataset is described. */
     readonly structureNote?: string;
+    /** The census, on a snapshot resolved under the partition. */
+    readonly partition?: DataProfileResult["partition"];
     readonly coverage?: DataProfileResult["coverage"];
 }
 
 /**
- * The dataset's structure. A snapshot predating kinds reports `available: false`
- * rather than an empty list: "this profile predates the structure" and "this dataset
- * has no structure" are different facts, and only one of them is true.
+ * The dataset's structure. A snapshot carrying none reports `available: false` rather
+ * than an empty list: "this profile predates the structure" and "this dataset has no
+ * structure" are different facts, and only one of them is true.
+ *
+ * A snapshot written under the previous model is served through `kinds`/`axes`, labelled
+ * — the structure exists, and an agent must not be told the dataset has none.
  */
 interface KindsOutput extends ProfileEnvelope {
     readonly scope: "kinds";
     readonly available: boolean;
+    readonly groups?: DataProfileResult["groups"];
+    readonly dimensions?: DataProfileResult["dimensions"];
+    readonly probes?: DataProfileResult["probes"];
+    readonly partition?: DataProfileResult["partition"];
     readonly kinds?: DataProfileResult["kinds"];
     readonly axes?: DataProfileResult["axes"];
     readonly coverage?: DataProfileResult["coverage"];
@@ -158,31 +169,21 @@ interface FailedOutput {
 
 export type InspectDataProfileOutput = OverviewOutput | KindsOutput | FilesOutput | AbsentOutput | PendingOutput | FailedOutput;
 
-/**
- * How many files the dataset holds, as far as the snapshot can establish it.
- *
- * Coverage counts the scanned tree, so it is the authority where present. Summed kind
- * counts are the fallback. A snapshot with neither returns `null` rather than the
- * described-file count, which would be a dataset size the row cannot support.
- */
-function datasetFileCount(result: DataProfileResult): number | null {
-    if (result.coverage) return result.coverage.total;
-    if (result.kinds && result.kinds.length > 0) return result.kinds.reduce((sum, kind) => sum + kind.count, 0);
-    return null;
-}
-
 /** Serve each per-file record with a path that resolves in the frame of the caller. */
 function rootFilePaths(files: readonly DataProfileFile[], analysisId: string): DataProfileFile[] {
     return files.map((file) => ({ ...file, path: toAnalysisRootPath(analysisId, file.path) }));
 }
 
 /**
- * Serve each kind with a glob that resolves in the frame of the caller.
+ * Serve each group with a display pattern that resolves in the frame of the caller.
  *
- * A `pathPattern` is a path with a wildcard segment, thus it takes the same
- * projection as a file path. The wildcard characters survive it: the projection
- * only re-roots the pattern.
+ * A pattern is a path with varying segments, thus it takes the same projection as a file
+ * path. Its placeholders survive it: the projection only re-roots the pattern.
  */
+function rootGroupPatterns(groups: NonNullable<DataProfileResult["groups"]>, analysisId: string): NonNullable<DataProfileResult["groups"]> {
+    return groups.map((group) => ({ ...group, displayPattern: toAnalysisRootPath(analysisId, group.displayPattern) }));
+}
+
 function rootKindPatterns(kinds: NonNullable<DataProfileResult["kinds"]>, analysisId: string): NonNullable<DataProfileResult["kinds"]> {
     return kinds.map((kind) => ({ ...kind, pathPattern: toAnalysisRootPath(analysisId, kind.pathPattern) }));
 }
@@ -229,7 +230,7 @@ export function createInspectDataProfileTool(pool: Pool) {
         description:
             "Read this analysis's data profile — the AUTHORITATIVE record of what the input dataset is: " +
             "organism and taxon id, scientific domain and subtype, tissue, cell type, condition, experimental design, " +
-            "dataset-wide quality concerns and strengths, public accessions, the KINDS of file the dataset is made of " +
+            "dataset-wide caveats, public accessions, the GROUPS of file the dataset is made of " +
             "and what varies across them, and per-file data type, format, row/column dimensions, tags and warnings for " +
             "the files described individually. " +
             "There is NO data-profile file in the workspace — this tool is the only way to read it. Do not search for one, " +
@@ -237,9 +238,10 @@ export function createInspectDataProfileTool(pool: Pool) {
             "Call it before you reason about the data (planning, writing analysis code, interpreting results). " +
             "scope:'overview' (the default) returns the dataset-level orientation, how many files are described individually, " +
             "and how many files the dataset holds — those two differ on purpose, because a large dataset is described by its " +
-            "kinds rather than file by file. " +
-            "scope:'kinds' returns those kinds with their counts, path patterns, and axes — this is where a dataset of thousands " +
-            "of files is described. A profile taken before kinds existed reports the scope unavailable. " +
+            "groups rather than file by file. " +
+            "scope:'kinds' returns those groups with their counts, display patterns, and the dimensions that vary across them — " +
+            "this is where a dataset of thousands of files is described. A profile taken before the structure record existed " +
+            "reports the scope unavailable. " +
             "scope:'files' returns the individually described files, paged: page (1-based, default 1) and pageSize (default 20, max 100), " +
             "always with the true total and hasMore, so you can see exactly what you have not read yet. " +
             "For the paths of files no record describes, list the workspace tree. " +
@@ -256,7 +258,7 @@ export function createInspectDataProfileTool(pool: Pool) {
                 .optional()
                 .describe(
                     "'overview' (default): dataset-level facts, described-file count, and dataset file count. " +
-                        "'kinds': the sets the dataset is made of and what varies across them. " +
+                        "'kinds': the groups the dataset is made of and what varies across them. " +
                         "'files': paged records for the individually described files.",
                 ),
             page: z.number().int().min(1).optional().describe("1-based page of per-file records. Only used when scope is 'files'. Default 1."),
@@ -322,9 +324,12 @@ export function createInspectDataProfileTool(pool: Pool) {
 
             const scope = input.scope ?? "overview";
 
+            const describedFiles = profileFileRecords(result);
+            const groups = profileGroups(result);
+
             if (scope === "overview") {
-                const dataset = datasetFileCount(result);
-                const described = result.files.length;
+                const dataset = profileDatasetFileCount(result);
+                const described = describedFiles.length;
                 const structureNote =
                     dataset === null
                         ? "This profile predates the dataset-structure record, so only the individually described files are known; " +
@@ -344,24 +349,36 @@ export function createInspectDataProfileTool(pool: Pool) {
                     cellType: result.cellType,
                     condition: result.condition,
                     experimentalDesign: result.experimentalDesign,
-                    qualityAssessment: result.qualityAssessment,
+                    caveats: profileCaveats(result),
                     accessions: result.accessions,
                     describedFileCount: described,
                     datasetFileCount: dataset,
-                    kindCount: result.kinds ? result.kinds.length : null,
+                    kindCount: result.groups || result.kinds ? groups.length : null,
                     ...(structureNote ? { structureNote } : {}),
+                    ...(result.partition ? { partition: result.partition } : {}),
                     ...(result.coverage ? { coverage: result.coverage } : {}),
                 });
             }
 
             if (scope === "kinds") {
+                if (result.groups) {
+                    return ok({
+                        ...envelope,
+                        scope: "kinds",
+                        available: true,
+                        groups: rootGroupPatterns(result.groups, resourceId),
+                        ...(result.dimensions ? { dimensions: result.dimensions } : {}),
+                        ...(result.probes ? { probes: result.probes } : {}),
+                        ...(result.partition ? { partition: result.partition } : {}),
+                    });
+                }
                 if (!result.kinds) {
                     return ok({
                         ...envelope,
                         scope: "kinds",
                         available: false,
                         message:
-                            "This profile was taken before the dataset-structure record existed, so it carries no kinds. " +
+                            "This profile was taken before the dataset-structure record existed, so it carries no groups. " +
                             "That is a fact about the profile, not about the dataset: use scope:'files' and the workspace " +
                             "listing tools, or re-profile the analysis.",
                     });
@@ -373,14 +390,15 @@ export function createInspectDataProfileTool(pool: Pool) {
                     kinds: rootKindPatterns(result.kinds, resourceId),
                     ...(result.axes ? { axes: result.axes } : {}),
                     ...(result.coverage ? { coverage: result.coverage } : {}),
+                    message: "Authored under the previous model: these are kinds and axes, not resolved groups and dimensions.",
                 });
             }
 
             const pageSize = input.pageSize ?? DEFAULT_PAGE_SIZE;
             const page = input.page ?? 1;
-            const total = result.files.length;
+            const total = describedFiles.length;
             const start = (page - 1) * pageSize;
-            const files = result.files.slice(start, start + pageSize);
+            const files = describedFiles.slice(start, start + pageSize);
 
             return ok({
                 ...envelope,
