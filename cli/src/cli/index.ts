@@ -521,7 +521,9 @@ export function buildProgram(): Command {
             // the flag could only ever have failed — `--analysis` is the way to name a target.
             .option("--analysis <id|name>", "Operate on a specific analysis")
             .option("--max-size <size>", "Override the per-Series download ceiling (e.g. 500MB, 64GB)"),
-        { kind: "approval" },
+        // A transfer: a Series is gigabytes over NCBI's link, so the agent's tool gives it no deadline and
+        // the downloader ends it when the bytes stop. `--max-size` bounds the SIZE, never the time.
+        { kind: "approval", transfer: true },
         async (gse: string, options: { analysis?: string; maxSize?: string }) => {
             const { runGeoDownload } = await import("../modules/geo/download.ts");
             await runGeoDownload(gse, { analysis: options.analysis }, options.maxSize);
@@ -729,7 +731,9 @@ export function buildProgram(): Command {
             .argument("[ids...]", "Catalog dataset ids (interactive selection when omitted)")
             .option("--yes", "Skip the download confirmation")
             .option("--force", "Re-fetch even when already installed — repairs damage and refreshes mutable upstreams"),
-        { kind: "approval" },
+        // A transfer: one catalog artifact reaches 2 GB, and the captured readout prints a line for each
+        // file that lands, so the whole of a large one is quiet. The downloader watches the bytes instead.
+        { kind: "approval", transfer: true },
         async (ids: string[], options: { yes?: boolean; force?: boolean }) => {
             const { runRefsDownload } = await import("../modules/refs/commands.ts");
             await runRefsDownload(ids, options);

@@ -21,6 +21,11 @@ function sha(body: string): string {
     return createHash("sha256").update(body).digest("hex");
 }
 
+/** Local rather than `Promise.sleep`: the global extensions load from the CLI entry point, which a test process never runs. */
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** Offline upstream: serves `body`, optionally as an error status, a post-redirect url, or with a content-length header. */
 function serve(
     body: string,
@@ -110,6 +115,53 @@ describe("downloadToFile", () => {
         expect(result.isOk()).toBe(true);
         expect(readFileSync(dest, "utf8")).toBe("payload");
         expect(cancelled).toBe(1);
+    });
+
+    test("ends a body that stops moving as stalled, and writes nothing", async () => {
+        // The failure the watch exists for: the socket is open, the promise is pending, and the upstream
+        // sent one chunk and then died. Nothing but the gap between chunks can tell this from slow work.
+        const dest = join(root(), "out.bin");
+        const stream = new ReadableStream({
+            start: (c) => c.enqueue(new TextEncoder().encode("first")),
+        });
+        const result = await downloadToFile(URL_OK, dest, { fetch: async () => new Response(stream), livenessWindowMs: 40 });
+        expect(result._unsafeUnwrapErr().type).toBe("stalled");
+        expect(existsSync(dest)).toBe(false);
+    });
+
+    test("runs past the window for as long as bytes keep arriving", async () => {
+        // The half that a wall-clock deadline gets wrong: this transfer outlives its own window twice over
+        // and is healthy throughout, which is exactly the multi-gigabyte download the bound must not cut.
+        const dest = join(root(), "out.bin");
+        const stream = new ReadableStream({
+            async start(c) {
+                for (const part of ["a", "b", "c", "d", "e"]) {
+                    await sleep(20);
+                    c.enqueue(new TextEncoder().encode(part));
+                }
+                c.close();
+            },
+        });
+        const result = await downloadToFile(URL_OK, dest, { fetch: async () => new Response(stream), livenessWindowMs: 50 });
+        expect(result.isOk()).toBe(true);
+        expect(readFileSync(dest, "utf8")).toBe("abcde");
+    });
+
+    test("ends a request that never answers as stalled, and spends no further attempt on it", async () => {
+        // An expired window is the upstream's whole allowance, so the retry schedule stops rather than
+        // spending three more windows on a host that has already said nothing for one.
+        let calls = 0;
+        const result = await downloadToFile(URL_OK, join(root(), "out.bin"), {
+            retry: { attempts: 3, baseMs: 0, shouldRetry: () => true },
+            livenessWindowMs: 40,
+            fetch: async (_input, init) =>
+                new Promise<Response>((_resolve, reject) => {
+                    calls += 1;
+                    init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+                }),
+        });
+        expect(result._unsafeUnwrapErr().type).toBe("stalled");
+        expect(calls).toBe(1);
     });
 
     test("a progress observer throw never aborts the transfer", async () => {

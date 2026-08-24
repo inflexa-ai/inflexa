@@ -27,8 +27,9 @@ import type { Command } from "commander";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { type AgentPolicy, getAgentPolicy } from "../../cli/agent_policy.ts";
+import { type AgentPolicy, getAgentPolicy, isTransferPolicy } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
+import { LIVENESS_WINDOW_MS } from "../../lib/download.ts";
 import { env } from "../../lib/env.ts";
 import { anchorPathForAnalysisId } from "../analysis/output.ts";
 import { classifyInflexaArgv, toEffectiveArgv } from "./inflexa_classify.ts";
@@ -45,6 +46,10 @@ const MAX_OUTPUT_CHARS = 60_000;
  * hung command hold the turn for just as long. Measuring the gap between output separates the two —
  * a command that is still reporting is still working, however long it takes, and one that has said
  * nothing for two minutes is not coming back.
+ *
+ * A transfer is the case where even that reading fails, because a captured download is legitimately
+ * silent for the whole of one large file. Such a command carries `TransferTrait` and runs under neither
+ * bound; its liveness is watched over the arriving bytes instead.
  */
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
 
@@ -72,6 +77,15 @@ const FLUSH_GRACE_MS = 1_000;
  * hold `exited` open forever and the timeout would bound nothing.
  */
 const KILL_GRACE_MS = 2_000;
+
+/**
+ * What the approval prompt of a transfer command says before the standing-grant sentence.
+ *
+ * The user consents to a run with no deadline, which the argv line does not show, thus the prompt must
+ * say it. The window comes from the downloader itself, so the number the user reads is the number that
+ * ends the run.
+ */
+const TRANSFER_DETAIL = `This command downloads data. It has no time limit, and it stops when no data arrives for ${Math.round(LIVENESS_WINDOW_MS / 60_000)} minutes. `;
 
 /**
  * What the tool should do with a classified `action` verdict, decided purely from
@@ -148,8 +162,15 @@ export type RunInflexaResult =
  */
 export type SubprocessResult = { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly endedBy: "exit" | "timeout" | "cancel" };
 
-/** The subprocess seam — injectable so tests assert on the composed argv and working directory without spawning a real process. */
-export type RunSubprocess = (cmd: readonly string[], cwd: string | undefined, signal: AbortSignal) => Promise<SubprocessResult>;
+/**
+ * The subprocess seam — injectable so tests assert on the composed argv and working directory without
+ * spawning a real process.
+ *
+ * `bounds` rides the call rather than the construction, because the deadlines belong to the COMMAND and
+ * not to the tool: a transfer runs unbounded while every other command keeps the tool's own two bounds,
+ * and one tool instance serves both.
+ */
+export type RunSubprocess = (cmd: readonly string[], cwd: string | undefined, signal: AbortSignal, bounds: SpawnBounds) => Promise<SubprocessResult>;
 
 /**
  * Locate the folder an analysis lives in — injectable so tests need no database.
@@ -253,8 +274,12 @@ function collectCapped(
 
 /** Injectable process bounds for {@link spawnInflexa}; graces default to the real values, shrinkable in tests. */
 export interface SpawnBounds {
-    /** Absolute ceiling on the run, however chatty the child is. */
-    readonly timeoutMs: number;
+    /**
+     * Absolute ceiling on the run, however chatty the child is. Omitted means no ceiling, and then only
+     * `idleTimeoutMs` and the caller's own signal can end the child — the shape a transfer command runs
+     * under, where the downloader holds the liveness bound instead (see `TransferTrait`).
+     */
+    readonly timeoutMs?: number;
     /** Longest the child may produce NO output before it is abandoned. Omitted means only `timeoutMs` bounds it. */
     readonly idleTimeoutMs?: number;
     readonly flushGraceMs?: number;
@@ -263,10 +288,12 @@ export interface SpawnBounds {
 
 /**
  * The real subprocess wrapper: spawn `cmd`, capture stdout/stderr memory-bounded,
- * and bound the run by `timeoutMs` and, when given, by how long it stays silent
- * (`idleTimeoutMs`, rearmed on every chunk either stream produces — so a command
- * that reports progress runs as long as it needs, while a wedged one still dies
- * promptly). The deadlines and the caller's `signal` (chat
+ * and bound the run by each bound `bounds` gives — `timeoutMs` for the whole run,
+ * and `idleTimeoutMs` for how long it stays silent (rearmed on every chunk either
+ * stream produces — so a command that reports progress runs as long as it needs,
+ * while a wedged one still dies promptly). Both are optional, and a `bounds` that
+ * gives neither leaves the caller's `signal` as the only stop — which is what a
+ * transfer command runs under. The deadlines and the caller's `signal` (chat
  * disconnect / turn abort) are merged — either aborts the child — and `endedBy`
  * reports which one fired (timeout wins a tie: the deadline elapsed either way),
  * so a user cancel is never mislabelled a timeout or a completed run.
@@ -299,7 +326,7 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     // firing into an abort nobody reads. Ordering is what closes that, so nothing between here and
     // the clears on the exit path may throw; the deadline controller is built above because
     // `Bun.spawn` needs its signal, but a controller with no timer costs nothing if the spawn fails.
-    const totalTimer = setTimeout(expire, timeoutMs);
+    const totalTimer: ReturnType<typeof setTimeout> | null = timeoutMs === undefined ? null : setTimeout(expire, timeoutMs);
     let idleTimer: ReturnType<typeof setTimeout> | null = idleTimeoutMs === undefined ? null : setTimeout(expire, idleTimeoutMs);
     // Latched once the child is reaped, because output outlives it: the pipes are still read
     // during the flush grace below, and a chunk arriving there would otherwise rearm the idle
@@ -328,7 +355,7 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     const stderr = collectCapped(proc.stderr, budget, noteActivity);
     const exitCode = await proc.exited;
     settled = true;
-    clearTimeout(totalTimer);
+    if (totalTimer !== null) clearTimeout(totalTimer);
     if (idleTimer !== null) clearTimeout(idleTimer);
     if (killTimer !== null) clearTimeout(killTimer);
     // The child is reaped; a LATER abort of the caller's long-lived turn signal
@@ -407,7 +434,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
     const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const idleTimeoutMs = deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     const resolveAnalysisFolder: ResolveAnalysisFolder = deps.resolveAnalysisFolder ?? ((analysisId) => anchorPathForAnalysisId(analysisId) ?? undefined);
-    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, cwd, signal) => spawnInflexa(cmd, signal, { timeoutMs, idleTimeoutMs }, cwd));
+    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, cwd, signal, bounds) => spawnInflexa(cmd, signal, bounds, cwd));
 
     return defineTool({
         id: "run_inflexa",
@@ -456,6 +483,10 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // A rejected argv never reaches a process or a prompt — report it and let the model correct itself.
             if (c.kind === "malformed") return ok({ status: "invalid", message: c.message });
 
+            // Read once, and used twice: it decides the bounds the child runs under, and it decides what
+            // the approval says about them. Introspection (`--help`) carries no policy and is never one.
+            const transfer = c.kind === "action" && isTransferPolicy(c.policy);
+
             if (c.kind === "action") {
                 // The registration-declared policy is the floor. `decideAction` runs it before any
                 // grant/ask interaction, so a `blocked` command (or an unclassified one, fail-closed)
@@ -470,7 +501,10 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
                         // executes, nothing hidden. Spaced elements render quoted so the word
                         // boundaries the user reads are the word boundaries that spawn.
                         command: ["inflexa", ...c.argv.map(displayArgvElement)].join(" "),
-                        detail: 'Approving "always" lets this inflexa subcommand run again in this analysis without asking each time.',
+                        // The caveat leads, because it is what this approval buys that the argv line does not
+                        // show: consent to a run with no deadline. It states the one condition that ends
+                        // such a run, so "no time limit" cannot read as "no way out".
+                        detail: `${transfer ? TRANSFER_DETAIL : ""}Approving "always" lets this inflexa subcommand run again in this analysis without asking each time.`,
                         // Trade-off accepted here: the standing grant keys on the bare subcommand PATH, not this exact
                         // argv, so an "always" on a benign `inflexa X` also blesses a later, more dangerous flag variant
                         // (`inflexa X --destructive`) of the same subcommand without a fresh prompt. That is tolerable
@@ -500,7 +534,9 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // child then inherits this process's directory.
             const scope = ctx.session.scope;
             const cwd = scope.kind === "analysis" ? resolveAnalysisFolder(scope.analysisId) : undefined;
-            const r = await runSubprocess(cmd, cwd, ctx.signal);
+            // A transfer runs with neither bound: `downloadToFile` ends it when the bytes stop, and a
+            // second deadline out here could only ever cut an honest download short (see `TransferTrait`).
+            const r = await runSubprocess(cmd, cwd, ctx.signal, transfer ? {} : { timeoutMs, idleTimeoutMs });
             // truncateOutput re-bounds here because the seam is injectable: the real
             // spawn already caps at source, but the contract must hold for any seam.
             if (r.endedBy === "timeout") return ok({ status: "timed_out", stdout: truncateOutput(r.stdout), stderr: truncateOutput(r.stderr) });

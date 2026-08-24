@@ -7,7 +7,15 @@ import { describe, expect, test } from "bun:test";
 
 import type { AgentPolicy } from "../../cli/agent_policy.ts";
 import { reportAgentPolicies } from "../../test_support/agent_policy_report.ts";
-import { createRunInflexaTool, decideAction, resolveInvocation, spawnInflexa, type RunSubprocess, type SubprocessResult } from "./inflexa_tool.ts";
+import {
+    createRunInflexaTool,
+    decideAction,
+    resolveInvocation,
+    spawnInflexa,
+    type RunSubprocess,
+    type SpawnBounds,
+    type SubprocessResult,
+} from "./inflexa_tool.ts";
 
 // A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
 const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", endedBy: "exit" };
@@ -17,15 +25,18 @@ function recordingSubprocess(result: SubprocessResult = OK_RESULT): {
     fn: RunSubprocess;
     calls: (readonly string[])[];
     cwds: (string | undefined)[];
+    bounds: SpawnBounds[];
 } {
     const calls: (readonly string[])[] = [];
     const cwds: (string | undefined)[] = [];
-    const fn: RunSubprocess = (cmd, cwd, _signal) => {
+    const bounds: SpawnBounds[] = [];
+    const fn: RunSubprocess = (cmd, cwd, _signal, spawnBounds) => {
         calls.push(cmd);
         cwds.push(cwd);
+        bounds.push(spawnBounds);
         return Promise.resolve(result);
     };
-    return { fn, calls, cwds };
+    return { fn, calls, cwds, bounds };
 }
 
 /** An `ask` seam that records its requests and resolves with a fixed approval. */
@@ -103,6 +114,33 @@ describe("run_inflexa — execute", () => {
         expect(ask.calls[0]?.grantKey).toBe("inflexa refs download");
         expect(sub.calls.length).toBe(1);
         expect(result.status).toBe("ran");
+    });
+
+    test("a transfer command runs under neither bound, and its approval states that", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        await tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(ask.fn));
+
+        // Neither key is present: a download outlives any ceiling worth setting, and it is silent for the
+        // whole of one large file, so either bound could only ever cut an honest transfer short.
+        expect(sub.bounds[0]).toEqual({});
+        // What the user consents to that the argv line cannot show, plus the one condition that ends it.
+        expect(ask.calls[0]?.detail).toContain("no time limit");
+        expect(ask.calls[0]?.detail).toContain("2 minutes");
+    });
+
+    test("a command that is not a transfer keeps both of the tool's bounds and says nothing about them", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        await tool.execute({ argv: ["status"] }, makeCtx(ask.fn));
+
+        expect(sub.bounds[0]?.timeoutMs).toBeGreaterThan(0);
+        expect(sub.bounds[0]?.idleTimeoutMs).toBeGreaterThan(0);
+        expect(ask.calls[0]?.detail).not.toContain("no time limit");
     });
 
     test("a packed single-string argv displays and spawns the SAME tokenized argv", async () => {

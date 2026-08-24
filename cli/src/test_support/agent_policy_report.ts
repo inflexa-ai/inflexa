@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 
-import { getAgentPolicy } from "../cli/agent_policy.ts";
+import { getAgentPolicy, isTransferPolicy } from "../cli/agent_policy.ts";
 import { buildProgram } from "../cli/index.ts";
 
 /**
@@ -18,6 +18,8 @@ export type PolicyRow = {
     readonly kind: "auto" | "approval" | "blocked" | null;
     /** The `auto` policy's safe flags, else `null` — the set that must be a subset of {@link declaredOptions}. */
     readonly safeFlags: readonly string[] | null;
+    /** Whether the policy marks a transfer — the command the tool runs with no deadline of its own. */
+    readonly transfer: boolean;
     /** Every declared option's canonical attributeName on this command. */
     readonly declaredOptions: readonly string[];
 };
@@ -44,6 +46,7 @@ function walk(command: Command, path: readonly string[], rows: PolicyRow[]): voi
             hasPolicy: policy !== undefined,
             kind: policy?.kind ?? null,
             safeFlags: policy?.kind === "auto" ? [...policy.safeFlags] : null,
+            transfer: isTransferPolicy(policy),
             declaredOptions: command.options.map((option) => option.attributeName()),
         });
     }

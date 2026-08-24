@@ -33,7 +33,7 @@ describe("classifyInflexaArgv — action", () => {
             argv,
             path: ["inflexa", "refs", "download"],
             grantKey: "inflexa refs download",
-            policy: { kind: "approval" },
+            policy: { kind: "approval", transfer: true },
             // `--yes` is explicitly set; the positional dataset id contributes nothing.
             setOptions: ["yes"],
         });
@@ -49,7 +49,7 @@ describe("classifyInflexaArgv — action", () => {
             argv,
             path: ["inflexa", "refs", "download"],
             grantKey: "inflexa refs download",
-            policy: { kind: "approval" },
+            policy: { kind: "approval", transfer: true },
             setOptions: [],
         });
     });
@@ -116,7 +116,7 @@ describe("classifyInflexaArgv — defensive tokenization", () => {
             argv: ["refs", "download", "reactome-pathways", "--yes"],
             path: ["inflexa", "refs", "download"],
             grantKey: "inflexa refs download",
-            policy: { kind: "approval" },
+            policy: { kind: "approval", transfer: true },
             setOptions: ["yes"],
         });
     });
@@ -144,7 +144,7 @@ describe("classifyInflexaArgv — policy + setOptions", () => {
     test("an approval command's verdict carries the approval policy", async () => {
         const result = await classifyInflexaArgv(["refs", "download", "reactome-pathways", "--yes"]);
         if (result.kind !== "action") throw new Error("expected action");
-        expect(result.policy).toEqual({ kind: "approval" });
+        expect(result.policy).toEqual({ kind: "approval", transfer: true });
     });
 
     test("an auto command's verdict carries the auto policy and its safeFlags", async () => {

@@ -53,6 +53,10 @@ export function describeGeoDownloadError(error: GeoDownloadError, accession: str
         case "http_failed":
         case "io_failed":
             return `Downloading ${accession} failed: ${error.message}\nNothing was downloaded.`;
+        // Its own arm rather than one more transport fault: a stall is the one failure here that the
+        // same command can clear on its own, so the line ends with the remedy instead of a full stop.
+        case "stalled":
+            return `Downloading ${accession} stopped: ${error.message}\nNothing was downloaded — re-run to start again.`;
     }
 }
 
