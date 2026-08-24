@@ -115,6 +115,15 @@ const EXTENSION_FORMATS: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Every suffix the table above recognises, plus the compression wrappers.
+ *
+ * A dotted token outside this set belongs to the stem: `calls.somatic.vcf.gz` has a
+ * two-token extension chain and a two-token stem, and reading `somatic` as part of
+ * the extension would hide a categorical position inside what looks like a format.
+ */
+export const KNOWN_EXTENSIONS: ReadonlySet<string> = new Set([...Object.keys(EXTENSION_FORMATS), ...WRAPPER_EXTENSIONS]);
+
+/**
  * `.bed` is PLINK's binary genotype table AND the interval format, and only the
  * bytes tell them apart (PLINK writes a three-byte magic).
  */
