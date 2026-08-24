@@ -57,10 +57,12 @@ import { buildSetMenu, renderSetMenu, type SetMenu } from "../input-scan/menu.js
 import { readoutTargets } from "../input-scan/readout-budget.js";
 import type { DetectedSets } from "../input-scan/set-types.js";
 import { scanInputTree } from "../input-scan/scan.js";
-import type { InputScan } from "../input-scan/types.js";
+import type { HeaderReadout, InputScan } from "../input-scan/types.js";
 import { profileDimensions, profileFileRecords, profileGroups } from "../app/data-profile-view.js";
+import type { DataProfileDimension, DataProfileGroup, DataProfileProbeReport } from "../contracts/data-profile.js";
 import { buildProfileIndexEntries } from "./data-profile-index.js";
-import { formatResolutionErrors, resolveProfileSubmission, type ProfileResolution } from "./data-profile-resolve.js";
+import { absorbRecipe, renderAbsorbDelta, type AbsorbKind } from "./data-profile-absorb.js";
+import { formatResolutionErrors, resolveProfileSubmission, type ProfileResolution, type ResolvedGroup } from "./data-profile-resolve.js";
 import {
     completeDataProfile,
     failDataProfile,
@@ -197,10 +199,7 @@ export function buildDataProfileResult(
 ): DataProfileResult {
     return {
         summary: submission.analysisSummary,
-        groups: resolution.groups.map(({ memberPaths, ...group }) => {
-            void memberPaths;
-            return group;
-        }),
+        groups: withoutMembers(resolution.groups),
         dimensions: [...resolution.dimensions],
         probes: [...resolution.probes],
         partition: resolution.partition,
@@ -220,29 +219,28 @@ export function buildDataProfileResult(
 }
 
 /**
- * Walk the staged tree, detect its sets, and read one header per set.
+ * Read one header per set, once a container exists.
  *
- * The walk, the set detection, and every prefix-sufficient readout run in this process
+ * The walk and the set detection run before any sandbox — a profile that absorbs a prior
+ * recipe never provisions one. Every prefix-sufficient readout also runs in this process
  * over the workspace read seam; only a footer-indexed container reaches into the sandbox,
  * and only once per set. A readout that fails is logged and dropped: it is enrichment,
  * and a menu without it still carries every structural observation the agent's grouping
  * rests on, so failing the profile over it would trade the whole capability for a nicety.
  */
-async function runInputScan(args: {
+async function readSetHeaders(args: {
     readonly session: RunSession;
     readonly deps: DataProfileDeps;
     readonly analysisId: string;
+    readonly detected: DetectedSets;
     readonly sandbox: SandboxRef;
     readonly execId: string;
     readonly deadlineMs: number;
     readonly logger: Logger;
-}): Promise<{ scan: InputScan; detected: DetectedSets; menu: SetMenu }> {
-    const { session, deps, analysisId, sandbox, execId, deadlineMs, logger } = args;
-    const scan = await scanInputTree({ session, fs: deps.workspaceFs, root: STAGED_INPUT_ROOT });
-    const detected = detectSets(scan.files);
-
+}): Promise<ReadonlyMap<string, HeaderReadout>> {
+    const { session, deps, analysisId, detected, sandbox, execId, deadlineMs, logger } = args;
     try {
-        const headers = await readHeaders({
+        return await readHeaders({
             targets: readoutTargets(detected),
             session,
             fs: deps.workspaceFs,
@@ -253,11 +251,122 @@ async function runInputScan(args: {
             deadlineMs,
             emit: async () => {},
         });
-        return { scan, detected, menu: buildSetMenu(detected, headers) };
     } catch (err) {
         logger.warn("input-scan header readout failed (non-fatal)", logger.errorFields(err));
-        return { scan, detected, menu: buildSetMenu(detected) };
+        return new Map();
     }
+}
+
+/** The membership the persisted record deliberately does not carry. */
+function withoutMembers(groups: readonly ResolvedGroup[]): DataProfileGroup[] {
+    return groups.map(({ memberPaths, ...group }) => {
+        void memberPaths;
+        return group;
+    });
+}
+
+/**
+ * The prior profile re-stamped over a deterministic absorb.
+ *
+ * Membership, counts, the partition, the recipe, and the signature come from the replay;
+ * everything the agent authored — the summary, the identity fields, the dimensions, the
+ * probes, the caveats — is the profile's existing finding and is carried verbatim. An
+ * absorb re-derives arithmetic, and re-deciding judgement without a model is not something
+ * this path is entitled to do.
+ */
+export function buildAbsorbedResult(
+    prior: DataProfileResult,
+    resolution: ProfileResolution,
+    stagedInputs: readonly StagedInput[],
+    profiledAt: string,
+): DataProfileResult {
+    return {
+        ...prior,
+        groups: withoutMembers(resolution.groups),
+        partition: resolution.partition,
+        recipe: [...resolution.recipe],
+        inputSignature: computeInputSignature(stagedInputs),
+        profiledAt,
+    };
+}
+
+/**
+ * Build and upsert the profile's vector index — one entry per group, one per entity, none
+ * per file.
+ *
+ * A pure projection of the scan crossed with the resolved profile, so an absorb rebuilds it
+ * from the same two things the agent path does. Embedding is not a model judgement: leaving
+ * the index behind after an absorb would make the newly absorbed members unsearchable while
+ * the record said they were profiled.
+ */
+async function indexProfile(args: {
+    readonly deps: DataProfileDeps;
+    readonly analysisId: string;
+    readonly session: RunSession;
+    readonly record: DataProfileResult;
+    readonly scan: InputScan;
+    readonly logger: Logger;
+}): Promise<void> {
+    const { deps, analysisId, session, record, scan, logger } = args;
+    await ensureSearchIndex(deps.pool, analysisId, deps.embedding.dimensions);
+    const vectorStore = createVectorStore(deps.pool);
+    const indexName = searchIndexName(analysisId);
+    const entries = buildProfileIndexEntries({
+        analysisId,
+        groups: profileGroups(record),
+        dimensions: profileDimensions(record),
+        scan,
+        files: profileFileRecords(record),
+    });
+
+    // Batched: both interfaces already take arrays, and one round trip per entry is
+    // what made indexing 12 of the 39 minutes the motivating profile took.
+    for (let start = 0; start < entries.length; start += INDEX_BATCH_SIZE) {
+        const batch = entries.slice(start, start + INDEX_BATCH_SIZE);
+        const vectors = unwrapOrThrow(
+            await deps.embedding.embed(
+                batch.map((entry) => entry.text),
+                session,
+            ),
+        );
+        if (vectors.length !== batch.length) throw new Error(`data-profile: embedding returned ${vectors.length} vectors for ${batch.length} entries`);
+        unwrapOrThrow(
+            await vectorStore.upsert({
+                indexName,
+                vectors,
+                metadata: batch.map((entry) => ({ ...entry.metadata, text: entry.text })),
+                ids: batch.map((entry) => entry.id),
+            }),
+        );
+    }
+    logger.info("indexed profile", { entries: entries.length, groups: record.groups?.length ?? 0 });
+}
+
+/**
+ * The counters the catalogue's fit against real use is measured from — one structured
+ * event per completed profile, emitted whether or not anything went wrong.
+ */
+function logProfileMonitoring(
+    logger: Logger,
+    args: {
+        readonly resolution: ProfileResolution;
+        readonly dimensions: readonly DataProfileDimension[];
+        readonly probes: readonly DataProfileProbeReport[];
+        readonly repairRounds: number;
+        readonly absorb: AbsorbKind;
+    },
+): void {
+    const { resolution, dimensions, probes, repairRounds, absorb } = args;
+    logger.info("profile monitoring", {
+        absorb,
+        repairRounds,
+        unresolvedOperations: resolution.errors.length,
+        unclassifiedFiles: resolution.partition.unclassifiedFiles,
+        keptFiles: resolution.partition.keptFiles,
+        otherGroupCategories: resolution.groups.filter((group) => group.category === "other" && !group.unclassified).length,
+        otherDimensionCategories: dimensions.filter((dimension) => dimension.category === "other").length,
+        probeNotFound: probes.filter((probe) => probe.outcome === "not-found").length,
+    });
 }
 
 /**
@@ -339,7 +448,6 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             })),
         );
 
-        // 3. Run data-profiler sandbox agent
         const executionId = generateExecutionId(DATA_PROFILE_AGENT_ID);
         const workflowId = DBOS.workflowID ?? `${DATA_PROFILE_RUN_LITERAL}:${executionId}`;
         const childSession = forSubAgent(runSession, DATA_PROFILE_AGENT_ID);
@@ -349,6 +457,53 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         const workspaceRoot = deps.resolveWorkspaceRoot(analysisId);
         const profileWritePrefix = `${workspaceRoot}/runs/${DATA_PROFILE_RUN_LITERAL}/${DATA_PROFILE_STEP_LITERAL}`;
 
+        // 3. The deterministic scan, before any container and before the agent's first turn.
+        // It is always needed and its result does not depend on agent judgement, so spending
+        // an agent turn to request it would be waste — and a briefing carrying one line per
+        // input file consumes context that carries no structure. It runs BEFORE the sandbox
+        // because the absorb below may complete the profile without ever needing one.
+        await activity.scanning();
+        const scan = await scanInputTree({ session: childSession, fs: deps.workspaceFs, root: STAGED_INPUT_ROOT });
+        const detected = detectSets(scan.files);
+        const menu = buildSetMenu(detected);
+        logger.info("input scan complete", {
+            files: detected.fileCount,
+            kept: detected.keptFileCount,
+            sets: detected.sets.length,
+            listedSets: menu.sets.length,
+            leftovers: detected.leftovers.memberCount,
+            quarantined: detected.quarantine.count,
+            truncated: scan.manifest.truncated,
+        });
+
+        // 3a. Absorption — replay a prior profile's recipe against the fresh scan. A recipe
+        // covering every kept file completes the profile here: an added directory of files
+        // that instantiate templates the profile already describes is arithmetic, and paying
+        // a container and a model pass for it is what this pre-step exists to remove.
+        const prior = unwrapOrThrow(await loadDataProfileStatus(deps.pool, analysisId))?.result ?? null;
+        const absorb = absorbRecipe(prior, detected, menu);
+        if (absorb.kind === "stranded") {
+            logger.warn("prior recipe stranded — re-profiling from scratch", { reason: absorb.reason });
+        }
+        if (absorb.kind === "full" && prior) {
+            logger.info("absorbed the prior recipe", { groups: absorb.resolution.groups.length, keptFiles: absorb.resolution.partition.keptFiles });
+            await activity.indexing();
+            const absorbed = buildAbsorbedResult(prior, absorb.resolution, stagedInputs, new Date().toISOString());
+            await indexProfile({ deps, analysisId, session: runSession, record: absorbed, scan, logger });
+            logProfileMonitoring(logger, {
+                resolution: absorb.resolution,
+                dimensions: absorbed.dimensions ?? [],
+                probes: absorbed.probes ?? [],
+                repairRounds: 0,
+                absorb: absorb.kind,
+            });
+            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, absorbed))) logTerminalNoop(logger, analysisId, "completion");
+            await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            await activity.complete();
+            return;
+        }
+
+        // 4. Run the data-profiler sandbox agent.
         logger.info("starting sandbox", { executionId });
 
         // Reported BEFORE the container exists, deliberately: provisioning is the longest single
@@ -390,29 +545,17 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             const deadlineAbs = (await DBOS.now()) + DEFAULT_DEADLINE_MS;
             const nextFunctionId = makeNextFunctionId();
 
-            // The deterministic scan, before the agent's first turn. It is always needed
-            // and its result does not depend on agent judgement, so spending an agent turn
-            // to request it would be waste — and a briefing carrying one line per input
-            // file consumes context that carries no structure.
-            await activity.scanning();
-            const { scan, detected, menu } = await runInputScan({
+            const headers = await readSetHeaders({
                 session: childSession,
                 deps,
                 analysisId,
+                detected,
                 sandbox,
                 execId: `${workflowId}:${DATA_PROFILE_STEP_LITERAL}:${nextFunctionId()}`,
                 deadlineMs: deadlineAbs,
                 logger,
             });
-            logger.info("input scan complete", {
-                files: detected.fileCount,
-                kept: detected.keptFileCount,
-                sets: detected.sets.length,
-                listedSets: menu.sets.length,
-                leftovers: detected.leftovers.memberCount,
-                quarantined: detected.quarantine.count,
-                truncated: scan.manifest.truncated,
-            });
+            const briefingMenu: SetMenu = { ...menu, headers };
 
             // The profiler runs outside `executeAnalysis`, so no scheduler composes a
             // briefing for it — this prompt IS its briefing, and the sandbox system
@@ -429,12 +572,16 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 ``,
                 `CRITICAL: File and directory paths may contain spaces. You MUST always double-quote paths in shell commands (e.g. head "/${analysisId}/data/inputs/My Folder/file.csv"). Unquoted paths with spaces will silently break commands.`,
                 ``,
-                renderSetMenu(menu, STAGED_INPUT_ROOT),
+                renderSetMenu(briefingMenu, STAGED_INPUT_ROOT),
                 ``,
-                `Author the dataset's groups as operations on this menu: \`use\` a set, \`split\` one by a slot or by a`,
-                `value mapping, \`merge\` several, or \`group\` explicit paths the scan left over. Membership and counts`,
-                `are computed from your operations — you do not state them. Inspect ONE example file per group where a`,
-                `description needs content the scan did not capture, then call \`submit_profile\` once.`,
+                ...(absorb.kind === "partial"
+                    ? [renderAbsorbDelta(absorb), ``]
+                    : [
+                          `Author the dataset's groups as operations on this menu: \`use\` a set, \`split\` one by a slot or by a`,
+                          `value mapping, \`merge\` several, or \`group\` explicit paths the scan left over. Membership and counts`,
+                          `are computed from your operations — you do not state them. Inspect ONE example file per group where a`,
+                          `description needs content the scan did not capture, then call \`submit_profile\` once.`,
+                      ]),
             ].join("\n");
 
             const sandboxAgentDeps: SandboxAgentDeps = {
@@ -486,7 +633,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 describeCall: "none",
                 execute: async (input): Promise<Result<SubmitOutcome, ToolError>> => {
                     rounds++;
-                    const resolution = resolveProfileSubmission(input, detected, menu);
+                    const resolution = resolveProfileSubmission(input, detected, briefingMenu);
                     if (rounds < MAX_SUBMIT_ROUNDS && (resolution.errors.length > 0 || resolution.unclaimed.length > 0)) {
                         return ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) });
                     }
@@ -550,7 +697,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
             const { submission, resolution } = accepted as { submission: ProfileSubmission; resolution: ProfileResolution };
 
-            // 4. Index into vector store — one entry per group, one per entity, none per file.
+            // 5. Index into vector store — one entry per group, one per entity, none per file.
             //
             // Reported as `indexing`, not `persisting`: the contract defines `persisting` as step
             // bytes uploading to an artifact store, and a profile uploads nothing — its durable
@@ -558,57 +705,16 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             await activity.indexing();
 
             const profileRecord = buildDataProfileResult(submission, resolution, stagedInputs, new Date().toISOString());
-
-            await ensureSearchIndex(deps.pool, analysisId, deps.embedding.dimensions);
-            const vectorStore = createVectorStore(deps.pool);
-            const indexName = searchIndexName(analysisId);
-            const entries = buildProfileIndexEntries({
-                analysisId,
-                groups: profileGroups(profileRecord),
-                dimensions: profileDimensions(profileRecord),
-                scan,
-                files: profileFileRecords(profileRecord),
-            });
-
-            // Batched: both interfaces already take arrays, and one round trip per entry is
-            // what made indexing 12 of the 39 minutes the motivating profile took.
-            for (let start = 0; start < entries.length; start += INDEX_BATCH_SIZE) {
-                const batch = entries.slice(start, start + INDEX_BATCH_SIZE);
-                const vectors = unwrapOrThrow(
-                    await deps.embedding.embed(
-                        batch.map((entry) => entry.text),
-                        runSession,
-                    ),
-                );
-                if (vectors.length !== batch.length) throw new Error(`data-profile: embedding returned ${vectors.length} vectors for ${batch.length} entries`);
-                unwrapOrThrow(
-                    await vectorStore.upsert({
-                        indexName,
-                        vectors,
-                        metadata: batch.map((entry) => ({ ...entry.metadata, text: entry.text })),
-                        ids: batch.map((entry) => entry.id),
-                    }),
-                );
-            }
-            logger.info("indexed profile", {
-                entries: entries.length,
-                groups: resolution.groups.length,
-                stagedCount: stagedInputs.length,
-            });
-
-            // The catalogue's fit against real use is measured from these counters, so they
-            // are emitted once per completed profile whether or not anything went wrong.
-            logger.info("profile monitoring", {
+            await indexProfile({ deps, analysisId, session: runSession, record: profileRecord, scan, logger });
+            logProfileMonitoring(logger, {
+                resolution,
+                dimensions: resolution.dimensions,
+                probes: resolution.probes,
                 repairRounds: rounds - 1,
-                unresolvedOperations: resolution.errors.length,
-                unclassifiedFiles: resolution.partition.unclassifiedFiles,
-                keptFiles: resolution.partition.keptFiles,
-                otherGroupCategories: resolution.groups.filter((group) => group.category === "other" && !group.unclassified).length,
-                otherDimensionCategories: resolution.dimensions.filter((dimension) => dimension.category === "other").length,
-                probeNotFound: resolution.probes.filter((probe) => probe.outcome === "not-found").length,
+                absorb: absorb.kind,
             });
 
-            // 5. Complete — store the FULL profiler finding plus the input signature for
+            // 6. Complete — store the FULL profiler finding plus the input signature for
             // staleness detection. The scratch tree is gone; this row is all that survives.
             if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, profileRecord))) {
                 logTerminalNoop(logger, analysisId, "completion");
