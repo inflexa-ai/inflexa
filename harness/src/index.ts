@@ -514,7 +514,14 @@ export type {
 
 // Reading a persisted profile of either era through one shape — the projection every
 // consumer uses so that a row written before groups existed still renders.
-export { profileCaveats, profileDatasetFileCount, profileDimensions, profileFileRecords, profileGroups } from "./app/data-profile-view.js";
+export {
+    dimensionCardinalities,
+    profileCaveats,
+    profileDatasetFileCount,
+    profileDimensions,
+    profileFileRecords,
+    profileGroups,
+} from "./app/data-profile-view.js";
 export type { ProfileDimensionView, ProfileGroupView } from "./app/data-profile-view.js";
 
 // Analysis reclamation — `purgeAnalysis` reclaims an analysis's whole Postgres

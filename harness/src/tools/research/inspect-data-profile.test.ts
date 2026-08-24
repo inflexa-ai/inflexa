@@ -30,7 +30,7 @@ async function completeWith(result: DataProfileResult): Promise<void> {
     (await completeDataProfile(pool, ANALYSIS, result))._unsafeUnwrap();
 }
 
-async function run(input: { scope?: "overview" | "kinds" | "files"; page?: number; pageSize?: number } = {}): Promise<InspectDataProfileOutput> {
+async function run(input: { scope?: "overview" | "groups" | "files"; page?: number; pageSize?: number } = {}): Promise<InspectDataProfileOutput> {
     const { ctx } = makeToolContext();
     return (await tool.execute(input, ctx))._unsafeUnwrap();
 }
@@ -297,7 +297,7 @@ describe("scope: overview", () => {
         });
 
         const out = await run();
-        expect(out).toMatchObject({ state: "ready", summary: "Three count matrices.", describedFileCount: 1, datasetFileCount: null, kindCount: null });
+        expect(out).toMatchObject({ state: "ready", summary: "Three count matrices.", describedFileCount: 1, datasetFileCount: null, groupCount: null });
         // The widened fields come back undefined and drop out at JSON serialization —
         // the model is told nothing rather than told a default.
         const overview = out as { domain?: string; organism?: unknown; qualityAssessment?: unknown };
@@ -392,7 +392,7 @@ describe("scope: files — paged, with truncation always visible", () => {
     });
 });
 
-describe("scope: kinds", () => {
+describe("scope: groups — a snapshot of the kinds era", () => {
     /** A profile of 3513 files that describes one of them individually. */
     function structuredResult(): DataProfileResult {
         return makeResult({
@@ -422,20 +422,23 @@ describe("scope: kinds", () => {
         });
     }
 
-    it("returns the dataset's structure with its counts, patterns, and axes", async () => {
+    it("serves the stored kinds and axes, labelled as authored under the previous model", async () => {
         await resetLedger();
         await seedAnalysis();
         await completeWith(structuredResult());
 
-        const out = await run({ scope: "kinds" });
+        const out = await run({ scope: "groups" });
         expect(out).toMatchObject({
             state: "ready",
-            scope: "kinds",
+            scope: "groups",
             available: true,
+            legacy: true,
             axes: [{ label: "patient", cardinality: 1171 }],
             coverage: { matched: 3510, unmatched: 3, total: 3513 },
         });
         expect((out as { kinds: unknown[] }).kinds).toHaveLength(2);
+        // The structure exists; an agent must never be told the dataset has none.
+        expect((out as { message: string }).message).toContain("previous model");
         // A glob takes the same rooting as a file path, and its wildcard survives it.
         expect((out as { kinds: { pathPattern: string }[] }).kinds.map((k) => k.pathPattern)).toEqual([
             `/${ANALYSIS}/data/inputs/vcf/*.vcf.gz`,
@@ -443,7 +446,7 @@ describe("scope: kinds", () => {
         ]);
     });
 
-    it("reports the scope unavailable — not empty — for a pre-kinds snapshot", async () => {
+    it("reports the scope unavailable — not empty — for a snapshot that predates every structure record", async () => {
         await resetLedger();
         await seedAnalysis(["file-aaa"]);
         await completeWith({
@@ -453,8 +456,8 @@ describe("scope: kinds", () => {
             profiledAt: "2026-01-02T03:04:05.000Z",
         });
 
-        const out = await run({ scope: "kinds" });
-        expect(out).toMatchObject({ scope: "kinds", available: false });
+        const out = await run({ scope: "groups" });
+        expect(out).toMatchObject({ scope: "groups", available: false });
         expect(out).not.toHaveProperty("kinds");
         expect((out as { message: string }).message).toContain("before the dataset-structure record existed");
     });
@@ -465,8 +468,8 @@ describe("scope: kinds", () => {
         await completeWith(structuredResult());
 
         const out = await run();
-        expect(out).toMatchObject({ describedFileCount: 1, datasetFileCount: 3513, kindCount: 2 });
-        expect((out as { structureNote: string }).structureNote).toContain("scope:'kinds'");
+        expect(out).toMatchObject({ describedFileCount: 1, datasetFileCount: 3513, groupCount: 2 });
+        expect((out as { structureNote: string }).structureNote).toContain("scope:'groups'");
     });
 
     it("states nothing about the dataset size a legacy row cannot support", async () => {
@@ -480,7 +483,148 @@ describe("scope: kinds", () => {
         });
 
         const out = await run();
-        expect(out).toMatchObject({ datasetFileCount: null, kindCount: null });
+        expect(out).toMatchObject({ datasetFileCount: null, groupCount: null });
         expect((out as { structureNote: string }).structureNote).toContain("predates");
+    });
+});
+
+describe("scope: groups — a snapshot resolved into groups", () => {
+    /** A resolved profile of 82 kept files, one of whose members carries an annotation. */
+    function resolvedResult(): DataProfileResult {
+        return makeResult({
+            files: undefined,
+            qualityAssessment: undefined,
+            caveats: ["batch is confounded with arm"],
+            groups: [
+                {
+                    id: "per-subject-calls",
+                    name: "per-subject calls",
+                    memberRepresents: "one subject's small-variant calls",
+                    description: "Small-variant calls, one member per subject.",
+                    role: "data",
+                    category: "variant-calls",
+                    count: 40,
+                    fileCount: 80,
+                    totalBytes: 4096,
+                    displayPattern: "data/inputs/vcf/<id>.vcf.gz",
+                    formats: [{ format: "vcf", count: 40 }],
+                    slots: [{ id: "set-1.slot-1", location: "name", index: 0, tokenClass: "digits-fixed", distinctValues: 40, sampleValues: ["001", "002"] }],
+                    memberAnnotations: [{ path: "data/inputs/vcf/S001.vcf.gz", note: "The only member carrying a contig header." }],
+                    completeness: { expectedCompanions: [".tbi"], completeMembers: 39, incompleteMembers: 1, incompleteSample: [] },
+                },
+                {
+                    id: "unclassified",
+                    name: "unclassified",
+                    memberRepresents: "one file no operation claimed",
+                    description: "Swept residue.",
+                    role: "data",
+                    category: "other",
+                    categoryLabel: "unclassified",
+                    count: 2,
+                    fileCount: 2,
+                    totalBytes: 20,
+                    displayPattern: "data/inputs",
+                    formats: [{ format: "txt", count: 2 }],
+                    unclassified: true,
+                },
+            ],
+            dimensions: [
+                {
+                    label: "subject",
+                    category: "subject",
+                    scope: "biological",
+                    observations: [
+                        {
+                            kind: "slot",
+                            groupIds: ["per-subject-calls"],
+                            slotId: "set-1.slot-1",
+                            tokenClass: "digits-fixed",
+                            cardinality: 40,
+                            sampleValues: ["001"],
+                        },
+                        { kind: "document", path: "data/inputs/meta/README.md", citation: "42 subjects were enrolled.", statesCardinality: 42 },
+                    ],
+                    reconciliations: [{ note: "Two enrolled subjects have no files.", delta: 2 }],
+                },
+            ],
+            probes: [{ probe: "timepoint", outcome: "not-found", searched: ["data/inputs/meta/README.md"], reason: "No column or path segment names a time." }],
+            partition: {
+                scannedFiles: 83,
+                keptFiles: 82,
+                keptMembers: 42,
+                groups: 2,
+                unclassifiedMembers: 2,
+                unclassifiedFiles: 2,
+                quarantine: { count: 1, totalBytes: 5, reasons: [{ reason: "os-junk", count: 1 }], sample: ["data/inputs/.DS_Store"] },
+            },
+            recipe: [{ op: "use", templates: ["data/inputs/vcf/<id>.vcf.gz"], groupIds: ["per-subject-calls"] }],
+        });
+    }
+
+    it("returns the groups with derived counts, display patterns, and slots", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        await completeWith(resolvedResult());
+
+        const out = await run({ scope: "groups" });
+        expect(out).toMatchObject({ state: "ready", scope: "groups", available: true });
+        expect(out).not.toHaveProperty("legacy");
+        expect(out).not.toHaveProperty("kinds");
+
+        const groups = (out as { groups: { id: string; count: number; fileCount: number; displayPattern: string; slots?: unknown[] }[] }).groups;
+        expect(groups.map((g) => g.id)).toEqual(["per-subject-calls", "unclassified"]);
+        expect(groups[0]).toMatchObject({ count: 40, fileCount: 80, displayPattern: `/${ANALYSIS}/data/inputs/vcf/<id>.vcf.gz` });
+        expect(groups[0]!.slots).toHaveLength(1);
+    });
+
+    it("returns the dimensions with their observations, reconciliations, and probe outcomes", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        await completeWith(resolvedResult());
+
+        const out = await run({ scope: "groups" });
+        expect(out).toMatchObject({
+            dimensions: [
+                {
+                    label: "subject",
+                    scope: "biological",
+                    reconciliations: [{ note: "Two enrolled subjects have no files.", delta: 2 }],
+                },
+            ],
+            probes: [{ probe: "timepoint", outcome: "not-found" }],
+            recipe: [{ op: "use", groupIds: ["per-subject-calls"] }],
+        });
+        // Both observations stand: nothing here resolves 40 against 42.
+        const dimensions = (out as { dimensions: { observations: unknown[] }[] }).dimensions;
+        expect(dimensions[0]!.observations).toHaveLength(2);
+    });
+
+    it("carries the partition accounting on the overview, alongside the classification", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        await completeWith(resolvedResult());
+
+        const out = await run();
+        expect(out).toMatchObject({
+            scope: "overview",
+            domain: "transcriptomics",
+            caveats: ["batch is confounded with arm"],
+            partition: { keptFiles: 82, unclassifiedFiles: 2, quarantine: { count: 1, reasons: [{ reason: "os-junk", count: 1 }] } },
+            datasetFileCount: 82,
+            groupCount: 2,
+            describedFileCount: 1,
+        });
+    });
+
+    it("pages the annotated members, and never lets their count read as the dataset's size", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        await completeWith(resolvedResult());
+
+        const out = await run({ scope: "files" });
+        expect(out).toMatchObject({ scope: "files", page: 1, pageSize: 20, total: 1, hasMore: false, datasetFileCount: 82 });
+        expect(out).toMatchObject({
+            files: [{ path: `/${ANALYSIS}/data/inputs/vcf/S001.vcf.gz`, description: "The only member carrying a contig header.", format: "vcf" }],
+        });
     });
 });

@@ -8,13 +8,16 @@
  * **There is no data-profile file.** The profiler's `runs/data-profile/` scratch tree
  * is deleted when profiling completes; the profile's only durable home is the
  * `cortex_analysis_state` row this tool reads. That makes this the single authoritative
- * source for dataset facts (organism, domain, design, per-file type/format/dimensions),
- * and it is why the record is served in full rather than summarized: an agent that
- * cannot pull a fact here has no fallback but to re-derive it from the raw bytes.
+ * source for dataset facts — the identity fields, the resolved groups with their slots,
+ * the dimensions with their observations, and the partition census — and it is why the
+ * record is served in full rather than summarized: an agent that cannot pull a fact here
+ * has no fallback but to re-derive it from the raw bytes.
  *
- * Bounded by construction. Like `inspect_run`, the per-file scope is explicitly
- * paged and always reports `total` and `hasMore`: an elided tail is a fact the
- * model can see and act on, never a silent truncation.
+ * Bounded by construction. Like `inspect_run`, the member scope is explicitly paged and
+ * always reports `total` and `hasMore`: an elided tail is a fact the model can see and
+ * act on, never a silent truncation. The annotated-member count and the dataset's file
+ * count are reported as two distinct figures, because a profile annotating eight members
+ * of several thousand files is correct and a single number would read as a tiny dataset.
  *
  * Lifecycle states are data variants, not errors (the `defineTool` contract): a missing,
  * in-flight, failed, or stale profile is an ordinary, expected outcome the model must be
@@ -71,21 +74,24 @@ interface OverviewOutput extends ProfileEnvelope {
     /** Dataset-wide findings the agent wrote, from whichever field the snapshot carries them in. */
     readonly caveats?: string[];
     readonly accessions?: string[];
-    /** How many per-file records `scope:"files"` would page through — NOT the dataset's size. */
+    /** How many member records `scope:"files"` would page through — NOT the dataset's size. */
     readonly describedFileCount: number;
     /**
      * How many files the dataset holds, or `null` when the snapshot cannot say (one
-     * written before kinds and coverage existed). Reported separately from
-     * `describedFileCount` because a profile describing eight files of several thousand
-     * is correct under this capability, and a single count would read as a dataset of
-     * eight files.
+     * written before any structure record existed). Reported separately from
+     * `describedFileCount` because a profile describing eight members of several thousand
+     * files is correct under this capability, and a single count would read as a dataset
+     * of eight files.
      */
     readonly datasetFileCount: number | null;
-    /** How many groups `scope:"kinds"` would return; `null` on a snapshot that carries no structure. */
-    readonly kindCount: number | null;
+    /** How many groups `scope:"groups"` would return; `null` on a snapshot that carries no structure. */
+    readonly groupCount: number | null;
     /** Present when the two counts differ — says where the rest of the dataset is described. */
     readonly structureNote?: string;
-    /** The census, on a snapshot resolved under the partition. */
+    /**
+     * The census, on a snapshot resolved under the partition: kept files, per-group
+     * counts, the unclassified sweep, and the quarantine with its reasons.
+     */
     readonly partition?: DataProfileResult["partition"];
     readonly coverage?: DataProfileResult["coverage"];
 }
@@ -98,27 +104,37 @@ interface OverviewOutput extends ProfileEnvelope {
  * A snapshot written under the previous model is served through `kinds`/`axes`, labelled
  * — the structure exists, and an agent must not be told the dataset has none.
  */
-interface KindsOutput extends ProfileEnvelope {
-    readonly scope: "kinds";
+interface GroupsOutput extends ProfileEnvelope {
+    readonly scope: "groups";
     readonly available: boolean;
+    /** Authored under the previous model — `kinds`/`axes` rather than resolved groups. */
+    readonly legacy?: boolean;
     readonly groups?: DataProfileResult["groups"];
     readonly dimensions?: DataProfileResult["dimensions"];
     readonly probes?: DataProfileResult["probes"];
     readonly partition?: DataProfileResult["partition"];
+    readonly recipe?: DataProfileResult["recipe"];
     readonly kinds?: DataProfileResult["kinds"];
     readonly axes?: DataProfileResult["axes"];
     readonly coverage?: DataProfileResult["coverage"];
     readonly message?: string;
 }
 
+/**
+ * The members the profile describes individually — annotated members on a resolved
+ * snapshot, the notable-file records on an older one. Never the dataset: `datasetFileCount`
+ * on the overview is what says how big that is.
+ */
 interface FilesOutput extends ProfileEnvelope {
     readonly scope: "files";
     readonly page: number;
     readonly pageSize: number;
-    /** Every per-file record the profile holds — not just this page. */
+    /** Every member record the profile holds — not just this page. */
     readonly total: number;
     /** True when records remain past this page. Truncation is always stated, never silent. */
     readonly hasMore: boolean;
+    /** How many files the dataset holds, so a page of 20 never reads as the whole of it. */
+    readonly datasetFileCount: number | null;
     readonly files: DataProfileFile[];
 }
 
@@ -167,7 +183,7 @@ interface FailedOutput {
     readonly message: string;
 }
 
-export type InspectDataProfileOutput = OverviewOutput | KindsOutput | FilesOutput | AbsentOutput | PendingOutput | FailedOutput;
+export type InspectDataProfileOutput = OverviewOutput | GroupsOutput | FilesOutput | AbsentOutput | PendingOutput | FailedOutput;
 
 /** Serve each per-file record with a path that resolves in the frame of the caller. */
 function rootFilePaths(files: readonly DataProfileFile[], analysisId: string): DataProfileFile[] {
@@ -230,21 +246,21 @@ export function createInspectDataProfileTool(pool: Pool) {
         description:
             "Read this analysis's data profile — the AUTHORITATIVE record of what the input dataset is: " +
             "organism and taxon id, scientific domain and subtype, tissue, cell type, condition, experimental design, " +
-            "dataset-wide caveats, public accessions, the GROUPS of file the dataset is made of " +
-            "and what varies across them, and per-file data type, format, row/column dimensions, tags and warnings for " +
-            "the files described individually. " +
+            "dataset-wide caveats, public accessions, the GROUPS of file the dataset is made of, the DIMENSIONS that vary " +
+            "across it with the evidence behind each, and the file census (kept, unclassified, quarantined). " +
             "There is NO data-profile file in the workspace — this tool is the only way to read it. Do not search for one, " +
             "and do not rediscover these facts by listing or reading the raw input files. " +
             "Call it before you reason about the data (planning, writing analysis code, interpreting results). " +
-            "scope:'overview' (the default) returns the dataset-level orientation, how many files are described individually, " +
-            "and how many files the dataset holds — those two differ on purpose, because a large dataset is described by its " +
-            "groups rather than file by file. " +
-            "scope:'kinds' returns those groups with their counts, display patterns, and the dimensions that vary across them — " +
-            "this is where a dataset of thousands of files is described. A profile taken before the structure record existed " +
-            "reports the scope unavailable. " +
-            "scope:'files' returns the individually described files, paged: page (1-based, default 1) and pageSize (default 20, max 100), " +
+            "scope:'overview' (the default) returns the dataset-level orientation plus the partition accounting — how many " +
+            "files were kept, how many landed in no group, how many were quarantined — and how many members are described " +
+            "individually. That last figure and the dataset's file count differ on purpose: a large dataset is described by " +
+            "its groups, not file by file. " +
+            "scope:'groups' returns the groups with their derived counts, display patterns, and slots, plus the dimensions " +
+            "with their observations, reconciliations, and probe outcomes — this is where a dataset of thousands of files is " +
+            "described. A profile written under the previous model returns its kinds and axes, labelled as such. " +
+            "scope:'files' returns the individually annotated members, paged: page (1-based, default 1) and pageSize (default 20, max 100), " +
             "always with the true total and hasMore, so you can see exactly what you have not read yet. " +
-            "For the paths of files no record describes, list the workspace tree. " +
+            "For the paths of files no record describes, use scope:'groups' for the structure and list the workspace tree for the paths. " +
             "The state field says what you got: 'ready'; 'stale' (a profile is returned but may not describe the current " +
             "inputs — staleReason says why); 'pending' (profiling is still running); 'failed'; or 'absent' (never profiled, " +
             "or the analysis has no input files). " +
@@ -254,21 +270,21 @@ export function createInspectDataProfileTool(pool: Pool) {
             "needs re-running rather than diagnosing the data itself.",
         inputSchema: z.object({
             scope: z
-                .enum(["overview", "kinds", "files"])
+                .enum(["overview", "groups", "files"])
                 .optional()
                 .describe(
-                    "'overview' (default): dataset-level facts, described-file count, and dataset file count. " +
-                        "'kinds': the groups the dataset is made of and what varies across them. " +
-                        "'files': paged records for the individually described files.",
+                    "'overview' (default): dataset-level facts, the partition accounting, the annotated-member count, and the dataset file count. " +
+                        "'groups': the groups the dataset is made of, with their slots, and the dimensions that vary across it. " +
+                        "'files': paged records for the individually annotated members.",
                 ),
-            page: z.number().int().min(1).optional().describe("1-based page of per-file records. Only used when scope is 'files'. Default 1."),
+            page: z.number().int().min(1).optional().describe("1-based page of member records. Only used when scope is 'files'. Default 1."),
             pageSize: z
                 .number()
                 .int()
                 .min(1)
                 .max(MAX_PAGE_SIZE)
                 .optional()
-                .describe(`Per-file records per page. Only used when scope is 'files'. Default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}.`),
+                .describe(`Member records per page. Only used when scope is 'files'. Default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}.`),
         }),
         // `execute` defaults both fields internally, and the hook applies the same
         // defaults. Without them the ordinary call, which names no field at all,
@@ -335,7 +351,7 @@ export function createInspectDataProfileTool(pool: Pool) {
                         ? "This profile predates the dataset-structure record, so only the individually described files are known; " +
                           "list the workspace tree for the rest."
                         : dataset !== described
-                          ? `${described} of ${dataset} files are described individually. Call scope:'kinds' for what the rest are, ` +
+                          ? `${described} of ${dataset} files are described individually. Call scope:'groups' for what the rest are, ` +
                             "and list the workspace tree for their paths."
                           : undefined;
                 return ok({
@@ -353,29 +369,30 @@ export function createInspectDataProfileTool(pool: Pool) {
                     accessions: result.accessions,
                     describedFileCount: described,
                     datasetFileCount: dataset,
-                    kindCount: result.groups || result.kinds ? groups.length : null,
+                    groupCount: result.groups || result.kinds ? groups.length : null,
                     ...(structureNote ? { structureNote } : {}),
                     ...(result.partition ? { partition: result.partition } : {}),
                     ...(result.coverage ? { coverage: result.coverage } : {}),
                 });
             }
 
-            if (scope === "kinds") {
+            if (scope === "groups") {
                 if (result.groups) {
                     return ok({
                         ...envelope,
-                        scope: "kinds",
+                        scope: "groups",
                         available: true,
                         groups: rootGroupPatterns(result.groups, resourceId),
                         ...(result.dimensions ? { dimensions: result.dimensions } : {}),
                         ...(result.probes ? { probes: result.probes } : {}),
                         ...(result.partition ? { partition: result.partition } : {}),
+                        ...(result.recipe ? { recipe: result.recipe } : {}),
                     });
                 }
                 if (!result.kinds) {
                     return ok({
                         ...envelope,
-                        scope: "kinds",
+                        scope: "groups",
                         available: false,
                         message:
                             "This profile was taken before the dataset-structure record existed, so it carries no groups. " +
@@ -383,14 +400,21 @@ export function createInspectDataProfileTool(pool: Pool) {
                             "listing tools, or re-profile the analysis.",
                     });
                 }
+                // The structure exists; only its vocabulary is older. Serving it labelled beats
+                // reporting the scope unavailable, which would tell an agent the dataset has no
+                // structure when the row plainly holds some.
                 return ok({
                     ...envelope,
-                    scope: "kinds",
+                    scope: "groups",
                     available: true,
+                    legacy: true,
                     kinds: rootKindPatterns(result.kinds, resourceId),
                     ...(result.axes ? { axes: result.axes } : {}),
                     ...(result.coverage ? { coverage: result.coverage } : {}),
-                    message: "Authored under the previous model: these are kinds and axes, not resolved groups and dimensions.",
+                    message:
+                        "Authored under the previous model: these are kinds and axes, not resolved groups and dimensions. " +
+                        "Counts and patterns were the profiler's own claims rather than a computed partition, and there is no " +
+                        "unclassified sweep or quarantine accounting on a profile of that era.",
                 });
             }
 
@@ -407,6 +431,7 @@ export function createInspectDataProfileTool(pool: Pool) {
                 pageSize,
                 total,
                 hasMore: start + files.length < total,
+                datasetFileCount: profileDatasetFileCount(result),
                 files: rootFilePaths(files, resourceId),
             });
         },

@@ -1,6 +1,12 @@
+/**
+ * The index is a projection, so these assert what the projection PRODUCES: which tiers
+ * exist, what each entry's id addresses, and what its text is composed from. Nothing here
+ * asserts that a function was called.
+ */
+
 import { describe, expect, it } from "bun:test";
 
-import type { ProfileGroupView } from "../app/data-profile-view.js";
+import type { DataProfileResult } from "../contracts/data-profile.js";
 import { buildManifest } from "../input-scan/scan.js";
 import type { ScannedFile } from "../input-scan/types.js";
 import { buildProfileIndexEntries } from "./data-profile-index.js";
@@ -30,87 +36,209 @@ function scanFixture() {
 
 const TOTAL_FILES = SUBJECTS * 2 + ALIGNED + SHEETS;
 
-const groups: ProfileGroupView[] = [
-    {
-        id: "per-subject-variant-calls",
-        name: "per-subject variant calls",
-        memberRepresents: "one subject's somatic variant calls",
-        description: "Small-variant calls, one file per subject.",
-        count: SUBJECTS,
-        pattern: "data/inputs/vcf/<id>.vcf.gz",
-        format: "vcf",
-    },
-    {
-        id: "variant-indexes",
-        name: "variant indexes",
-        memberRepresents: "the tabix index of one subject's calls",
-        description: "Indexes accompanying the calls.",
-        count: SUBJECTS,
-        pattern: "data/inputs/tbi/<id>.vcf.gz.tbi",
-        format: "tabix-index",
-    },
-    {
-        id: "alignments",
-        name: "alignments",
-        memberRepresents: "one subject's aligned reads",
-        description: "Per-subject alignments.",
-        count: ALIGNED,
-        pattern: "data/inputs/bam/<id>.bam",
-        format: "bam",
-    },
-    {
-        id: "sample-sheets",
-        name: "sample sheets",
-        memberRepresents: "one cohort's annotation table",
-        description: "Specimen annotations.",
-        count: SHEETS,
-        pattern: "data/inputs/meta/sheet_<digits>.csv",
-        format: "csv",
-    },
-];
+/** A snapshot of the groups era: resolved groups, evidenced dimensions, two annotated members. */
+const RESOLVED: DataProfileResult = {
+    summary: "A synthetic cohort.",
+    profiledAt: "2026-08-01T00:00:00.000Z",
+    groups: [
+        {
+            id: "per-subject-calls",
+            name: "per-subject variant calls",
+            memberRepresents: "one subject's small-variant calls",
+            description: "Small-variant calls, one member per subject.",
+            role: "data",
+            category: "variant-calls",
+            count: SUBJECTS,
+            fileCount: SUBJECTS * 2,
+            totalBytes: 4096,
+            displayPattern: "data/inputs/vcf/<id>.vcf.gz",
+            formats: [{ format: "vcf", count: SUBJECTS }],
+            slots: [{ id: "set-1.slot-1", location: "name", index: 1, tokenClass: "digits-fixed", distinctValues: SUBJECTS, sampleValues: ["0001", "0002"] }],
+            memberAnnotations: [{ path: "data/inputs/vcf/SUBJ_0001.vcf.gz", note: "The only member carrying a contig header." }],
+        },
+        {
+            id: "sample-sheets",
+            name: "sample sheets",
+            memberRepresents: "one cohort's annotation table",
+            description: "Specimen annotations.",
+            role: "metadata",
+            category: "sample-annotation",
+            count: SHEETS,
+            fileCount: SHEETS,
+            totalBytes: 512,
+            displayPattern: "data/inputs/meta/sheet_<digits>.csv",
+            formats: [{ format: "csv", count: SHEETS }],
+            memberAnnotations: [{ path: "data/inputs/meta/sheet_1.csv", note: "Carries the subject-to-arm mapping." }],
+        },
+        {
+            id: "unclassified",
+            name: "unclassified",
+            memberRepresents: "one file no operation claimed",
+            description: "Swept residue.",
+            role: "data",
+            category: "other",
+            categoryLabel: "unclassified",
+            count: 1,
+            fileCount: 1,
+            totalBytes: 10,
+            displayPattern: "data/inputs",
+            formats: [{ format: "txt", count: 1 }],
+            unclassified: true,
+        },
+    ],
+    dimensions: [
+        {
+            label: "subject",
+            category: "subject",
+            scope: "biological",
+            description: "The individual each member was taken from.",
+            observations: [
+                {
+                    kind: "slot",
+                    groupIds: ["per-subject-calls"],
+                    slotId: "set-1.slot-1",
+                    tokenClass: "digits-fixed",
+                    cardinality: SUBJECTS,
+                    sampleValues: ["0001", "0002"],
+                },
+                { kind: "column", path: "data/inputs/meta/sheet_1.csv", column: "subject_id", exampleValues: ["0001"], distinctValues: 402 },
+            ],
+            reconciliations: [{ note: "The sheet names two subjects no file exists for.", delta: 2 }],
+        },
+        {
+            label: "arm",
+            category: "cohort-arm",
+            scope: "biological",
+            observations: [{ kind: "column", path: "data/inputs/meta/sheet_1.csv", column: "arm", exampleValues: ["treated", "control"], distinctValues: 2 }],
+        },
+    ],
+};
 
-const dimensions = [{ label: "subject", cardinalities: [SUBJECTS], exampleValues: ["0001", "0002"] }];
+/** A snapshot of the kinds era, indexed the way that era indexed it. */
+const LEGACY: DataProfileResult = {
+    summary: "A synthetic cohort, profiled under the previous model.",
+    profiledAt: "2026-02-01T00:00:00.000Z",
+    kinds: [
+        {
+            name: "per-subject variant calls",
+            memberRepresents: "one subject's somatic variant calls",
+            description: "Small-variant calls, one file per subject.",
+            count: SUBJECTS,
+            pathPattern: "data/inputs/vcf/*.vcf.gz",
+            format: "vcf",
+        },
+        {
+            name: "sample sheets",
+            memberRepresents: "one cohort's annotation table",
+            description: "Specimen annotations.",
+            count: SHEETS,
+            pathPattern: "data/inputs/meta/*.csv",
+            format: "csv",
+        },
+    ],
+    axes: [{ label: "subject", cardinality: SUBJECTS, exampleValues: ["0001", "0002"] }],
+};
 
-describe("buildProfileIndexEntries", () => {
-    it("indexes one entry per group and one per entity, none per file", () => {
-        const entries = buildProfileIndexEntries({ analysisId: "a1", groups, dimensions, scan: scanFixture() });
+describe("a snapshot of the groups era", () => {
+    it("writes three tiers: one per group, one per dimension, one per annotated member", () => {
+        const entries = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED, scan: scanFixture() });
 
-        const groupEntries = entries.filter((e) => e.metadata.type === "input-kind");
-        const entityEntries = entries.filter((e) => e.metadata.type === "input");
-
-        expect(groupEntries).toHaveLength(groups.length);
-        expect(entityEntries).toHaveLength(SUBJECTS);
-        expect(entries).toHaveLength(groups.length + SUBJECTS);
-        // Every file went in; not one of them has an entry of its own.
-        expect(entries.some((e) => e.id.includes(".vcf.gz"))).toBe(false);
+        expect(entries.filter((e) => e.metadata.type === "input-group")).toHaveLength(3);
+        expect(entries.filter((e) => e.metadata.type === "input-dimension")).toHaveLength(2);
+        expect(entries.filter((e) => e.metadata.type === "input")).toHaveLength(2);
+        expect(entries).toHaveLength(7);
     });
 
-    it("batches into round trips that scale with groups and entities, not files", () => {
-        const entries = buildProfileIndexEntries({ analysisId: "a1", groups, dimensions, scan: scanFixture() });
-        const batches = Math.ceil(entries.length / 256);
-        expect(batches).toBe(2);
-        // The loop this replaced issued one embed + one upsert per staged file.
-        expect(batches).toBeLessThan(TOTAL_FILES);
+    it("writes no entry for a member the agent did not annotate", () => {
+        const entries = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED, scan: scanFixture() });
+        expect(entries.some((e) => e.id.includes("SUBJ_0002"))).toBe(false);
+        expect(entries.some((e) => e.id.includes("sheet_2.csv"))).toBe(false);
+        // The whole point of the tier bound: entries scale with judgement, not with files.
+        expect(entries.length).toBeLessThan(TOTAL_FILES);
     });
 
-    it("keeps type:'input' meaning what it meant, so existing filtered searches still match", () => {
-        const entries = buildProfileIndexEntries({ analysisId: "a1", groups, dimensions, scan: scanFixture() });
-        const entity = entries.find((e) => e.metadata.type === "input")!;
-        expect(entity.metadata.axis).toBe("subject");
-        expect(entity.text).toContain("subject");
-        expect(entity.text).toContain("one subject's somatic variant calls");
+    it("composes a group entry from its meaning, category, and description, and carries the template and counts in metadata", () => {
+        const entry = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED }).find((e) => e.metadata.group === "per-subject-calls")!;
+
+        expect(entry.id).toBe("/a1/group/per-subject-calls");
+        expect(entry.text).toContain("one member is one subject's small-variant calls");
+        expect(entry.text).toContain("Small-variant calls, one member per subject.");
+        expect(entry.text).toContain("variant-calls");
+        expect(entry.metadata).toMatchObject({
+            type: "input-group",
+            name: "per-subject variant calls",
+            role: "data",
+            category: "variant-calls",
+            pathPattern: "data/inputs/vcf/<id>.vcf.gz",
+            count: SUBJECTS,
+            fileCount: SUBJECTS * 2,
+            slots: [{ id: "set-1.slot-1", location: "name", tokenClass: "digits-fixed", distinctValues: SUBJECTS }],
+        });
     });
 
-    it("templates every entry deterministically — the same inputs give the same entries", () => {
-        const args = { analysisId: "a1", groups, dimensions, scan: scanFixture() };
+    it("names the swept residue as a group like any other, so the sweep is searchable", () => {
+        const entry = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED }).find((e) => e.metadata.group === "unclassified")!;
+        expect(entry.metadata).toMatchObject({ type: "input-group", unclassified: true, categoryLabel: "unclassified" });
+    });
+
+    it("composes a dimension entry from its label, category, and observation summaries", () => {
+        const entry = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED }).find((e) => e.metadata.dimension === "subject")!;
+
+        expect(entry.id).toBe("/a1/dimension/subject");
+        expect(entry.text).toContain("subject — subject, a biological dimension");
+        expect(entry.text).toContain("slot set-1.slot-1 (digits-fixed, 400 values, e.g. 0001, 0002)");
+        expect(entry.text).toContain("column subject_id of data/inputs/meta/sheet_1.csv, 402 values");
+        // Disagreeing observations both stand — no canonical cardinality anywhere.
+        expect(entry.metadata.cardinalities).toEqual([SUBJECTS, 402]);
+        expect(entry.metadata.groups).toEqual(["per-subject-calls"]);
+    });
+
+    it("addresses an annotated member by its workspace path and composes its group's meaning into the text", () => {
+        const entries = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED });
+        const entry = entries.find((e) => e.metadata.type === "input" && e.metadata.group === "per-subject-calls")!;
+
+        expect(entry.id).toBe("/a1/data/inputs/vcf/SUBJ_0001.vcf.gz");
+        expect(entry.text).toContain("The only member carrying a contig header.");
+        expect(entry.text).toContain("one member is one subject's small-variant calls");
+        expect(entry.metadata).toMatchObject({ type: "input", group: "per-subject-calls", groupName: "per-subject variant calls", format: "vcf" });
+    });
+
+    it("templates every entry deterministically — the same record gives the same entries", () => {
+        const args = { analysisId: "a1", result: RESOLVED, scan: scanFixture() };
         expect(buildProfileIndexEntries(args)).toEqual(buildProfileIndexEntries(args));
     });
 
-    it("falls back to the notable files when a profile resolved no groups", () => {
+    it("costs round trips that scale with judgement, not with files", () => {
+        const entries = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED, scan: scanFixture() });
+        expect(Math.ceil(entries.length / 256)).toBe(1);
+    });
+});
+
+describe("a snapshot of the kinds era", () => {
+    it("keeps the kind and entity tiers it was written with", () => {
+        const entries = buildProfileIndexEntries({ analysisId: "a1", result: LEGACY, scan: scanFixture() });
+
+        expect(entries.filter((e) => e.metadata.type === "input-kind")).toHaveLength(2);
+        expect(entries.filter((e) => e.metadata.type === "input")).toHaveLength(SUBJECTS);
+        expect(entries.filter((e) => e.metadata.type === "input-group")).toHaveLength(0);
+        expect(entries.filter((e) => e.metadata.type === "input-dimension")).toHaveLength(0);
+    });
+
+    it("labels its entity entries with the axis the profile named", () => {
+        const entries = buildProfileIndexEntries({ analysisId: "a1", result: LEGACY, scan: scanFixture() });
+        const entity = entries.find((e) => e.metadata.type === "input")!;
+        expect(entity.metadata.axis).toBe("subject");
+        expect(entity.text).toContain("one subject's somatic variant calls");
+    });
+
+    it("falls back to the notable files when a legacy profile carried no structure at all", () => {
         const entries = buildProfileIndexEntries({
             analysisId: "a1",
-            groups: [],
-            files: [{ path: "data/inputs/meta/sheet_1.csv", description: "Specimen annotations.", dataType: "sample-annotation" }],
+            result: {
+                summary: "Three matrices.",
+                profiledAt: "2026-01-01T00:00:00.000Z",
+                files: [{ path: "data/inputs/meta/sheet_1.csv", description: "Specimen annotations.", dataType: "sample-annotation" }],
+            },
         });
         expect(entries).toHaveLength(1);
         expect(entries[0]!.metadata.type).toBe("input");

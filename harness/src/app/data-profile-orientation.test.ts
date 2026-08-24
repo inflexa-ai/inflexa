@@ -116,12 +116,12 @@ describe("buildDataProfileOrientation", () => {
         expect(text).not.toContain("data/inputs/f8/counts.csv");
     });
 
-    it("caps concerns at 3 and counts the remainder", () => {
+    it("caps caveats at 3 and counts the remainder", () => {
         const many: DataProfileResult = {
             ...RICH,
             qualityAssessment: { concerns: ["c1", "c2", "c3", "c4", "c5"], strengths: [] },
         };
-        expect(buildDataProfileOrientation(many, ANALYSIS_ID)).toContain("Concerns: c1; c2; c3 (+2 more)");
+        expect(buildDataProfileOrientation(many, ANALYSIS_ID)).toContain("Caveats: c1; c2; c3 (+2 more)");
     });
 
     // The bound is the whole point: this text is destined for a context window it does
@@ -197,14 +197,16 @@ describe("a snapshot of the kinds era", () => {
 
     it("renders its kinds as groups, before the notable files", () => {
         const text = buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID);
-        expect(text).toContain("Groups (2, 2339 files):");
+        expect(text).toContain("Groups (2):");
         expect(text).toContain("per-patient variant calls (1171x, VCF) — one patient's somatic variant calls");
         expect(text).toContain("Dimensions: patient (1171)");
         expect(text.indexOf("Groups (")).toBeLessThan(text.indexOf("Notable files"));
     });
 
-    it("names a coverage shortfall rather than implying the kinds cover everything", () => {
-        expect(buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID)).toContain("Coverage: 2339 of 2340 files match a kind");
+    it("censuses what its era recorded, naming the coverage shortfall rather than a quarantine it never had", () => {
+        const text = buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID);
+        expect(text).toContain("Census: 2340 files in 2 groups · 1 matching no kind");
+        expect(text).not.toContain("quarantined");
     });
 
     it("stays within the character budget on a structured profile", () => {
@@ -282,23 +284,62 @@ describe("a snapshot resolved into groups", () => {
         },
     };
 
-    it("renders the resolved groups, the dimensions, and the unclassified count", () => {
+    it("renders the census, the resolved groups, and the dimensions", () => {
         const text = buildDataProfileOrientation(RESOLVED, ANALYSIS_ID);
-        expect(text).toContain("Groups (2, 82 files):");
+        expect(text).toContain("Census: 82 files in 2 groups · 2 unclassified · 1 quarantined");
+        expect(text).toContain("Groups (2):");
         expect(text).toContain("per-subject calls (40x, VCF) — one subject's small-variant calls");
         expect(text).toContain("Dimensions: subject (40)");
-        expect(text).toContain("Unclassified: 2 of 82 kept files");
     });
 
-    it("serves an annotated member as a notable file, and the agent's caveats as concerns", () => {
+    it("puts the census in the header, above every structured section", () => {
+        const lines = buildDataProfileOrientation(RESOLVED, ANALYSIS_ID).split("\n");
+        expect(lines[0]).toStartWith("Dataset: ");
+        expect(lines[1]).toStartWith("Census: ");
+    });
+
+    it("orders identity, census, groups, dimensions, design, then caveats", () => {
+        const text = buildDataProfileOrientation(RESOLVED, ANALYSIS_ID);
+        const order = ["Dataset: ", "Census: ", "Groups (", "Dimensions: ", "Design: ", "Caveats: "].map((marker) => text.indexOf(marker));
+        expect(order.every((index) => index >= 0)).toBe(true);
+        expect(order).toEqual([...order].sort((a, b) => a - b));
+    });
+
+    it("serves an annotated member as a notable file, and the agent's caveats under their own name", () => {
         const text = buildDataProfileOrientation(RESOLVED, ANALYSIS_ID);
         expect(text).toContain("Notable files (1):");
         expect(text).toContain("Only member with a contig header.");
-        expect(text).toContain("batch is confounded with arm");
+        expect(text).toContain("Caveats: batch is confounded with arm");
     });
 
     it("stays within the character budget", () => {
         expect(buildDataProfileOrientation(RESOLVED, ANALYSIS_ID).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);
+    });
+
+    it("keeps the census whatever the clamp removes", () => {
+        for (const budget of [200, 300, 500, 900]) {
+            const text = buildDataProfileOrientation(RESOLVED, ANALYSIS_ID, budget);
+            expect(text.length).toBeLessThanOrEqual(budget);
+            expect(text).toContain("Census: 82 files in 2 groups");
+        }
+    });
+
+    it("renders the structure in full before prose expands, whatever the profile's caveats cost", () => {
+        const verbose: DataProfileResult = {
+            ...RESOLVED,
+            caveats: Array.from({ length: 20 }, (_, i) => `${i}: ${"P".repeat(400)}`),
+            experimentalDesign: "D".repeat(2_000),
+        };
+        const text = buildDataProfileOrientation(verbose, ANALYSIS_ID);
+
+        expect(text).toContain("Census: 82 files in 2 groups");
+        expect(text).toContain("per-subject calls (40x, VCF)");
+        expect(text).toContain("unclassified (2x, txt)");
+        expect(text).toContain("Dimensions: subject (40)");
+        // Two caps hold the prose down: per item, and as a share of the whole rendering.
+        const caveats = text.split("\n").find((line) => line.startsWith("Caveats: "))!;
+        expect(caveats).toContain("(+18 more)");
+        expect(caveats.length).toBeLessThanOrEqual(Math.floor(DATA_PROFILE_ORIENTATION_MAX_CHARS * 0.25) + 40);
     });
 });
 
