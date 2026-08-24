@@ -87,25 +87,56 @@ re-profile them on every parity check.
 
 The persisted operations recipe SHALL be keyed to scanner templates, never to menu
 identifiers — menu identifiers are per-scan ephemera, and a recipe addressing them could
-not be replayed against a fresh scan.
+not be replayed against a fresh scan. A dimension's slot observation SHALL be keyed the
+same way, as the addressed set's template plus the slot's position within it: the scan's
+own slot identifier is display-only past the scan that minted it, because a re-scan that
+reorders the sets makes the same identifier name a different slot.
 
 Absorption SHALL run as a pre-step of the existing profile workflow, introducing no new
 lifecycle: the body claims the row, re-scans, and re-resolves the recipe against the
 fresh scan. Files matching existing templates are absorbed deterministically — membership,
 derived counts, and the input signature are re-stamped with no sandbox and no LLM call —
-and a full absorb completes the profile there. Files matching no template proceed to the
-agent as a repair-style round over the **delta only**, with the resolved recipe carried
+and a full absorb completes the profile there. Each dimension's slot observations SHALL be
+re-resolved through their bindings and their cardinality and values RECOMPUTED against the
+fresh scan; the labels, descriptions, reconciliations, and non-slot observations are the
+profile's existing finding and are carried verbatim. Files matching no template proceed to
+the agent as a repair-style round over the **delta only**, with the resolved recipe carried
 forward; a drift event SHALL NOT cost a blank-page re-profile when the tree's structure
 is already described.
 
-A recipe that no longer resolves — a scanner change or a reshaped tree strands its
-templates — SHALL fall back to a full re-profile, never to a silent partial absorb.
+The recipe SHALL also record the paths the previous resolution swept into `unclassified`.
+A file that profile already declined to classify is NOT structurally new: on replay it
+re-sweeps deterministically, a swept file that has since been deleted simply drops, and
+only a file that is new to the tree and matched by no template is delta. Without that
+record an unchanged tree re-absorbs as a partial and wakes the agent to re-judge what it
+already judged. The record is bounded; a sweep past the bound records a prefix and says
+so, and its replays wake the agent.
+
+A recipe that no longer resolves SHALL fall back to a full re-profile, never to a silent
+partial absorb. It no longer resolves when a scanner change or a reshaped tree strands its
+templates, when a dimension's slot binding does not re-resolve, or when any step of it
+produces no group — a step that resolved to nothing has deleted a group, renumbered its
+siblings, and left every reference to it dangling.
 
 #### Scenario: Template-matching files absorb deterministically
 
 - **GIVEN** a completed profile whose recipe covers a per-sample template
 - **WHEN** files for additional samples matching that template are staged
 - **THEN** the pre-step SHALL absorb them into the existing groups, re-derive counts, re-stamp the signature, and complete without a model call
+
+#### Scenario: An unchanged tree costs no model call, residue included
+
+- **GIVEN** a completed profile that swept some files into `unclassified`
+- **WHEN** the profile re-runs against a byte-identical tree
+- **THEN** the pre-step SHALL report a full absorb and complete without a model call
+- **AND** the previously swept files SHALL re-form the `unclassified` group rather than counting as delta
+
+#### Scenario: A dimension's slot binding survives a re-scan that reorders the sets
+
+- **GIVEN** a completed profile whose dimension binds a slot of one set
+- **WHEN** files are staged that make another set outrank it, so the scan's slot identifiers name different slots
+- **THEN** the absorbed profile's observation SHALL bind the same template slot
+- **AND** its cardinality and values SHALL be recomputed from the fresh scan
 
 #### Scenario: Novel structure wakes the agent over the delta
 
@@ -120,3 +151,10 @@ templates — SHALL fall back to a full re-profile, never to a silent partial ab
 - **WHEN** the pre-step runs
 - **THEN** it SHALL proceed as a full re-profile
 - **AND** SHALL NOT complete an absorb that silently dropped part of the recipe
+
+#### Scenario: A step that resolves to no group strands rather than deleting it
+
+- **GIVEN** a recipe whose explicit path grouping names files that have all been deleted
+- **WHEN** the pre-step runs
+- **THEN** it SHALL report the recipe stranded, naming the step
+- **AND** SHALL NOT report a full absorb over a profile that lost a group

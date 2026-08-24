@@ -133,6 +133,33 @@ function keptPaths(detected: DetectedSets): string[] {
     );
 }
 
+/**
+ * Operations that deliberately collide: every set is claimed twice, and the leftovers are
+ * claimed by two overlapping explicit groups. Nothing here is a valid submission — the
+ * point is that the partition holds anyway.
+ */
+function makeOverlappingOperations(detected: DetectedSets, menu: SetMenu, random: () => number): MenuOperation[] {
+    const operations: MenuOperation[] = [];
+    for (const set of menu.sets) {
+        operations.push({ op: "use", setId: set.id, group: annotation(`${set.id} first`) });
+        if (random() < 0.7) operations.push({ op: "use", setId: set.id, group: annotation(`${set.id} second`) });
+    }
+    if (menu.sets.length >= 2 && random() < 0.5) {
+        operations.push({ op: "merge", setIds: menu.sets.slice(0, 2).map((set) => set.id), group: annotation("merged over the top") });
+    }
+
+    const leftovers = detected.leftoverMembers.map((member) => member.path);
+    if (leftovers.length > 0) {
+        operations.push({ op: "group", paths: leftovers, group: annotation("context", { category: "document" }) });
+        operations.push({
+            op: "group",
+            paths: leftovers.slice(0, Math.max(1, leftovers.length - 1)),
+            group: annotation("context again", { category: "document" }),
+        });
+    }
+    return operations;
+}
+
 /** The invariant itself: exactly one group per kept file, and an accounting that sums. */
 function expectPartitions(detected: DetectedSets, resolution: ProfileResolution, seed: number): void {
     const claimed = resolution.groups.flatMap((group) => [...group.memberPaths]);
@@ -196,6 +223,39 @@ describe("every kept file lands in exactly one group", () => {
         }
         // A property that never reaches the branch it is about proves nothing.
         expect(swept).toBeGreaterThan(0);
+    });
+
+    it("holds under adversarial overlaps, on the round that must resolve them and the round that must not", () => {
+        let contested = 0;
+        for (let seed = 1; seed <= CASES; seed++) {
+            const random = rng(seed);
+            const detected = detectSets(makeTree(random));
+            const menu = buildSetMenu(detected);
+            const operations = makeOverlappingOperations(detected, menu, random);
+
+            const repairable = resolveProfileSubmission(submission(operations), detected, menu);
+            const final = resolveProfileSubmission(submission(operations), detected, menu, { finalRound: true });
+
+            expectPartitions(detected, repairable, seed);
+            expectPartitions(detected, final, seed);
+
+            if (final.contested.length > 0) {
+                contested++;
+                // Reported while a repair remains; swept once none does — never awarded.
+                expect(
+                    repairable.errors.some((error) => error.includes("claimed by both")),
+                    `seed ${seed}`,
+                ).toBe(true);
+                expect(
+                    final.errors.some((error) => error.includes("claimed by both")),
+                    `seed ${seed}`,
+                ).toBe(false);
+                const unclassified = final.groups.find((group) => group.id === UNCLASSIFIED_GROUP_ID)!;
+                for (const path of final.contested) expect(unclassified.memberPaths, `seed ${seed}`).toContain(path);
+                expect(final.partition.contested!.members, `seed ${seed}`).toBe(final.contested.length);
+            }
+        }
+        expect(contested).toBeGreaterThan(0);
     });
 
     it("resolves the same input to the same output, every time", () => {

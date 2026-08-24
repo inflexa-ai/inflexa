@@ -50,10 +50,12 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
             'previous era, one entity the dataset is about), "output" (files a step produced), ' +
             '"summary" (a step\'s summary), "synthesis" (a run\'s literature-grounded synthesis), ' +
             '"input-kind" (a repeating set, on a profile of the previous era). ' +
-            "For input/output/summary/synthesis the entry id IS the workspace path; for a group or a " +
-            "dimension it is not, because each spans many files — search input-group for a group's " +
-            "display pattern, then list the tree for its members. Most input files carry no entry of " +
-            "their own: find them through their group and the listing tools.",
+            "For output/summary/synthesis the entry id IS the workspace path, and so it is for an " +
+            '"input" entry that annotates a file. An "input" entry for an ENTITY of a previous-era ' +
+            "profile addresses the entity, not a path — read its metadata rather than opening the id. " +
+            "For a group or a dimension the id is never a path, because each spans many files: search " +
+            "input-group for a group's display pattern, then list the tree for its members. Most input " +
+            "files carry no entry of their own — find them through their group and the listing tools.",
         inputSchema: z.object({
             query: z.string().min(1).describe("What to search for, in natural language"),
             type: z

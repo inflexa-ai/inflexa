@@ -60,6 +60,19 @@ export interface UpsertInput {
     readonly ids?: readonly string[];
 }
 
+/**
+ * A narrow delete surface: every entry of one index whose metadata `type` is named.
+ *
+ * `type` is the only dimension a caller may delete along, deliberately. The index holds
+ * several independently-owned tiers in one table, and a writer rebuilding its own tier
+ * has to be unable to reach another's — a general predicate would make that a review
+ * question rather than a type error.
+ */
+export interface DeleteByTypeInput {
+    readonly indexName: string;
+    readonly types: readonly string[];
+}
+
 export interface QueryInput {
     readonly indexName: string;
     readonly queryVector: readonly number[];
@@ -77,6 +90,7 @@ export interface VectorStore {
     createIndex(input: CreateIndexInput): ResultAsync<void, DbError>;
     buildIndex(input: BuildIndexInput): ResultAsync<void, DbError>;
     upsert(input: UpsertInput): ResultAsync<void, DbError>;
+    deleteByType(input: DeleteByTypeInput): ResultAsync<void, DbError>;
     query(input: QueryInput): ResultAsync<QueryResult[], DbError>;
 }
 
@@ -138,6 +152,14 @@ export function createVectorStore(pool: Pool): VectorStore {
                         [finalIds[i], vec, meta],
                     );
                 }
+            });
+        },
+
+        deleteByType({ indexName, types }) {
+            assertIdent(indexName);
+            if (types.length === 0) return okAsync(undefined);
+            return tryMutation("vectorStore.deleteByType", async () => {
+                await pool.query(`DELETE FROM "${indexName}" WHERE metadata->>'type' = ANY($1::text[])`, [[...types]]);
             });
         },
 

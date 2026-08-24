@@ -496,7 +496,15 @@ export function dimensionCategoryEntry(id: DimensionCategory): DimensionCategory
     return DIMENSION_CATEGORY_BY_ID.get(id)!;
 }
 
-/** The scope a dimension inherits from its category — derived, never agent-authored. */
-export function dimensionScope(id: DimensionCategory): DimensionScope {
-    return dimensionCategoryEntry(id).scope;
+/**
+ * The scope a dimension takes.
+ *
+ * Derived from the category for everything in the catalogue. `other` is by definition
+ * outside it, so there is nothing to derive from and the scope is the agent's to declare:
+ * a biological thing that varies and has no category is still biological, and pinning
+ * every `other` to technical would misfile it. Undeclared, it defaults to technical.
+ */
+export function dimensionScope(id: DimensionCategory, declared?: DimensionScope): DimensionScope {
+    if (id === "other") return declared ?? "technical";
+    return DIMENSION_CATEGORY_BY_ID.get(id)?.scope ?? "technical";
 }

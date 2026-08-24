@@ -183,7 +183,12 @@ const SplitOperationSchema = z
 const MergeOperationSchema = z
     .object({
         op: z.literal("merge"),
-        setIds: z.array(z.string()).min(2).max(MAX_MERGE_SETS).describe("Set ids from the menu, merged into one group."),
+        setIds: z
+            .array(z.string())
+            .min(2)
+            .max(MAX_MERGE_SETS)
+            .refine((ids) => new Set(ids).size === ids.length, { message: "Each set may be named once — a repeated id would claim its members twice." })
+            .describe("Distinct set ids from the menu, merged into one group."),
         group: GroupAnnotationSchema,
         reason: z.string().describe("Why these sets are one group despite instantiating different templates."),
     })
@@ -276,6 +281,10 @@ export const DimensionSchema = z
         label: z.string().describe("What this dimension is, in the dataset's own words."),
         category: z.enum(DIMENSION_CATEGORY_IDS).describe("The dimension's category, from the shipped vocabulary."),
         categoryLabel: z.string().optional().describe("Required when category is 'other': what actually varies."),
+        scope: z
+            .enum(["biological", "technical"])
+            .optional()
+            .describe("Only read when category is 'other', whose scope the catalogue cannot derive. Defaults to technical. Ignored for every other category."),
         description: z.string().optional().describe("What a downstream planner needs about this dimension — ordering, pairing, imbalance."),
         observations: z
             .array(ObservationSchema)

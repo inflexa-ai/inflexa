@@ -308,8 +308,8 @@ export function createInspectDataProfileTool(pool: Pool) {
                 if (status.status === "failed") {
                     // A failure that DID leave a prior profile on the row never reaches
                     // here — it is served as `stale`, where `stalenessReasons` names the
-                    // failed re-profile and compares the input sets through the single
-                    // shared predicate. This branch is the case with nothing to compare.
+                    // failed re-profile. This branch is the case with no prior profile to
+                    // serve at all.
                     return ok({
                         state: "failed",
                         error: status.error,
@@ -369,7 +369,10 @@ export function createInspectDataProfileTool(pool: Pool) {
                     accessions: result.accessions,
                     describedFileCount: described,
                     datasetFileCount: dataset,
-                    groupCount: result.groups || result.kinds ? groups.length : null,
+                    // Presence, not truthiness: a completed profile over a tree the scan kept
+                    // nothing of carries `groups: []`, and "zero groups" is a finding — reading
+                    // it as "no structure record" would report the analysis unprofiled.
+                    groupCount: result.groups !== undefined || result.kinds !== undefined ? groups.length : null,
                     ...(structureNote ? { structureNote } : {}),
                     ...(result.partition ? { partition: result.partition } : {}),
                     ...(result.coverage ? { coverage: result.coverage } : {}),
@@ -377,7 +380,7 @@ export function createInspectDataProfileTool(pool: Pool) {
             }
 
             if (scope === "groups") {
-                if (result.groups) {
+                if (result.groups !== undefined) {
                     return ok({
                         ...envelope,
                         scope: "groups",
@@ -389,7 +392,7 @@ export function createInspectDataProfileTool(pool: Pool) {
                         ...(result.recipe ? { recipe: result.recipe } : {}),
                     });
                 }
-                if (!result.kinds) {
+                if (result.kinds === undefined) {
                     return ok({
                         ...envelope,
                         scope: "groups",

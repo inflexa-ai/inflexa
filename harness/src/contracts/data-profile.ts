@@ -213,6 +213,20 @@ export interface DataProfileChecked {
 }
 
 /**
+ * Where a slot observation points, in terms that survive the scan that produced it.
+ *
+ * A slot id is per-scan ephemera — the same id names a different slot after a re-scan
+ * reorders the sets — so the durable binding is the set's template plus the slot's
+ * position within it, exactly as the recipe keys a split. A binding that no longer
+ * resolves strands the profile rather than rebinding to whatever now sits at that
+ * position.
+ */
+export interface DataProfileSlotBinding {
+    template: string;
+    slotIndex: number;
+}
+
+/**
  * One evidenced sighting of a dimension.
  *
  * A slot observation binds to a scanner slot, and its cardinality and values are computed
@@ -224,12 +238,23 @@ export type DataProfileObservation =
     | {
           kind: "slot";
           groupIds: string[];
+          /** Scan-scoped, and display-only past the scan that wrote it. `binding` is what replays. */
           slotId: string;
+          binding?: DataProfileSlotBinding;
           tokenClass: string;
           cardinality: number;
           sampleValues: string[];
           checked?: DataProfileChecked;
           checkedAgainst?: string;
+          /**
+           * The slot the SCANNER found this one repeats, with the members whose two tokens
+           * disagreed. Its own performed measurement, in members rather than values — and
+           * the reason `checked` stays absent for such a pair: affix recovery strips literal
+           * text off one side, so an exact value-set intersection over two positions the
+           * scan matched one-to-one would report them wholly disjoint.
+           */
+          sameAsSlot?: string;
+          sameAsSlotMismatches?: number;
           note?: string;
       }
     | {
@@ -308,6 +333,14 @@ export interface DataProfilePartition {
     unclassifiedMembers: number;
     unclassifiedFiles: number;
     quarantine: DataProfileQuarantine;
+    /**
+     * Members more than one operation claimed after the last repair round. Removed from
+     * every claimant and swept into `unclassified`, never awarded by precedence — a
+     * machine finding, so it is here rather than in the agent's caveats.
+     */
+    contested?: { members: number; sample: string[] };
+    /** True when the walk stopped at its file ceiling, so the census covers part of the tree. */
+    scanTruncated?: boolean;
 }
 
 /**
@@ -315,9 +348,15 @@ export interface DataProfilePartition {
  *
  * Menu ids are per-scan ephemera; templates survive a re-scan, so the recipe can be
  * re-resolved against a changed tree.
+ *
+ * `unclassified` is the one step no agent authored: it records the paths resolution swept
+ * because no operation claimed them. It is carried so a replay can tell a file the last
+ * profile already declined to classify from a file that is new to the tree — without it
+ * an unchanged tree re-absorbs as partial and wakes the agent to re-judge what it already
+ * judged.
  */
 export interface DataProfileRecipeStep {
-    op: "use" | "split" | "merge" | "group";
+    op: "use" | "split" | "merge" | "group" | "unclassified";
     /** The templates this step addressed. Empty for an explicit path grouping. */
     templates: string[];
     /** Position of the split slot within the addressed set's slots. */
@@ -325,6 +364,8 @@ export interface DataProfileRecipeStep {
     /** Slot values each resulting group claimed, for a value-mapped split. */
     valueMapping?: { groupId: string; values: string[] }[];
     paths?: string[];
+    /** True when `paths` holds a prefix of the step's membership rather than all of it. */
+    pathsTruncated?: boolean;
     groupIds: string[];
 }
 
