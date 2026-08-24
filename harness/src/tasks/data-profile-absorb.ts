@@ -17,15 +17,23 @@
  *
  * Group ids survive a replay because the reconstructed annotation carries the PERSISTED
  * group name, which is what the original resolution derived the id from — including the
- * `name — value` a slot split minted. A dimension's `groupIds` therefore still point at
- * the groups they pointed at.
+ * `name — value` a slot split minted. That is checked rather than trusted: every group id
+ * the recipe named must be present in the replayed resolution, so a step that resolved to
+ * nothing strands the recipe instead of quietly deleting a group and renumbering its
+ * siblings out from under a dimension's `groupIds`.
+ *
+ * Dimensions are re-resolved, not copied. Their slot observations are persisted as
+ * template + slot position, so a replay binds each to whatever the FRESH scan has there
+ * and recomputes its cardinality and values — a scan-scoped slot id would name a
+ * different slot after the set order changed, and the numbers riding on it would describe
+ * some other slot entirely.
  */
 
-import type { DataProfileGroup, DataProfileRecipeStep, DataProfileResult } from "../contracts/data-profile.js";
-import type { GroupCategory, GroupRole } from "../contracts/profile-vocabulary.js";
+import type { DataProfileDimension, DataProfileGroup, DataProfileRecipeStep, DataProfileResult } from "../contracts/data-profile.js";
+import type { DimensionCategory, GroupCategory, GroupRole } from "../contracts/profile-vocabulary.js";
 import type { SetMenu } from "../input-scan/menu.js";
 import type { DetectedSet, DetectedSets } from "../input-scan/set-types.js";
-import type { GroupAnnotation, MenuOperation, ProfileSubmission } from "../schemas/data-profile-schemas.js";
+import type { GroupAnnotation, MenuOperation, Observation, ProfileDimension, ProfileSubmission } from "../schemas/data-profile-schemas.js";
 import { resolveProfileSubmission, type ProfileResolution } from "./data-profile-resolve.js";
 
 /** Delta paths named in the repair briefing before the tail folds into a count. */
@@ -118,7 +126,10 @@ function replayStep(ctx: ReplayContext, step: DataProfileRecipeStep): MenuOperat
 
     if (step.op === "group") {
         const paths = (step.paths ?? []).filter((path) => ctx.kept.has(path));
-        if (paths.length === 0) return undefined;
+        // Every path gone means the group is gone. Absorbing the rest would report a FULL
+        // absorb over a profile that silently lost a group, renumbered its siblings, and
+        // left every dimension bound to it pointing at nothing.
+        if (paths.length === 0) throw new StrandedRecipe(`group: every path the recipe grouped as "${step.groupIds[0] ?? "(none)"}" is gone from the tree`);
         return { op: "group", paths, group: annotationOf(requireGroup(ctx, step.groupIds[0], "group"), ctx.kept) };
     }
 
@@ -136,12 +147,69 @@ function replayStep(ctx: ReplayContext, step: DataProfileRecipeStep): MenuOperat
 }
 
 /**
+ * Rebind one persisted dimension to the fresh scan.
+ *
+ * A slot observation is re-addressed through its template binding and nothing else: its
+ * cardinality and values are computed, not asserted, so carrying the persisted numbers
+ * across a scan would restate an old measurement under a new one's name. A binding that
+ * no longer resolves strands the recipe — rebinding to whatever now occupies that
+ * position would silently reattach the dimension to a different slot.
+ */
+function replayDimension(ctx: ReplayContext, dimension: DataProfileDimension): ProfileDimension {
+    const observations: Observation[] = dimension.observations.map((observation) => {
+        if (observation.kind !== "slot") return { ...observation };
+        const binding = observation.binding;
+        if (!binding) {
+            throw new StrandedRecipe(`dimension "${dimension.label}": a slot observation carries no template binding, so it cannot be re-resolved`);
+        }
+        const set = ctx.setsByTemplate.get(binding.template);
+        if (!set) throw new StrandedRecipe(`dimension "${dimension.label}": the template "${binding.template}" is not on the fresh menu`);
+        const slot = set.slots[binding.slotIndex];
+        if (!slot) {
+            throw new StrandedRecipe(
+                `dimension "${dimension.label}": the template "${binding.template}" no longer carries a slot at position ${binding.slotIndex}`,
+            );
+        }
+        return { kind: "slot", setId: set.id, slotId: slot.id, ...(observation.note ? { note: observation.note } : {}) };
+    });
+
+    return {
+        label: dimension.label,
+        category: dimension.category as DimensionCategory,
+        ...(dimension.categoryLabel ? { categoryLabel: dimension.categoryLabel } : {}),
+        ...(dimension.scope ? { scope: dimension.scope } : {}),
+        ...(dimension.description ? { description: dimension.description } : {}),
+        observations,
+        ...(dimension.reconciliations && dimension.reconciliations.length > 0
+            ? { reconciliations: dimension.reconciliations.map((entry) => ({ ...entry })) }
+            : {}),
+        ...(dimension.nestsUnder ? { nestsUnder: { ...dimension.nestsUnder } } : {}),
+        ...(dimension.treatmentReason ? { treatmentReason: dimension.treatmentReason } : {}),
+    };
+}
+
+/** Every group id the authored steps named, including a value-mapped split's per-value groups. */
+function namedGroupIds(steps: readonly DataProfileRecipeStep[]): string[] {
+    const ids = new Set<string>();
+    for (const step of steps) {
+        for (const id of step.groupIds) ids.add(id);
+        for (const entry of step.valueMapping ?? []) ids.add(entry.groupId);
+    }
+    return [...ids];
+}
+
+/**
  * Replay a completed profile's recipe against a fresh scan.
  *
- * Pure. Strandedness is decided while rebuilding the operations — a template, slot, or
- * group id that no longer resolves — so every fault the resolution itself reports (a value
- * no member takes any more, a grouped path that was deleted) is a fact about the tree
- * having moved, not about the recipe having come apart.
+ * Pure. Strandedness is decided both while rebuilding the operations — a template, slot,
+ * group id, or dimension binding that no longer resolves — and after resolving them, by
+ * checking that every group the recipe named came back. What remains is a fact about the
+ * tree having moved: files the recipe does not account for.
+ *
+ * The residue is replayed too. The recipe carries the paths the last resolution swept, so
+ * a file that profile already declined to classify re-sweeps deterministically and only a
+ * file NEW to the tree is delta — without that an unchanged tree would re-absorb as
+ * partial and wake the agent to re-judge what it already judged.
  */
 export function absorbRecipe(prior: DataProfileResult | null | undefined, detected: DetectedSets, menu: SetMenu): AbsorbOutcome {
     if (!prior?.recipe?.length || !prior.groups?.length) return { kind: "none" };
@@ -152,25 +220,46 @@ export function absorbRecipe(prior: DataProfileResult | null | undefined, detect
         kept: keptPaths(detected),
     };
 
+    const authored = prior.recipe.filter((step) => step.op !== "unclassified");
+    const sweep = prior.recipe.find((step) => step.op === "unclassified");
+    if (authored.length === 0) return { kind: "none" };
+
     let operations: MenuOperation[];
+    let dimensions: ProfileDimension[];
     try {
-        operations = prior.recipe.map((step) => replayStep(ctx, step)).filter((operation): operation is MenuOperation => operation !== undefined);
+        operations = authored.map((step) => replayStep(ctx, step)).filter((operation): operation is MenuOperation => operation !== undefined);
+        dimensions = (prior.dimensions ?? []).map((dimension) => replayDimension(ctx, dimension));
     } catch (err) {
         if (err instanceof StrandedRecipe) return { kind: "stranded", reason: err.message };
         throw err;
     }
-    if (operations.length === 0) return { kind: "stranded", reason: "every step of the recipe addressed files or templates that are gone" };
+    if (operations.length !== authored.length) {
+        return { kind: "stranded", reason: "a step of the recipe addressed files or templates that are gone" };
+    }
 
     const submission: ProfileSubmission = {
         operations,
+        ...(dimensions.length > 0 ? { dimensions } : {}),
         analysisSummary: prior.summary,
         domain: prior.domain ?? "",
         organism: prior.organism ?? null,
     };
-    const resolution = resolveProfileSubmission(submission, detected, menu);
+    // Final round by construction: no agent is awake to repair anything this raises, so a
+    // contested file sweeps rather than being awarded to whichever step ran first.
+    const resolution = resolveProfileSubmission(submission, detected, menu, { finalRound: true });
 
-    if (resolution.unclaimed.length === 0) return { kind: "full", operations, resolution };
-    return { kind: "partial", operations, resolution, delta: resolution.unclaimed };
+    const missing = namedGroupIds(authored).filter((id) => !resolution.groups.some((group) => group.id === id));
+    if (missing.length > 0) {
+        return { kind: "stranded", reason: `the replay produced no group for ${missing.join(", ")}, so the recipe no longer describes the tree` };
+    }
+    if (resolution.dimensions.length !== (prior.dimensions?.length ?? 0)) {
+        return { kind: "stranded", reason: "a dimension of the profile did not re-resolve against the fresh scan" };
+    }
+
+    const swept = new Set(sweep?.paths ?? []);
+    const delta = resolution.unclaimed.filter((path) => !swept.has(path));
+    if (delta.length === 0) return { kind: "full", operations, resolution };
+    return { kind: "partial", operations, resolution, delta };
 }
 
 /** A carried-forward group in full, so resubmitting it verbatim needs no recall. */
@@ -212,7 +301,7 @@ export function renderAbsorbDelta(outcome: Extract<AbsorbOutcome, { kind: "parti
     }
 
     lines.push("");
-    lines.push(`${outcome.delta.length} kept files are NOT accounted for by them:`);
+    lines.push(`${outcome.delta.length} kept files are NEW to the tree and accounted for by nothing above:`);
     for (const path of outcome.delta.slice(0, MAX_DELTA_PATHS)) lines.push(`- ${path}`);
     if (outcome.delta.length > MAX_DELTA_PATHS) lines.push(`- … ${outcome.delta.length - MAX_DELTA_PATHS} more`);
 
@@ -221,6 +310,7 @@ export function renderAbsorbDelta(outcome: Extract<AbsorbOutcome, { kind: "parti
     lines.push("and add the operations that claim them. Then resubmit the WHOLE operation list — the");
     lines.push("carried-forward ones unchanged unless the new files change what a group MEANS, plus");
     lines.push("yours. Do not re-author what already resolves, and do not re-read files the carried");
-    lines.push("operations already describe.");
+    lines.push("operations already describe. Anything you still leave unclaimed sweeps into `unclassified`,");
+    lines.push("as the previous profile's own residue already has.");
     return lines.join("\n");
 }

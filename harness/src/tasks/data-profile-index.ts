@@ -33,6 +33,17 @@ import type { DataProfileFile } from "../state/data-profile.js";
 /** Entity entries built for a legacy profile. Past this the entity tier is a liability, not a search aid. */
 export const MAX_ENTITY_ENTRIES = 20_000;
 
+/**
+ * Every metadata `type` a profile writes, in either era.
+ *
+ * The index is a pure PROJECTION, so re-indexing replaces rather than merges: an upsert
+ * keyed by entry id leaves the entries of a renamed group, a dropped dimension, or a
+ * de-annotated member behind forever, searchable and wrong. Clearing exactly these types
+ * clears exactly what a profile wrote — step outputs, summaries, and syntheses carry their
+ * own types and are untouched.
+ */
+export const PROFILE_INDEX_TYPES = ["input-group", "input-dimension", "input", "input-kind"] as const;
+
 /** Group names named in one legacy entity entry's text. */
 const MAX_GROUPS_IN_ENTITY_TEXT = 6;
 
@@ -242,7 +253,9 @@ function legacyEntries(analysisId: string, result: DataProfileResult, scan: Inpu
  */
 export function buildProfileIndexEntries(args: BuildProfileIndexArgs): ProfileIndexEntry[] {
     const { analysisId, result, scan } = args;
-    if (!result.groups) return legacyEntries(analysisId, result, scan);
+    // Presence, not truthiness: a tree the scan kept nothing of resolves to `groups: []`,
+    // and that is a groups-era record with no groups, not a record from before groups.
+    if (result.groups === undefined) return legacyEntries(analysisId, result, scan);
 
     const entries = result.groups.map((group) => groupEntry(analysisId, group));
     for (const dimension of result.dimensions ?? []) entries.push(dimensionEntry(analysisId, dimension));

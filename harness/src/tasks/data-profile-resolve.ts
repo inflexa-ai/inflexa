@@ -10,8 +10,11 @@
  * The partition is the load-bearing invariant: every kept file lands in exactly one
  * group. Overlapping operations are an error returned for repair rather than resolved by
  * precedence — precedence would silently pick a winner and the profile would still read
- * as complete. Files no operation claims are swept into a visible `unclassified` group,
- * so "how much did the profile cover" stops being a question and becomes a census.
+ * as complete. Past the last repair round there is nobody left to return them to, so a
+ * still-contested file is removed from EVERY claimant and swept, recorded as a machine
+ * finding: unowned and counted once beats owned by a winner nobody chose. Files no
+ * operation claims are swept into the same visible `unclassified` group, so "how much did
+ * the profile cover" stops being a question and becomes a census.
  */
 
 import { assessCompleteness } from "../input-scan/companions.js";
@@ -35,6 +38,19 @@ import { MAX_SPLIT_GROUPS } from "../schemas/data-profile-schemas.js";
 /** The id the swept residue carries. Visible in the record and in the accounting. */
 export const UNCLASSIFIED_GROUP_ID = "unclassified";
 
+/**
+ * Sweep paths the recipe carries, so a replay can tell a file the last profile declined
+ * to classify from one that is new to the tree.
+ *
+ * Bounded because the record is a thin ledger and the row is detoasted by every reader.
+ * A sweep past the bound records a prefix and says so; its replay wakes the agent, which
+ * is the honest outcome for a profile that left that many files unaccounted for.
+ */
+export const MAX_UNCLASSIFIED_RECIPE_PATHS = 1000;
+
+/** Contested paths named in the accounting before the count stands alone. */
+export const MAX_CONTESTED_SAMPLE = 10;
+
 /** A resolved group plus the membership the record deliberately does not carry. */
 export interface ResolvedGroup extends DataProfileGroup {
     /** Member paths — what the index projects from. The persisted record holds counts only. */
@@ -46,6 +62,8 @@ export interface ProfileResolution {
     readonly errors: readonly string[];
     /** Kept members no operation claimed. Already swept into the `unclassified` group below. */
     readonly unclaimed: readonly string[];
+    /** Kept members more than one operation claimed. Swept rather than awarded on the final round. */
+    readonly contested: readonly string[];
     readonly groups: readonly ResolvedGroup[];
     readonly dimensions: readonly DataProfileDimension[];
     readonly probes: readonly DataProfileProbeReport[];
@@ -134,10 +152,10 @@ function narrowSlot(slot: SetSlot, values: readonly string[]): DataProfileGroupS
     };
 }
 
-function groupSlots(detected: DetectedSets, draft: DraftGroup): DataProfileGroupSlot[] {
+function groupSlots(detected: DetectedSets, draft: DraftGroup, claims: readonly Claim[]): DataProfileGroupSlot[] {
     const slots: DataProfileGroupSlot[] = [];
     for (const set of draft.sets) {
-        const indices = draft.claims.filter((claim) => claim.set?.id === set.id && claim.memberIndex !== undefined).map((claim) => claim.memberIndex!);
+        const indices = claims.filter((claim) => claim.set?.id === set.id && claim.memberIndex !== undefined).map((claim) => claim.memberIndex!);
         for (const slot of set.slots) {
             const values = detected.memberSlotValues.get(slot.id);
             if (!values) continue;
@@ -152,11 +170,11 @@ function groupSlots(detected: DetectedSets, draft: DraftGroup): DataProfileGroup
     return slots;
 }
 
-function finalizeGroup(detected: DetectedSets, draft: DraftGroup, id: string): ResolvedGroup {
-    const members = draft.claims.map((claim) => claim.member);
+function finalizeGroup(detected: DetectedSets, draft: DraftGroup, id: string, claims: readonly Claim[]): ResolvedGroup {
+    const members = claims.map((claim) => claim.member);
     const { annotation } = draft;
     const { completeness } = assessCompleteness(members);
-    const slots = groupSlots(detected, draft);
+    const slots = groupSlots(detected, draft, claims);
 
     return {
         id,
@@ -304,7 +322,11 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
     const claimedValues = new Set<string>();
     for (const mapped of op.by.groups) {
         const indices: number[] = [];
-        for (const value of mapped.values) {
+        const taken: string[] = [];
+        // Deduped within the group first: a value repeated inside ONE group's list is a
+        // typo, not a cross-group overlap, and reading it as one accused the group of
+        // colliding with itself.
+        for (const value of new Set(mapped.values)) {
             if (claimedValues.has(value)) {
                 ctx.errors.push(`split ${op.setId} by ${slot.id}: value "${value}" is claimed by more than one group.`);
                 continue;
@@ -318,6 +340,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
                 continue;
             }
             indices.push(...bucket);
+            taken.push(value);
         }
         if (indices.length === 0) continue;
         emit(ctx, entry, {
@@ -326,7 +349,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
             displayPattern: set.pathTemplate,
             sets: [set],
             claims: claimsAt(set, indices),
-            splitValues: [...mapped.values],
+            splitValues: taken,
         });
     }
 
@@ -355,7 +378,16 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
 
 function applyMerge(ctx: OperationContext, op: Extract<MenuOperation, { op: "merge" }>): void {
     const sets: DetectedSet[] = [];
+    const named = new Set<string>();
     for (const setId of op.setIds) {
+        // A repeated id would claim the same members twice under one group id, which no
+        // cross-group overlap check can see. The schema refuses it too; this is the half
+        // that holds for a submission the schema never validated (a replayed recipe).
+        if (named.has(setId)) {
+            ctx.errors.push(`merge: set "${setId}" is named more than once. Each set may be merged once.`);
+            continue;
+        }
+        named.add(setId);
         const set = resolveSet(ctx, setId, "merge");
         if (set) sets.push(set);
     }
@@ -417,7 +449,8 @@ function resolveObservation(observation: Observation, ctx: ObservationContext): 
         ctx.errors.push(`dimension "${ctx.label}": slot observation names set "${observation.setId}", which is not on the menu.`);
         return undefined;
     }
-    const slot = set.slots.find((candidate) => candidate.id === observation.slotId);
+    const slotIndex = set.slots.findIndex((candidate) => candidate.id === observation.slotId);
+    const slot = set.slots[slotIndex];
     if (!slot) {
         ctx.errors.push(`dimension "${ctx.label}": set "${observation.setId}" has no slot "${observation.slotId}".`);
         return undefined;
@@ -427,11 +460,22 @@ function resolveObservation(observation: Observation, ctx: ObservationContext): 
         kind: "slot",
         groupIds: [...(ctx.groupsBySet.get(set.id) ?? [])],
         slotId: slot.id,
+        // Template + position, not the scan-scoped id: an absorb re-resolves this against a
+        // fresh scan, where the same id can name a different slot, and every number below is
+        // recomputed from whatever it resolves to.
+        binding: { template: set.pathTemplate, slotIndex },
         tokenClass: slot.tokenClass,
         cardinality: slot.distinctValues,
         sampleValues: [...values].sort((a, b) => a.localeCompare(b, "en")).slice(0, MAX_SLOT_SAMPLE_VALUES),
         ...(observation.note ? { note: observation.note } : {}),
     };
+}
+
+/** Every slot of the scan, keyed by id — the scanner's own view of what a slot observation points at. */
+function slotsById(detected: DetectedSets): Map<string, SetSlot> {
+    const byId = new Map<string, SetSlot>();
+    for (const set of detected.sets) for (const slot of set.slots) byId.set(slot.id, slot);
+    return byId;
 }
 
 /**
@@ -440,15 +484,32 @@ function resolveObservation(observation: Observation, ctx: ObservationContext): 
  * Both value sets are known host-side, so the check is PERFORMED rather than claimed —
  * and where it was not performed the field is simply absent. A boolean would assert an
  * exhaustive comparison that never happened.
+ *
+ * Two positions the SCANNER already linked are exempt. It matched them member by member
+ * and counted the disagreements; an exact-string intersection over their value sets
+ * measures something else, because affix recovery strips literal text off one side and
+ * identical identifiers then compare unequal. Running it anyway would persist
+ * `matched: 0` — a claim of total disjointness — over a one-to-one correspondence.
  */
 function crossCheckSlots(detected: DetectedSets, observations: readonly DataProfileObservation[]): DataProfileObservation[] {
     const reference = observations.find((observation) => observation.kind === "slot");
     if (!reference || reference.kind !== "slot") return [...observations];
+    const byId = slotsById(detected);
+    const referenceSlot = byId.get(reference.slotId);
     const referenceValues = new Set(detected.slotValues.get(reference.slotId) ?? []);
-    if (referenceValues.size === 0) return [...observations];
 
     return observations.map((observation) => {
         if (observation.kind !== "slot" || observation.slotId === reference.slotId || observation.checked) return observation;
+        const slot = byId.get(observation.slotId);
+        if (slot?.sameAsSlot === reference.slotId || referenceSlot?.sameAsSlot === observation.slotId) {
+            const linked = slot?.sameAsSlot === reference.slotId ? slot : referenceSlot;
+            return {
+                ...observation,
+                sameAsSlot: reference.slotId,
+                ...(linked?.crossCheckMismatches !== undefined ? { sameAsSlotMismatches: linked.crossCheckMismatches } : {}),
+            };
+        }
+        if (referenceValues.size === 0) return observation;
         const values = detected.slotValues.get(observation.slotId) ?? [];
         if (values.length === 0) return observation;
         const matched = values.filter((value) => referenceValues.has(value)).length;
@@ -487,7 +548,7 @@ function resolveDimensions(
             label: dimension.label,
             category: dimension.category,
             ...(dimension.categoryLabel ? { categoryLabel: dimension.categoryLabel } : {}),
-            scope: dimensionScope(dimension.category),
+            scope: dimensionScope(dimension.category, dimension.scope),
             ...(dimension.description ? { description: dimension.description } : {}),
             observations: crossCheckSlots(detected, observations),
             ...(dimension.reconciliations && dimension.reconciliations.length > 0
@@ -505,6 +566,15 @@ function resolveDimensions(
     return resolved;
 }
 
+export interface ResolveOptions {
+    /**
+     * True when no repair round follows. A contested file is then swept rather than
+     * reported: there is nobody left to hand the error to, and leaving it with whichever
+     * operation ran first would be the precedence the partition forbids.
+     */
+    readonly finalRound?: boolean;
+}
+
 /**
  * Resolve a submission against the scan it was authored over.
  *
@@ -513,7 +583,12 @@ function resolveDimensions(
  * round is a full resubmit, and after it the residue sweeps rather than blocking a
  * profile that gates planning.
  */
-export function resolveProfileSubmission(submission: ProfileSubmission, detected: DetectedSets, menu: SetMenu = buildSetMenu(detected)): ProfileResolution {
+export function resolveProfileSubmission(
+    submission: ProfileSubmission,
+    detected: DetectedSets,
+    menu: SetMenu = buildSetMenu(detected),
+    options: ResolveOptions = {},
+): ProfileResolution {
     const errors: string[] = [];
     const byPath = keptMembers(detected);
     const ctx: OperationContext = {
@@ -550,32 +625,76 @@ export function resolveProfileSubmission(submission: ProfileSubmission, detected
         }
     }
 
-    const claimedBy = new Map<string, string>();
+    // Claims are normalized before anything counts them. Within a draft a path appears at
+    // most once — an operation naming the same set twice would otherwise put its members in
+    // one group twice, which no cross-group check can see. Across drafts, a path more than
+    // one draft claims is CONTESTED.
+    const claimsByDraft = new Map<DraftGroup, Claim[]>();
+    const claimants = new Map<string, string[]>();
     for (const draft of ctx.drafts) {
         const id = ids.get(draft)!;
+        const seen = new Set<string>();
+        const kept: Claim[] = [];
         for (const claim of draft.claims) {
-            const owner = claimedBy.get(claim.member.path);
-            if (owner !== undefined && owner !== id) {
-                errors.push(`"${claim.member.path}" is claimed by both "${owner}" and "${id}". A kept file belongs to exactly one group.`);
-                continue;
-            }
-            claimedBy.set(claim.member.path, id);
+            if (seen.has(claim.member.path)) continue;
+            seen.add(claim.member.path);
+            kept.push(claim);
+            const owners = claimants.get(claim.member.path);
+            if (owners) owners.push(id);
+            else claimants.set(claim.member.path, [id]);
         }
-        const members = new Set(draft.claims.map((claim) => claim.member.path));
+        claimsByDraft.set(draft, kept);
+
         for (const annotation of draft.annotation.memberAnnotations ?? []) {
-            if (!members.has(annotation.path)) errors.push(`group "${id}": annotated member "${annotation.path}" is not one of its members.`);
+            if (!seen.has(annotation.path)) errors.push(`group "${id}": annotated member "${annotation.path}" is not one of its members.`);
         }
         if (draft.annotation.category === "other" && !draft.annotation.categoryLabel) {
             errors.push(`group "${id}": category "other" needs a categoryLabel saying what it is.`);
         }
     }
 
-    const unclaimed = [...byPath.keys()].filter((path) => !claimedBy.has(path)).sort((a, b) => a.localeCompare(b, "en"));
+    const contested = [...claimants]
+        .filter(([, owners]) => owners.length > 1)
+        .map(([path]) => path)
+        .sort((a, b) => a.localeCompare(b, "en"));
+
+    if (contested.length > 0) {
+        const disputed = new Set(contested);
+        if (options.finalRound) {
+            // Removed from every claimant, not awarded to one: it lands in `unclassified`,
+            // counted exactly once, and the accounting says how many were swept that way.
+            for (const [draft, kept] of claimsByDraft)
+                claimsByDraft.set(
+                    draft,
+                    kept.filter((claim) => !disputed.has(claim.member.path)),
+                );
+        } else {
+            for (const path of contested) {
+                const owners = claimants.get(path)!;
+                errors.push(`"${path}" is claimed by both "${owners[0]}" and "${owners[1]}". A kept file belongs to exactly one group.`);
+            }
+            // The repair round decides who keeps it. Until then the first claimant holds it,
+            // so the accounting handed back to the agent still sums.
+            for (const [draft, kept] of claimsByDraft) {
+                const id = ids.get(draft)!;
+                claimsByDraft.set(
+                    draft,
+                    kept.filter((claim) => !disputed.has(claim.member.path) || claimants.get(claim.member.path)![0] === id),
+                );
+            }
+        }
+    }
+
+    const claimed = new Set<string>();
+    for (const kept of claimsByDraft.values()) for (const claim of kept) claimed.add(claim.member.path);
+
+    const unclaimed = [...byPath.keys()].filter((path) => !claimed.has(path)).sort((a, b) => a.localeCompare(b, "en"));
     const drafts = [...ctx.drafts];
     if (unclaimed.length > 0) {
         const residue = unclassifiedDraft(unclaimed.map((path) => byPath.get(path)!));
         drafts.push(residue);
         ids.set(residue, UNCLASSIFIED_GROUP_ID);
+        claimsByDraft.set(residue, [...residue.claims]);
     }
 
     for (const entry of ctx.recipe) {
@@ -585,7 +704,19 @@ export function resolveProfileSubmission(submission: ProfileSubmission, detected
         }
     }
 
-    const groups = drafts.map((draft) => finalizeGroup(detected, draft, ids.get(draft)!));
+    const recipe: DataProfileRecipeStep[] = ctx.recipe.map((entry) => entry.step);
+    if (unclaimed.length > 0) {
+        const paths = unclaimed.slice(0, MAX_UNCLASSIFIED_RECIPE_PATHS);
+        recipe.push({
+            op: "unclassified",
+            templates: [],
+            paths,
+            ...(unclaimed.length > paths.length ? { pathsTruncated: true } : {}),
+            groupIds: [UNCLASSIFIED_GROUP_ID],
+        });
+    }
+
+    const groups = drafts.map((draft) => finalizeGroup(detected, draft, ids.get(draft)!, claimsByDraft.get(draft) ?? []));
     const unclassifiedGroup = groups.find((group) => group.unclassified);
 
     const partition: DataProfilePartition = {
@@ -601,16 +732,19 @@ export function resolveProfileSubmission(submission: ProfileSubmission, detected
             reasons: detected.quarantine.reasons.map((entry) => ({ reason: entry.reason, count: entry.count })),
             sample: [...detected.quarantine.sample],
         },
+        ...(contested.length > 0 ? { contested: { members: contested.length, sample: contested.slice(0, MAX_CONTESTED_SAMPLE) } } : {}),
+        ...(menu.truncated ? { scanTruncated: true } : {}),
     };
 
     return {
         errors,
         unclaimed,
+        contested,
         groups,
         dimensions: resolveDimensions(submission, detected, ctx.menuSets, groupsBySet, errors),
         probes: (submission.probes ?? []).map((probe) => ({ ...probe })),
         partition,
-        recipe: ctx.recipe.map((entry) => entry.step),
+        recipe,
     };
 }
 
@@ -620,6 +754,9 @@ export function formatResolutionErrors(resolution: ProfileResolution, unclaimedS
     if (resolution.errors.length > 0) {
         lines.push("Your operations did not resolve:");
         for (const error of resolution.errors) lines.push(`- ${error}`);
+    }
+    if (resolution.contested.length > 0) {
+        lines.push("Leave these claimed once. On a resubmit that still contests them they are swept into `unclassified` rather than awarded to either group.");
     }
     if (resolution.unclaimed.length > 0) {
         lines.push(`${resolution.unclaimed.length} kept files are claimed by no operation:`);

@@ -59,7 +59,7 @@ import type { DetectedSets } from "../input-scan/set-types.js";
 import { scanInputTree } from "../input-scan/scan.js";
 import type { HeaderReadout, InputScan } from "../input-scan/types.js";
 import type { DataProfileDimension, DataProfileGroup, DataProfileProbeReport } from "../contracts/data-profile.js";
-import { buildProfileIndexEntries } from "./data-profile-index.js";
+import { PROFILE_INDEX_TYPES, buildProfileIndexEntries } from "./data-profile-index.js";
 import { absorbRecipe, renderAbsorbDelta, type AbsorbKind } from "./data-profile-absorb.js";
 import { formatResolutionErrors, resolveProfileSubmission, type ProfileResolution, type ResolvedGroup } from "./data-profile-resolve.js";
 import {
@@ -256,6 +256,25 @@ async function readSetHeaders(args: {
     }
 }
 
+/**
+ * The submission a tree with nothing to group would have produced.
+ *
+ * Authored here rather than by a model: with no kept file there is no judgement to make,
+ * and the fields below say exactly that. Resolution turns it into the census — zero
+ * groups against a full quarantine accounting — which is the honest record of such a tree
+ * and is what keeps `inspect_data_profile` from reporting the analysis unprofiled.
+ */
+function emptySubmission(): ProfileSubmission {
+    return {
+        operations: [],
+        analysisSummary:
+            "The input scan kept no files: every staged file was quarantined as OS junk, an editor temp, or a partial download. " +
+            "There is no dataset structure to describe. See the quarantine accounting for what was set aside and why.",
+        domain: "",
+        organism: null,
+    };
+}
+
 /** The membership the persisted record deliberately does not carry. */
 function withoutMembers(groups: readonly ResolvedGroup[]): DataProfileGroup[] {
     return groups.map(({ memberPaths, ...group }) => {
@@ -282,6 +301,10 @@ export function buildAbsorbedResult(
     return {
         ...prior,
         groups: withoutMembers(resolution.groups),
+        // Re-resolved, not carried: a slot observation's cardinality and values are computed
+        // from the scan, and the scan just changed. The labels and the reasoning are the
+        // profile's existing finding; the numbers under them are this replay's.
+        dimensions: [...resolution.dimensions],
         partition: resolution.partition,
         recipe: [...resolution.recipe],
         inputSignature: computeInputSignature(stagedInputs),
@@ -311,6 +334,11 @@ async function indexProfile(args: {
     const vectorStore = createVectorStore(deps.pool);
     const indexName = searchIndexName(analysisId);
     const entries = buildProfileIndexEntries({ analysisId, result: record, scan });
+
+    // Replace, don't merge. The tiers are a projection of THIS profile, and an upsert keyed
+    // by entry id leaves a renamed group, a dropped dimension, and a de-annotated member
+    // behind — searchable, and describing a profile that no longer exists.
+    unwrapOrThrow(await vectorStore.deleteByType({ indexName, types: [...PROFILE_INDEX_TYPES] }));
 
     // Batched: both interfaces already take arrays, and one round trip per entry is
     // what made indexing 12 of the 39 minutes the motivating profile took.
@@ -342,7 +370,8 @@ async function indexProfile(args: {
 function logProfileMonitoring(
     logger: Logger,
     args: {
-        readonly resolution: ProfileResolution;
+        /** Absent on a profile that completed without resolving anything — an empty or wholly quarantined tree. */
+        readonly resolution?: ProfileResolution;
         readonly dimensions: readonly DataProfileDimension[];
         readonly probes: readonly DataProfileProbeReport[];
         readonly repairRounds: number;
@@ -353,10 +382,12 @@ function logProfileMonitoring(
     logger.info("profile monitoring", {
         absorb,
         repairRounds,
-        unresolvedOperations: resolution.errors.length,
-        unclassifiedFiles: resolution.partition.unclassifiedFiles,
-        keptFiles: resolution.partition.keptFiles,
-        otherGroupCategories: resolution.groups.filter((group) => group.category === "other" && !group.unclassified).length,
+        unresolvedOperations: resolution?.errors.length ?? 0,
+        contestedFiles: resolution?.contested.length ?? 0,
+        unclassifiedFiles: resolution?.partition.unclassifiedFiles ?? 0,
+        keptFiles: resolution?.partition.keptFiles ?? 0,
+        scanTruncated: resolution?.partition.scanTruncated ?? false,
+        otherGroupCategories: (resolution?.groups ?? []).filter((group) => group.category === "other" && !group.unclassified).length,
         otherDimensionCategories: dimensions.filter((dimension) => dimension.category === "other").length,
         probeNotFound: probes.filter((probe) => probe.outcome === "not-found").length,
     });
@@ -420,6 +451,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // input. The body never downloads.
         if (stagedInputs.length === 0) {
             logger.warn("no input files staged");
+            // One event per completed profile, this one included: the counters are how the
+            // catalogue's fit is measured, and a completion that emitted none would make the
+            // empty-manifest path invisible to the same monitoring that watches every other.
+            logProfileMonitoring(logger, { dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
             if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId))) logTerminalNoop(logger, analysisId, "completion");
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
             // This is a terminal completion like any other, so it reports one — a consumer watching
@@ -458,7 +493,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         await activity.scanning();
         const scan = await scanInputTree({ session: childSession, fs: deps.workspaceFs, root: STAGED_INPUT_ROOT });
         const detected = detectSets(scan.files);
-        const menu = buildSetMenu(detected);
+        const menu = buildSetMenu(detected, { truncated: scan.manifest.truncated });
         logger.info("input scan complete", {
             files: detected.fileCount,
             kept: detected.keptFileCount,
@@ -469,7 +504,24 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             truncated: scan.manifest.truncated,
         });
 
-        // 3a. Absorption — replay a prior profile's recipe against the fresh scan. A recipe
+        // 3a. A tree the scan kept nothing of. There is no menu to author against and no file
+        // to describe, so a sandbox and a model pass would produce an empty submission at the
+        // cost of a container. The quarantine accounting is the whole finding, and it is a
+        // real one: it names every file and why each was set aside.
+        if (detected.keptFileCount === 0) {
+            logger.warn("every scanned file was quarantined", { scanned: detected.fileCount, quarantined: detected.quarantine.count });
+            const resolution = resolveProfileSubmission(emptySubmission(), detected, menu, { finalRound: true });
+            const record = buildDataProfileResult(emptySubmission(), resolution, stagedInputs, new Date().toISOString());
+            await activity.indexing();
+            await indexProfile({ deps, analysisId, session: runSession, record, scan, logger });
+            logProfileMonitoring(logger, { resolution, dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
+            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, record))) logTerminalNoop(logger, analysisId, "completion");
+            await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            await activity.complete();
+            return;
+        }
+
+        // 3b. Absorption — replay a prior profile's recipe against the fresh scan. A recipe
         // covering every kept file completes the profile here: an added directory of files
         // that instantiate templates the profile already describes is arithmetic, and paying
         // a container and a model pass for it is what this pre-step exists to remove.
@@ -626,8 +678,12 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 describeCall: "none",
                 execute: async (input): Promise<Result<SubmitOutcome, ToolError>> => {
                     rounds++;
-                    const resolution = resolveProfileSubmission(input, detected, briefingMenu);
-                    if (rounds < MAX_SUBMIT_ROUNDS && (resolution.errors.length > 0 || resolution.unclaimed.length > 0)) {
+                    // The last round resolves as final: nothing that follows can repair an
+                    // overlap, so a contested file sweeps rather than being awarded to whichever
+                    // operation the agent happened to write first.
+                    const finalRound = rounds >= MAX_SUBMIT_ROUNDS;
+                    const resolution = resolveProfileSubmission(input, detected, briefingMenu, { finalRound });
+                    if (!finalRound && (resolution.errors.length > 0 || resolution.unclaimed.length > 0)) {
                         return ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) });
                     }
                     accepted = { submission: input, resolution };

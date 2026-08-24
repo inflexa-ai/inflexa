@@ -17,6 +17,21 @@ function file(path: string, format: string, extensions: string[] = [], wrapper?:
     return { path, size: 100, extensions, format, ...(wrapper ? { wrapper } : {}) };
 }
 
+/**
+ * Deterministic PRNG (mulberry32), the same one the property suite uses. A power-of-two
+ * LCG's low bits cycle, so `next() % 2` would alternate and the "arbitrary" partition
+ * below would only ever be one of them.
+ */
+function rng(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+        state = (state + 0x6d2b79f5) >>> 0;
+        let t = Math.imul(state ^ (state >>> 15), 1 | state);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
 const id = (n: number) => `S${String(n).padStart(3, "0")}`;
 
 const SUBJECTS = 6;
@@ -240,12 +255,11 @@ describe("the partition", () => {
 
     it("holds the invariant under arbitrary partitions of the leftovers", () => {
         const leftovers = detected.leftoverMembers.map((member) => member.path);
-        let seed = 7;
-        const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+        const random = rng(7);
 
         for (let round = 0; round < 40; round++) {
             const buckets: string[][] = [[], []];
-            for (const path of leftovers) buckets[next() % buckets.length]!.push(path);
+            for (const path of leftovers) buckets[Math.floor(random() * buckets.length)]!.push(path);
 
             const operations: MenuOperation[] = [
                 { op: "use", setId: calls.id, group: annotation("calls") },
@@ -317,6 +331,120 @@ describe("the partition", () => {
             menu,
         );
         expect(resolution.errors.join(" ")).toContain("needs a categoryLabel");
+    });
+});
+
+describe("a contested file on the final round", () => {
+    /** Two operations that both claim every member of the calls set. */
+    const overlapping: MenuOperation[] = claimEverything([
+        { op: "use", setId: calls.id, group: annotation("calls") },
+        { op: "use", setId: calls.id, group: annotation("calls again") },
+    ]);
+
+    it("is still an error while a repair round remains", () => {
+        const resolution = resolveProfileSubmission(submission(overlapping), detected, menu);
+
+        expect(resolution.contested).toHaveLength(calls.memberCount);
+        expect(resolution.errors.filter((error) => error.includes("claimed by both"))).toHaveLength(calls.memberCount);
+    });
+
+    it("is removed from every claimant and swept, never awarded to one", () => {
+        const resolution = resolveProfileSubmission(submission(overlapping), detected, menu, { finalRound: true });
+        const first = resolution.groups.find((group) => group.name === "calls")!;
+        const second = resolution.groups.find((group) => group.name === "calls again")!;
+        const unclassified = resolution.groups.find((group) => group.id === UNCLASSIFIED_GROUP_ID)!;
+
+        expect(first.memberPaths).toEqual([]);
+        expect(second.memberPaths).toEqual([]);
+        expect([...unclassified.memberPaths].sort()).toEqual([...calls.members.map((member) => member.path)].sort());
+        expect(resolution.errors.filter((error) => error.includes("claimed by both"))).toEqual([]);
+    });
+
+    it("is recorded in the accounting as a machine finding", () => {
+        const resolution = resolveProfileSubmission(submission(overlapping), detected, menu, { finalRound: true });
+
+        expect(resolution.partition.contested!.members).toBe(calls.memberCount);
+        expect(resolution.partition.contested!.sample.length).toBeGreaterThan(0);
+        expect(resolution.partition.contested!.sample.every((path) => path.includes("/calls/"))).toBe(true);
+    });
+
+    it("leaves the accounting summing, with no path counted twice", () => {
+        for (const finalRound of [false, true]) {
+            const resolution = resolveProfileSubmission(submission(overlapping), detected, menu, { finalRound });
+            const claimed = resolution.groups.flatMap((group) => group.memberPaths);
+
+            expect(new Set(claimed).size).toBe(claimed.length);
+            expect(resolution.groups.reduce((total, group) => total + group.fileCount, 0)).toBe(detected.keptFileCount);
+            expect(resolution.partition.keptFiles).toBe(detected.keptFileCount);
+        }
+    });
+});
+
+describe("an operation that claims the same members twice", () => {
+    it("is refused by the schema when a merge repeats a set id", () => {
+        const parsed = ProfileSubmissionSchema.safeParse(
+            submission([{ op: "merge", setIds: [calls.id, calls.id], group: annotation("doubled"), reason: "Repeated on purpose." }]),
+        );
+        expect(parsed.success).toBe(false);
+    });
+
+    it("is refused by resolution too, and counts the members once", () => {
+        const resolution = resolveProfileSubmission(
+            submission(claimEverything([{ op: "merge", setIds: [calls.id, calls.id], group: annotation("doubled"), reason: "Repeated on purpose." }])),
+            detected,
+            menu,
+        );
+        expect(resolution.errors.join(" ")).toContain('set "' + calls.id + '" is named more than once');
+        expect(resolution.groups.some((group) => group.name === "doubled")).toBe(false);
+        expect(resolution.partition.keptFiles).toBe(detected.keptFileCount);
+    });
+
+    it("does not read a value repeated inside ONE mapped group as a cross-group overlap", () => {
+        const resolution = resolveProfileSubmission(
+            submission(
+                claimEverything([
+                    {
+                        op: "split",
+                        setId: calls.id,
+                        by: {
+                            kind: "values",
+                            slotId: originSlot.id,
+                            groups: [
+                                { values: ["somatic", "somatic"], group: annotation("somatic calls") },
+                                { values: ["germline"], group: annotation("germline calls") },
+                            ],
+                        },
+                        reason: "Different substrates.",
+                    },
+                ]),
+            ),
+            detected,
+            menu,
+        );
+        const somatic = resolution.groups.find((group) => group.name === "somatic calls")!;
+
+        expect(resolution.errors).toEqual([]);
+        expect(somatic.count).toBe(SUBJECTS);
+        expect(resolution.recipe.find((step) => step.op === "split")!.valueMapping).toEqual([
+            { groupId: "somatic-calls", values: ["somatic"] },
+            { groupId: "germline-calls", values: ["germline"] },
+        ]);
+    });
+});
+
+describe("the swept residue is carried in the recipe", () => {
+    it("records the paths it swept, so a replay can tell them from files new to the tree", () => {
+        const resolution = resolveProfileSubmission(submission([{ op: "use", setId: calls.id, group: annotation("calls") }]), detected, menu);
+        const sweep = resolution.recipe.find((step) => step.op === "unclassified")!;
+
+        expect(sweep.groupIds).toEqual([UNCLASSIFIED_GROUP_ID]);
+        expect([...sweep.paths!].sort()).toEqual([...resolution.unclaimed].sort());
+        expect(sweep).not.toHaveProperty("pathsTruncated");
+    });
+
+    it("records no sweep step when every kept file is claimed", () => {
+        const resolution = resolveProfileSubmission(submission(claimEverything([{ op: "use", setId: calls.id, group: annotation("calls") }])), detected, menu);
+        expect(resolution.recipe.some((step) => step.op === "unclassified")).toBe(false);
     });
 });
 
@@ -419,6 +547,42 @@ describe("dimensions", () => {
         expect(resolution.dimensions).toEqual([]);
     });
 
+    it("persists a slot observation's binding as a template and a position, not a scan-scoped id", () => {
+        const resolution = resolveProfileSubmission(
+            submission(base, {
+                dimensions: [{ label: "subject", category: "subject", observations: [{ kind: "slot", setId: calls.id, slotId: subjectSlot.id }] }],
+            }),
+            detected,
+            menu,
+        );
+        const observation = resolution.dimensions[0]!.observations[0]!;
+        if (observation.kind !== "slot") throw new Error("expected a slot observation");
+
+        expect(observation.binding).toEqual({
+            template: calls.pathTemplate,
+            slotIndex: calls.slots.findIndex((slot) => slot.id === subjectSlot.id),
+        });
+    });
+
+    it("lets the agent declare the scope of an `other` dimension, defaulting to technical", () => {
+        const observations = [{ kind: "slot" as const, setId: calls.id, slotId: originSlot.id }];
+        const declared = resolveProfileSubmission(
+            submission(base, {
+                dimensions: [{ label: "graft state", category: "other", categoryLabel: "graft state", scope: "biological", observations }],
+            }),
+            detected,
+            menu,
+        );
+        const defaulted = resolveProfileSubmission(
+            submission(base, { dimensions: [{ label: "graft state", category: "other", categoryLabel: "graft state", observations }] }),
+            detected,
+            menu,
+        );
+
+        expect(declared.dimensions[0]!.scope).toBe("biological");
+        expect(defaulted.dimensions[0]!.scope).toBe("technical");
+    });
+
     it("refuses a nesting under a dimension that was not submitted", () => {
         const resolution = resolveProfileSubmission(
             submission(base, {
@@ -435,6 +599,57 @@ describe("dimensions", () => {
             menu,
         );
         expect(resolution.errors.join(" ")).toContain("not among the submitted dimensions");
+    });
+});
+
+describe("two slots the scanner itself linked", () => {
+    /**
+     * One identity in two positions: the directory carries `S001`, the stem carries the
+     * same id after a literal prefix. The scanner links them and counts zero disagreements —
+     * but affix recovery leaves the two value sets textually different, so an exact-string
+     * intersection over them would measure nothing real.
+     */
+    const linkedTree = Array.from({ length: 5 }, (_, i) => {
+        const subject = `S${String(i + 1).padStart(3, "0")}`;
+        return file(`data/inputs/${subject}/lib-${subject}.vcf`, "vcf", ["vcf"]);
+    });
+    const linked = detectSets(linkedTree);
+    const linkedMenu = buildSetMenu(linked);
+    const linkedSet = linked.sets[0]!;
+
+    it("are not intersected, so the profile never claims two corresponding id sets are disjoint", () => {
+        const dirSlot = linkedSet.slots.find((slot) => slot.location === "directory")!;
+        const stemSlot = linkedSet.slots.find((slot) => slot.location === "name")!;
+        // The premise: the scan linked them, and their values differ as text.
+        expect(stemSlot.sameAsSlot).toBe(dirSlot.id);
+        expect(new Set(linked.slotValues.get(dirSlot.id)!)).not.toEqual(new Set(linked.slotValues.get(stemSlot.id)!));
+
+        const resolution = resolveProfileSubmission(
+            {
+                operations: [{ op: "use", setId: linkedSet.id, group: annotation("per-subject calls") }],
+                dimensions: [
+                    {
+                        label: "subject",
+                        category: "subject",
+                        observations: [
+                            { kind: "slot", setId: linkedSet.id, slotId: dirSlot.id },
+                            { kind: "slot", setId: linkedSet.id, slotId: stemSlot.id },
+                        ],
+                    },
+                ],
+                analysisSummary: "A synthetic per-subject tree.",
+                domain: "genomics",
+                organism: null,
+            },
+            linked,
+            linkedMenu,
+        );
+        const second = resolution.dimensions[0]!.observations[1]!;
+        if (second.kind !== "slot") throw new Error("expected a slot observation");
+
+        expect(second).not.toHaveProperty("checked");
+        expect(second.sameAsSlot).toBe(dirSlot.id);
+        expect(second.sameAsSlotMismatches).toBe(0);
     });
 });
 

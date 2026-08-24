@@ -84,7 +84,7 @@ function fromGroup(group: DataProfileGroup): ProfileGroupView {
 
 /** The dataset's structure, from whichever field the snapshot carries it in. */
 export function profileGroups(result: DataProfileResult): ProfileGroupView[] {
-    if (result.groups) return result.groups.map(fromGroup);
+    if (result.groups !== undefined) return result.groups.map(fromGroup);
     return (result.kinds ?? []).map((kind, index) => ({
         id: `kind-${index + 1}`,
         name: kind.name,
@@ -98,7 +98,7 @@ export function profileGroups(result: DataProfileResult): ProfileGroupView[] {
 
 /** What varies across the dataset, from whichever field the snapshot carries it in. */
 export function profileDimensions(result: DataProfileResult): ProfileDimensionView[] {
-    if (result.dimensions) {
+    if (result.dimensions !== undefined) {
         return result.dimensions.map((dimension) => ({
             label: dimension.label,
             cardinalities: dimensionCardinalities(dimension),
@@ -122,7 +122,7 @@ export function profileDimensions(result: DataProfileResult): ProfileDimensionVi
  * of notable inputs, never the dataset.
  */
 export function profileFileRecords(result: DataProfileResult): DataProfileFile[] {
-    if (result.groups) {
+    if (result.groups !== undefined) {
         return result.groups.flatMap((group) =>
             (group.memberAnnotations ?? []).map((annotation) => ({
                 path: annotation.path,

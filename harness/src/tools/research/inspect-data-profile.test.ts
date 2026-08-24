@@ -628,3 +628,61 @@ describe("scope: groups — a snapshot resolved into groups", () => {
         });
     });
 });
+
+describe("a completed profile with no groups at all", () => {
+    /** Every scanned file was quarantined: zero groups is the finding, not a missing record. */
+    function emptyPartitionResult(): DataProfileResult {
+        return makeResult({
+            files: undefined,
+            qualityAssessment: undefined,
+            summary: "The input scan kept no files.",
+            groups: [],
+            dimensions: [],
+            recipe: [],
+            partition: {
+                scannedFiles: 3,
+                keptFiles: 0,
+                keptMembers: 0,
+                groups: 0,
+                unclassifiedMembers: 0,
+                unclassifiedFiles: 0,
+                quarantine: { count: 3, totalBytes: 300, reasons: [{ reason: "partial-download", count: 3 }], sample: ["data/inputs/counts.csv.part"] },
+            },
+        });
+    }
+
+    it("serves the groups scope as available rather than reporting no structure record", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        await completeWith(emptyPartitionResult());
+
+        const out = await run({ scope: "groups" });
+        expect(out).toMatchObject({ scope: "groups", available: true, groups: [], dimensions: [] });
+        expect(out).not.toHaveProperty("legacy");
+        expect(out).not.toHaveProperty("message");
+    });
+
+    it("reports zero groups and the full quarantine accounting on the overview", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        await completeWith(emptyPartitionResult());
+
+        const out = await run();
+        expect(out).toMatchObject({
+            scope: "overview",
+            groupCount: 0,
+            datasetFileCount: 0,
+            describedFileCount: 0,
+            partition: { keptFiles: 0, quarantine: { count: 3, reasons: [{ reason: "partial-download", count: 3 }] } },
+        });
+    });
+
+    it("serves a kinds-era snapshot carrying no kinds as available too", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        await completeWith(makeResult({ files: undefined, kinds: [], axes: [] }));
+
+        const out = await run({ scope: "groups" });
+        expect(out).toMatchObject({ scope: "groups", available: true, legacy: true, kinds: [], axes: [] });
+    });
+});
