@@ -2,7 +2,8 @@ name: Test
 
 # Runs the unit suites of the independent subsystems. `cli/`, `harness/`, and
 # `prov-kernel/` are self-contained bun packages (each owns its bun.lock), so
-# each is installed and tested in its own job. All three suites use bun:test.
+# each is installed and tested in its own job. All three suites use bun:test;
+# `harness/` additionally runs pytest over its Python package asset.
 on:
   push:
     branches: [main]
@@ -106,6 +107,18 @@ jobs:
 
       - name: Run tests
         run: bun test
+
+      # The input-scan container decoder is Python shipped as a package asset, and
+      # bun:test cannot reach it. Pinned into a venv put on PATH, so `test:python`
+      # resolves the same pytest here as on a developer machine.
+      - name: Set up Python tooling
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet --disable-pip-version-check pytest==8.4.1
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Run Python tests
+        run: bun run test:python
 
   prov-kernel:
     name: test (prov-kernel)

@@ -1,8 +1,9 @@
 name: Lint
 
 # Lints/typechecks the independent subsystems. `cli/` has ESLint + a tsc
-# typecheck; `harness/` has no ESLint config, so its lint is the tsc typecheck;
-# `prov-kernel/` has ESLint + a tsc typecheck over its test-inclusive config.
+# typecheck; `harness/` has a tsc typecheck plus ruff over its Python package
+# asset; `prov-kernel/` has ESLint + a tsc typecheck over its test-inclusive
+# config.
 on:
   push:
     branches: [main]
@@ -89,6 +90,19 @@ jobs:
 
       - name: Typecheck
         run: bunx tsc -p tsconfig.json --noEmit
+
+      # The input-scan container decoder is Python shipped as a package asset, so
+      # its linter is a source-validity gate like the typecheck above. Pinned into
+      # a venv put on PATH, so `lint:python` resolves the same `ruff` here as on a
+      # developer machine.
+      - name: Set up Python tooling
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet --disable-pip-version-check ruff==0.14.10
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Ruff
+        run: bun run lint:python
 
   prov-kernel:
     name: lint (prov-kernel)

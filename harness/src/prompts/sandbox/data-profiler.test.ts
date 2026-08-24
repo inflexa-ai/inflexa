@@ -7,7 +7,10 @@
 
 import { describe, expect, it } from "bun:test";
 
+import { z } from "zod";
+
 import { DIMENSION_CATEGORIES, DIMENSION_PROBE_IDS, GROUP_CATEGORY_IDS, GROUP_ROLE_IDS, PROBE_OUTCOME_IDS } from "../../contracts/profile-vocabulary.js";
+import { ProfileSubmissionSchema } from "../../schemas/data-profile-schemas.js";
 import { dataProfilerPrompt } from "./data-profiler.js";
 
 /** Collapse wrapping and blockquote markers, so a verbatim carry survives being re-wrapped. */
@@ -119,5 +122,50 @@ describe("reasons and orientation", () => {
         expect(flat).not.toMatch(/\bkinds\b/);
         expect(flat).not.toMatch(/\baxes\b/);
         expect(flat).not.toMatch(/qualityAssessment/);
+    });
+});
+
+/**
+ * Every property name anywhere in the submission schema. Collected from the emitted JSON
+ * Schema rather than the Zod object, so a nested rename is caught without this test
+ * knowing the shape's structure.
+ */
+function schemaFieldNames(node: unknown, into: Set<string> = new Set()): Set<string> {
+    if (Array.isArray(node)) {
+        for (const entry of node) schemaFieldNames(entry, into);
+        return into;
+    }
+    if (node === null || typeof node !== "object") return into;
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (key === "properties" && value !== null && typeof value === "object") {
+            for (const property of Object.keys(value as Record<string, unknown>)) into.add(property);
+        }
+        schemaFieldNames(value, into);
+    }
+    return into;
+}
+
+describe("the prompt names the submission's fields as the schema spells them", () => {
+    const fields = schemaFieldNames(z.toJSONSchema(ProfileSubmissionSchema));
+
+    it("uses a real field name for every camelCase token it quotes", () => {
+        const quoted = [...new Set(dataProfilerPrompt.match(/`[a-z]+[A-Z][A-Za-z]*`/g) ?? [])].map((token) => token.slice(1, -1));
+
+        expect(quoted.length).toBeGreaterThan(0);
+        for (const token of quoted) expect(fields.has(token), `prompt quotes \`${token}\`, which the submission schema does not carry`).toBe(true);
+    });
+
+    it("uses the schema's own plural for every list field it names", () => {
+        for (const field of ["operations", "dimensions", "probes", "reconciliations", "caveats", "memberAnnotations", "accessions"]) {
+            expect(fields.has(field), field).toBe(true);
+            expect(flat, field).toContain(`\`${field}\``);
+        }
+    });
+
+    it("never quotes the singular of a list field, which is what a reader would then look for", () => {
+        for (const near of ["reconciliation", "operation", "caveat", "accession", "memberAnnotation", "observation"]) {
+            expect(fields.has(near), near).toBe(false);
+            expect(flat, near).not.toContain(`\`${near}\``);
+        }
     });
 });
