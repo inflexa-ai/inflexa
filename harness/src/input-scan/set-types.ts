@@ -185,8 +185,14 @@ export interface SetRepresentative {
  */
 export interface ReadoutSelection {
     readonly representatives: readonly SetRepresentative[];
-    /** Leftover paths — the files no set speaks for, each read on its own. */
+    /** Leftover paths — the files no set speaks for, each read on its own. Bounded. */
     readonly individual: readonly string[];
+    /**
+     * Leftovers past that bound. Reported rather than dropped: a tree of thousands of
+     * one-off files would otherwise buy an unbounded read budget, and an agent shown a
+     * header for some leftovers and not others has to be told which.
+     */
+    readonly individualElided: number;
 }
 
 export interface DetectedSets {

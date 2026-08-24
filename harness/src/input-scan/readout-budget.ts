@@ -12,6 +12,15 @@
 
 import type { DetectedSet, DetectedSets, MemberFile, ReadoutSelection, SetRepresentative } from "./set-types.js";
 
+/**
+ * Leftovers opened individually before the rest are elided.
+ *
+ * One readout per set costs O(sets), which is bounded by the menu. Leftovers are not: a
+ * tree of one-off human-named files is leftovers all the way down, and reading every one
+ * of them is a per-file cost in a pipeline whose whole claim is that it has none.
+ */
+export const MAX_LEFTOVER_READOUTS = 64;
+
 /** A file the selection named, with what the scan already knows about its bytes. */
 export interface ReadoutTarget {
     readonly path: string;
@@ -31,9 +40,11 @@ export function selectReadouts(sets: readonly DetectedSet[], leftovers: readonly
         const path = representativeOf(set);
         if (path !== undefined) representatives.push({ setId: set.id, path });
     }
+    const paths = [...leftovers].map((file) => file.path).sort((a, b) => a.localeCompare(b, "en"));
     return {
         representatives,
-        individual: [...leftovers].map((file) => file.path).sort((a, b) => a.localeCompare(b, "en")),
+        individual: paths.slice(0, MAX_LEFTOVER_READOUTS),
+        individualElided: Math.max(0, paths.length - MAX_LEFTOVER_READOUTS),
     };
 }
 

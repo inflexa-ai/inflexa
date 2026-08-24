@@ -4,7 +4,7 @@ import { okAsync } from "neverthrow";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { ExecResult, SubmitExecBody } from "../sandbox/types.js";
 import type { ReadBytesResult, WorkspaceFilesystem } from "../workspace/filesystem.js";
-import { MEMBERS_DECODED_PER_SHAPE, enrichShapes } from "./enrich.js";
+import { enrichShapes } from "./enrich.js";
 import { observeShapes } from "./shapes.js";
 import type { ScannedFile } from "./types.js";
 
@@ -22,7 +22,7 @@ function motivatingTree(): ScannedFile[] {
     return [
         ...Array.from({ length: 800 }, (_, i) => file(`data/inputs/vcf/PATIENT_${pad(i + 1)}.vcf.gz`, "vcf")),
         ...Array.from({ length: 800 }, (_, i) => file(`data/inputs/tbi/PATIENT_${pad(i + 1)}.vcf.gz.tbi`, "tabix-index")),
-        ...Array.from({ length: 1168 }, (_, i) => file(`data/inputs/bam/SAMPLE_${pad(i + 1)}.bam`, "bam")),
+        ...Array.from({ length: 1200 }, (_, i) => file(`data/inputs/bam/SAMPLE_${pad(i + 1)}.bam`, "bam")),
         ...Array.from({ length: 3 }, (_, i) => file(`data/inputs/meta/sheet_${i + 1}.csv`, "csv")),
     ];
 }
@@ -55,6 +55,16 @@ function recordingSandbox(): { client: SandboxClient; submitted: SubmitExecBody[
     return { client, submitted };
 }
 
+/** A sandbox whose decoder exec produced no usable stdout, with the outcome under test. */
+function failingSandbox(result: Partial<ExecResult>): SandboxClient {
+    return {
+        async submitExec() {},
+        async awaitExec(_ref: unknown, execId: string): Promise<ExecResult> {
+            return { execId, exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false, ...result };
+        },
+    } as unknown as SandboxClient;
+}
+
 function enrichArgs(overrides: Record<string, unknown>) {
     return {
         session: SESSION,
@@ -74,12 +84,19 @@ describe("enrichShapes", () => {
 
         const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
 
-        expect(observed.shapes).toHaveLength(4);
-        expect(reads).toHaveLength(observed.shapes.length * MEMBERS_DECODED_PER_SHAPE);
-        expect(reads.length).toBeLessThan(10);
-        expect(submitted).toHaveLength(0);
-        expect(shapes.every((shape) => shape.header !== undefined)).toBe(true);
-        expect(shapes[0]!.header!.path.startsWith("data/inputs/")).toBe(true);
+        expect(reads.map((read) => read.path).sort()).toEqual([
+            "data/inputs/bam/SAMPLE_0001.bam",
+            "data/inputs/meta/sheet_1.csv",
+            "data/inputs/tbi/PATIENT_0001.vcf.gz.tbi",
+            "data/inputs/vcf/PATIENT_0001.vcf.gz",
+        ]);
+        expect(submitted).toEqual([]);
+        expect(shapes.map((shape) => shape.header?.path).sort()).toEqual([
+            "data/inputs/bam/SAMPLE_0001.bam",
+            "data/inputs/meta/sheet_1.csv",
+            "data/inputs/tbi/PATIENT_0001.vcf.gz.tbi",
+            "data/inputs/vcf/PATIENT_0001.vcf.gz",
+        ]);
     });
 
     it("reads a header in process, with no sandbox wired at all", async () => {
@@ -121,8 +138,7 @@ describe("enrichShapes", () => {
 
         const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
 
-        expect(submitted).toHaveLength(1);
-        expect(submitted[0]!.command.slice(3)).toEqual(["/a1/data/inputs/tables/counts_1.parquet"]);
+        expect(submitted.map((body) => body.command.slice(3))).toEqual([["/a1/data/inputs/tables/counts_1.parquet"]]);
         expect(submitted[0]!.command[0]).toBe("python3");
         expect(submitted[0]!.command[2]).toContain("def parquet_fields(");
         const parquet = shapes.find((shape) => shape.format === "parquet")!;
@@ -140,15 +156,30 @@ describe("enrichShapes", () => {
         expect(shapes[0]!.header).toBeUndefined();
     });
 
-    it("notes a container the decoder said nothing about", async () => {
+    it("names the exec's own failure when the decoder produced no line for a container", async () => {
         const observed = observeShapes([file("data/inputs/tables/counts_1.parquet", "parquet"), file("data/inputs/tables/counts_2.parquet", "parquet")]);
         const { fs } = readSeam({});
-        const client = {
-            async submitExec() {},
-            async awaitExec(_ref: unknown, execId: string): Promise<ExecResult> {
-                return { execId, exitCode: 1, stdout: "", stderr: "python3: not found", durationMs: 1, timedOut: false };
-            },
-        } as unknown as SandboxClient;
+        const client = failingSandbox({ exitCode: 1, stderr: "python3: not found" });
+
+        const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
+
+        expect(shapes[0]!.header!.unavailable).toBe("container decoder exited 1: python3: not found");
+    });
+
+    it("names a decoder timeout rather than reporting silence", async () => {
+        const observed = observeShapes([file("data/inputs/tables/counts_1.parquet", "parquet"), file("data/inputs/tables/counts_2.parquet", "parquet")]);
+        const { fs } = readSeam({});
+        const client = failingSandbox({ exitCode: null, timedOut: true });
+
+        const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
+
+        expect(shapes[0]!.header!.unavailable).toBe("container decoder timed out after 120s");
+    });
+
+    it("reports silence as silence when the decoder exited cleanly", async () => {
+        const observed = observeShapes([file("data/inputs/tables/counts_1.parquet", "parquet"), file("data/inputs/tables/counts_2.parquet", "parquet")]);
+        const { fs } = readSeam({});
+        const client = failingSandbox({ exitCode: 0 });
 
         const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { id: "s1" } }));
 
@@ -162,7 +193,7 @@ describe("enrichShapes", () => {
         const shapes = await enrichShapes(enrichArgs({ shapes: [], fs, sandboxClient: client, sandbox: { id: "s1" } }));
 
         expect(shapes).toEqual([]);
-        expect(reads).toHaveLength(0);
-        expect(submitted).toHaveLength(0);
+        expect(reads).toEqual([]);
+        expect(submitted).toEqual([]);
     });
 });

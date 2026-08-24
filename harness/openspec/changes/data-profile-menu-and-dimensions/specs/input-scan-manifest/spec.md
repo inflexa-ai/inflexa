@@ -57,9 +57,18 @@ asset — not as an inline source string assembled at runtime, which is unlintab
 untestable, and invisible to review.
 
 Header readout SHALL be performed per set, not per file: a bounded number of members per
-set, plus the leftover and singleton files individually. A scan that decoded every file
-would make enrichment cost scale with input size, which is the cost this capability exists
-to remove.
+set, plus the leftover and singleton files individually, up to a bound of their own. A
+scan that decoded every file would make enrichment cost scale with input size, which is the
+cost this capability exists to remove — and leftovers are not bounded by the menu, so a
+tree of one-off files would restore that cost through them. Leftovers past the bound SHALL
+be counted and the count surfaced on the menu, so an agent shown a header for some
+leftovers and not others is told which. The reads SHALL run at bounded concurrency.
+
+The sandbox decoder SHALL report per path and survive its batch: one unreadable container
+SHALL NOT cost the readouts of the files beside it. A path the decoder produced nothing
+for SHALL carry a diagnosable reason drawn from the exec's own outcome — its exit status,
+its stderr, or its timeout — because "reported nothing" alone names no fault a reader can
+act on.
 
 The scan SHALL be the sole enumeration pass. The profiler agent SHALL NOT be required to
 issue one command per input file to discover structure.
@@ -88,6 +97,20 @@ issue one command per input file to discover structure.
 - **WHEN** the scan runs
 - **THEN** it SHALL decode headers for a bounded number of files per set plus the leftovers
 - **AND** SHALL NOT decode a header per file
+
+#### Scenario: Leftover readouts are bounded and the bound is visible
+
+- **GIVEN** a tree whose leftovers outnumber the readout bound
+- **WHEN** the scan runs
+- **THEN** it SHALL open at most that many leftovers
+- **AND** the menu SHALL say how many it left unopened
+
+#### Scenario: One corrupt container does not cost its batch
+
+- **GIVEN** a batch of containers in which one is unreadable
+- **WHEN** the decoder runs
+- **THEN** every other container in the batch SHALL still carry its readout
+- **AND** the unreadable one SHALL carry a reason naming what failed
 
 ### Requirement: The scan mines templates over the full relative path
 
@@ -141,6 +164,13 @@ file count.
 - **WHEN** the scan runs
 - **THEN** the manifest SHALL report the three slots with their distinct-value counts
 - **AND** SHALL NOT report only the set's total file count
+
+#### Scenario: Slot co-occurrence distinguishes a full crossing from a partial one
+
+- **GIVEN** a set whose two slots take 8 and 3 values
+- **WHEN** the menu renders it
+- **THEN** it SHALL report how many combinations were observed against the full cross product
+- **AND** an incomplete crossing SHALL be named as one
 
 ### Requirement: Token correspondence across sets is reported with evidence
 
@@ -202,7 +232,18 @@ consumes context that carries no structure.
 
 The menu SHALL be bounded. Its set list SHALL carry at most a fixed number of entries;
 beyond the bound the remainder is aggregated with an explicit overflow note, so an elided
-tail is a fact the agent can see and act on rather than a silent truncation.
+tail is a fact the agent can see and act on rather than a silent truncation. A walk that
+stopped at its own file ceiling SHALL be stated on the menu prominently: every count on it
+is then a count over part of the tree, and a grouping authored as though it were complete
+is wrong in a way nothing later reveals.
+
+A set small enough to annotate member by member SHALL be listed member by member. Member
+annotations are keyed by path, so an agent shown one example of five cannot write prose for
+the other four — the bound is on the listing, not on the set.
+
+The menu SHALL nudge toward a split on any set that is residue rather than structure: one
+no sharper template explained, or one whose format census says its members are not a single
+substrate.
 
 The harness SHALL additionally expose the scan as a `scan_inputs` tool accepting a path,
 so the agent can re-scan a subtree. A re-scan is informational: it refines what the agent
@@ -221,6 +262,19 @@ data-profile-init spec).
 - **GIVEN** a tree producing more sets than the menu bound
 - **WHEN** the briefing is assembled
 - **THEN** the menu SHALL carry the bounded list plus an aggregate naming how many sets were elided
+
+#### Scenario: A truncated walk says so before anything else
+
+- **GIVEN** a tree larger than the walk's file ceiling
+- **WHEN** the briefing is assembled
+- **THEN** the menu SHALL state that it describes part of the tree
+- **AND** the persisted accounting and the rendered orientation SHALL carry the same fact
+
+#### Scenario: A small set is listed member by member
+
+- **GIVEN** a set of a handful of members
+- **WHEN** the menu renders it
+- **THEN** it SHALL list every member's path rather than one example
 
 #### Scenario: The agent re-scans a subtree
 

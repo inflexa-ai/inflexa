@@ -35,6 +35,37 @@ export const MAX_CORRESPONDENCE_SAMPLE = 5;
 const MIN_CORRESPONDENCE_CARDINALITY = 2;
 
 /**
+ * Members listed in full rather than by one example.
+ *
+ * A set this small is a handful of distinct artifacts, and `memberAnnotations` are keyed
+ * by path — an agent shown one example of five cannot write per-member prose for the
+ * other four. Past the bound the example plus the template is the whole of what a listing
+ * would add, at a cost that grows with the tree.
+ */
+export const MAX_FULLY_LISTED_SET_MEMBERS = 10;
+
+/** Slots crossed in one co-occurrence report. Past this the cross product says nothing a reader can hold. */
+export const MAX_CROSSED_SLOTS = 3;
+
+/** Combinations the cross product may reach before it is reported as unbounded rather than counted. */
+const MAX_POSSIBLE_COMBINATIONS = 1_000_000;
+
+/**
+ * How a set's slots vary TOGETHER.
+ *
+ * Per-slot cardinalities describe the margins; a set of 8 subjects × 3 timepoints could be
+ * a full 24-member crossing or 8 members each at one timepoint, and the two are different
+ * experimental designs. The margins alone cannot tell them apart.
+ */
+export interface SetCrossing {
+    readonly setId: string;
+    readonly slotIds: readonly string[];
+    readonly observedCombinations: number;
+    /** The full cross product, or `null` when it is past counting. */
+    readonly possibleCombinations: number | null;
+}
+
+/**
  * Measured overlap between two sets' slots, with its gaps.
  *
  * Evidence, not a claim. Two id slots drawing on the same values is what makes a shared
@@ -67,10 +98,20 @@ export interface SetMenu {
     readonly sets: readonly DetectedSet[];
     readonly unlisted: UnlistedSets;
     readonly correspondences: readonly SlotCorrespondence[];
+    /** How each multi-slot set's slots vary together. Empty for single-slot sets. */
+    readonly crossings: readonly SetCrossing[];
     readonly quarantine: QuarantineSummary;
     readonly leftovers: LeftoverFiles;
     /** Header readouts keyed by path — one member per set, plus every leftover. */
     readonly headers: ReadonlyMap<string, HeaderReadout>;
+    /**
+     * True when the walk stopped at its file ceiling. Every count below then describes a
+     * prefix of the tree — carried on the menu because the agent's grouping, the persisted
+     * census, and the orientation all read as complete otherwise.
+     */
+    readonly truncated: boolean;
+    /** Leftovers whose header readout was elided by the readout budget. */
+    readonly readoutsElided: number;
 }
 
 function sample(values: Iterable<string>, limit: number): string[] {
@@ -135,8 +176,41 @@ export function buildCorrespondences(detected: DetectedSets, sets: readonly Dete
         .slice(0, MAX_CORRESPONDENCES);
 }
 
+/**
+ * How the slots of one set vary together, from the per-member values the scan keeps
+ * host-side. A bounded sample could not distinguish a full crossing from a partial one,
+ * which is the whole content of the observation.
+ */
+export function buildCrossings(detected: DetectedSets, sets: readonly DetectedSet[]): SetCrossing[] {
+    const crossings: SetCrossing[] = [];
+    for (const set of sets) {
+        const slots = set.slots.filter((slot) => slot.sameAsSlot === undefined).slice(0, MAX_CROSSED_SLOTS);
+        if (slots.length < 2) continue;
+
+        const columns = slots.map((slot) => detected.memberSlotValues.get(slot.id) ?? []);
+        const combinations = new Set<string>();
+        for (let member = 0; member < set.members.length; member++) combinations.add(columns.map((values) => values[member] ?? "").join(" "));
+
+        const product = slots.reduce((total, slot) => total * slot.distinctValues, 1);
+        crossings.push({
+            setId: set.id,
+            slotIds: slots.map((slot) => slot.id),
+            observedCombinations: combinations.size,
+            possibleCombinations: product > MAX_POSSIBLE_COMBINATIONS ? null : product,
+        });
+    }
+    return crossings;
+}
+
+export interface BuildSetMenuOptions {
+    readonly headers?: ReadonlyMap<string, HeaderReadout>;
+    /** The walk stopped at its ceiling; see {@link SetMenu.truncated}. */
+    readonly truncated?: boolean;
+    readonly readoutsElided?: number;
+}
+
 /** Project a scan into the bounded menu the agent authors against. */
-export function buildSetMenu(detected: DetectedSets, headers: ReadonlyMap<string, HeaderReadout> = new Map()): SetMenu {
+export function buildSetMenu(detected: DetectedSets, options: BuildSetMenuOptions = {}): SetMenu {
     const sets = detected.sets.slice(0, MAX_MENU_SETS);
     const tail = detected.sets.slice(MAX_MENU_SETS);
 
@@ -151,9 +225,12 @@ export function buildSetMenu(detected: DetectedSets, headers: ReadonlyMap<string
             totalBytes: tail.reduce((total, set) => total + set.totalBytes, 0),
         },
         correspondences: buildCorrespondences(detected, sets),
+        crossings: buildCrossings(detected, sets),
         quarantine: detected.quarantine,
         leftovers: detected.leftovers,
-        headers,
+        headers: options.headers ?? new Map(),
+        truncated: options.truncated ?? false,
+        readoutsElided: options.readoutsElided ?? detected.readout.individualElided,
     };
 }
 
@@ -178,7 +255,15 @@ function renderSlot(slot: SetSlot): string {
     return `  - slot ${slot.id} (${where}, ${slot.tokenClass})${identity}: ${slot.distinctValues} distinct — ${slot.sampleValues.join(", ")}${more}`;
 }
 
-function renderSet(set: DetectedSet, headers: ReadonlyMap<string, HeaderReadout>): string[] {
+function renderCrossing(crossing: SetCrossing | undefined): string | undefined {
+    if (!crossing) return undefined;
+    const { observedCombinations: observed, possibleCombinations: possible } = crossing;
+    const of = possible === null ? "an uncounted cross product" : `${possible}`;
+    const verdict = possible === null ? "" : observed === possible ? " — fully crossed" : ` — incomplete crossing, ${possible - observed} combinations absent`;
+    return `  - crossing ${crossing.slotIds.join(" × ")}: ${observed} combinations observed of ${of}${verdict}`;
+}
+
+function renderSet(set: DetectedSet, headers: ReadonlyMap<string, HeaderReadout>, crossing: SetCrossing | undefined): string[] {
     const lines: string[] = [];
     const origin = set.origin === "marker" ? `marker: ${set.marker ?? "recognised"}` : set.origin;
     lines.push(`- ${set.id} — ${set.memberCount} members, ${set.fileCount} files, ${formatBytes(set.totalBytes)} (${origin})`);
@@ -186,6 +271,8 @@ function renderSet(set: DetectedSet, headers: ReadonlyMap<string, HeaderReadout>
     lines.push(`  - formats: ${set.formats.map((f) => `${f.format} (${f.count})`).join(", ") || "unknown"}`);
     if (set.wrappers.length > 1) lines.push(`  - wrappers vary: ${set.wrappers.map((w) => `${w.wrapper} (${w.count})`).join(", ")}`);
     for (const slot of set.slots) lines.push(renderSlot(slot));
+    const crossed = renderCrossing(crossing);
+    if (crossed) lines.push(crossed);
     if (set.completeness.expectedCompanions.length > 0) {
         const gaps = set.completeness.incompleteSample.map((member) => `${member.path} missing ${member.missingCompanions.join(", ")}`);
         lines.push(
@@ -193,12 +280,21 @@ function renderSet(set: DetectedSet, headers: ReadonlyMap<string, HeaderReadout>
                 `${set.completeness.incompleteMembers} incomplete${gaps.length > 0 ? ` — ${gaps.join("; ")}` : ""}`,
         );
     }
-    if (set.origin === "catch-all") {
-        lines.push("  - catch-all: these members are what no other template explained. Consider a split before you use or merge it.");
+    // A residue set is what no other template explained and a mixed format census says its
+    // members are not one substrate — both are the shape a lazy `use` covers over.
+    if (set.origin === "catch-all" || set.origin === "prefix" || set.formats.length > 1) {
+        lines.push("  - residue: these members are what no sharper template explained. Consider a split before you use or merge it.");
     }
     const header = renderHeader([...set.members].map((member) => headers.get(member.path)).find((readout) => readout !== undefined));
     if (header) lines.push(header);
-    lines.push(`  - example: ${set.examplePaths[0] ?? "—"}`);
+    // A small set is a handful of distinct artifacts, and member annotations are keyed by
+    // path: one example of five leaves the other four unwritable.
+    if (set.memberCount > 0 && set.memberCount <= MAX_FULLY_LISTED_SET_MEMBERS) {
+        const paths = [...set.members].map((member) => member.path).sort((a, b) => a.localeCompare(b, "en"));
+        lines.push(`  - members: ${paths.join(", ")}`);
+    } else {
+        lines.push(`  - example: ${set.examplePaths[0] ?? "—"}`);
+    }
     return lines;
 }
 
@@ -213,6 +309,16 @@ export function renderSetMenu(menu: SetMenu, root: string): string {
     const listed = menu.sets.length === 1 ? "1 set listed" : `${menu.sets.length} sets listed`;
     lines.push(`Input menu for ${root} — ${menu.keptFileCount} files kept of ${menu.fileCount} scanned, ${listed}.`);
 
+    // Ahead of everything, because every count below is a count over a prefix of the tree
+    // and a grouping authored as if it were complete would be wrong in a way nothing later
+    // reveals.
+    if (menu.truncated) {
+        lines.push(
+            "INCOMPLETE SCAN: the walk stopped at its file ceiling, so this menu describes PART of the tree. " +
+                "Every count below is a count over that part. Say so in your caveats.",
+        );
+    }
+
     if (menu.quarantine.count > 0) {
         const reasons = menu.quarantine.reasons.map((r) => `${r.reason} (${r.count})`).join(", ");
         lines.push(`Quarantined before structure was observed: ${menu.quarantine.count} files — ${reasons}. e.g. ${menu.quarantine.sample.join(", ")}`);
@@ -225,9 +331,10 @@ export function renderSetMenu(menu: SetMenu, root: string): string {
     lines.push("and you record it as operations on the ids below — no other id is addressable.");
 
     if (menu.sets.length > 0) {
+        const crossings = new Map(menu.crossings.map((crossing) => [crossing.setId, crossing]));
         lines.push("");
         lines.push("Sets:");
-        for (const set of menu.sets) lines.push(...renderSet(set, menu.headers));
+        for (const set of menu.sets) lines.push(...renderSet(set, menu.headers, crossings.get(set.id)));
     }
 
     if (menu.unlisted.sets > 0) {
@@ -264,6 +371,9 @@ export function renderSetMenu(menu: SetMenu, root: string): string {
         }
         if (menu.leftovers.memberCount > menu.leftovers.sample.length) {
             lines.push(`- … ${menu.leftovers.memberCount - menu.leftovers.sample.length} more not listed`);
+        }
+        if (menu.readoutsElided > 0) {
+            lines.push(`- ${menu.readoutsElided} leftovers past the readout budget were not opened, so they carry no header above.`);
         }
         lines.push("Gather the ones that belong together with a `group` operation naming their paths.");
     }
