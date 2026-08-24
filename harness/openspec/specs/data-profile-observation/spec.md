@@ -3,9 +3,7 @@
 ## Purpose
 
 A running data profile is observable. The data-profile workflow emits typed activity parts to its own durable event stream across its whole lifecycle — container provisioning, the agent loop and every tool call it makes, the vector-indexing pass, and a single terminal outcome — and its `cortex_analysis_state` row names the workflow producing them. Together those let a consumer subscribe to a profile's activity through the existing run-event read seam without deriving a workflow id or reading durability-engine tables.
-
 ## Requirements
-
 ### Requirement: The data-profile workflow emits its activity to a durable event stream
 
 The data-profile workflow body SHALL write typed run-event parts to its own durable
@@ -52,6 +50,7 @@ The body SHALL emit, in this order:
 | Where | Phase | Activity phrase |
 |-|-|-|
 | before creating its sandbox | `sandbox-init` | `Starting sandbox` |
+| before the deterministic input scan | `executing` | `Scanning input files` |
 | before starting the agent loop | `executing` | `Running data-profiler` |
 | per tool call | `executing` | the phrase derived from the tool's name and input |
 | the vector-store indexing pass | `indexing` | `Indexing input descriptions for search` |
@@ -68,6 +67,12 @@ incidental: container provisioning is the longest single operation in a profile 
 precedes the agent loop entirely, so a body that emitted only from the loop would
 leave the longest wait unreported. The `Running data-profiler` emission covers the
 remaining gap between a ready sandbox and the agent's first tool call.
+
+`Scanning input files` is emitted for the same reason. The deterministic scan (see the
+input-scan-manifest spec) runs between a ready sandbox and the agent's first turn, walks
+every staged input, and on a large tree is the second-longest operation in a profile. Left
+unreported it would read as `Running data-profiler` for minutes before the agent had begun,
+which is the misreport `sandbox-init` exists to prevent.
 
 The body SHALL emit **exactly one** terminal activity. `complete` SHALL be emitted
 only AFTER the terminal ledger write has succeeded: emitted before it, a ledger write
@@ -86,36 +91,22 @@ body does not have, and `warning` requires a non-fatal user-facing warning chann
 the body's two soft conditions are logged and neither warrants interrupting the
 activity line.
 
-#### Scenario: The wait for a container is reported
+#### Scenario: The scan is reported before the agent loop
 
-- **WHEN** the body begins creating the profile's sandbox
-- **THEN** it has already emitted a `data-step-activity` part with `phase`
-  `sandbox-init`
-- **AND** a consumer subscribed at that moment can describe the profile as starting
-  up rather than showing nothing
+- **WHEN** the body runs the deterministic input scan
+- **THEN** it SHALL emit `Scanning input files` before the scan begins
+- **AND** SHALL emit `Running data-profiler` only once the scan has returned and the agent loop is starting
 
-#### Scenario: The vector-indexing pass is reported
+#### Scenario: A long scan does not read as agent work
 
-- **WHEN** the body indexes per-file descriptions into the analysis vector store
-  after the agent has submitted its profile
-- **THEN** it emits a `data-step-activity` part with `phase` `indexing`
+- **GIVEN** an analysis whose input scan takes minutes
+- **WHEN** a consumer reads the activity line during the scan
+- **THEN** it SHALL read `Scanning input files` rather than `Running data-profiler`
 
-#### Scenario: A profile that fails before its sandbox exists still reports a terminal phase
+#### Scenario: Exactly one terminal activity is emitted
 
-- **WHEN** a profile fails between emitting `sandbox-init` and starting the agent loop
-- **THEN** it emits a terminal `failed` activity with no intervening `executing`
-- **AND** a consumer keying on the terminal phase observes the profile as settled
-
-#### Scenario: A completed profile reports a terminal phase
-
-- **WHEN** a profile completes successfully
-- **THEN** it emits exactly one `data-step-activity` part with `phase` `complete`
-
-#### Scenario: A ledger write that fails does not produce two terminal activities
-
-- **GIVEN** a profile whose agent submitted successfully
-- **WHEN** its terminal ledger write fails and the body reaches its failure path
-- **THEN** only a `failed` activity is emitted, and no `complete` activity precedes it
+- **WHEN** the body completes a profile successfully
+- **THEN** it SHALL emit `Profile complete` after the terminal ledger write and no `failed` activity
 
 ### Requirement: The emitted frame is a constant, not an identifier
 
@@ -223,3 +214,4 @@ to a workflow without children, not a new case.
 - **WHEN** the seam's child discovery runs against a profile's workflow id
 - **THEN** it finds no child workflows
 - **AND** delivery of the profile's own parts is unaffected
+
