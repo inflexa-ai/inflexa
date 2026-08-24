@@ -1,3 +1,7 @@
+## RENAMED Requirements
+- FROM: `### Requirement: The profiler's output is bounded by kind, not by file count`
+- TO: `### Requirement: The profiler's output is bounded by the menu, not by file count`
+
 ## MODIFIED Requirements
 
 ### Requirement: Grouping the dataset is the agent's judgement, not the scan's
