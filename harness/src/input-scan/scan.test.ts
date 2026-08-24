@@ -79,14 +79,14 @@ describe("scanInputTree", () => {
     });
 
     it("renders a bounded briefing for a large tree", async () => {
-        const paths = Array.from({ length: 3513 }, (_, i) => `data/inputs/vcf/PATIENT_${String(i + 1).padStart(4, "0")}.vcf.gz`);
+        const paths = Array.from({ length: 3200 }, (_, i) => `data/inputs/vcf/PATIENT_${String(i + 1).padStart(4, "0")}.vcf.gz`);
         const scan = await scanInputTree({ session: SESSION, fs: fakeFs(paths), root: "data/inputs" });
         const rendered = renderInputScanManifest(scan.manifest);
 
-        expect(scan.manifest.fileCount).toBe(3513);
+        expect(scan.manifest.fileCount).toBe(3200);
         // ~2 KB of structure in place of ~270 KB of bare paths, and not one line per file.
         expect(rendered.length).toBeLessThan(4000);
         expect(rendered.split("\n").length).toBeLessThan(60);
-        expect(rendered).toContain("3513 files");
+        expect(rendered).toContain("3200 files");
     });
 });

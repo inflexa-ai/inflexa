@@ -21,15 +21,15 @@ function pad(n: number, width = 4): string {
 
 describe("observeShapes", () => {
     it("reports a repeating structure as one shape carrying its values", () => {
-        const files = Array.from({ length: 1171 }, (_, i) => file(`data/inputs/vcf/PATIENT_${pad(i + 1)}.haplotypecaller.vcf.gz`, { format: "vcf" }));
+        const files = Array.from({ length: 800 }, (_, i) => file(`data/inputs/vcf/PATIENT_${pad(i + 1)}.haplotypecaller.vcf.gz`, { format: "vcf" }));
 
         const observed = observeShapes(files);
 
         expect(observed.shapes).toHaveLength(1);
         const shape = observed.shapes[0]!;
-        expect(shape.fileCount).toBe(1171);
+        expect(shape.fileCount).toBe(800);
         expect(shape.variablePositions).toHaveLength(1);
-        expect(shape.variablePositions[0]!.distinctValues).toBe(1171);
+        expect(shape.variablePositions[0]!.distinctValues).toBe(800);
         expect(shape.variablePositions[0]!.sampleValues.length).toBeGreaterThan(0);
         expect(shape.variablePositions[0]!.sampleValues).toContain("0001");
         expect(observed.unstructured.count).toBe(0);

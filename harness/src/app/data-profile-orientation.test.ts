@@ -169,13 +169,13 @@ describe("buildDataProfileOrientation", () => {
 describe("a snapshot of the kinds era", () => {
     const STRUCTURED: DataProfileResult = {
         ...RICH,
-        files: [{ path: "data/inputs/meta/samplesheet.csv", description: "Clinical annotations for all 1171 subjects", format: "CSV" }],
+        files: [{ path: "data/inputs/meta/samplesheet.csv", description: "Clinical annotations for all 800 subjects", format: "CSV" }],
         kinds: [
             {
                 name: "per-patient variant calls",
                 memberRepresents: "one patient's somatic variant calls",
                 description: "HaplotypeCaller VCFs.",
-                count: 1171,
+                count: 800,
                 pathPattern: "data/inputs/vcf/*.vcf.gz",
                 format: "VCF",
                 axisLabels: ["patient"],
@@ -190,7 +190,7 @@ describe("a snapshot of the kinds era", () => {
                 axisLabels: ["patient"],
             },
         ],
-        axes: [{ label: "patient", cardinality: 1171 }],
+        axes: [{ label: "patient", cardinality: 800 }],
         coverage: { matched: 2339, unmatched: 1, total: 2340 },
         inputSignature: { count: 2340, digest: "abc" },
     };
@@ -198,8 +198,8 @@ describe("a snapshot of the kinds era", () => {
     it("renders its kinds as groups, before the notable files", () => {
         const text = buildDataProfileOrientation(STRUCTURED, ANALYSIS_ID);
         expect(text).toContain("Groups (2):");
-        expect(text).toContain("per-patient variant calls (1171x, VCF) — one patient's somatic variant calls");
-        expect(text).toContain("Dimensions: patient (1171)");
+        expect(text).toContain("per-patient variant calls (800x, VCF) — one patient's somatic variant calls");
+        expect(text).toContain("Dimensions: patient (800)");
         expect(text.indexOf("Groups (")).toBeLessThan(text.indexOf("Notable files"));
     });
 

@@ -20,8 +20,8 @@ function file(path: string, format: string): ScannedFile {
 function motivatingTree(): ScannedFile[] {
     const pad = (n: number) => String(n).padStart(4, "0");
     return [
-        ...Array.from({ length: 1171 }, (_, i) => file(`data/inputs/vcf/PATIENT_${pad(i + 1)}.vcf.gz`, "vcf")),
-        ...Array.from({ length: 1171 }, (_, i) => file(`data/inputs/tbi/PATIENT_${pad(i + 1)}.vcf.gz.tbi`, "tabix-index")),
+        ...Array.from({ length: 800 }, (_, i) => file(`data/inputs/vcf/PATIENT_${pad(i + 1)}.vcf.gz`, "vcf")),
+        ...Array.from({ length: 800 }, (_, i) => file(`data/inputs/tbi/PATIENT_${pad(i + 1)}.vcf.gz.tbi`, "tabix-index")),
         ...Array.from({ length: 1168 }, (_, i) => file(`data/inputs/bam/SAMPLE_${pad(i + 1)}.bam`, "bam")),
         ...Array.from({ length: 3 }, (_, i) => file(`data/inputs/meta/sheet_${i + 1}.csv`, "csv")),
     ];

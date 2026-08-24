@@ -26,7 +26,7 @@ export interface ScannedFile {
  * A filename position whose token differs across a shape's members.
  *
  * `sampleValues` is normative, not decoration: a count alone cannot distinguish an
- * identifier (`0001`…`1171`) from a categorical label (`tumor`/`normal`) from a shard
+ * identifier (`0001`…`800`) from a categorical label (`tumor`/`normal`) from a shard
  * index (`chr1`…`chr22`), and those readings imply entirely different kinds.
  */
 export interface VariablePosition {

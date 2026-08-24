@@ -393,16 +393,16 @@ describe("scope: files — paged, with truncation always visible", () => {
 });
 
 describe("scope: groups — a snapshot of the kinds era", () => {
-    /** A profile of 3513 files that describes one of them individually. */
+    /** A profile of 3200 files that describes one of them individually. */
     function structuredResult(): DataProfileResult {
         return makeResult({
-            files: [{ path: "data/inputs/meta/samplesheet.csv", description: "Clinical annotations for all 1171 subjects." }],
+            files: [{ path: "data/inputs/meta/samplesheet.csv", description: "Clinical annotations for all 800 subjects." }],
             kinds: [
                 {
                     name: "per-patient variant calls",
                     memberRepresents: "one patient's somatic variant calls",
                     description: "HaplotypeCaller VCFs.",
-                    count: 1171,
+                    count: 800,
                     pathPattern: "data/inputs/vcf/*.vcf.gz",
                     format: "vcf",
                     axisLabels: ["patient"],
@@ -411,14 +411,14 @@ describe("scope: groups — a snapshot of the kinds era", () => {
                     name: "variant indexes",
                     memberRepresents: "the tabix index of one patient's calls",
                     description: "Tabix indexes.",
-                    count: 1171,
+                    count: 800,
                     pathPattern: "data/inputs/tbi/*.tbi",
                     format: "tabix-index",
                     axisLabels: ["patient"],
                 },
             ],
-            axes: [{ label: "patient", cardinality: 1171, exampleValues: ["PT0001", "PT0002"] }],
-            coverage: { matched: 3510, unmatched: 3, total: 3513 },
+            axes: [{ label: "patient", cardinality: 800, exampleValues: ["PT0001", "PT0002"] }],
+            coverage: { matched: 3197, unmatched: 3, total: 3200 },
         });
     }
 
@@ -433,8 +433,8 @@ describe("scope: groups — a snapshot of the kinds era", () => {
             scope: "groups",
             available: true,
             legacy: true,
-            axes: [{ label: "patient", cardinality: 1171 }],
-            coverage: { matched: 3510, unmatched: 3, total: 3513 },
+            axes: [{ label: "patient", cardinality: 800 }],
+            coverage: { matched: 3197, unmatched: 3, total: 3200 },
         });
         expect((out as { kinds: unknown[] }).kinds).toHaveLength(2);
         // The structure exists; an agent must never be told the dataset has none.
@@ -468,7 +468,7 @@ describe("scope: groups — a snapshot of the kinds era", () => {
         await completeWith(structuredResult());
 
         const out = await run();
-        expect(out).toMatchObject({ describedFileCount: 1, datasetFileCount: 3513, groupCount: 2 });
+        expect(out).toMatchObject({ describedFileCount: 1, datasetFileCount: 3200, groupCount: 2 });
         expect((out as { structureNote: string }).structureNote).toContain("scope:'groups'");
     });
 
