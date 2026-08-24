@@ -24,9 +24,10 @@ private benchmark workspace; synthetic fixtures are authored fresh here.
 - [ ] Move prefix-sufficient decoding (CSV sniff, gzip peek, text headers) to TS over the workspace read seam; residual parquet/HDF5 decoder as linted+pytested `.py` asset; delete the `String.raw` blob
 
 ## 2. Authoring contract
-- [ ] Menu render into the profiler briefing (bounded; nudge on catch-all use/merge)
-- [ ] `submit_profile` ops vocabulary (use/split/merge/group) + submit-time resolution: membership, derived counts, partition check, one repair round-trip, `unclassified` sweep
-- [ ] Dimensions/observations schema (slot bindings, column/document evidence, `checked:{matched,of}`, nests-under, probe outcomes); member annotations on groups; drop `qualityAssessment.strengths`; renames kinds→groups, axes→dimensions with legacy optional-on-read
+- [x] Vocabulary as data (`contracts/profile-vocabulary.ts`): group roles, group categories with anti-overlap notes, dimension categories with default treatment, probe list — one source for submit validation and prompt assembly
+- [x] Menu render into the profiler briefing (bounded; nudge on catch-all use/merge)
+- [x] `submit_profile` ops vocabulary (use/split/merge/group) + submit-time resolution: membership, derived counts, partition check, one repair round-trip, `unclassified` sweep
+- [x] Dimensions/observations schema (slot bindings, column/document evidence, `checked:{matched,of}`, nests-under, probe outcomes); member annotations on groups; drop `qualityAssessment.strengths`; renames kinds→groups, axes→dimensions with legacy optional-on-read
 - [ ] Prompt rewrite: substrate test verbatim, probe list, no-forcing stance ("empty is a correct answer"), category defaults
 - [ ] Incremental absorption: recipe re-resolution against a changed tree; deterministic absorb path (membership/counts/signature, no LLM); delta repair round for structurally new files; drift digest over kept files only
 

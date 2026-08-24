@@ -24,6 +24,7 @@
 
 import type { DataProfileResult } from "../state/data-profile.js";
 import { toAnalysisRootPath } from "../workspace/paths.js";
+import { profileCaveats, profileDimensions, profileFileRecords, profileGroups } from "./data-profile-view.js";
 
 /** The character budget the projection guarantees it will not exceed. */
 export const DATA_PROFILE_ORIENTATION_MAX_CHARS = 1200;
@@ -31,10 +32,10 @@ export const DATA_PROFILE_ORIENTATION_MAX_CHARS = 1200;
 /** Files listed before the tail is elided (the count still reports the total). */
 const MAX_FILES = 8;
 
-/** Kinds listed before the tail is elided. A dataset with more is described by its first few. */
-const MAX_KINDS = 6;
+/** Groups listed before the tail is elided. A dataset with more is described by its first few. */
+const MAX_GROUPS = 6;
 
-const MAX_KIND_DESCRIPTION_CHARS = 90;
+const MAX_GROUP_DESCRIPTION_CHARS = 90;
 
 /** Quality concerns listed — the profiler orders them, so these are the top ones. */
 const MAX_CONCERNS = 3;
@@ -80,7 +81,7 @@ function formatOrganism(organism: DataProfileResult["organism"]): string | undef
 }
 
 /** `(20000 x 24, CSV)` — whichever of dimensions / format the profiler recorded. */
-function formatFileFacts(file: DataProfileResult["files"][number]): string {
+function formatFileFacts(file: { rows?: number | null; cols?: number | null; format?: string }): string {
     const dims = typeof file.rows === "number" && typeof file.cols === "number" ? `${file.rows} x ${file.cols}` : undefined;
     const facts = [dims, present(file.format)].filter((f): f is string => f !== undefined);
     return facts.length > 0 ? ` (${facts.join(", ")})` : "";
@@ -126,44 +127,49 @@ export function buildDataProfileOrientation(result: DataProfileResult, analysisI
     const design = present(result.experimentalDesign);
     if (design) lines.push(`Design: ${clip(design, MAX_DESIGN_CHARS)}`);
 
-    const concerns = (result.qualityAssessment?.concerns ?? []).map((c) => present(c)).filter((c): c is string => c !== undefined);
-    if (concerns.length > 0) {
-        const shown = concerns.slice(0, MAX_CONCERNS).map((c) => clip(c, MAX_CONCERN_CHARS));
-        const more = concerns.length > shown.length ? ` (+${concerns.length - shown.length} more)` : "";
+    const caveats = profileCaveats(result)
+        .map((c) => present(c))
+        .filter((c): c is string => c !== undefined);
+    if (caveats.length > 0) {
+        const shown = caveats.slice(0, MAX_CONCERNS).map((c) => clip(c, MAX_CONCERN_CHARS));
+        const more = caveats.length > shown.length ? ` (+${caveats.length - shown.length} more)` : "";
         lines.push(`Concerns: ${shown.join("; ")}${more}`);
     }
 
-    // Kinds come first because they are what the dataset IS at this budget: four lines
-    // describing 3513 files, where the per-file list could only show the first eight of
-    // them and imply the rest away.
-    const kinds = result.kinds ?? [];
-    if (kinds.length > 0) {
-        const shown = kinds.slice(0, MAX_KINDS);
-        const datasetFiles = kinds.reduce((sum, kind) => sum + kind.count, 0);
+    // Groups come first because they are what the dataset IS at this budget: four lines
+    // describing thousands of files, where the per-file list could only show the first
+    // eight of them and imply the rest away.
+    const groups = profileGroups(result);
+    if (groups.length > 0) {
+        const shown = groups.slice(0, MAX_GROUPS);
+        const datasetFiles = result.partition?.keptFiles ?? groups.reduce((sum, group) => sum + group.count, 0);
         const header =
-            shown.length < kinds.length
-                ? `Kinds (${shown.length} of ${kinds.length}, ${datasetFiles} files):`
-                : `Kinds (${kinds.length}, ${datasetFiles} files):`;
+            shown.length < groups.length
+                ? `Groups (${shown.length} of ${groups.length}, ${datasetFiles} files):`
+                : `Groups (${groups.length}, ${datasetFiles} files):`;
         lines.push(header);
-        for (const kind of shown) {
-            const facts = [`${kind.count}x`, present(kind.format)].filter((f): f is string => f !== undefined).join(", ");
-            lines.push(`- ${kind.name} (${facts}) — ${clip(kind.memberRepresents, MAX_KIND_DESCRIPTION_CHARS)}`);
+        for (const group of shown) {
+            const facts = [`${group.count}x`, present(group.format)].filter((f): f is string => f !== undefined).join(", ");
+            lines.push(`- ${group.name} (${facts}) — ${clip(group.memberRepresents, MAX_GROUP_DESCRIPTION_CHARS)}`);
         }
-        const axes = result.axes ?? [];
-        if (axes.length > 0) {
-            lines.push(`Axes: ${axes.map((axis) => `${axis.label} (${axis.cardinality})`).join(", ")}`);
+        const dimensions = profileDimensions(result);
+        if (dimensions.length > 0) {
+            lines.push(`Dimensions: ${dimensions.map((d) => `${d.label} (${d.cardinalities.join(" / ") || "unmeasured"})`).join(", ")}`);
         }
-        if (result.coverage && result.coverage.unmatched > 0) {
+        if (result.partition && result.partition.unclassifiedFiles > 0) {
+            lines.push(`Unclassified: ${result.partition.unclassifiedFiles} of ${result.partition.keptFiles} kept files`);
+        } else if (result.coverage && result.coverage.unmatched > 0) {
             lines.push(`Coverage: ${result.coverage.matched} of ${result.coverage.total} files match a kind`);
         }
     }
 
-    if (result.files.length > 0) {
-        const shown = result.files.slice(0, MAX_FILES);
-        // With kinds present these are the individually notable files — the metadata
+    const files = profileFileRecords(result);
+    if (files.length > 0) {
+        const shown = files.slice(0, MAX_FILES);
+        // With groups present these are the individually notable files — the metadata
         // sheet, the README, the outlier — not a sample of the dataset.
-        const label = kinds.length > 0 ? "Notable files" : "Files";
-        const header = shown.length < result.files.length ? `${label} (${shown.length} of ${result.files.length}):` : `${label} (${result.files.length}):`;
+        const label = groups.length > 0 ? "Notable files" : "Files";
+        const header = shown.length < files.length ? `${label} (${shown.length} of ${files.length}):` : `${label} (${files.length}):`;
         lines.push(header);
         for (const file of shown) {
             lines.push(`- ${toAnalysisRootPath(analysisId, file.path)} — ${clip(file.description, MAX_FILE_DESCRIPTION_CHARS)}${formatFileFacts(file)}`);

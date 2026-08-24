@@ -1,9 +1,13 @@
 import { describe, expect, it } from "bun:test";
 
+import type { ProfileGroupView } from "../app/data-profile-view.js";
 import { buildManifest } from "../input-scan/scan.js";
 import type { ScannedFile } from "../input-scan/types.js";
-import type { DataProfileKind } from "../state/data-profile.js";
 import { buildProfileIndexEntries } from "./data-profile-index.js";
+
+const SUBJECTS = 400;
+const ALIGNED = 398;
+const SHEETS = 3;
 
 const pad = (n: number) => String(n).padStart(4, "0");
 
@@ -13,110 +17,100 @@ function file(path: string, format: string): ScannedFile {
     return { path, size: 2048, extensions: dot <= 0 ? [] : base.slice(dot + 1).split("."), format };
 }
 
-/** 3513 files, four shapes, 1171 subjects. */
-function motivatingScan() {
+/** A synthetic tree: many files, few sets, one wide identifier. */
+function scanFixture() {
     const files: ScannedFile[] = [
-        ...Array.from({ length: 1171 }, (_, i) => file(`data/inputs/vcf/PATIENT_${pad(i + 1)}.vcf.gz`, "vcf")),
-        ...Array.from({ length: 1171 }, (_, i) => file(`data/inputs/tbi/PATIENT_${pad(i + 1)}.vcf.gz.tbi`, "tabix-index")),
-        ...Array.from({ length: 1168 }, (_, i) => file(`data/inputs/bam/PATIENT_${pad(i + 1)}.bam`, "bam")),
-        ...Array.from({ length: 3 }, (_, i) => file(`data/inputs/meta/sheet_${i + 1}.csv`, "csv")),
+        ...Array.from({ length: SUBJECTS }, (_, i) => file(`data/inputs/vcf/SUBJ_${pad(i + 1)}.vcf.gz`, "vcf")),
+        ...Array.from({ length: SUBJECTS }, (_, i) => file(`data/inputs/tbi/SUBJ_${pad(i + 1)}.vcf.gz.tbi`, "tabix-index")),
+        ...Array.from({ length: ALIGNED }, (_, i) => file(`data/inputs/bam/SUBJ_${pad(i + 1)}.bam`, "bam")),
+        ...Array.from({ length: SHEETS }, (_, i) => file(`data/inputs/meta/sheet_${i + 1}.csv`, "csv")),
     ];
     return buildManifest("data/inputs", files, false);
 }
 
-const kinds: DataProfileKind[] = [
+const TOTAL_FILES = SUBJECTS * 2 + ALIGNED + SHEETS;
+
+const groups: ProfileGroupView[] = [
     {
-        name: "per-patient variant calls",
-        memberRepresents: "one patient's somatic variant calls",
-        description: "HaplotypeCaller VCFs, one per patient.",
-        count: 1171,
-        pathPattern: "data/inputs/vcf/*.vcf.gz",
+        id: "per-subject-variant-calls",
+        name: "per-subject variant calls",
+        memberRepresents: "one subject's somatic variant calls",
+        description: "Small-variant calls, one file per subject.",
+        count: SUBJECTS,
+        pattern: "data/inputs/vcf/<id>.vcf.gz",
         format: "vcf",
-        axisLabels: ["patient"],
     },
     {
+        id: "variant-indexes",
         name: "variant indexes",
-        memberRepresents: "the tabix index of one patient's calls",
-        description: "Tabix indexes accompanying the VCFs.",
-        count: 1171,
-        pathPattern: "data/inputs/tbi/*.tbi",
+        memberRepresents: "the tabix index of one subject's calls",
+        description: "Indexes accompanying the calls.",
+        count: SUBJECTS,
+        pattern: "data/inputs/tbi/<id>.vcf.gz.tbi",
         format: "tabix-index",
-        axisLabels: ["patient"],
     },
     {
+        id: "alignments",
         name: "alignments",
-        memberRepresents: "one patient's aligned reads",
-        description: "Per-patient BAMs.",
-        count: 1168,
-        pathPattern: "data/inputs/bam/*.bam",
+        memberRepresents: "one subject's aligned reads",
+        description: "Per-subject alignments.",
+        count: ALIGNED,
+        pattern: "data/inputs/bam/<id>.bam",
         format: "bam",
-        axisLabels: ["patient"],
     },
     {
+        id: "sample-sheets",
         name: "sample sheets",
-        memberRepresents: "one cohort's clinical annotation table",
-        description: "Clinical metadata.",
-        count: 3,
-        pathPattern: "data/inputs/meta/*.csv",
+        memberRepresents: "one cohort's annotation table",
+        description: "Specimen annotations.",
+        count: SHEETS,
+        pattern: "data/inputs/meta/sheet_<digits>.csv",
         format: "csv",
     },
 ];
 
-describe("buildProfileIndexEntries", () => {
-    it("indexes one entry per kind and one per entity, none per file", () => {
-        const entries = buildProfileIndexEntries({
-            analysisId: "a1",
-            kinds,
-            axes: [{ label: "patient", cardinality: 1171 }],
-            scan: motivatingScan(),
-        });
+const dimensions = [{ label: "subject", cardinalities: [SUBJECTS], exampleValues: ["0001", "0002"] }];
 
-        const kindEntries = entries.filter((e) => e.metadata.type === "input-kind");
+describe("buildProfileIndexEntries", () => {
+    it("indexes one entry per group and one per entity, none per file", () => {
+        const entries = buildProfileIndexEntries({ analysisId: "a1", groups, dimensions, scan: scanFixture() });
+
+        const groupEntries = entries.filter((e) => e.metadata.type === "input-kind");
         const entityEntries = entries.filter((e) => e.metadata.type === "input");
 
-        expect(kindEntries).toHaveLength(4);
-        expect(entityEntries).toHaveLength(1171);
-        expect(entries).toHaveLength(1175);
-        // 3513 files went in; not one of them has an entry of its own.
+        expect(groupEntries).toHaveLength(groups.length);
+        expect(entityEntries).toHaveLength(SUBJECTS);
+        expect(entries).toHaveLength(groups.length + SUBJECTS);
+        // Every file went in; not one of them has an entry of its own.
         expect(entries.some((e) => e.id.includes(".vcf.gz"))).toBe(false);
     });
 
-    it("batches into round trips that scale with kinds and entities, not files", () => {
-        const entries = buildProfileIndexEntries({
-            analysisId: "a1",
-            kinds,
-            axes: [{ label: "patient", cardinality: 1171 }],
-            scan: motivatingScan(),
-        });
+    it("batches into round trips that scale with groups and entities, not files", () => {
+        const entries = buildProfileIndexEntries({ analysisId: "a1", groups, dimensions, scan: scanFixture() });
         const batches = Math.ceil(entries.length / 256);
-        expect(batches).toBe(5);
+        expect(batches).toBe(2);
         // The loop this replaced issued one embed + one upsert per staged file.
-        expect(batches).toBeLessThan(3513);
+        expect(batches).toBeLessThan(TOTAL_FILES);
     });
 
     it("keeps type:'input' meaning what it meant, so existing filtered searches still match", () => {
-        const entries = buildProfileIndexEntries({
-            analysisId: "a1",
-            kinds,
-            axes: [{ label: "patient", cardinality: 1171 }],
-            scan: motivatingScan(),
-        });
+        const entries = buildProfileIndexEntries({ analysisId: "a1", groups, dimensions, scan: scanFixture() });
         const entity = entries.find((e) => e.metadata.type === "input")!;
-        expect(entity.metadata.axis).toBe("patient");
-        expect(entity.text).toContain("patient");
-        expect(entity.text).toContain("one patient's somatic variant calls");
+        expect(entity.metadata.axis).toBe("subject");
+        expect(entity.text).toContain("subject");
+        expect(entity.text).toContain("one subject's somatic variant calls");
     });
 
     it("templates every entry deterministically — the same inputs give the same entries", () => {
-        const args = { analysisId: "a1", kinds, axes: [{ label: "patient", cardinality: 1171 }], scan: motivatingScan() };
+        const args = { analysisId: "a1", groups, dimensions, scan: scanFixture() };
         expect(buildProfileIndexEntries(args)).toEqual(buildProfileIndexEntries(args));
     });
 
-    it("falls back to the notable files when a profile submitted no kinds", () => {
+    it("falls back to the notable files when a profile resolved no groups", () => {
         const entries = buildProfileIndexEntries({
             analysisId: "a1",
-            kinds: [],
-            files: [{ path: "data/inputs/meta/sheet_1.csv", description: "Clinical annotations.", dataType: "clinical-metadata" }],
+            groups: [],
+            files: [{ path: "data/inputs/meta/sheet_1.csv", description: "Specimen annotations.", dataType: "sample-annotation" }],
         });
         expect(entries).toHaveLength(1);
         expect(entries[0]!.metadata.type).toBe("input");

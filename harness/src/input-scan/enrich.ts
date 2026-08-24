@@ -43,6 +43,27 @@ export const SANDBOX_CONTAINER_FORMATS: ReadonlySet<string> = new Set(["parquet"
 
 const CONTAINER_DECODER = new URL("./decoder/container_readout.py", import.meta.url);
 
+/** One file to read a header from, and what the scan already knows about its bytes. */
+export interface ReadoutTargetSpec {
+    readonly path: string;
+    readonly format: string;
+    readonly wrapper?: string;
+}
+
+export interface ReadHeadersArgs {
+    readonly targets: readonly ReadoutTargetSpec[];
+    readonly session: AgentSession;
+    readonly fs: WorkspaceFilesystem;
+    /** Omit the sandbox to skip container readouts; every other format still reads. */
+    readonly sandboxClient?: SandboxClient;
+    readonly sandbox?: SandboxRef;
+    /** Absolute in-sandbox path of the analysis root (`/{analysisId}`). */
+    readonly mountRoot: string;
+    readonly execId: string;
+    readonly deadlineMs: number;
+    readonly emit: EmitFn;
+}
+
 export interface EnrichShapesArgs {
     readonly shapes: readonly FileShape[];
     readonly session: AgentSession;
@@ -57,73 +78,83 @@ export interface EnrichShapesArgs {
     readonly emit: EmitFn;
 }
 
-interface ReadoutTarget {
-    readonly shape: FileShape;
-    readonly path: string;
+/**
+ * Read a header from each named file, keyed by path.
+ *
+ * A target whose readout failed carries an `unavailable` note rather than vanishing: the
+ * readout is enrichment, and a menu without it still carries every structural observation
+ * the agent's grouping rests on.
+ */
+export async function readHeaders(args: ReadHeadersArgs): Promise<Map<string, HeaderReadout>> {
+    const readouts = new Map<string, HeaderReadout>();
+    const containers: ReadoutTargetSpec[] = [];
+    for (const target of args.targets) {
+        if (SANDBOX_CONTAINER_FORMATS.has(target.format)) containers.push(target);
+        else readouts.set(target.path, await readFromPrefix(args, target));
+    }
+
+    const { sandboxClient, sandbox } = args;
+    if (containers.length > 0 && sandboxClient && sandbox) {
+        for (const [path, readout] of await decodeContainers(args, { sandboxClient, sandbox }, containers)) readouts.set(path, readout);
+    }
+    return readouts;
 }
 
 /**
  * Read one member per shape and attach the readout.
  *
  * A shape whose readout failed keeps its `unavailable` note rather than losing the
- * shape: the readout is enrichment, and a manifest without it still carries every
- * structural observation the agent's grouping rests on.
+ * shape, for the same reason.
  */
 export async function enrichShapes(args: EnrichShapesArgs): Promise<FileShape[]> {
-    const targets = selectTargets(args.shapes);
-    if (targets.length === 0) return [...args.shapes];
-
-    const readouts = new Map<string, HeaderReadout>();
-    const containers: ReadoutTarget[] = [];
-    for (const target of targets) {
-        if (SANDBOX_CONTAINER_FORMATS.has(target.shape.format)) containers.push(target);
-        else readouts.set(target.shape.id, await readFromPrefix(args, target));
+    const targets = new Map<string, FileShape>();
+    for (const shape of args.shapes) {
+        const path = shape.examplePaths.slice(0, MEMBERS_DECODED_PER_SHAPE)[0];
+        if (path !== undefined && !targets.has(path)) targets.set(path, shape);
     }
+    if (targets.size === 0) return [...args.shapes];
 
-    const { sandboxClient, sandbox } = args;
-    if (containers.length > 0 && sandboxClient && sandbox) {
-        for (const [shapeId, readout] of await decodeContainers(args, { sandboxClient, sandbox }, containers)) readouts.set(shapeId, readout);
+    const readouts = await readHeaders({
+        ...args,
+        targets: [...targets.entries()].map(([path, shape]) => ({ path, format: shape.format, ...(shape.wrapper ? { wrapper: shape.wrapper } : {}) })),
+    });
+
+    const byShape = new Map<string, HeaderReadout>();
+    for (const [path, shape] of targets) {
+        const readout = readouts.get(path);
+        if (readout) byShape.set(shape.id, readout);
     }
 
     return args.shapes.map((shape) => {
-        const header = readouts.get(shape.id);
+        const header = byShape.get(shape.id);
         return header ? { ...shape, header } : shape;
     });
 }
 
-function selectTargets(shapes: readonly FileShape[]): ReadoutTarget[] {
-    const targets: ReadoutTarget[] = [];
-    for (const shape of shapes) {
-        const path = shape.examplePaths.slice(0, MEMBERS_DECODED_PER_SHAPE)[0];
-        if (path !== undefined) targets.push({ shape, path });
-    }
-    return targets;
-}
-
-async function readFromPrefix(args: EnrichShapesArgs, target: ReadoutTarget): Promise<HeaderReadout> {
-    const { shape, path } = target;
+async function readFromPrefix(args: ReadHeadersArgs, target: ReadoutTargetSpec): Promise<HeaderReadout> {
+    const { path } = target;
     const read = await args.fs
         .readBytes({ session: args.session, path, length: READOUT_PREFIX_BYTES })
         .unwrapOr<ReadBytesResult | { readonly kind: "read_failed" }>({ kind: "read_failed" });
     if (read.kind !== "ok") return { path, fields: {}, unavailable: `prefix unreadable (${read.kind})` };
 
-    const readout = await readPrefix({ prefix: read.bytes, format: shape.format, ...(shape.wrapper ? { wrapper: shape.wrapper } : {}) });
+    const readout = await readPrefix({ prefix: read.bytes, format: target.format, ...(target.wrapper ? { wrapper: target.wrapper } : {}) });
     return { path, fields: readout.fields, ...(readout.unavailable ? { unavailable: readout.unavailable } : {}) };
 }
 
 async function decodeContainers(
-    args: EnrichShapesArgs,
+    args: ReadHeadersArgs,
     machine: { readonly sandboxClient: SandboxClient; readonly sandbox: SandboxRef },
-    containers: readonly ReadoutTarget[],
+    containers: readonly ReadoutTargetSpec[],
 ): Promise<Map<string, HeaderReadout>> {
     const readouts = new Map<string, HeaderReadout>();
     const source = await readFile(CONTAINER_DECODER, "utf8").catch(() => undefined);
     if (source === undefined) {
-        for (const { shape, path } of containers) readouts.set(shape.id, { path, fields: {}, unavailable: "container decoder is missing from this build" });
+        for (const { path } of containers) readouts.set(path, { path, fields: {}, unavailable: "container decoder is missing from this build" });
         return readouts;
     }
 
-    const byAbsolute = new Map<string, ReadoutTarget>();
+    const byAbsolute = new Map<string, ReadoutTargetSpec>();
     for (const target of containers) byAbsolute.set(`${args.mountRoot}/${target.path}`, target);
 
     const result = await runSandboxExec({
@@ -147,15 +178,15 @@ async function decodeContainers(
         }
         const target = parsed.path ? byAbsolute.get(parsed.path) : undefined;
         if (!target) continue;
-        readouts.set(target.shape.id, {
+        readouts.set(target.path, {
             path: target.path,
             fields: parsed.fields ?? {},
             ...(parsed.unavailable ? { unavailable: parsed.unavailable } : {}),
         });
     }
 
-    for (const { shape, path } of containers) {
-        if (!readouts.has(shape.id)) readouts.set(shape.id, { path, fields: {}, unavailable: "container decoder reported nothing for this member" });
+    for (const { path } of containers) {
+        if (!readouts.has(path)) readouts.set(path, { path, fields: {}, unavailable: "container decoder reported nothing for this member" });
     }
     return readouts;
 }

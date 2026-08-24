@@ -268,7 +268,9 @@ describe("scope: overview", () => {
             condition: "Ulcerative Colitis vs healthy controls",
             accessions: ["GSE123456"],
             experimentalDesign: "12 UC vs 12 control, paired by batch.",
-            qualityAssessment: { concerns: ["batch confounded with group"], strengths: ["balanced groups"] },
+            // A legacy row's `qualityAssessment.concerns` reads through as caveats, so a
+            // consumer sees one field whichever era wrote the row.
+            caveats: ["batch confounded with group"],
             describedFileCount: 2,
         });
         // The overview is an orientation, not a dump: per-file records live behind scope:"files".

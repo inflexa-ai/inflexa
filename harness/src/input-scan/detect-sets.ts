@@ -158,7 +158,7 @@ function assembleMinedSet(group: MinedGroup, path: readonly PathSegment[]): Draf
     return { origin, pathTemplate: renderTemplate(segments, slots), segments, slots, members };
 }
 
-function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values: [string, readonly string[]][] } {
+function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values: [string, readonly string[]][]; memberValues: [string, readonly string[]][] } {
     const id = `set-${index + 1}`;
     const slotIds = draft.slots.map((_, position) => `${id}.slot-${position + 1}`);
     const slots: SetSlot[] = draft.slots.map((slot, position) => ({
@@ -199,6 +199,7 @@ function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values
             members,
         },
         values: draft.slots.map((slot, position) => [slotIds[position]!, slot.values]),
+        memberValues: draft.slots.map((slot, position) => [slotIds[position]!, slot.memberValues]),
     };
 }
 
@@ -285,11 +286,13 @@ export function detectSets(files: readonly ScannedFile[], options: DetectSetsOpt
         (a, b) => b.members.length - a.members.length || bytesOf(b.members) - bytesOf(a.members) || a.pathTemplate.localeCompare(b.pathTemplate, "en"),
     );
     const slotValues = new Map<string, readonly string[]>();
+    const memberSlotValues = new Map<string, readonly string[]>();
     const sets: DetectedSet[] = [];
     for (const [index, draft] of ordered.entries()) {
         const finalized = finalizeSet(draft, index);
         sets.push(finalized.set);
         for (const [slotId, values] of finalized.values) slotValues.set(slotId, values);
+        for (const [slotId, values] of finalized.memberValues) memberSlotValues.set(slotId, values);
     }
 
     const coveredFiles = sets.reduce((total, set) => total + set.fileCount, 0);
@@ -307,7 +310,9 @@ export function detectSets(files: readonly ScannedFile[], options: DetectSetsOpt
         quarantine: summary,
         sets,
         leftovers: leftoverFiles,
+        leftoverMembers: leftovers,
         readout: selectReadouts(sets, leftovers),
         slotValues,
+        memberSlotValues,
     };
 }

@@ -457,18 +457,65 @@ export { clearDataProfile, loadDataProfileStatus, tryRetryDataProfile, reconcile
 // not know which half of the package declares what.
 export type {
     DataProfileAxis,
+    DataProfileChecked,
+    DataProfileCompanionCompleteness,
     DataProfileCoverage,
+    DataProfileDimension,
     DataProfileFile,
+    DataProfileGroup,
+    DataProfileGroupSlot,
     DataProfileInputFile,
     DataProfileInputSignature,
     DataProfileKind,
     DataProfileLifecycleStatus,
+    DataProfileMemberAnnotation,
+    DataProfileObservation,
     DataProfileOrganism,
+    DataProfilePartition,
+    DataProfileProbeReport,
     DataProfileQualityAssessment,
+    DataProfileQuarantine,
+    DataProfileRecipeStep,
     DataProfileResult,
     DataProfileSubjectSource,
 } from "./contracts/data-profile.js";
 export type { DataProfileStatus } from "./state/data-profile.js";
+
+// The controlled vocabulary the profiler draws from, as data. A consumer rendering a
+// stored group needs the category's meaning, and the package owns the catalogue — a host
+// does not extend it.
+export {
+    DIMENSION_CATEGORIES,
+    DIMENSION_CATEGORY_IDS,
+    DIMENSION_PROBES,
+    DIMENSION_PROBE_IDS,
+    GROUP_CATEGORIES,
+    GROUP_CATEGORY_IDS,
+    GROUP_ROLES,
+    GROUP_ROLE_IDS,
+    PROBE_OUTCOME_IDS,
+    dimensionCategoryEntry,
+    dimensionScope,
+    groupCategoryEntry,
+} from "./contracts/profile-vocabulary.js";
+export type {
+    DimensionCategory,
+    DimensionCategoryEntry,
+    DimensionProbe,
+    DimensionProbeEntry,
+    DimensionScope,
+    DimensionTreatment,
+    GroupCategory,
+    GroupCategoryEntry,
+    GroupRole,
+    GroupRoleEntry,
+    ProbeOutcome,
+} from "./contracts/profile-vocabulary.js";
+
+// Reading a persisted profile of either era through one shape — the projection every
+// consumer uses so that a row written before groups existed still renders.
+export { profileCaveats, profileDatasetFileCount, profileDimensions, profileFileRecords, profileGroups } from "./app/data-profile-view.js";
+export type { ProfileDimensionView, ProfileGroupView } from "./app/data-profile-view.js";
 
 // Analysis reclamation — `purgeAnalysis` reclaims an analysis's whole Postgres
 // footprint from its id alone; workspace files stay the embedder's to dispose of.
