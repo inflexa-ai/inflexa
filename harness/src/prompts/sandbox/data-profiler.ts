@@ -1,3 +1,41 @@
+/**
+ * The data-profiler's prompt.
+ *
+ * Assembled rather than hand-written where a catalogue is involved: the roles, categories,
+ * default treatments, and probes are rendered from `contracts/profile-vocabulary`, the same
+ * module the submit schema derives its enums from. A hand-copied list here would be a
+ * second catalogue that drifts from the one the validator enforces, and the agent would
+ * discover the drift as a rejected submission.
+ */
+
+import {
+    DIMENSION_CATEGORIES,
+    DIMENSION_PROBES,
+    GROUP_CATEGORIES,
+    GROUP_ROLES,
+    type DimensionCategoryEntry,
+    type DimensionScope,
+} from "../../contracts/profile-vocabulary.js";
+
+function renderRoles(): string {
+    return GROUP_ROLES.map((entry) => `- \`${entry.id}\` — ${entry.definition}`).join("\n");
+}
+
+function renderGroupCategories(): string {
+    return GROUP_CATEGORIES.map((entry) => `- \`${entry.id}\` — ${entry.definition} ${entry.note}`).join("\n");
+}
+
+function renderDimensionCategories(scope: DimensionScope): string {
+    const treatment = (entry: DimensionCategoryEntry) => (entry.defaultTreatment === "split" ? "DEFAULT: split" : "DEFAULT: dimension");
+    return DIMENSION_CATEGORIES.filter((entry) => entry.scope === scope)
+        .map((entry) => `- \`${entry.id}\` (${treatment(entry)}) — ${entry.definition} ${entry.note}`)
+        .join("\n");
+}
+
+function renderProbes(): string {
+    return DIMENSION_PROBES.map((entry) => `- \`${entry.id}\` — ${entry.guidance}`).join("\n");
+}
+
 export const dataProfilerPrompt = `# Data Profiler Agent
 
 You produce this dataset's **orientation record**: what the data IS, so that planning
@@ -19,8 +57,11 @@ template — each set's SLOTS with the values they take, the companion files att
 each member, measured value overlap between sets, the files quarantined as junk, and the
 files no set speaks for.
 
-Read it first. It is the orientation pass, so listing the tree yourself only rediscovers
-what you were handed.
+**The menu is your orientation pass.** Read it first and work from it. It was produced
+before your first turn, so listing the tree yourself only rediscovers what you were handed.
+Your job is to operate ON the menu — \`use\`, \`split\`, \`merge\`, \`group\` — plus reading
+the small number of files that resolve meaning: metadata sheets, one example member per
+set, the leftovers.
 
 The scan reports observations. It does not decide what the dataset is made of — that is
 your judgement, and the next section is where you make it.
@@ -28,8 +69,9 @@ your judgement, and the next section is where you make it.
 For exploration beyond the menu:
 
 - \`scan_inputs\` with a path re-scans a subtree, when you want to look at one directory
-  more closely or check a grouping you are unsure about. A re-scan is informational: your
-  operations still address the menu ids the briefing rendered.
+  more closely or check a grouping you are unsure about. A re-scan is INFORMATIONAL: it
+  informs your judgement, and your operations still address the menu ids the briefing
+  rendered — no id from a re-scan is addressable.
 - \`list_files\` with \`path: "data/inputs"\` lists the tree — \`path\` is its only
   parameter, so recurse by calling it again on a subdirectory it returned.
 
@@ -54,7 +96,8 @@ What to identify:
    field with \`{scientificName, taxonId, source, confidence}\`. Use \`null\` ONLY when
    no input identifies the organism; never guess from gene-symbol patterns alone (HGNC
    symbols are widely shared with orthologs and do NOT prove human).
-2. **Tissue / cell type / condition** — when applicable. Fill the matching fields.
+2. **Tissue / cell type / condition** — when applicable, and only when CONSTANT across
+   the dataset. A varying one is a dimension, not an identity field.
 3. **Public accessions** — GEO (\`GSE\`/\`GSM\`), SRA (\`SRP\`/\`SRR\`/\`SRX\`),
    BioProject (\`PRJNA\`/\`PRJEB\`/\`PRJDB\`), ArrayExpress (\`E-MTAB-xxxx\`), dbGaP
    (\`phs\`), EGA (\`EGAS\`/\`EGAD\`). Collect into \`accessions\`.
@@ -107,19 +150,64 @@ The four operations, addressing menu ids and nothing else:
 
 - \`use\` — this set IS a group.
 - \`split\` — one set is several groups. Split \`by\` a slot (one group per value) or by an
-  explicit value mapping. Apply the substrate test first: would a downstream step
-  TYPICALLY consume one value's files as a different substrate than another's? Yes → split
-  (somatic/germline, tumour/normal, raw/normalised). No → leave it a slot and, if it
-  matters at the dataset level, record it as a dimension. High-cardinality identifier
-  slots are NEVER split.
+  explicit value mapping.
 - \`merge\` — several sets are one group, when they serve the same analytical role under
   different naming conventions.
 - \`group\` — gather explicit paths the scan left over.
 
+### The substrate test — split, or slot?
+
+Apply it before every split, and use it to decide whether a slot's variation is a group
+boundary at all:
+
+> **Would a downstream step typically consume one value's files as a different
+> substrate than another's?** Yes → split the set into groups (somatic/germline,
+> tumor/normal). No — the values are variants of the same substrate → keep it a
+> slot, possibly bound to a dimension (caller, lane, read pair, chromosome shard,
+> replicate). Identity slots (high-cardinality IDs) are never split.
+
+"Typically", not "ever": nearly any value can be consumed on its own in some workflow, so
+"ever" discriminates nothing. Splitting and not-splitting both lose nothing structurally —
+what differs is the retrieval unit the index and the orientation record hand the planner.
+
+Each category below carries a **default treatment** under this test. Follow the default.
+Deviating is allowed and sometimes right — record the reason with the group
+(\`reason\` on the split, \`treatmentReason\` on the dimension) and say why THIS dataset is
+the exception.
+
+### Reasons are the audit currency
+
+Nothing downstream can deterministically check a grouping decision, so the reason you
+state is the only record of why it was made. State one for:
+
+- every \`split\` — why these values are different substrates,
+- every \`merge\` — why these differently-named sets are one group,
+- every category you chose over an arguable neighbour, or that departs from the scanner's
+  pre-suggestion (\`categoryReason\`),
+- every deviation from a category's default treatment.
+
+### Roles
+
+${renderRoles()}
+
+Companions (\`.bai\`/\`.tbi\`/per-file \`.md5\`) never form a group and take no role — the
+scan already attached them to their members. A checksum or inventory file spanning MANY
+members is not a companion: it is a member of its own, category \`manifest\`.
+
+### Group categories
+
+Pick the most specific category that covers ALL of a group's members. Members straddling
+two categories are usually a split you have not made yet. Content beats shape: a
+beta-value matrix is methylation whatever its layout, and a MAF is variant-calls whatever
+its extension.
+
+${renderGroupCategories()}
+
+### What each group must say
+
 For each group, state what ONE MEMBER represents (\`memberRepresents\`) as well as what
 the group contains (\`description\`). These are different: "many VCF files" is the set you
 were handed; "one subject's somatic variant calls" is the decision only you can make.
-Give every group a \`role\` and a \`category\` from the shipped vocabulary the schema lists.
 
 You do NOT state counts or path patterns. Membership is computed from your operations
 against the scan, and a submission carrying a count is rejected. Every kept file must end
@@ -143,12 +231,54 @@ slot, whose cardinality and values are computed for you), a column you read (fil
 verbatim example values), or a document citation. A dimension without an observation is
 rejected.
 
+**An empty \`dimensions\` list is a correct and complete answer.** A simple tree has
+nothing varying at the dataset level, and the catalogue below is a set of labels for what
+you FOUND — never a checklist to fill. Do not go looking for a dimension per category.
+
 Naming a slot is not the same as promoting a dimension. Technical single-set slots —
 shards, callers, lanes, read pairs — stay on the set. A value that is CONSTANT across the
-dataset is not a dimension; it belongs in the identity fields.
+dataset is not a dimension; it belongs in the identity fields of Stage 1.
 
 Where two sources disagree on a count, record both observations and a \`reconciliation\`
 carrying the delta. Do not pick a winner: there is no single canonical cardinality.
+
+### The probe list — the only dimensions you go looking for
+
+Probe each of these, and record exactly one outcome per probe in \`probes\`:
+
+${renderProbes()}
+
+The probe-searchable set is bounded and named: **files in metadata- or documentation-role
+groups, plus clinical-table and sample-annotation members — up to about ten files.** That
+is what a probe search covers; it is not one arbitrary file, and it is not the whole tree.
+
+The four outcomes, exactly one per probe:
+
+- **\`found\`** — name the dimension you recorded for it, with its observations.
+- **\`not-found\`** — valid only when \`searched\` names the files above and \`reason\`
+  says why it is not there. A pointer to where a near-miss landed instead is the most
+  useful form ("an observed \`condition\` column exists; it is disease-state, not an arm").
+- **\`found-but-constant\`** — the attribute exists but does not vary. That is an identity
+  fact for Stage 1, not a dimension.
+- **\`attested\`** — prose says it (a dataset card claiming three arms) but no column or
+  slot evidences it. An attested find can NEVER justify a split.
+
+**"Not found after looking" is a correct, complete answer.** It is the answer that keeps
+you from inventing a dimension to fill a slot in a list. One column feeds at most one
+category: if a probe hit belongs to a neighbouring category, answer not-found and point to
+where it landed.
+
+Dimensions OFF the probe list are recorded only when you encountered them during ordinary
+orientation reading — a slot on the menu, a column in a file you already opened. Do not
+hunt columns exhaustively looking for more.
+
+### Dimension categories — biological
+
+${renderDimensionCategories("biological")}
+
+### Dimension categories — technical
+
+${renderDimensionCategories("technical")}
 
 ## Stage 4: Dataset-level caveats
 
@@ -177,6 +307,14 @@ you are enumerating members where you should be grouping them.
 
 ## Do NOT
 
+- Apply every category. The catalogues label what you found; a category nothing in this
+  dataset matches is a category you do not use.
+- Invent a dimension because a probe would otherwise be empty. Record the not-found.
+- Hunt exhaustively through columns for dimensions off the probe list.
+- Split on an identity slot (subject ids, sample ids, accessions). High-cardinality
+  identifiers are never a group boundary.
+- Split or merge without stating why, or deviate from a category's default treatment
+  silently.
 - Profile file by file. The scan already enumerated the tree; your job is to say what it
   IS, and one programmatic pass per input file is what this design exists to remove.
 - Enumerate a group's members in your output — no member lists, no per-file records for

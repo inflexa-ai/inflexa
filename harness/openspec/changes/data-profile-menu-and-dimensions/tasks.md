@@ -17,18 +17,18 @@ private benchmark workspace; synthetic fixtures are authored fresh here.
 - [x] Delta specs under `specs/` (input-scan-manifest, data-profile-init, data-profile-rerun, sandbox-format-standards) — written against the post-`data-profile-orientation` spec state; archive that change first
 
 ## 1. Scanner
-- [ ] Port the prototype pipeline into `input-scan/` (quarantine, markers, sibling clustering, mining, assembly); adopt the prototype's integration notes (path templates, slots, format census, cross-checks) — code only, per the hygiene rule
-- [ ] Companion detection (same-stem helper suffixes) + per-member completeness
-- [ ] Readout budget: one member per set + all leftovers/singletons; content-similarity hook
-- [ ] Threshold validation on synthetic suites; date-token class; marker-unit co-clustering
-- [ ] Move prefix-sufficient decoding (CSV sniff, gzip peek, text headers) to TS over the workspace read seam; residual parquet/HDF5 decoder as linted+pytested `.py` asset; delete the `String.raw` blob
+- [x] Port the prototype pipeline into `input-scan/` (quarantine, markers, sibling clustering, mining, assembly); adopt the prototype's integration notes (path templates, slots, format census, cross-checks) — code only, per the hygiene rule
+- [x] Companion detection (same-stem helper suffixes) + per-member completeness
+- [x] Readout budget: one member per set + all leftovers/singletons; content-similarity hook
+- [ ] Threshold validation on synthetic suites; date-token class; marker-unit co-clustering (date-token class + per-stage suites done; marker-unit co-clustering still open)
+- [x] Move prefix-sufficient decoding (CSV sniff, gzip peek, text headers) to TS over the workspace read seam; residual parquet/HDF5 decoder as linted+pytested `.py` asset; delete the `String.raw` blob
 
 ## 2. Authoring contract
 - [x] Vocabulary as data (`contracts/profile-vocabulary.ts`): group roles, group categories with anti-overlap notes, dimension categories with default treatment, probe list — one source for submit validation and prompt assembly
 - [x] Menu render into the profiler briefing (bounded; nudge on catch-all use/merge)
 - [x] `submit_profile` ops vocabulary (use/split/merge/group) + submit-time resolution: membership, derived counts, partition check, one repair round-trip, `unclassified` sweep
 - [x] Dimensions/observations schema (slot bindings, column/document evidence, `checked:{matched,of}`, nests-under, probe outcomes); member annotations on groups; drop `qualityAssessment.strengths`; renames kinds→groups, axes→dimensions with legacy optional-on-read
-- [ ] Prompt rewrite: substrate test verbatim, probe list, no-forcing stance ("empty is a correct answer"), category defaults
+- [x] Prompt rewrite: substrate test verbatim, probe list, no-forcing stance ("empty is a correct answer"), category defaults
 - [ ] Incremental absorption: recipe re-resolution against a changed tree; deterministic absorb path (membership/counts/signature, no LLM); delta repair round for structurally new files; drift digest over kept files only
 
 ## 3. Projection & consumers
