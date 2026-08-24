@@ -39,7 +39,7 @@ private benchmark workspace; synthetic fixtures are authored fresh here.
 ## 4. Verification
 - [x] Synthetic fixture suites per pipeline stage (authored in-repo, no real-tree derivation)
 - [x] Ops-resolution property tests (every file accounted; partition invariant)
-- [ ] Host-side end-to-end validation against real trees stays in the private workspace; only pass/fail conclusions recorded here
+- [x] Host-side end-to-end validation against real trees stays in the private workspace; only pass/fail conclusions recorded here — **passed 2026-08-24** on the motivating large tree: full partition with an empty `unclassified`, temp artifacts quarantined, cross-directory identity slots detected and cross-linked, bounded menu/submission, no repair round; one defect found (cross-check disjointness on affix-recovered slots) and fixed with the review findings
 
 ## Companion items (not this change)
 - [ ] Host ticket: input materializer leaves sparse `*.tmp-<uuid>` partial downloads beside completed twins
