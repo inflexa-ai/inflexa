@@ -32,13 +32,13 @@ private benchmark workspace; synthetic fixtures are authored fresh here.
 - [x] Incremental absorption: recipe re-resolution against a changed tree; deterministic absorb path (membership/counts/signature, no LLM); delta repair round for structurally new files; drift digest over kept files only
 
 ## 3. Projection & consumers
-- [ ] Index: groups + member annotations + dimensions entries (restore per-file searchability)
-- [ ] Orientation: new field order, coverage/integrity signals survive the clamp
-- [ ] `inspect_data_profile` over the new record; contracts for the frontend
+- [x] Index: groups + member annotations + dimensions entries (restore per-file searchability)
+- [x] Orientation: new field order, coverage/integrity signals survive the clamp
+- [x] `inspect_data_profile` over the new record; contracts for the frontend
 
 ## 4. Verification
-- [ ] Synthetic fixture suites per pipeline stage (authored in-repo, no real-tree derivation)
-- [ ] Ops-resolution property tests (every file accounted; partition invariant)
+- [x] Synthetic fixture suites per pipeline stage (authored in-repo, no real-tree derivation)
+- [x] Ops-resolution property tests (every file accounted; partition invariant)
 - [ ] Host-side end-to-end validation against real trees stays in the private workspace; only pass/fail conclusions recorded here
 
 ## Companion items (not this change)
