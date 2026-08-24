@@ -29,7 +29,6 @@ import { z } from "zod";
 
 import { type AgentPolicy, getAgentPolicy, isTransferPolicy } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
-import { LIVENESS_WINDOW_MS } from "../../lib/download.ts";
 import { env } from "../../lib/env.ts";
 import { anchorPathForAnalysisId } from "../analysis/output.ts";
 import { classifyInflexaArgv, toEffectiveArgv } from "./inflexa_classify.ts";
@@ -82,10 +81,11 @@ const KILL_GRACE_MS = 2_000;
  * What the approval prompt of a transfer command says before the standing-grant sentence.
  *
  * The user consents to a run with no deadline, which the argv line does not show, thus the prompt must
- * say it. The window comes from the downloader itself, so the number the user reads is the number that
- * ends the run.
+ * say it. It says only that. How the run ends is the downloader's mechanism, and a prompt that recited
+ * it would ask the user to hold a number they can act on in no way, and would go stale the day the
+ * mechanism changes.
  */
-const TRANSFER_DETAIL = `This command downloads data. It has no time limit, and it stops when no data arrives for ${Math.round(LIVENESS_WINDOW_MS / 60_000)} minutes. `;
+const TRANSFER_DETAIL = "This command downloads data. It has no time limit. ";
 
 /**
  * What the tool should do with a classified `action` verdict, decided purely from

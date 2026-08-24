@@ -126,9 +126,8 @@ describe("run_inflexa — execute", () => {
         // Neither key is present: a download outlives any ceiling worth setting, and it is silent for the
         // whole of one large file, so either bound could only ever cut an honest transfer short.
         expect(sub.bounds[0]).toEqual({});
-        // What the user consents to that the argv line cannot show, plus the one condition that ends it.
+        // What the user consents to that the argv line cannot show, and nothing about the mechanism.
         expect(ask.calls[0]?.detail).toContain("no time limit");
-        expect(ask.calls[0]?.detail).toContain("2 minutes");
     });
 
     test("a command that is not a transfer keeps both of the tool's bounds and says nothing about them", async () => {
