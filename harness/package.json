@@ -33,15 +33,17 @@
         "directory": "harness"
     },
     "scripts": {
-        "build": "tsc -p tsconfig.json",
+        "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
         "design:fixture": "bun scripts/render-fixture.ts",
         "format": "prettier --write src/",
         "format:file": "prettier --write",
         "lint": "eslint .",
-        "prepare": "tsc -p tsconfig.json",
+        "lint:python": "ruff check src/input-scan/decoder && ruff format --check src/input-scan/decoder",
+        "prepare": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
         "prepublishOnly": "bun run build && bun run smoke",
         "smoke": "node scripts/smoke.mjs",
         "test:full": "bash scripts/test-full.sh",
+        "test:python": "python3 -m pytest src/input-scan/decoder -q",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {

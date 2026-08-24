@@ -84,7 +84,7 @@ export interface FileShape {
     readonly cooccurrence: readonly PositionCooccurrence[];
     /** Bounded sample of member paths. */
     readonly examplePaths: readonly string[];
-    /** Present once sandbox enrichment has run for this shape. */
+    /** Present once the header readout has run for this shape. */
     readonly header?: HeaderReadout;
 }
 

@@ -2,15 +2,15 @@
  * Format detection over a bounded byte prefix.
  *
  * A prefix read compared against a magic-byte table is NOT a decode: no parser
- * runs over the bytes, so this belongs in the harness process. Every actual
- * decoder — zlib, HDF5, PDF — stays in the sandbox (see `enrich.ts`), which is
- * the exposure the sandbox exists to contain.
+ * runs over the bytes, so this belongs in the harness process. So does every
+ * readout a bounded prefix suffices for (see `readout.ts`); a parser that must
+ * walk a whole container stays in the sandbox (see `enrich.ts`).
  *
  * Compression wrappers are reported ALONGSIDE the inner format, never in place of
  * it: `.vcf.gz` is a VCF, and a shape observed on the wrapper would present
  * unrelated data as mechanically alike. The wrapper comes from the bytes; the inner
- * format of a wrapped file comes from its extension chain, which the sandbox
- * header readout then confirms against the decompressed stream.
+ * format of a wrapped file comes from its extension chain, which the header
+ * readout then confirms against the decompressed prefix.
  *
  * The recognised list is a floor, not a closed set. An unrecognised format reports
  * `unknown` with its extension chain preserved, and still joins a shape — shape
