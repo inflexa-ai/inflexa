@@ -42,21 +42,24 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
         id: "workspace_search",
         description:
             "Semantic search over the analysis workspace. Returns ranked entries with descriptions " +
-            "and metadata; read a file separately to see its contents. Indexed entries are exactly " +
-            'five types, and `type` restricts results to one of them: "input-kind" (a KIND of input ' +
-            "data — a repeating set the data profiler named, carrying its count and a pathPattern " +
-            'matching its members), "input" (one entity the dataset is about — a subject, sample, or ' +
-            'other axis value — with the kinds of file it carries), "output" (files a step produced), ' +
-            '"summary" (a step\'s summary), "synthesis" (a run\'s literature-grounded synthesis). ' +
-            "For output/summary/synthesis the entry id IS the workspace path; for the two input types " +
-            "it is not, because a kind and an entity each span many files — search input-kind for a " +
-            "set's pathPattern, then list the tree for its members.",
+            "and metadata; read a file separately to see its contents. `type` restricts results to one " +
+            'entry type: "input-group" (a GROUP of input data the data profiler declared, carrying its ' +
+            'derived count, its display pattern, and its slots), "input-dimension" (something that VARIES ' +
+            "across the dataset — subject, timepoint, batch — with the observations evidencing it), " +
+            '"input" (one input file the profiler annotated individually, or, on a profile of the ' +
+            'previous era, one entity the dataset is about), "output" (files a step produced), ' +
+            '"summary" (a step\'s summary), "synthesis" (a run\'s literature-grounded synthesis), ' +
+            '"input-kind" (a repeating set, on a profile of the previous era). ' +
+            "For input/output/summary/synthesis the entry id IS the workspace path; for a group or a " +
+            "dimension it is not, because each spans many files — search input-group for a group's " +
+            "display pattern, then list the tree for its members. Most input files carry no entry of " +
+            "their own: find them through their group and the listing tools.",
         inputSchema: z.object({
             query: z.string().min(1).describe("What to search for, in natural language"),
             type: z
-                .enum(["input-kind", "input", "output", "summary", "synthesis"])
+                .enum(["input-group", "input-dimension", "input", "input-kind", "output", "summary", "synthesis"])
                 .optional()
-                .describe('Restrict results to one entry type: "input-kind", "input", "output", "summary", or "synthesis"'),
+                .describe('Restrict results to one entry type: "input-group", "input-dimension", "input", "input-kind", "output", "summary", or "synthesis"'),
             limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
         }),
         describeCall: ({ query, type }) => (type === undefined ? query : `${query} (${type})`),

@@ -11,8 +11,9 @@ The conversation already carries the task: which analysis, which audience, and t
 findings the user cares about. Start from what is in front of you. Reach for a read
 tool only where the context is thin, and reach in a targeted way:
 
-- \`inspect_data_profile\` — what the dataset is: its design, its organism, its
-  per-file types. Read it when you must state a fact about the data itself.
+- \`inspect_data_profile\` — what the dataset is: its design, its organism, the
+  groups its files fall into. Read it when you must state a fact about the data
+  itself.
 - \`inspect_run\` — what a run produced, and where its outputs are. Read it when you
   must ground a claim in a run's results.
 - \`workspace_search\` — the ranked files that nothing in the conversation named. It

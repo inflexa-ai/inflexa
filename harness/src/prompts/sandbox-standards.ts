@@ -40,16 +40,19 @@ re-reading an upstream step whose summary you were handed, no re-deriving the
 organism or the dimensions from raw bytes. Reach further only where the briefing is
 genuinely thin for what you must do:
 
-- \`inspect_data_profile\` — the full dataset profile (per-file metrics, warnings,
-  the profiler's narrative), paged. It is the ONLY record of what the input data
-  IS; no file on disk carries it. Use it when the briefing's orientation is not
-  enough, or when it carried none.
+- \`inspect_data_profile\` — the full dataset profile: \`scope:'overview'\` for the
+  identity and the file census, \`scope:'groups'\` for the groups and the dimensions
+  that vary across them, \`scope:'files'\` for the members the profiler annotated
+  individually. It is the ONLY record of what the input data IS; no file on disk
+  carries it. Use it when the briefing's orientation is not enough, or when it
+  carried none.
 - \`read_file\` on an upstream step's summary — its path is in your briefing — when
   the excerpt you were handed is not enough to build on.
 - \`workspace_search({ query })\` — natural-language search for a file the briefing
-  does not name. Optional \`type\` filter (\`input\` | \`output\` | \`summary\` |
-  \`synthesis\`) and \`limit\` (1-50, default 8). Returns paths, descriptions, and
-  metadata — not file contents.
+  does not name. Optional \`type\` filter (\`input-group\` | \`input-dimension\` |
+  \`input\` | \`output\` | \`summary\` | \`synthesis\`) and \`limit\` (1-50, default 8).
+  Returns paths, descriptions, and metadata — not file contents. Most input files
+  carry no entry of their own; reach them through their group and \`list_files\`.
 
 ## Your Workspace
 

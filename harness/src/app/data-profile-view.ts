@@ -42,7 +42,14 @@ export interface ProfileDimensionView {
     readonly description?: string;
 }
 
-function cardinalitiesOf(dimension: DataProfileDimension): number[] {
+/**
+ * Every number the observations reported, side by side and de-duplicated.
+ *
+ * There is no canonical cardinality: a metadata sheet describing one count and files
+ * existing for another both stand, so a single number would be a silent judgement between
+ * disagreeing sources.
+ */
+export function dimensionCardinalities(dimension: DataProfileDimension): number[] {
     const counts: number[] = [];
     for (const observation of dimension.observations) {
         if (observation.kind === "slot") counts.push(observation.cardinality);
@@ -94,7 +101,7 @@ export function profileDimensions(result: DataProfileResult): ProfileDimensionVi
     if (result.dimensions) {
         return result.dimensions.map((dimension) => ({
             label: dimension.label,
-            cardinalities: cardinalitiesOf(dimension),
+            cardinalities: dimensionCardinalities(dimension),
             exampleValues: examplesOf(dimension),
             ...(dimension.description ? { description: dimension.description } : {}),
         }));

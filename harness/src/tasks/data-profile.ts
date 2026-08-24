@@ -1,8 +1,8 @@
 /**
  * Data-profile DBOS workflow — scans the already-staged input tree, runs the
  * data-profiler sandbox agent over the resulting manifest, registers each staged
- * file in cortex_artifacts, and indexes the profile's kinds and entities into the
- * pgvector store. Inputs are staged under `data/inputs/` by the embedder before the
+ * file in cortex_artifacts, and indexes the profile's groups, dimensions, and annotated
+ * members into the pgvector store. Inputs are staged under `data/inputs/` by the embedder before the
  * run (see the data-profile-init spec); the body assumes a populated tree and never
  * downloads.
  *
@@ -58,7 +58,6 @@ import { readoutTargets } from "../input-scan/readout-budget.js";
 import type { DetectedSets } from "../input-scan/set-types.js";
 import { scanInputTree } from "../input-scan/scan.js";
 import type { HeaderReadout, InputScan } from "../input-scan/types.js";
-import { profileDimensions, profileFileRecords, profileGroups } from "../app/data-profile-view.js";
 import type { DataProfileDimension, DataProfileGroup, DataProfileProbeReport } from "../contracts/data-profile.js";
 import { buildProfileIndexEntries } from "./data-profile-index.js";
 import { absorbRecipe, renderAbsorbDelta, type AbsorbKind } from "./data-profile-absorb.js";
@@ -291,13 +290,13 @@ export function buildAbsorbedResult(
 }
 
 /**
- * Build and upsert the profile's vector index — one entry per group, one per entity, none
- * per file.
+ * Build and upsert the profile's vector index — one entry per group, one per dimension,
+ * one per annotated member, none per unannotated file.
  *
- * A pure projection of the scan crossed with the resolved profile, so an absorb rebuilds it
- * from the same two things the agent path does. Embedding is not a model judgement: leaving
- * the index behind after an absorb would make the newly absorbed members unsearchable while
- * the record said they were profiled.
+ * A pure projection of the persisted profile crossed with the scan, so an absorb rebuilds
+ * it from the same two things the agent path does. Embedding is not a model judgement:
+ * leaving the index behind after an absorb would make the newly absorbed members
+ * unsearchable while the record said they were profiled.
  */
 async function indexProfile(args: {
     readonly deps: DataProfileDeps;
@@ -311,13 +310,7 @@ async function indexProfile(args: {
     await ensureSearchIndex(deps.pool, analysisId, deps.embedding.dimensions);
     const vectorStore = createVectorStore(deps.pool);
     const indexName = searchIndexName(analysisId);
-    const entries = buildProfileIndexEntries({
-        analysisId,
-        groups: profileGroups(record),
-        dimensions: profileDimensions(record),
-        scan,
-        files: profileFileRecords(record),
-    });
+    const entries = buildProfileIndexEntries({ analysisId, result: record, scan });
 
     // Batched: both interfaces already take arrays, and one round trip per entry is
     // what made indexing 12 of the 39 minutes the motivating profile took.
@@ -697,7 +690,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
             const { submission, resolution } = accepted as { submission: ProfileSubmission; resolution: ProfileResolution };
 
-            // 5. Index into vector store — one entry per group, one per entity, none per file.
+            // 5. Index into vector store — one entry per group, one per dimension, one per annotated member.
             //
             // Reported as `indexing`, not `persisting`: the contract defines `persisting` as step
             // bytes uploading to an artifact store, and a profile uploads nothing — its durable

@@ -36,13 +36,15 @@ Re-orient only when:
 Route by what you are asking for:
 
 1. **What the dataset IS** → \`inspect_data_profile\`. The authoritative record:
-   domain, organism, tissue, condition, experimental design, quality concerns,
-   and the per-file data types and dimensions. There is no data-profile file —
-   this tool is the only way to read it. Do not go looking for one, and do not
-   re-derive these facts by reading the raw inputs.
+   domain, organism, tissue, condition, experimental design, caveats, the file
+   census, and — under \`scope:'groups'\` — the groups the files fall into and the
+   dimensions that vary across them. There is no data-profile file — this tool is
+   the only way to read it. Do not go looking for one, and do not re-derive these
+   facts by reading the raw inputs.
 2. **Which files exist** → \`workspace_search\`. Semantic search over the indexed
    workspace; it returns ranked paths with descriptions and metadata, not
-   contents.
+   contents. Groups and dimensions are indexed; most individual input files are
+   not, so reach them through their group and \`list_files\`.
 3. **What is inside a file** → \`read_file\` (or \`list_files\`) on a path a search
    returned.
 
@@ -224,7 +226,7 @@ When the user wants to explore hypotheses, follow the scientist process
 as one continuous thought process. Do not skip phases.
 
 ### 1. Orient — Understand What Exists
-- \`inspect_data_profile\` for the dataset's design and per-file facts.
+- \`inspect_data_profile\` for the dataset's design, its groups, and its dimensions.
 - Search the workspace for analysis results, DE results, QC summaries.
 - Read key files — result tables, summaries, metadata. Don't stop at search
   results — read the files to see specific values.
