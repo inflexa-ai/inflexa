@@ -146,6 +146,47 @@ def test_main_writes_one_line_per_path(tmp_path, capsys):
     assert [json.loads(line)["path"] for line in lines] == [first, str(second)]
 
 
+def test_render_reports_a_reader_that_raises_an_unexpected_exception(tmp_path, monkeypatch):
+    def explode(path):
+        raise RuntimeError("boom")
+
+    target = write_docx(tmp_path / "protocol.docx")
+    monkeypatch.setattr("container_readout.docx_fields", explode)
+    record = json.loads(render(target))
+    assert record["fields"] == {}
+    assert "RuntimeError" in record["unavailable"]
+    assert "boom" in record["unavailable"]
+
+
+def test_main_continues_past_a_corrupt_container_mid_batch(tmp_path, capsys):
+    good = write_docx(tmp_path / "one.docx")
+    corrupt = tmp_path / "broken.parquet"
+    corrupt.write_bytes(b"PAR1" + b"\x00\xff" * 64)
+    other = write_docx(tmp_path / "three.docx", properties=False)
+
+    assert main([good, str(corrupt), other]) == 0
+
+    lines = capsys.readouterr().out.strip().split("\n")
+    assert len(lines) == 3
+    records = [json.loads(line) for line in lines]
+    assert [record["path"] for record in records] == [good, str(corrupt), other]
+
+    assert records[0]["fields"]["pages"] == 7
+    assert "unavailable" not in records[0]
+    assert isinstance(records[1]["unavailable"], str) and records[1]["unavailable"]
+    assert records[1]["fields"] == {}
+    assert records[2]["fields"] == {"parts": 2}
+    assert "unavailable" not in records[2]
+
+
+def test_main_returns_zero_when_every_path_fails(tmp_path, capsys):
+    absent = [str(tmp_path / "a.parquet"), str(tmp_path / "b.h5"), str(tmp_path / "c.docx")]
+    assert main(absent) == 0
+    lines = capsys.readouterr().out.strip().split("\n")
+    assert [json.loads(line)["path"] for line in lines] == absent
+    assert all("FileNotFoundError" in json.loads(line)["unavailable"] for line in lines)
+
+
 def test_clip_collapses_whitespace_and_bounds_length():
     assert clip("  a\n\tb   c  ") == "a b c"
     assert clip("x" * 500) == "x" * 200

@@ -23,6 +23,7 @@ import type { EmitFn } from "../tools/define-tool.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { SandboxRef } from "../sandbox/types.js";
 import { runSandboxExec } from "../tools/workspace/run-exec.js";
+import type { ExecResult } from "../sandbox/types.js";
 import type { ReadBytesResult, WorkspaceFilesystem } from "../workspace/filesystem.js";
 
 import { READOUT_PREFIX_BYTES, readPrefix } from "./readout.js";
@@ -33,6 +34,16 @@ export const MEMBERS_DECODED_PER_SHAPE = 1;
 
 /** Wall-clock bound on the container-decode exec. It opens footers, nothing more. */
 const ENRICH_TIMEOUT_SECONDS = 120;
+
+/**
+ * Prefix reads in flight at once. Each is a bounded read over the workspace seam; running
+ * them one at a time makes a menu of sixty leftovers sixty serial round trips, and running
+ * them all at once hands the seam an unbounded burst.
+ */
+export const READOUT_CONCURRENCY = 8;
+
+/** Characters of decoder stderr carried into a per-file reason. */
+const MAX_STDERR_CHARS = 160;
 
 /**
  * The formats whose header lives behind a whole-container parse: Parquet's schema is
@@ -88,10 +99,21 @@ export interface EnrichShapesArgs {
 export async function readHeaders(args: ReadHeadersArgs): Promise<Map<string, HeaderReadout>> {
     const readouts = new Map<string, HeaderReadout>();
     const containers: ReadoutTargetSpec[] = [];
+    const prefixed: ReadoutTargetSpec[] = [];
     for (const target of args.targets) {
         if (SANDBOX_CONTAINER_FORMATS.has(target.format)) containers.push(target);
-        else readouts.set(target.path, await readFromPrefix(args, target));
+        else prefixed.push(target);
     }
+
+    let next = 0;
+    await Promise.all(
+        Array.from({ length: Math.min(READOUT_CONCURRENCY, prefixed.length) }, async () => {
+            for (let i = next++; i < prefixed.length; i = next++) {
+                const target = prefixed[i]!;
+                readouts.set(target.path, await readFromPrefix(args, target));
+            }
+        }),
+    );
 
     const { sandboxClient, sandbox } = args;
     if (containers.length > 0 && sandboxClient && sandbox) {
@@ -185,8 +207,23 @@ async function decodeContainers(
         });
     }
 
+    // A target the decoder said nothing about is told WHY, from the exec's own outcome: the
+    // decoder reports per path and exits 0 even when every path failed, so a silent gap is
+    // the exec itself having timed out, died, or never started — and "reported nothing" on
+    // its own is the one thing a reader cannot diagnose.
+    const failure = describeExecFailure(result);
     for (const { path } of containers) {
-        if (!readouts.has(path)) readouts.set(path, { path, fields: {}, unavailable: "container decoder reported nothing for this member" });
+        if (!readouts.has(path)) readouts.set(path, { path, fields: {}, unavailable: failure });
     }
     return readouts;
+}
+
+function describeExecFailure(result: ExecResult): string {
+    if (result.timedOut) return `container decoder timed out after ${ENRICH_TIMEOUT_SECONDS}s`;
+    if (result.syntheticFailure) return `container decoder did not complete: ${result.syntheticFailure.reason}`;
+    if (result.exitCode !== 0) {
+        const stderr = result.stderr.replace(/\s+/g, " ").trim().slice(0, MAX_STDERR_CHARS);
+        return `container decoder exited ${result.exitCode ?? "with no code"}${stderr ? `: ${stderr}` : ""}`;
+    }
+    return "container decoder reported nothing for this member";
 }

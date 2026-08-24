@@ -41,6 +41,10 @@ def clip(text: str, limit: int = MAX_FIELD_CHARS) -> str:
     return " ".join(str(text).split())[:limit]
 
 
+def reason(exc: BaseException) -> str:
+    return type(exc).__name__ + ": " + clip(str(exc), MAX_REASON_CHARS)
+
+
 def join_names(names: list) -> str:
     return clip(", ".join(str(name)[:MAX_NAME_CHARS] for name in names[:MAX_NAMES_REPORTED]))
 
@@ -60,7 +64,7 @@ def parquet_fields(path: str) -> dict:
             "rowCount": handle.metadata.num_rows,
             "rowGroups": handle.metadata.num_row_groups,
         }
-    except (OSError, ValueError) as exc:
+    except Exception as exc:
         return {"unavailable": "parquet read failed: " + clip(str(exc), MAX_REASON_CHARS)}
 
 
@@ -78,7 +82,7 @@ def hdf5_fields(path: str) -> dict:
                 if shape:
                     fields[probe + "Shape"] = "x".join(str(extent) for extent in shape)
             return fields
-    except (OSError, RuntimeError, ValueError) as exc:
+    except Exception as exc:
         return {"unavailable": "hdf5 read failed: " + clip(str(exc), MAX_REASON_CHARS)}
 
 
@@ -111,7 +115,7 @@ def docx_fields(path: str) -> dict:
                     if match:
                         fields[tag.lower()] = int(match.group(1))
             return fields
-    except (OSError, zipfile.BadZipFile) as exc:
+    except Exception as exc:
         return {"unavailable": "docx read failed: " + clip(str(exc), MAX_REASON_CHARS)}
 
 
@@ -141,18 +145,25 @@ def describe(path: str) -> dict:
 def render(path: str) -> str:
     try:
         fields = describe(path)
-    except OSError as exc:
-        fields = {"unavailable": type(exc).__name__ + ": " + clip(str(exc), MAX_REASON_CHARS)}
+    except Exception as exc:
+        fields = {"unavailable": reason(exc)}
     note = fields.pop("unavailable", None)
     record = {"path": path, "fields": fields}
     if note:
         record["unavailable"] = note
-    return json.dumps(record)
+    try:
+        return json.dumps(record)
+    except Exception as exc:
+        return json.dumps({"path": path, "fields": {}, "unavailable": reason(exc)})
 
 
 def main(paths: list) -> int:
     for path in paths:
-        sys.stdout.write(render(path) + "\n")
+        try:
+            line = render(path)
+        except Exception as exc:
+            line = json.dumps({"path": str(path), "fields": {}, "unavailable": reason(exc)})
+        sys.stdout.write(line + "\n")
     return 0
 
 
