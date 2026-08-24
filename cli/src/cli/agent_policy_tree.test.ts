@@ -29,10 +29,16 @@ function runReport(channel: "development" | "production"): PolicyRow[] {
     return JSON.parse(proc.stdout.toString()) as PolicyRow[];
 }
 
-/** Compact each row to its audit value: `auto(flag,flag)` for auto, otherwise the bare kind. */
+/**
+ * Compact each row to its audit value: `auto(flag,flag)` for auto, otherwise the bare kind, and `+transfer`
+ * on either when the command runs with no deadline of the tool's own.
+ */
 function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
     const out: Record<string, string> = {};
-    for (const row of rows) out[row.grantKey] = row.kind === "auto" ? `auto(${(row.safeFlags ?? []).join(",")})` : String(row.kind);
+    for (const row of rows) {
+        const kind = row.kind === "auto" ? `auto(${(row.safeFlags ?? []).join(",")})` : String(row.kind);
+        out[row.grantKey] = row.transfer ? `${kind}+transfer` : kind;
+    }
     return out;
 }
 
@@ -47,7 +53,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa auth whoami": "auto()",
     "inflexa config": "blocked",
     "inflexa down": "blocked",
-    "inflexa geo download": "approval",
+    "inflexa geo download": "approval+transfer",
     "inflexa inputs add": "blocked",
     "inflexa inputs ls": "auto(analysis)",
     "inflexa inputs remove": "blocked",
@@ -61,7 +67,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa prov verify": "auto()",
     "inflexa prov verify-file": "auto()",
     "inflexa prune": "approval",
-    "inflexa refs download": "approval",
+    "inflexa refs download": "approval+transfer",
     "inflexa refs list": "auto(urls,json)",
     "inflexa refs path": "auto()",
     "inflexa refs verify": "auto(json)",
@@ -91,7 +97,7 @@ const EXPECTED_DEV_ON: Record<string, string> = {
     "inflexa chat": "blocked",
     "inflexa config": "blocked",
     "inflexa down": "blocked",
-    "inflexa geo download": "approval",
+    "inflexa geo download": "approval+transfer",
     "inflexa inputs add": "blocked",
     "inflexa inputs ls": "auto(analysis)",
     "inflexa inputs remove": "blocked",
@@ -106,7 +112,7 @@ const EXPECTED_DEV_ON: Record<string, string> = {
     "inflexa prov verify": "auto()",
     "inflexa prov verify-file": "auto()",
     "inflexa prune": "approval",
-    "inflexa refs download": "approval",
+    "inflexa refs download": "approval+transfer",
     "inflexa refs list": "auto(urls,json)",
     "inflexa refs path": "auto()",
     "inflexa refs verify": "auto(json)",

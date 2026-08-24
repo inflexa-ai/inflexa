@@ -15,9 +15,37 @@ import type { Command } from "commander";
  *   which is grantable per analysis. The prompt is the security boundary here.
  * - `blocked` — never runs, not even with approval; the mandatory `reason` is handed
  *   verbatim to the model so it can explain to the user why and stop retrying.
+ *
+ * A runnable kind can also carry {@link TransferTrait}.
  */
 export type AgentPolicy =
-    { readonly kind: "auto"; readonly safeFlags: readonly string[] } | { readonly kind: "approval" } | { readonly kind: "blocked"; readonly reason: string };
+    | ({ readonly kind: "auto"; readonly safeFlags: readonly string[] } & TransferTrait)
+    | ({ readonly kind: "approval" } & TransferTrait)
+    | { readonly kind: "blocked"; readonly reason: string };
+
+/**
+ * The trait a runnable command carries when its work is a transfer from an upstream publisher —
+ * `refs download` and `geo download` today. The tool then runs it with NO deadline of its own, and the
+ * approval prompt states that.
+ *
+ * A transfer has no honest deadline to declare here. Its size is a 2 GB artifact over whatever link the
+ * user has, so a ceiling generous enough to spare an honest run also spares a dead one; and a bound on
+ * silence stops the honest run first, because a captured transfer prints one line for each file and one
+ * file is minutes of quiet. Liveness is decided where the bytes are instead — `downloadToFile` in
+ * `lib/download.ts` watches its own body and ends a transfer that stops moving, within
+ * `LIVENESS_WINDOW_MS`. A second bound out here could only ever be the wrong one.
+ *
+ * The trait is deliberately not a `kind`: what may run the command, and how long it may take, are
+ * different questions, and folding them together would make a fourth kind that means "approval, but".
+ */
+export type TransferTrait = {
+    readonly transfer?: true;
+};
+
+/** Whether `policy` marks a transfer — see {@link TransferTrait}. A `blocked` command never runs, thus it never carries one. */
+export function isTransferPolicy(policy: AgentPolicy | undefined): boolean {
+    return policy !== undefined && policy.kind !== "blocked" && policy.transfer === true;
+}
 
 /**
  * The policy store, keyed on the `Command` INSTANCE rather than its path string.
