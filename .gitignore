@@ -20,6 +20,8 @@ dist-ssr
 # Python bytecode cache (e.g. from scripts/lib-validator/*.py smoke tests)
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
 
 # Guard against tsc emitting alongside source. the harness builds to harness/dist (ignored
 # above); these catch an accidental in-place emit. Scoped to core, NOT blanket

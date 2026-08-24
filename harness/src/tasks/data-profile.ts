@@ -227,11 +227,12 @@ export function buildDataProfileResult(
 /**
  * Walk the staged tree and enrich its shapes with a header readout.
  *
- * The walk and the shape observation run in this process over the workspace read seam;
- * only the readout reaches into the sandbox, and only once per shape. A readout that
- * fails is logged and dropped: it is enrichment, and a manifest without it still
- * carries every structural observation the agent's grouping rests on, so failing the
- * profile over it would trade the whole capability for a nicety.
+ * The walk, the shape observation, and every prefix-sufficient readout run in this
+ * process over the workspace read seam; only a footer-indexed container reaches into
+ * the sandbox, and only once per shape. A readout that fails is logged and dropped: it
+ * is enrichment, and a manifest without it still carries every structural observation
+ * the agent's grouping rests on, so failing the profile over it would trade the whole
+ * capability for a nicety.
  */
 async function runInputScan(args: {
     readonly session: RunSession;
@@ -248,6 +249,8 @@ async function runInputScan(args: {
     try {
         const shapes = await enrichShapes({
             shapes: scan.manifest.shapes,
+            session,
+            fs: deps.workspaceFs,
             sandboxClient: deps.sandboxClient,
             sandbox,
             mountRoot: `/${analysisId}`,

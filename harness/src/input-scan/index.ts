@@ -10,7 +10,8 @@ export { detectSets, type DetectSetsOptions } from "./detect-sets.js";
 export { type ClusterEvidence, type ContentSimilarity } from "./clustering.js";
 export { MAX_SAMPLE_VALUES, MAX_SHAPES, nameStem, observeShapes, tokenizeStem, type ObservedShapes } from "./shapes.js";
 export { MAX_SCANNED_FILES, buildManifest, renderInputScanManifest, scanInputTree, type ScanInputTreeArgs } from "./scan.js";
-export { MEMBERS_DECODED_PER_SHAPE, enrichShapes, type EnrichShapesArgs } from "./enrich.js";
+export { MEMBERS_DECODED_PER_SHAPE, SANDBOX_CONTAINER_FORMATS, enrichShapes, type EnrichShapesArgs } from "./enrich.js";
+export { READOUT_PREFIX_BYTES, READOUT_TEXT_BYTES, readPrefix, type PrefixReadout, type ReadoutFields } from "./readout.js";
 export { computeCoverage, type ProfileCoverage } from "./coverage.js";
 export type {
     FileShape,

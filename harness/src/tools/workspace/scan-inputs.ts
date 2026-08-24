@@ -7,9 +7,9 @@
  * with the observed shapes, or wants a directory the injected manifest summarised, can
  * get the evidence to group differently.
  *
- * Dependency-bearing factory. The walk and the shape observation run in-process over
- * the workspace read seam; only the per-shape header readout reaches into the sandbox
- * (see `input-scan/enrich.ts`).
+ * Dependency-bearing factory. The walk, the shape observation, and every
+ * prefix-sufficient header readout run in-process over the workspace read seam; only a
+ * footer-indexed container reaches into the sandbox (see `input-scan/enrich.ts`).
  */
 
 import { ok, type Result } from "neverthrow";
@@ -25,7 +25,7 @@ import { defineTool, type ToolError } from "../define-tool.js";
 export interface ScanInputsDeps {
     readonly workspaceFs: WorkspaceFilesystem;
     readonly analysisId: string;
-    /** Omit to run the host-side scan with no header readout (no sandbox wired). */
+    /** Omit to skip the container readouts; the prefix readouts run regardless. */
     readonly sandboxClient?: SandboxClient;
     readonly sandbox?: SandboxRef;
     readonly workflowId: string;
@@ -66,18 +66,16 @@ export function createScanInputsTool(deps: ScanInputsDeps) {
                 signal: ctx.signal,
             });
 
-            const shapes =
-                deps.sandboxClient && deps.sandbox
-                    ? await enrichShapes({
-                          shapes: scan.manifest.shapes,
-                          sandboxClient: deps.sandboxClient,
-                          sandbox: deps.sandbox,
-                          mountRoot: `/${deps.analysisId}`,
-                          execId: `${deps.workflowId}:${deps.stepId}:${deps.nextFunctionId()}`,
-                          deadlineMs: deps.deadlineMs(),
-                          emit: ctx.emit,
-                      })
-                    : scan.manifest.shapes;
+            const shapes = await enrichShapes({
+                shapes: scan.manifest.shapes,
+                session: ctx.session,
+                fs: deps.workspaceFs,
+                ...(deps.sandboxClient && deps.sandbox ? { sandboxClient: deps.sandboxClient, sandbox: deps.sandbox } : {}),
+                mountRoot: `/${deps.analysisId}`,
+                execId: `${deps.workflowId}:${deps.stepId}:${deps.nextFunctionId()}`,
+                deadlineMs: deps.deadlineMs(),
+                emit: ctx.emit,
+            });
 
             const manifest = { ...scan.manifest, shapes };
             return ok({

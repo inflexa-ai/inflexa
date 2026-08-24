@@ -4,8 +4,8 @@
  * Runs in the harness process over the workspace read seam, which is
  * sandbox-independent: the walk touches names and metadata, and format detection
  * compares a bounded byte prefix against a table. Neither is a decode, so neither
- * needs a container. Only the per-shape header readout (`enrich.ts`) runs a decoder,
- * and it runs in the sandbox.
+ * needs a container. Only a footer-indexed container reaches the sandbox, and only
+ * through the per-shape header readout (`enrich.ts`).
  *
  * The scan is the SOLE enumeration pass. Before it, the profiler agent discovered
  * structure by issuing one command per input file, so its cost scaled with file
