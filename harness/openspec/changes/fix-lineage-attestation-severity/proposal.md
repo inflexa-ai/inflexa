@@ -26,9 +26,10 @@ inverts.
 - Severity follows what a rejection puts at risk, not the fact of a rejection.
   A rejected **output** — bytes that exist nowhere but the step tree — stays
   terminal, and so does a rejection cascaded from a real one.
-- `failedCount` (surfaced as `externalFailed`) SHALL exclude a rejection of a
-  file no activity in the payload references. `failed[]` still carries every
-  per-path rejection, and an uncounted one SHALL be logged at warn with its path
+- `failedCount` (surfaced as `externalFailed`) and `failed[]` SHALL both exclude
+  a rejection of a file no activity in the payload references, so the fail-fast
+  message names only what cost the step something. Such a rejection is reported
+  across the seam in `notCounted`, and `registerStepArtifacts` logs it with its path
   and the registry's reason — not counting a rejection is never licence to drop
   it silently.
 - Byte sync SHALL be attempted whatever registration returned, including when it

@@ -2,19 +2,19 @@
 
 ## 1. Severity of a registry rejection
 
-- [ ] 1.1 Adapter: exclude a not-referenced rejection from `failedCount`, keeping it in `failed[]` with its path and reason; output and cascaded rejections stay counted.
-- [ ] 1.2 `registerStepArtifacts` — when `failedCount` is 0 and `failed` is non-empty, log one warn record naming each rejected path and the registry's reason.
+- [ ] 1.1 (cortex, inflexa-ai/cortex#347) Adapter: exclude a not-referenced rejection from `failedCount` and `failed[]`, reporting it in `notCounted` with its path and reason; output and cascaded rejections stay counted.
+- [x] 1.2 `registerStepArtifacts` — log one warn record naming each `notCounted` path and the registry's reason.
 
 ## 2. Byte sync independent of registration
 
-- [ ] 2.1 `sandbox-step` post-step body — attempt `ArtifactRegistry.sync` whatever registration returned, including when it threw.
-- [ ] 2.2 Keep the registration error as the surfaced cause; log a sync failure that follows one with its own detail rather than replacing the cause.
+- [x] 2.1 `sandbox-step` post-step body — attempt `ArtifactRegistry.sync` whatever registration returned, including when it threw.
+- [x] 2.2 Keep the registration error as the surfaced cause; log a sync failure that follows one with its own detail rather than replacing the cause.
 
 ## 3. Tests
 
-- [ ] 3.1 A step whose only rejection is a not-referenced file completes, with the rejection logged.
-- [ ] 3.2 An output rejection still fails the step with the per-file detail.
-- [ ] 3.3 Registration throws — sync is still called and the accepted rows upload; the step fails with the registration error.
+- [x] 3.1 A step whose only rejection is a not-referenced file completes, with the rejection logged.
+- [x] 3.2 An output rejection still fails the step with the per-file detail.
+- [x] 3.3 Registration throws — sync is still called and the accepted rows upload; the step fails with the registration error.
 
 ## 4. Spec
 

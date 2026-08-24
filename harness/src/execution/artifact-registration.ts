@@ -80,6 +80,16 @@ export async function registerStepArtifacts(
     const localPaths = new Set(localEntries.map((e) => e.path));
     const result = await registry.register(input, session);
 
+    // The registry excluded these from `failed` by its own severity judgement, so
+    // this is their only record. Logged here rather than left to the registry:
+    // the seam is implementable by an embedder, and a rejection does not get to
+    // go unrecorded because one implementation chose not to log it.
+    if (result.notCounted && result.notCounted.length > 0) {
+        log.warn("registry rejections excluded from the failure count", {
+            rejected: result.notCounted.map((f) => ({ path: f.path, error: f.error })),
+        });
+    }
+
     let externalRegistered = 0;
     for (const reg of result.registered) {
         // Skip files the registry also returned that we didn't upsert locally

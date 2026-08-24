@@ -223,21 +223,26 @@ return all-zero counts immediately and SHALL NOT call the registry.
 
 The registry's outcome is partial by contract — it commits per leaf and per
 activity, with no batch-wide rollback — so `registered` and `failed` arriving
-together describes a normal registration. `failed` SHALL carry every per-path
-rejection the registry reported, each with its path and the registry's reason.
-`failedCount`, surfaced as `externalFailed`, SHALL count only the **terminal**
-rejections: a rejected artifact whose bytes exist nowhere but the step tree, and
-any rejection cascaded from one — a row the registry rejected as a consequence
-of a genuine failure. A rejection of a file that no activity in the payload
-references SHALL NOT be counted, because it registers nothing and so puts no
-bytes at risk.
+together describes a normal registration. `failed`, surfaced as
+`failureDetails`, and `failedCount`, surfaced as `externalFailed`, SHALL both
+describe only the **terminal** rejections: a rejected artifact whose bytes exist
+nowhere but the step tree, and any rejection cascaded from one — a row the
+registry rejected as a consequence of a genuine failure. A rejection of a file
+that no activity in the payload references SHALL NOT appear in either, because
+it registers nothing and so puts no bytes at risk. The two move together so that
+the fail-fast message lists exactly the paths that cost the step something: a
+`failed` array padded with harmless rejections would name them, during an
+incident, in the same breath and the same format as the real ones.
 
-An uncounted rejection SHALL still be surfaced: when `failedCount` is zero and
-`failed` is non-empty, `registerStepArtifacts` SHALL log a warn record naming
-each rejected path and the registry's reason for it. Not counting a rejection
-decides only that it is not worth failing a step over; it is never licence to
-drop it silently, because that record is the only place a reader can check the
-verdict against what the registry actually said.
+A rejection the registry excludes SHALL still be reported, in `notCounted`, and
+`registerStepArtifacts` SHALL log a warn record naming each such path and the
+registry's reason for it. Excluding a rejection decides only that it is not
+worth failing a step over; it is never licence to drop it silently, because that
+record is the only place a reader can check the verdict against what the
+external system actually said. The log SHALL be emitted by
+`registerStepArtifacts` rather than left to the registry: the seam is
+implementable by an embedder, and a rejection does not get to go unrecorded
+because one implementation chose not to log it.
 
 #### Scenario: Successful registration
 
@@ -252,7 +257,7 @@ verdict against what the registry actually said.
 #### Scenario: A rejection that nothing references is surfaced, not counted
 
 - **WHEN** the registry accepts every row except a file that no activity in the payload references
-- **THEN** `failed` carries that path with the registry's reason, a warn record names the path and that reason, and `externalFailed` is `0`
+- **THEN** `notCounted` carries that path with the registry's reason, a warn record names the path and that reason, and both `externalFailed` and `failureDetails` are empty
 
 #### Scenario: Empty artifact list short-circuits
 
