@@ -36,6 +36,53 @@ describe("computeInputSignature", () => {
         expect(edited.count).toBe(before.count);
     });
 
+    it("ignores a quarantined file appearing beside the staged inputs", () => {
+        const staged = inputs.map((f, i) => ({ ...f, relativePath: `inputs/mount/file-${i}.csv` }));
+        const churned = [...staged, { fileId: "f-junk", size: 7, mtimeMs: 1_700_000_500_000, relativePath: "inputs/mount/file-0.csv.part" }];
+
+        expect(computeInputSignature(churned)).toEqual(computeInputSignature(staged));
+    });
+
+    it("ignores a quarantined file changing size and mtime", () => {
+        const junk = { fileId: "f-junk", size: 7, mtimeMs: 1_700_000_500_000, relativePath: "inputs/mount/.DS_Store" };
+        const staged = inputs.map((f, i) => ({ ...f, relativePath: `inputs/mount/file-${i}.csv` }));
+
+        const before = computeInputSignature([...staged, junk]);
+        const after = computeInputSignature([...staged, { ...junk, size: 9000, mtimeMs: 1_700_009_000_000 }]);
+        expect(after).toEqual(before);
+    });
+
+    it("detects a kept file arriving even while junk churns", () => {
+        const staged = inputs.map((f, i) => ({ ...f, relativePath: `inputs/mount/file-${i}.csv` }));
+        const grown = [...staged, { fileId: "f-4", size: 400, mtimeMs: 1_700_000_000_003, relativePath: "inputs/mount/file-3.csv" }];
+
+        expect(computeInputSignature(grown).digest).not.toBe(computeInputSignature(staged).digest);
+        expect(computeInputSignature(grown).count).toBe(4);
+    });
+
+    it("counts and digests kept files only", () => {
+        const signature = computeInputSignature([
+            { fileId: "f-1", size: 100, mtimeMs: 1, relativePath: "inputs/mount/a.csv" },
+            { fileId: "f-2", size: 200, mtimeMs: 2, relativePath: "inputs/mount/__MACOSX/a.csv" },
+            { fileId: "f-3", size: 300, mtimeMs: 3, relativePath: "inputs/mount/b.csv.tmp-0123abcd" },
+        ]);
+        expect(signature.count).toBe(1);
+    });
+
+    it("is order-independent with quarantine applied", () => {
+        const mixed = [
+            { fileId: "f-1", size: 100, mtimeMs: 1, relativePath: "inputs/mount/a.csv" },
+            { fileId: "f-junk", size: 5, mtimeMs: 2, relativePath: "inputs/mount/a.csv.crdownload" },
+            { fileId: "f-2", size: 200, mtimeMs: 3, relativePath: "inputs/mount/b.csv" },
+        ];
+        expect(computeInputSignature([...mixed].reverse())).toEqual(computeInputSignature(mixed));
+    });
+
+    it("keeps an entry that names no path, so a pathless manifest still compares", () => {
+        const pathless = computeInputSignature([{ fileId: "f-1", size: 100, mtimeMs: 1 }]);
+        expect(pathless.count).toBe(1);
+    });
+
     it("still digests a legacy manifest entry that carries no mtime", () => {
         const legacy = computeInputSignature([
             { fileId: "f-1", size: 100 },

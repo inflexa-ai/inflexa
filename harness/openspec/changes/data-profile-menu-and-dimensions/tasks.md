@@ -29,7 +29,7 @@ private benchmark workspace; synthetic fixtures are authored fresh here.
 - [x] `submit_profile` ops vocabulary (use/split/merge/group) + submit-time resolution: membership, derived counts, partition check, one repair round-trip, `unclassified` sweep
 - [x] Dimensions/observations schema (slot bindings, column/document evidence, `checked:{matched,of}`, nests-under, probe outcomes); member annotations on groups; drop `qualityAssessment.strengths`; renames kinds→groups, axes→dimensions with legacy optional-on-read
 - [x] Prompt rewrite: substrate test verbatim, probe list, no-forcing stance ("empty is a correct answer"), category defaults
-- [ ] Incremental absorption: recipe re-resolution against a changed tree; deterministic absorb path (membership/counts/signature, no LLM); delta repair round for structurally new files; drift digest over kept files only
+- [x] Incremental absorption: recipe re-resolution against a changed tree; deterministic absorb path (membership/counts/signature, no LLM); delta repair round for structurally new files; drift digest over kept files only
 
 ## 3. Projection & consumers
 - [ ] Index: groups + member annotations + dimensions entries (restore per-file searchability)
