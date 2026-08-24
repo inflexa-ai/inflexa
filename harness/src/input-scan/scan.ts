@@ -25,8 +25,8 @@ import type { FormatCount, InputScan, InputScanManifest, ScannedFile } from "./t
  *
  * Header decode is O(shapes), but the walk and its per-file prefix read are O(files),
  * and that arm needs a stated ceiling rather than an implicit one. 100k files is ~30s
- * of stat-and-prefix work against a 20-minute profile deadline, and two orders of
- * magnitude above the largest tree the platform has seen (3513). Past it the scan
+ * of stat-and-prefix work against a 20-minute profile deadline, and well above the
+ * largest input trees the platform is expected to stage. Past it the scan
  * stops and SAYS it stopped: a silently sampled manifest would describe a fraction of
  * the tree while reading as a description of all of it, which is the failure mode this
  * capability exists to remove.
