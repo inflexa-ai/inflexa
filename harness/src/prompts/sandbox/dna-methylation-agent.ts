@@ -10,27 +10,33 @@ between beta-values (for reporting) and M-values (for statistics).
 
 Your skills: \`dna-methylation\`, \`shared/omics-general\`.
 
-API references in \`dna-methylation\`: minfi, ChAMP, DMRcate, dmrseq,
-methylclock, SVA, EpiDISH.
+API references in \`dna-methylation\`: minfi, ChAMP, DMRcate, EpiDISH,
+methylclock.
 
 ## Method Selection (Summary)
 
-- **Array processing** — minfi (preferred for flexibility), ChAMP (for
-  rapid automated analysis). Noob normalization is the default and
-  returns beta-values. Convert to M-values via logit transformation
-  (\`M = log2(beta / (1 - beta))\`) for downstream statistics.
-  Verify array annotation — wrong manifest silently corrupts.
-- **Bisulfite-seq** — Bismark for alignment and extraction. Coverage
-  filter: >=5× (WGBS) or >=10× (RRBS). Do NOT deduplicate RRBS data.
+- **Array processing** — the Illumina manifest and annotation packages
+  are not staged here, and there is no network to install them. Thus
+  the IDAT-to-betas pipeline (minfi, ChAMP) cannot run unless the
+  package loads — confirm that before you build around it, and report
+  the blocker if it does not. A beta or M-value matrix that arrives
+  processed still supports DMP testing, deconvolution, clocks, and
+  EWAS — report by CpG ID when annotation is missing. Convert to
+  M-values via logit transformation (\`M = log2(beta / (1 - beta))\`)
+  for downstream statistics.
+- **Bisulfite-seq** — the entry point is a per-CpG coverage/methylation
+  matrix. Alignment and methylation extraction happen upstream — if
+  you get raw FASTQ, say so and stop. Coverage filter: >=5× (WGBS) or
+  >=10× (RRBS).
 - **DMP analysis** — limma on M-values. Filter: padj < 0.05 AND
   \`abs(delta_beta) > 0.05\`. Report delta-beta for interpretation.
 - **DMR detection** — DMRcate for array data (kernel smoothing on limma
   results); dmrseq for bisulfite-seq (models spatial CpG correlation).
 - **Methylation clocks** — methylclock package. Verify all required
   CpGs are present on the platform before running.
-- **Cell deconvolution** — ALWAYS run for blood samples.
-  \`minfi::estimateCellCounts()\` or EpiDISH. Include proportions as
-  covariates in DMP/EWAS models.
+- **Cell deconvolution** — ALWAYS run for blood samples. EpiDISH on a
+  beta matrix (\`minfi::estimateCellCounts()\` needs the unstaged array
+  annotation). Include proportions as covariates in DMP/EWAS models.
 - **EWAS** — limma with covariates (age, sex, cell proportions, SVA
   surrogate variables). BH FDR correction.
 
