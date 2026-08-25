@@ -10,9 +10,11 @@ mounts: the store root at `/mnt/libs`, and the farm of its analysis at the
 farm container path. A sandbox step is physically unable to install anything
 at runtime, because there is no network and the mounts are read-only.
 
-Agents never assume packages or paths. They discover what is linked through
-the `list_available_packages` tool, which reads the one `inflexa.lock` of
-the mounted farm. When the store is mounted, the harness also injects the
+Agents never assume packages or paths. They discover what is available
+through the `list_available_packages` tool, which reads the inventory
+source that the embedder binds: the `inflexa.lock` of the mounted farm for
+a sandbox agent, and a pool-scope source for a conversation or planning
+surface. When the store is mounted, the harness also injects the
 language-resolver env, so imports resolve against the farm without
 per-script path wiring.
 
@@ -168,22 +170,36 @@ no `/mnt/libs` mount and no lib-store env, and the farm source MUST NOT run.
 ### Requirement: Packages are discoverable via the list_available_packages tool
 
 The harness MUST expose a `list_available_packages` tool, built with
-`defineTool`. The tool reads the `inflexa.lock` of the mounted farm, at the farm
-container path. When the baked image fragment at
+`defineTool`. The tool MUST read the inventory source that the embedder
+binds. A sandbox agent reads the `inflexa.lock` of the mounted farm,
+because a step imports only what the farm links. A conversation or
+planning surface reads a pool-scope source, because the ask flow marks the
+packages that the POOL does not hold. When the baked image fragment at
 `/opt/inflexa/image-packages.txt` exists, the tool merges it into the
-report. A missing or unmounted store is an expected state: the tool MUST NOT
-throw — it MUST return an `available: false` data variant carrying a
-fallback note rather than an error.
+report.
+
+Each answer MUST render the version beside the name, as `name==version`.
+The targeted `names` path MUST also carry the store directory and the full
+content hash when the source gives them. A full listing carries no hashes,
+because a thousand rows of sha256 bury the signal. A missing or unreadable
+source is an expected state: the tool MUST NOT throw — it MUST return an
+`available: false` data variant carrying a fallback note rather than an
+error.
 
 #### Scenario: Packages available
 
 - **WHEN** `list_available_packages` is called and the `inflexa.lock` of the mounted farm is readable
-- **THEN** it returns `{ available: true, ... }` with the package inventory of the farm merged with the image fragment
+- **THEN** it returns `{ available: true, ... }` with the farm inventory as `name==version` rows, merged with the image fragment
 
 #### Scenario: Store not mounted
 
 - **WHEN** `list_available_packages` is called and the lock cannot be read
 - **THEN** it returns `{ available: false, content }`, and the content names the missing mount, without a throw
+
+#### Scenario: A pool-scope answer carries the pinned version
+
+- **WHEN** a conversation surface asks `names: ["scipy"]` against a pool that pins `scipy==1.16.3`
+- **THEN** the answer marks it present as `scipy==1.16.3`, with the store directory and the full hash
 
 ### Requirement: The lib-store resolver env is injected only when the store is mounted
 
