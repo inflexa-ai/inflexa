@@ -839,18 +839,34 @@ def _prune_dangling_nodes() -> int:
     return len(gone)
 
 
-def cmd_reclaim(_args) -> int:
+def _graph_node_dirs() -> set[str]:
+    """Store directory names that deps.json advertises."""
+    deps_path = LIBS / "deps.json"
+    if not deps_path.is_file():
+        return set()
+    return set(json.loads(deps_path.read_text()).get("nodes", {}))
+
+
+def cmd_reclaim(args) -> int:
     """Remove store directories that no farm references, and prune their
     graph nodes.
 
     Explicit and host-invoked, never automatic — an unreferenced package is
     kept until this runs, thus an old analysis can be rebuilt.
+
+    With --debris the pass narrows to the tier that nothing references at
+    all: a directory with no farm link AND no graph node, plus the stale
+    acquire reports. A directory the graph advertises stays, thus a
+    pre-fetched package survives, and the graph itself stays untouched.
     """
+    debris = bool(getattr(args, "debris", False))
     with store_lock(shared=False):
         if not STORE.is_dir():
             log("reclaim: no store")
             return 0
         referenced = _referenced_store_dirs()
+        if debris:
+            referenced |= _graph_node_dirs()
         removed = 0
         for d in sorted(STORE.iterdir()):
             if not d.is_dir() or d.name.startswith("."):
@@ -859,6 +875,17 @@ def cmd_reclaim(_args) -> int:
                 shutil.rmtree(d, ignore_errors=True)
                 removed += 1
                 log(f"  reclaimed {d.name}")
+        if debris:
+            reports = 0
+            download = LIBS / ".inflexa-download"
+            if download.is_dir():
+                for report in sorted(download.glob("acquire-*.json")):
+                    report.unlink(missing_ok=True)
+                    reports += 1
+                    log(f"  removed stale report {report.name}")
+            log(f"reclaim --debris: {removed} debris dir(s) removed, "
+                f"{reports} stale report(s) removed")
+            return 0
         pruned = _prune_dangling_nodes()
         log(f"reclaim: {removed} unreferenced store dir(s) removed, "
             f"{pruned} graph node(s) pruned, {len(referenced)} still referenced")
@@ -1543,6 +1570,9 @@ def main() -> int:
     prepare.set_defaults(func=cmd_prepare)
 
     reclaim = sub.add_parser("reclaim", help="remove store directories that no farm references")
+    reclaim.add_argument("--debris", action="store_true",
+                         help="remove only the directories with no farm link and no graph node, "
+                              "plus the stale acquire reports; the graph stays untouched")
     reclaim.set_defaults(func=cmd_reclaim)
 
     remove_farm = sub.add_parser("remove-farm", help="remove one farm; the pool stays")
