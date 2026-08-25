@@ -289,6 +289,55 @@ export const migrations: Migration[] = [
             );
         `,
     },
+    {
+        // The terminal `failed` state of a flight, with its durable `message`. A
+        // refusal of a DETACHED flush has no other surface: the child runs with
+        // ignored stdio, thus the row is where the reason survives the process.
+        // The message records the WHOLE error text — the surfaces bound the
+        // render, and a truncation here would destroy the one durable copy.
+        //
+        // A CHECK constraint cannot change in place, thus the table rebuilds. The
+        // subscriptions rebuild WITH it, child first on the drop side: a DROP of
+        // the old parent under `PRAGMA foreign_keys = ON` runs an implicit
+        // DELETE, and the old CASCADE would then eat the copied subscriptions.
+        // The RENAME at the end rewrites the FK of the new child onto the final
+        // table name.
+        version: 7,
+        up: `
+            CREATE TABLE package_store_flights_v7 (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'failed')),
+                ecosystem TEXT CHECK (ecosystem IN ('python', 'r') OR ecosystem IS NULL),
+                name TEXT NOT NULL,
+                specifier TEXT NOT NULL,
+                progress TEXT,
+                message TEXT,
+                holder_pid INTEGER NOT NULL
+            );
+            INSERT INTO package_store_flights_v7
+                SELECT id, created_at, updated_at, state, ecosystem, name, specifier, progress, NULL, holder_pid
+                FROM package_store_flights;
+            CREATE TABLE package_store_flight_subscriptions_v7 (
+                flight_id TEXT NOT NULL REFERENCES package_store_flights_v7(id) ON DELETE CASCADE,
+                analysis_id TEXT REFERENCES analyses(id) ON DELETE CASCADE
+            );
+            INSERT INTO package_store_flight_subscriptions_v7
+                SELECT flight_id, analysis_id FROM package_store_flight_subscriptions;
+            DROP TABLE package_store_flight_subscriptions;
+            DROP TABLE package_store_flights;
+            ALTER TABLE package_store_flights_v7 RENAME TO package_store_flights;
+            ALTER TABLE package_store_flight_subscriptions_v7 RENAME TO package_store_flight_subscriptions;
+            CREATE INDEX idx_ps_flight_subs_flight ON package_store_flight_subscriptions(flight_id);
+            CREATE UNIQUE INDEX uq_ps_flight_subs_analysis
+                ON package_store_flight_subscriptions(flight_id, analysis_id)
+                WHERE analysis_id IS NOT NULL;
+            CREATE UNIQUE INDEX uq_ps_flight_subs_host
+                ON package_store_flight_subscriptions(flight_id)
+                WHERE analysis_id IS NULL;
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

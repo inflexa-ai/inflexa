@@ -149,17 +149,25 @@ function transferMeterOf(reports: readonly TransferReport[]): { filled: string; 
 const FLIGHT_SPEC_CHARS = 24;
 
 /**
- * One line for each live acquisition flight. The line carries the spec and the
+ * One line for each acquisition flight. A live line carries the spec and the
  * state, and a count follows the state when more than one analysis subscribes.
- * The rail is narrow, thus the spec clamps and `inflexa store ls` carries the
- * full record.
+ * A `failed` flight keeps one error-colored line until its row clears — a
+ * retry of the spec, or the success of that retry, is what clears it. The
+ * rail is narrow, thus the spec clamps and `inflexa store ls` carries the
+ * full record with the reason.
  */
 function flightLinesOf(flights: readonly StoreFlightLine[]): LiveLine[] {
-    return flights.map((flight) => ({
-        glyph: GLYPHS.warning,
-        role: "warning" as const,
-        text: `${flight.spec.length <= FLIGHT_SPEC_CHARS ? flight.spec : `${flight.spec.slice(0, FLIGHT_SPEC_CHARS)}${GLYPHS.ellipsis}`} ${flight.state}${flight.subscribers > 1 ? ` (${flight.subscribers})` : ""}`,
-    }));
+    return flights.map((flight) => {
+        const spec = flight.spec.length <= FLIGHT_SPEC_CHARS ? flight.spec : `${flight.spec.slice(0, FLIGHT_SPEC_CHARS)}${GLYPHS.ellipsis}`;
+        if (flight.state === "failed") {
+            return { glyph: GLYPHS.cross, role: "error" as const, text: `${spec} failed` };
+        }
+        return {
+            glyph: GLYPHS.warning,
+            role: "warning" as const,
+            text: `${spec} ${flight.state}${flight.subscribers > 1 ? ` (${flight.subscribers})` : ""}`,
+        };
+    });
 }
 
 /** Map a {@link ProfileSnapshot} to its display line: muted placeholders, warn "profiling…", success count+age, error one-liner. */

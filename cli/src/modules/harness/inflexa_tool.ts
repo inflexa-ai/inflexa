@@ -455,6 +455,8 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             "Each approved add ENQUEUES; the acquisitions run as one batch when this turn settles, so do not wait for bytes between asks. " +
             "Invite a swap: the user can name a different package in place of a proposed one, and then you revise the plan toward it and do not ask for the replaced one again. " +
             "A declined ask is guidance, never an error: propose an alternative or replan, and never send the same ask again. " +
+            'When a package you asked for is still missing in a later turn, run ["store", "ls"] BEFORE any second ask: ' +
+            "a failed flight listed there carries the recorded reason, and your next message reports that reason instead of repeating the ask. " +
             "A run refusal that names missing packages means the pool does not hold them yet — `inflexa store add <name>` is the remedy to propose.",
         inputSchema: z.object({
             argv: z

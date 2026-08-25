@@ -812,7 +812,7 @@ export function listTransfers(): Result<TransferRow[], DbError> {
 // --- Data model: the package-store acquisition flights ---
 
 /** The columns of `package_store_flights`, in the house order: identity, then core data. The table has no foreign key. */
-const STORE_FLIGHT_COLS = "id, created_at, updated_at, state, ecosystem, name, specifier, progress, holder_pid";
+const STORE_FLIGHT_COLS = "id, created_at, updated_at, state, ecosystem, name, specifier, progress, message, holder_pid";
 
 /** A row of the columnar `package_store_flights` table — one typed column for each field, so a reader filters on the state in SQL. */
 type StoreFlightDbRow = {
@@ -824,6 +824,7 @@ type StoreFlightDbRow = {
     name: string;
     specifier: string;
     progress: string | null;
+    message: string | null;
     holder_pid: number;
 };
 
@@ -839,6 +840,7 @@ function storeFlightFromRow(r: StoreFlightDbRow): StoreFlightRow {
         name: r.name,
         specifier: r.specifier,
         progress: r.progress,
+        message: r.message,
         holderPid: r.holder_pid,
     };
 }

@@ -21,8 +21,9 @@
  * report file — `deps.json` stays untouched. Phase two: the load check of the
  * acquired set runs inside the SANDBOX image, and only a green check appends
  * the staged nodes to the graph under the metadata lock. A failed check leaves
- * no advertised state: no graph node, no farm link, and a reported refusal.
- * `store reclaim` frees the orphaned bytes.
+ * no advertised state: no graph node, and no farm link. The refusal settles as
+ * a terminal `failed` flight row with the whole reason, and the silent debris
+ * pass frees the orphaned bytes.
  */
 
 import { existsSync } from "node:fs";
@@ -36,6 +37,7 @@ import { z } from "zod";
 import { readConfig } from "../../lib/config.ts";
 import { readFileResult } from "../../lib/fs.ts";
 import { instanceLockHolder, isPidAlive, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
+import type { DbError } from "../../db/errors.ts";
 import { countStoreFlightSubscribers, listStoreFlights, type PendingStoreAdd } from "../../db/primary_query.ts";
 import {
     claimPendingStoreAdds,
@@ -44,6 +46,7 @@ import {
     enqueuePendingStoreAdd,
     promoteStoreFlightBatch,
     recordStoreFlightProgress,
+    settleStoreFlightFailure,
     subscribeStoreFlight,
 } from "../../db/primary_mutation.ts";
 import { analysisFarmPath, canonicalDistributionName, extendFarm, describeFarmCompositionError } from "./composition.ts";
@@ -63,12 +66,14 @@ import { readTransferReport } from "./transfers.ts";
 export type StoreEcosystem = "python" | "r";
 
 /**
- * The live states of one flight. There is no terminal state, because a finished
- * flight removes its row. `queued` is a flight that owns its key and waits for
- * a slot under the concurrency cap. `running` is a flight whose batch container
- * is up.
+ * The states of one flight. `queued` is a flight that owns its key and waits
+ * for a slot under the concurrency cap. `running` is a flight whose batch
+ * container is up. `failed` is the ONE terminal state: a refused spec settles
+ * into it with a durable message, and a retry of the same spec claims the row
+ * back to `queued`. A success still removes its row — a completed state that
+ * everyone has is noise.
  */
-export type StoreFlightStatus = "queued" | "running";
+export type StoreFlightStatus = "queued" | "running" | "failed";
 
 /**
  * The normalized spec that keys a flight.
@@ -108,7 +113,14 @@ export type StoreFlightRow = {
     readonly specifier: string;
     /** The newest provisioner line, or `null` before the container writes one. */
     readonly progress: string | null;
-    /** The process that owns the flight. A row whose holder is dead is debris that the next read sweeps. */
+    /** The recorded reason of a `failed` flight: the phase, then the whole error text. `null` on a live row. */
+    readonly message: string | null;
+    /**
+     * The process that owns the flight. A live row whose holder is dead is
+     * debris that the next read sweeps. A `failed` row keeps the pid of its
+     * ended flush, and the sweep keeps the row — the record must survive the
+     * process.
+     */
     readonly holderPid: number;
 };
 
@@ -153,26 +165,28 @@ export function storeFlightConcurrency(): number {
 }
 
 /**
- * Remove each flight row whose owner is gone, then report the flights that are live.
+ * Remove each live flight row whose owner is gone, then report the rows that
+ * remain: the live flights, and the terminal `failed` records.
  *
- * A killed owner writes no ending, thus its row would dedup every later request for that spec against
- * work that stopped. The sweep is what makes the pid column a liveness signal rather than a claim,
- * and it runs before every read and before every claim.
+ * A killed owner writes no ending, thus its live row would dedup every later request for that spec
+ * against work that stopped. The sweep is what makes the pid column a liveness signal rather than a
+ * claim, and it runs before every read and before every claim. A `failed` row is exempt: its holder
+ * ended by design, and the row is the one durable copy of the refusal.
  *
  * A read failure degrades to an empty list rather than an error. The database is a file on the
  * machine of the user, and a store that a reader cannot describe is still a store that works.
  */
 export function readStoreFlights(): readonly StoreFlightReport[] {
     const rows = listStoreFlights().unwrapOr([]);
-    const live: StoreFlightReport[] = [];
+    const kept: StoreFlightReport[] = [];
     for (const entry of rows) {
-        if (!isPidAlive(entry.flight.holderPid)) {
+        if (entry.flight.state !== "failed" && !isPidAlive(entry.flight.holderPid)) {
             deleteStoreFlight(entry.flight.id).unwrapOr(0);
             continue;
         }
-        live.push({ row: entry.flight, analysisIds: entry.analysisIds });
+        kept.push({ row: entry.flight, analysisIds: entry.analysisIds });
     }
-    return live;
+    return kept;
 }
 
 // --- The pending set -----------------------------------------------------------
@@ -462,6 +476,10 @@ function requeueBatch(entries: readonly PendingStoreAdd[]): void {
  * with its own refusal, and the rest of the set still lands. A both-hit name
  * stops with its two candidates, and only its caller can name the ecosystem.
  *
+ * A refused spec also settles as a terminal `failed` flight row, with the
+ * phase and the whole error text. That row is the surface of a DETACHED
+ * flush, whose stdio nobody reads, and a retry of the spec clears it.
+ *
  * A flush that cannot run — a live catalog merge, a live reclamation that
  * outwaits the bound — puts the claimed entries BACK, because an approval must
  * not vanish into a transient condition.
@@ -499,21 +517,42 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
     const outcomes: FlushSpecOutcome[] = [];
     const batch: BatchEntry[] = [];
     for (const entry of groupPendingAdds(claimed)) {
-        const owned = claimStoreFlight({
+        const claim = claimStoreFlight({
             id: entry.key,
             ecosystem: entry.spec.ecosystem,
             name: entry.spec.name,
             specifier: entry.spec.specifier,
             holderPid: process.pid,
-        }).unwrapOr(false);
+        });
+        // A claim QUERY failure is its own refusal, never "joined": a broken
+        // ledger must not read as a live duplicate, because "joined" tells the
+        // caller that somebody else does the work, and here nobody does.
+        if (claim.isErr()) {
+            outcomes.push({
+                kind: "refused",
+                spec: entry.spec,
+                reason: `the flight ledger could not be claimed (${describeDbError(claim.error)}) — nothing was acquired for this spec`,
+            });
+            continue;
+        }
         for (const analysisId of entry.analysisIds) subscribeStoreFlight({ flightId: entry.key, analysisId }).unwrapOr(0);
         if (entry.analysisIds.size === 0) subscribeStoreFlight({ flightId: entry.key, analysisId: null }).unwrapOr(0);
-        if (owned) batch.push(entry);
+        if (claim.value) batch.push(entry);
         else outcomes.push({ kind: "joined", spec: entry.spec });
     }
     if (batch.length === 0) return ok({ type: "flew", outcomes });
 
     const keys = batch.map((entry) => entry.key);
+    // The recorded refusals, keyed by flight key: `<phase>: <whole error text>`.
+    // The tail settles these rows as `failed` instead of deleting them, thus a
+    // refusal of a DETACHED flush survives the process — the row is the one
+    // durable surface, and no truncation happens at record time.
+    const failures = new Map<string, string>();
+    const failWholeBatch = (phase: "resolve" | "load_check" | "commit", message: string): void => {
+        for (const entry of batch) {
+            if (!failures.has(entry.key)) failures.set(entry.key, `${phase}: ${message}`);
+        }
+    };
     try {
         // One slot per RUN under the cap. The wait ends when the batch promotes whole.
         const cap = deps.cap ?? storeFlightConcurrency();
@@ -539,15 +578,23 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
         };
         const specs = batch.map((entry) => provisionerSpec(entry.spec));
         const ran = await run({ storeRoot, egressAllow: ACQUIRE_EGRESS_ALLOW, args: ["acquire", "--report", `/mnt/libs/${reportName}`, ...specs] }, onLine);
-        if (ran.isErr()) return err(ran.error);
+        if (ran.isErr()) {
+            failWholeBatch("resolve", ran.error.message);
+            return err(ran.error);
+        }
         const classified = classifyProvisionerRun(ran.value);
-        if (classified.isErr()) return err(classified.error);
+        if (classified.isErr()) {
+            failWholeBatch("resolve", classified.error.message);
+            return err(classified.error);
+        }
 
         const reportPath = join(storeRoot, reportName);
         const rawReport = await readFile(reportPath, "utf8").catch(() => null);
         const report: AcquireReport | null = rawReport === null ? null : JSON.parseWith(rawReport, acquireReportSchema);
         if (report === null) {
-            return err({ type: "provisioner_failed", code: 0, message: `The acquire run wrote no readable report at ${reportPath}.` });
+            const message = `The acquire run wrote no readable report at ${reportPath}.`;
+            failWholeBatch("resolve", message);
+            return err({ type: "provisioner_failed", code: 0, message });
         }
 
         // The report speaks per spec, in the provisioner's own spelling. Map each
@@ -561,9 +608,12 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
                 case "acquired":
                     acquired.push({ entry, storeDirs: outcome.store_dirs ?? [] });
                     break;
-                case "refused":
-                    outcomes.push({ kind: "refused", spec: entry.spec, reason: outcome.reason ?? "the spec did not resolve" });
+                case "refused": {
+                    const reason = outcome.reason ?? "the spec did not resolve";
+                    outcomes.push({ kind: "refused", spec: entry.spec, reason });
+                    failures.set(entry.key, `resolve: ${reason}`);
                     break;
+                }
                 case "both_hit":
                     outcomes.push({ kind: "both_hit", spec: entry.spec, candidates: outcome.candidates ?? [] });
                     break;
@@ -582,18 +632,21 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
         if (acquired.length > 0 && Object.keys(staged).length > 0) {
             progress("[flight] load check of the acquired set (sandbox image, no network)");
             const check = await (deps.loadCheck ?? runLoadCheck)({ storeRoot, reportName });
-            if (check.isErr()) return err(check.error);
-            const failedDirs = check.value.code === 0 ? new Set<string>() : failedLoadDirs(check.value.stdout, Object.keys(staged));
+            if (check.isErr()) {
+                failWholeBatch("load_check", check.error.message);
+                return err(check.error);
+            }
+            const failedDirs = check.value.code === 0 ? new Map<string, string>() : failedLoadResults(check.value.stdout, Object.keys(staged));
             if (failedDirs.size > 0) {
                 staged = Object.fromEntries(Object.entries(staged).filter(([dir]) => !failedDirs.has(dir)));
                 for (let index = acquired.length - 1; index >= 0; index -= 1) {
                     const item = acquired[index] as { entry: BatchEntry; storeDirs: string[] };
-                    if (item.storeDirs.some((dir) => failedDirs.has(dir))) {
-                        outcomes.push({
-                            kind: "refused",
-                            spec: item.entry.spec,
-                            reason: "the load check failed inside the sandbox image — nothing was advertised, and `inflexa store reclaim` frees the bytes",
-                        });
+                    const bad = item.storeDirs.filter((dir) => failedDirs.has(dir));
+                    if (bad.length > 0) {
+                        const detail = bad.map((dir) => `${dir}: ${failedDirs.get(dir) ?? "no reason recorded"}`).join("\n");
+                        const reason = `the load check failed inside the sandbox image — nothing was advertised:\n${detail}`;
+                        outcomes.push({ kind: "refused", spec: item.entry.spec, reason });
+                        failures.set(item.entry.key, `load_check: ${reason}`);
                         for (const dir of item.storeDirs) delete staged[dir];
                         acquired.splice(index, 1);
                     }
@@ -606,13 +659,18 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
         // commit drops its spec too, with the reason.
         if (acquired.length > 0) {
             const committed = await commitStagedNodes(storeRoot, staged);
-            if (committed.isErr()) return err(committed.error);
+            if (committed.isErr()) {
+                failWholeBatch("commit", committed.error.message);
+                return err(committed.error);
+            }
             const refusedDirs = new Map(committed.value.refused.map((refusal) => [refusal.storeDir, refusal.reason]));
             for (let index = acquired.length - 1; index >= 0; index -= 1) {
                 const item = acquired[index] as { entry: BatchEntry; storeDirs: string[] };
                 const bad = item.storeDirs.find((dir) => refusedDirs.has(dir));
                 if (bad !== undefined) {
-                    outcomes.push({ kind: "refused", spec: item.entry.spec, reason: refusedDirs.get(bad) ?? "the commit refused a dependency" });
+                    const reason = refusedDirs.get(bad) ?? "the commit refused a dependency";
+                    outcomes.push({ kind: "refused", spec: item.entry.spec, reason });
+                    failures.set(item.entry.key, `commit: ${reason}`);
                     acquired.splice(index, 1);
                 }
             }
@@ -639,39 +697,58 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
 
         return ok({ type: "flew", outcomes });
     } finally {
-        for (const key of keys) deleteStoreFlight(key).unwrapOr(0);
+        // A refused key settles as a terminal `failed` row, and every other key
+        // deletes — a success row that everyone has is noise. A settle that
+        // cannot write leaves a live row with a dead holder, and the next read
+        // sweeps it: the record is best-effort over a database this process
+        // could stop being able to write.
+        for (const key of keys) {
+            const message = failures.get(key);
+            if (message === undefined) deleteStoreFlight(key).unwrapOr(0);
+            else settleStoreFlightFailure({ id: key, message }).unwrapOr(0);
+        }
     }
 }
 
+/** One line of a ledger failure: the variant, with the cause the driver reported. */
+function describeDbError(error: DbError): string {
+    const cause = "cause" in error && error.cause instanceof Error ? `: ${error.cause.message}` : "";
+    return `${error.type}${cause}`;
+}
+
 /**
- * The store directories whose load check failed, read from the check's JSON
- * stdout. For a staged-node check, the `package` field of each result IS the
- * store directory key. A stdout that does not parse names every staged
- * directory, because a red check with an unreadable verdict must not commit
- * anything.
+ * The store directories whose load check failed, with the error text of each,
+ * read from the check's JSON stdout. For a staged-node check, the `package`
+ * field of each result IS the store directory key. A stdout that does not
+ * parse names every staged directory, because a red check with an unreadable
+ * verdict must not commit anything — the whole output then stands as the
+ * reason.
  */
-function failedLoadDirs(stdout: string, stagedDirs: readonly string[]): Set<string> {
+function failedLoadResults(stdout: string, stagedDirs: readonly string[]): Map<string, string> {
     const parsed = JSON.parseWith(
         stdout,
-        z.object({ results: z.array(z.object({ package: z.string(), ok: z.boolean() }).passthrough()).default([]) }).passthrough(),
+        z
+            .object({ results: z.array(z.object({ package: z.string(), ok: z.boolean(), error: z.string().optional() }).passthrough()).default([]) })
+            .passthrough(),
     );
-    if (parsed === null) return new Set(stagedDirs);
-    const failed = new Set<string>();
+    if (parsed === null) return new Map(stagedDirs.map((dir) => [dir, `the check wrote no readable verdict. Its output:\n${stdout}`]));
+    const failed = new Map<string, string>();
     for (const result of parsed.results) {
-        if (!result.ok) failed.add(result.package);
+        if (!result.ok) failed.set(result.package, result.error ?? "the check named no reason");
     }
     // A red exit with no named failure still must not commit: name everything.
-    return failed.size > 0 ? failed : new Set(stagedDirs);
+    return failed.size > 0 ? failed : new Map(stagedDirs.map((dir) => [dir, `the check exited red and named no failure. Its output:\n${stdout}`]));
 }
 
 /**
  * The count check the reclamation uses: whether ANY flight row with a live
  * holder exists. The reclamation must not free a store directory that a live
  * batch is about to reference, and the flight rows are the record of exactly
- * that.
+ * that. A `failed` row is a terminal record, not live work, thus it blocks
+ * nothing.
  */
 export function anyLiveStoreFlight(): boolean {
-    return readStoreFlights().length > 0;
+    return readStoreFlights().some((flight) => flight.row.state !== "failed");
 }
 
 /** Whether a flight of one key still carries a subscriber. Exported for the surfaces that render a join. */
