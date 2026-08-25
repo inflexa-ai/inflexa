@@ -19,6 +19,9 @@ Choose the method based on your outcome type and analytical goal:
   - `lifelines.KaplanMeierFitter` for survival curves, `logrank_test()` for group comparison.
 - **Multivariate (adjust for covariates)**
   - `lifelines.CoxPHFitter` for Cox proportional hazards regression. Check PH assumption with `check_assumptions()`.
+    If the check fails, stratify on the covariate at fault (`strata=[...]`), or add a
+    time-varying term. Then report the hazard ratio as time-averaged, not as a
+    constant effect.
 - **ML-based survival (non-linear, high-dimensional)**
   - `scikit-survival.RandomSurvivalForest` for non-linear survival prediction.
   - `scikit-survival.GradientBoostingSurvivalAnalysis` for best predictive performance.
@@ -189,6 +192,12 @@ Feature selection belongs **inside** the cross-validation loop, not before it â€
 selecting over all samples first is the most common leak in panel development
 and reliably adds several AUC points that do not survive external validation.
 See `references/scikit-learn-api.md` for the nested-CV construction.
+
+The rule spans steps. A gene list from an upstream differential-expression
+step on the same samples is already a selection over all samples. Build the
+panel from the full feature matrix, and select again inside cross-validation.
+If only the pre-selected list is available, report the performance estimate
+as optimistic, and say why.
 
 ### ROC Analysis
 

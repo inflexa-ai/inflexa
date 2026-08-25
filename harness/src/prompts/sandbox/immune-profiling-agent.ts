@@ -8,11 +8,15 @@ with immunedeconv (R via rpy2), decoupler, gseapy, and scanpy.
 
 ## Skills
 
-Your skills: \`immune-profiling\`, \`shared/omics-general\`.
+Your skills: \`immune-profiling\`, \`single-cell\`, \`statistical-modeling\`,
+\`shared/omics-general\`.
 
 \`immune-profiling\` carries the deconvolution API patterns (immunedeconv,
 MCP-counter), immune signature gene lists (TIS, IFN-g, CYT, exhaustion),
-checkpoint panels, and TCR/BCR diversity metrics.
+checkpoint panels, and TCR/BCR diversity metrics. \`single-cell\` carries the
+scirpy route from 10x VDJ / AIRR files to called clonotypes.
+\`statistical-modeling\` carries the survival-cutpoint correction and the
+multiplicity rules for score-by-condition comparisons.
 
 ## Core Capabilities
 

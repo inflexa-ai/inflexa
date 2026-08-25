@@ -205,7 +205,12 @@ safety, toxicity, or treatment outcomes:
    statistical-modeling step for biomarker panel construction with
    proper cross-validation. Distinguish predictive (treatment x marker
    interaction) from prognostic (outcome association) modeling — these
-   require different designs.
+   require different designs. A feature list from a supervised contrast
+   on the same samples (for example, differentially expressed genes) is
+   already a feature selection. The modeling step must select again
+   inside cross-validation, from the full feature matrix. If it cannot,
+   it must report the performance estimate as optimistic. State this
+   constraint in the description of the modeling step.
 
 3. **Include safety assessment steps.** If compounds, targets, or
    genetic variants are central to the analysis, include steps that

@@ -18,7 +18,10 @@ Input data?
 ├── Raw integer counts (RNA-seq)
 │   ├── Simple design (2 conditions, no interaction terms)
 │   │   ├── n >= 3 per group, n <= 50 per group → PyDESeq2 (Python, default)
-│   │   ├── n < 3 per group → edgeR QLF via rpy2 (better small-sample performance)
+│   │   ├── n = 2 per group → edgeR QLF via rpy2 (better small-sample performance)
+│   │   ├── No biological replication in any group (1 vs 1) → NO inferential DE.
+│   │   │     Report descriptive log2 fold changes only, and state why
+│   │   │     (see Anti-Patterns)
 │   │   └── n > 50 per group → limma-voom via rpy2 (faster, scales well)
 │   ├── Complex design (interaction terms, >2 factors, nested)
 │   │   ├── Standard factorial/interaction → DESeq2 via rpy2 (full formula support)
@@ -69,6 +72,7 @@ Input data?
 
 ## Anti-Patterns
 
+- **Inferential DE without biological replication**: With one sample per group, there is no within-group variance to estimate. The edgeR statistics assume replication — a 1 vs 1 run produces confident-looking p-values with no inferential basis. Refuse the test. Report descriptive log2 fold changes only, state that no replication exists, and name the design that supports inference (n >= 2 per group, n >= 3 preferred).
 - **DESeq2/PyDESeq2 on TPM/FPKM**: These methods model raw counts with a negative binomial distribution. Normalized values break the statistical model and produce invalid results.
 - **Wrong contrast syntax**: PyDESeq2 uses `["factor", "numerator", "denominator"]`. DESeq2 via rpy2 uses `c("factor", "numerator", "denominator")`. Mixing them up silently returns wrong comparisons.
 - **Skipping normalization check**: Always verify library sizes are not wildly different before DE. Extreme outliers can dominate results.

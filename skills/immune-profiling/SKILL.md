@@ -136,8 +136,10 @@ When DE results are available from upstream steps:
 
 ### With Survival / Clinical Outcomes
 - Stratify patients by immune cell proportions or signature scores
-- Kaplan-Meier by high/low immune infiltration (median split or
-  optimal cutpoint)
+- Kaplan-Meier by high/low immune infiltration. A median split is a
+  pre-specified split, and it demands no cutpoint correction. An
+  optimal cutpoint demands the maxstat corrected p-value — see
+  Statistics below.
 - Multivariate Cox including immune scores alongside clinical
   covariates
 
@@ -145,6 +147,22 @@ When DE results are available from upstream steps:
 - Compare immune profiles between responders and non-responders
 - Test whether baseline immune state predicts treatment response
 - Assess on-treatment immune modulation (paired pre/post)
+
+## Statistics
+
+- **Multiplicity over immune scores**: One run yields 10 to 64
+  cell-type or signature scores. Correct every score-by-condition
+  comparison (t-test, Wilcoxon, correlation) with Benjamini-Hochberg
+  FDR across the full set of scores. Report q-values, not raw
+  p-values.
+- **Survival cutpoints**: The nominal log-rank p-value of an optimal
+  cutpoint has no meaning — the scan over candidate cutpoints
+  inflates it. Report the maxstat corrected p-value. The
+  `statistical-modeling` skill carries the full rule and the
+  `surv_cutpoint` API pattern.
+- **Cox models**: Include clinical covariates. Do a check of the
+  proportional-hazards assumption, and apply the failure path that
+  the `statistical-modeling` skill states.
 
 ## References
 
@@ -170,3 +188,7 @@ When DE results are available from upstream steps:
   macrophages, and MDSCs are immunosuppressive
 - Score immune signatures without checking that the signature genes
   are actually expressed in the dataset
+- Report the nominal p-value of an optimized survival cutpoint — only
+  the maxstat corrected p-value has meaning
+- Compare immune scores across conditions without BH FDR over the
+  full score set
