@@ -29,11 +29,11 @@ import { notify } from "./notice.ts";
 // no catalog receipt and is completely usable; a row that reports `installed` over an absent store
 // keeps the refusal. The rows supply the reason for a hold and the progress the hold reports.
 
-/** One live acquisition flight as the sidebar renders it. */
+/** One acquisition flight as the sidebar renders it: a live one, or a terminal `failed` record. */
 export type StoreFlightLine = {
     /** The spec of the flight, as a user reads it. */
     readonly spec: string;
-    /** The live state: waiting for a slot under the cap, or running. */
+    /** The state: waiting for a slot under the cap, running, or failed. */
     readonly state: StoreFlightStatus;
     /** How many analyses subscribe to the flight. */
     readonly subscribers: number;

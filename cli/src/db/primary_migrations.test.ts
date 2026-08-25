@@ -1,5 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { migrations, runMigrations } from "./primary_migrations.ts";
 
@@ -82,7 +85,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -197,7 +200,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {
@@ -206,6 +209,60 @@ describe("migration 2: dropping the chat tables", () => {
         for (const table of ["anchors", "projects", "analyses", "analysis_inputs"]) {
             expect(tables).toContain(table);
             expect(db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n).toBe(1);
+        }
+    });
+});
+
+describe("migration 7 — the flight-table rebuild", () => {
+    // Task 1.3 of flight-refusals-and-debris: the rebuild runs while a SECOND
+    // connection — the picture of a live flush child on an old binary — holds
+    // the same database file. The old states are a subset of the new CHECK,
+    // and SQLite re-prepares a statement on a schema change, thus the writes
+    // of the old connection must keep landing on the rebuilt table.
+    test("a live second connection keeps its rows and keeps writing across the rebuild", () => {
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-mig7-"));
+        const path = join(dir, "agent.db");
+        const migrator = new Database(path);
+        const holder = new Database(path);
+        try {
+            for (const conn of [migrator, holder]) {
+                conn.run("PRAGMA journal_mode = WAL");
+                conn.run("PRAGMA busy_timeout = 5000");
+                conn.run("PRAGMA foreign_keys = ON");
+            }
+            runMigrations(
+                migrator,
+                migrations.filter((m) => m.version <= 6),
+            )._unsafeUnwrap();
+            holder
+                .query(
+                    `INSERT INTO package_store_flights (id, created_at, updated_at, state, ecosystem, name, specifier, progress, holder_pid)
+                 VALUES (?, ?, ?, 'running', 'python', 'scanpy', '', NULL, ?)`,
+                )
+                .run("python::scanpy::", 1, 1, 4242);
+            holder.query("INSERT INTO package_store_flight_subscriptions (flight_id, analysis_id) VALUES (?, NULL)").run("python::scanpy::");
+
+            runMigrations(migrator, migrations)._unsafeUnwrap();
+
+            // The copied row and its subscription survived the rebuild.
+            const changed = holder
+                .query("UPDATE package_store_flights SET updated_at = ?, progress = ? WHERE id = ?")
+                .run(2, "[provision] step", "python::scanpy::").changes;
+            expect(changed).toBe(1);
+            const row = holder
+                .query<{ state: string; progress: string | null; message: string | null }, [string]>(
+                    "SELECT state, progress, message FROM package_store_flights WHERE id = ?",
+                )
+                .get("python::scanpy::");
+            expect(row).toEqual({ state: "running", progress: "[provision] step", message: null });
+            expect(holder.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions").get()?.n).toBe(1);
+            // The rebuilt CHECK accepts the new terminal state.
+            migrator.query("UPDATE package_store_flights SET state = 'failed', message = ? WHERE id = ?").run("resolve: x", "python::scanpy::");
+            expect(holder.query<{ state: string }, []>("SELECT state FROM package_store_flights").get()?.state).toBe("failed");
+        } finally {
+            migrator.close();
+            holder.close();
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 });

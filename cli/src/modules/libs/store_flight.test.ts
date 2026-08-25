@@ -7,11 +7,13 @@ import { ok } from "neverthrow";
 
 import { env } from "../../lib/env.ts";
 import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
+import { db } from "../../db/primary.ts";
 import { listPendingStoreAdds } from "../../db/primary_query.ts";
-import { claimPendingStoreAdds } from "../../db/primary_mutation.ts";
+import { claimPendingStoreAdds, deleteStoreFlight } from "../../db/primary_mutation.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { CaptureResult } from "../../lib/container.ts";
 import { enqueueStoreAdd, flushPendingStoreAdds, readStoreFlights, storeFlightKey } from "./store_flight.ts";
+import { flushAndPrint } from "./store.ts";
 import type { LoadCheckRunner, ProvisionerRunner } from "./provisioner.ts";
 
 // The flush is the two-phase flight over the pending set: one provisioner
@@ -70,15 +72,21 @@ function loadCheck(failing: readonly string[]): LoadCheckRunner {
 
 beforeEach(() => {
     assertTestSandbox(env.locksDir);
-    // The pending set persists in the sandboxed database; every test starts empty.
+    // The pending set and the flight rows persist in the sandboxed database;
+    // every test starts empty. A `failed` row is durable by design, thus the
+    // sweep alone does not clear it.
     claimPendingStoreAdds().unwrapOr([]);
+    for (const flight of readStoreFlights()) deleteStoreFlight(flight.row.id).unwrapOr(0);
 });
 
 afterEach(() => {
     for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
     rmSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), { force: true });
     claimPendingStoreAdds().unwrapOr([]);
-    for (const flight of readStoreFlights()) rmSync(instanceLockPath(flight.row.id), { force: true });
+    for (const flight of readStoreFlights()) {
+        deleteStoreFlight(flight.row.id).unwrapOr(0);
+        rmSync(instanceLockPath(flight.row.id), { force: true });
+    }
 });
 
 describe("the pending set", () => {
@@ -166,8 +174,14 @@ describe("flushPendingStoreAdds", () => {
         };
         expect(graph.nodes[NEW_DIR]).toBeDefined();
         expect(graph.by_name.python["newpkg"]).toEqual([NEW_DIR]);
-        // The flight rows ended with the batch: a finished flight is not a cache.
-        expect(readStoreFlights()).toHaveLength(0);
+        // The acquired flight deleted its row — a success that everyone has is
+        // noise. The refused spec settled as the ONE durable `failed` row, with
+        // the phase and the whole reason.
+        const rows = readStoreFlights();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.row.state).toBe("failed");
+        expect(rows[0]?.row.name).toBe("ghost");
+        expect(rows[0]?.row.message).toBe("resolve: no ecosystem holds the name");
         // The pending set drained.
         expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(0);
     });
@@ -217,10 +231,66 @@ describe("flushPendingStoreAdds", () => {
         if (result.type !== "flew") throw new Error(`expected a flight, got ${result.type}`);
         expect(result.outcomes[0]?.kind).toBe("refused");
         // No advertised state: the graph holds no node for the failed package. The
-        // pool bytes stay, and a reclamation frees them.
+        // pool bytes stay, and the debris pass frees them.
         const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as { nodes: Record<string, unknown> };
         expect(graph.nodes[BAD_DIR]).toBeUndefined();
         expect(existsSync(join(root, "store", BAD_DIR))).toBe(true);
+        // The refusal settled durably, with the load-check phase in front.
+        const rows = readStoreFlights();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.row.state).toBe("failed");
+        expect(rows[0]?.row.message).toStartWith("load_check: ");
+        expect(rows[0]?.row.message).toContain(BAD_DIR);
+    });
+
+    test("a retry of a failed spec claims the same row, and its success clears the failure", async () => {
+        const root = tempStore();
+        enqueueStoreAdd({ name: "flaky", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        const refusing = acquiringRunner({ "python:flaky": { outcome: "refused", reason: "the index timed out" } }, {});
+        (await flushPendingStoreAdds(root, { run: refusing, loadCheck: loadCheck([]) }))._unsafeUnwrap();
+        const failedRow = readStoreFlights()[0];
+        expect(failedRow?.row.state).toBe("failed");
+        expect(failedRow?.row.message).toBe("resolve: the index timed out");
+
+        const FLAKY_DIR = "flaky-1.0-0000000000flaky1";
+        enqueueStoreAdd({ name: "flaky", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        const succeeding = acquiringRunner(
+            { "python:flaky": { outcome: "acquired", store_dirs: [FLAKY_DIR] } },
+            { [FLAKY_DIR]: { track: "python", name: "flaky", version: "1.0", order: "0a", edges: [] } },
+        );
+        const retried = (await flushPendingStoreAdds(root, { run: succeeding, loadCheck: loadCheck([]) }))._unsafeUnwrap();
+
+        if (retried.type !== "flew") throw new Error(`expected a flight, got ${retried.type}`);
+        // The retry CLAIMED the failed row (it did not read as "joined"), flew,
+        // and its success deleted the row — no stale failure line stays.
+        expect(retried.outcomes[0]?.kind).toBe("acquired");
+        expect(readStoreFlights()).toHaveLength(0);
+    });
+
+    test("a broken flight ledger is its own refusal, never a join", async () => {
+        const root = tempStore();
+        enqueueStoreAdd({ name: "alpha", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        let ran = 0;
+        const run: ProvisionerRunner = async () => {
+            ran += 1;
+            return ok({ code: 0, stdout: "", stderr: "" });
+        };
+        const conn = db()._unsafeUnwrap();
+        conn.run("ALTER TABLE package_store_flights RENAME TO package_store_flights_broken");
+        try {
+            const result = (await flushPendingStoreAdds(root, { run }))._unsafeUnwrap();
+
+            if (result.type !== "flew") throw new Error(`expected a flight, got ${result.type}`);
+            expect(result.outcomes).toHaveLength(1);
+            const outcome = result.outcomes[0];
+            if (outcome?.kind !== "refused") throw new Error(`expected a refusal, got ${outcome?.kind}`);
+            // The refusal names the ledger problem, and no acquire run started:
+            // "joined" would promise that somebody else does the work.
+            expect(outcome.reason).toContain("flight ledger");
+            expect(ran).toBe(0);
+        } finally {
+            conn.run("ALTER TABLE package_store_flights_broken RENAME TO package_store_flights");
+        }
     });
 
     test("a live reclamation defers the batch and puts the approvals back", async () => {
@@ -246,6 +316,56 @@ describe("flushPendingStoreAdds", () => {
             holder.kill();
             await holder.exited;
         }
+    });
+});
+
+describe("the flush tail", () => {
+    // The trigger of the silent debris pass: only a flush that ended with
+    // refusals starts one, and the pass itself is tested in `store.test.ts`.
+
+    test("a refusal triggers the debris pass over the refused bytes", async () => {
+        const root = tempStore();
+        enqueueStoreAdd({ name: "badpkg", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        const BAD_DIR = "badpkg-1.0-00000000000bad02";
+        const run = acquiringRunner(
+            { "python:badpkg": { outcome: "acquired", store_dirs: [BAD_DIR] } },
+            { [BAD_DIR]: { track: "python", name: "badpkg", version: "1.0", order: "0a", edges: [] } },
+        );
+        const debrisInvocations: (readonly string[])[] = [];
+        const debrisRun: ProvisionerRunner = async (invocation) => {
+            debrisInvocations.push([...invocation.args]);
+            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+        };
+
+        try {
+            await flushAndPrint(root, { flush: { run, loadCheck: loadCheck([BAD_DIR]) }, debris: { run: debrisRun } });
+        } finally {
+            // The refusal prints through the CLI error path, which marks the
+            // process failed; the test process must not keep that mark. Bun
+            // ignores an `undefined` assignment as a reset, thus zero it is.
+            process.exitCode = 0;
+        }
+
+        expect(debrisInvocations).toEqual([["reclaim", "--debris"]]);
+    });
+
+    test("a clean flush starts no debris pass", async () => {
+        const root = tempStore();
+        enqueueStoreAdd({ name: "goodpkg", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        const GOOD_DIR = "goodpkg-1.0-0000000000good1";
+        const run = acquiringRunner(
+            { "python:goodpkg": { outcome: "acquired", store_dirs: [GOOD_DIR] } },
+            { [GOOD_DIR]: { track: "python", name: "goodpkg", version: "1.0", order: "0a", edges: [] } },
+        );
+        const debrisInvocations: (readonly string[])[] = [];
+        const debrisRun: ProvisionerRunner = async (invocation) => {
+            debrisInvocations.push([...invocation.args]);
+            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+        };
+
+        await flushAndPrint(root, { flush: { run, loadCheck: loadCheck([]) }, debris: { run: debrisRun } });
+
+        expect(debrisInvocations).toHaveLength(0);
     });
 });
 

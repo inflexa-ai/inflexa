@@ -1,8 +1,11 @@
 import { createEffect, createSignal, onCleanup } from "solid-js";
 
+import { env } from "../../lib/env.ts";
+import { getLogger } from "../../lib/log.ts";
 import type { ModelConnectionIdentity, ResolvedHarnessConfig } from "../../modules/harness/config.ts";
 import { bootHarnessRuntime, describeBootError, type HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { currentAgentModels, onAgentStateChange, pendingAgentSelections, type AgentName } from "../../modules/harness/agent_switch.ts";
+import { collectStoreDebris } from "../../modules/libs/store.ts";
 
 // The embedded harness runtime's boot lifecycle as seen by the chat UI, held here (not inside
 // `app.tsx`) so the holder is decoupled from its renderer — the launcher DRIVES it
@@ -77,6 +80,18 @@ export async function startHarnessBoot(config: ResolvedHarnessConfig, analysisId
             // the ready edge and immutable thereafter (a swap changes only a model, never the shared
             // connection), so the sidebar surfaces it beside the agents.
             setState({ phase: "ready", model: rt.conversation.model, connection: rt.connection });
+            // The one boot-time debris pass, fire-and-forget at the ready edge: it
+            // sweeps what a crashed session left, it yields to any live work, and
+            // it starts no container when there is nothing to free. Silent by
+            // design — only a pass that freed something writes a log line.
+            void collectStoreDebris(env.packageStoreDir).then((collected) =>
+                collected.match(
+                    (outcome) => {
+                        if (outcome.swept) getLogger("chat").info({ dirs: outcome.dirs, reports: outcome.reports }, "collected package-store debris");
+                    },
+                    (error) => getLogger("chat").debug({ err: error }, "the boot debris pass did not run"),
+                ),
+            );
         },
         (e) => setState({ phase: "failed", message: describeBootError(e) }),
     );

@@ -421,13 +421,16 @@ export function settleTransfer(
 /**
  * Claim the flight for one normalized spec, and report whether this process owns it.
  *
- * The insert IS the single-flight decision. `ON CONFLICT DO NOTHING` over the primary key makes it one
- * atomic statement, thus two processes — and two calls inside one process — cannot both own the flight
- * for a key. `true` means "this call owns the flight and must run the work"; `false` means "a flight is
- * already live, thus subscribe to it".
+ * The upsert IS the single-flight decision, in one atomic statement, thus two processes — and two
+ * calls inside one process — cannot both own the flight for a key. `true` means "this call owns the
+ * flight and must run the work"; `false` means "a flight is already live, thus subscribe to it".
  *
- * The row starts `queued`, never `running`: a slot under the concurrency cap is a second decision, and
- * {@link promoteStoreFlight} makes it.
+ * A `failed` row is a terminal record, not a live flight: the conflict branch flips it back to
+ * `queued`, clears its message, and hands the key to this caller. Thus a retry of the same spec
+ * claims the same row, and the recorded failure clears with the retry. Only a live row refuses.
+ *
+ * A claimed row starts `queued`, never `running`: a slot under the concurrency cap is a second
+ * decision, and {@link promoteStoreFlight} makes it.
  */
 export function claimStoreFlight(params: {
     id: string;
@@ -442,13 +445,36 @@ export function claimStoreFlight(params: {
             conn
                 .query(
                     `INSERT INTO package_store_flights (
-                     id, created_at, updated_at, state, ecosystem, name, specifier, progress, holder_pid
+                     id, created_at, updated_at, state, ecosystem, name, specifier, progress, message, holder_pid
                  )
-                 VALUES (?, ?, ?, 'queued', ?, ?, ?, NULL, ?)
-                 ON CONFLICT(id) DO NOTHING`,
+                 VALUES (?, ?, ?, 'queued', ?, ?, ?, NULL, NULL, ?)
+                 ON CONFLICT(id) DO UPDATE SET
+                     created_at = excluded.created_at,
+                     updated_at = excluded.updated_at,
+                     state = 'queued',
+                     progress = NULL,
+                     message = NULL,
+                     holder_pid = excluded.holder_pid
+                 WHERE package_store_flights.state = 'failed'`,
                 )
                 .run(params.id, now, now, params.ecosystem, params.name, params.specifier, params.holderPid).changes === 1
         );
+    });
+}
+
+/**
+ * Settle a flight as `failed`, with the reason the surfaces render. Returns rows changed.
+ *
+ * The message holds the WHOLE error text behind its phase — the row is the one durable copy after
+ * the debris pass collects the report file, thus a truncation here would destroy the trace. The
+ * surfaces bound the render instead. The progress clears, because a terminal row reports a reason,
+ * not a live line.
+ */
+export function settleStoreFlightFailure(params: { id: string; message: string }): Result<number, DbError> {
+    return tryMutation("settleStoreFlightFailure", (conn) => {
+        return conn
+            .query("UPDATE package_store_flights SET updated_at = ?, state = 'failed', progress = NULL, message = ? WHERE id = ?")
+            .run(Date.now(), params.message, params.id).changes;
     });
 }
 

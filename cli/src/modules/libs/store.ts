@@ -37,7 +37,7 @@ import { err, ok, type Result } from "neverthrow";
 import { readFarmLock } from "@inflexa-ai/harness";
 
 import { env } from "../../lib/env.ts";
-import { acquireInstanceLock, liveInstanceLockHolds, releaseInstanceLock, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
+import { acquireInstanceLock, liveInstanceLockHolds, releaseInstanceLock, PACKAGE_STORE_RECLAIM_LOCK_KEY, TRANSFER_LOCK_KEY_PREFIX } from "../../lib/lock.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import { listAnalyses, listPendingStoreAdds } from "../../db/primary_query.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -61,6 +61,7 @@ import {
     enqueueStoreAdd,
     flushPendingStoreAdds,
     readStoreFlights,
+    type FlushDeps,
     type FlushSpecOutcome,
     type StoreEcosystem,
     type StoreFlightStatus,
@@ -166,6 +167,13 @@ export type StoreFlightInspection = {
     readonly analyses: readonly string[];
 };
 
+/** One failed flight as the listing reports it: the spec, and the recorded reason whole. */
+export type StoreFailedFlightInspection = {
+    readonly spec: string;
+    /** The durable reason: the phase, then the whole error text. The printer renders a short head of it. */
+    readonly message: string;
+};
+
 /** One pending add of the queue, as the listing reports it. */
 export type StorePendingInspection = {
     readonly spec: string;
@@ -194,6 +202,8 @@ export type StoreInspection = {
     readonly farms: readonly StoreFarm[];
     /** The acquisition flights that are live now. Empty is the common state. */
     readonly flights: readonly StoreFlightInspection[];
+    /** The failed flights, each with its durable reason. Empty is the common state. */
+    readonly failed: readonly StoreFailedFlightInspection[];
     /** The enqueued adds that no flush took yet. Empty is the common state. */
     readonly pending: readonly StorePendingInspection[];
     /** Bytes the deduplicated store content occupies (`store/` only — the farms are symlinks). */
@@ -218,16 +228,16 @@ export type StoreInspection = {
 export async function inspectStore(storeRoot: string): Promise<Result<StoreInspection, StoreActionError>> {
     try {
         const download = await inspectStoreDownload(storeRoot);
-        const flights = readFlightInspections();
+        const { flights, failed } = readFlightInspections();
         const pending = readPendingInspections();
         if (!existsSync(storeRoot)) {
-            return ok({ root: storeRoot, exists: false, packages: [], farms: [], flights, pending, storeBytes: 0, reclaimableBytes: 0, download });
+            return ok({ root: storeRoot, exists: false, packages: [], farms: [], flights, failed, pending, storeBytes: 0, reclaimableBytes: 0, download });
         }
         const packages = await readStorePackages(storeRoot);
         const farms = await readFarms(storeRoot);
         const storeBytes = await dirBytes(join(storeRoot, "store"));
         const reclaimableBytes = await reclaimableStoreBytes(storeRoot);
-        return ok({ root: storeRoot, exists: true, packages, farms, flights, pending, storeBytes, reclaimableBytes, download });
+        return ok({ root: storeRoot, exists: true, packages, farms, flights, failed, pending, storeBytes, reclaimableBytes, download });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not inspect the package store at ${storeRoot}.`, cause });
     }
@@ -242,16 +252,25 @@ function analysisNamesById(): ReadonlyMap<string, string> {
     );
 }
 
-/** The live acquisition flights, with each subscriber named where the database holds a name for it. */
-function readFlightInspections(): readonly StoreFlightInspection[] {
-    const flights = readStoreFlights();
-    if (flights.length === 0) return [];
+/** The flight rows split for the listing: the live flights with their subscribers, and the failed records with their reasons. */
+function readFlightInspections(): { flights: readonly StoreFlightInspection[]; failed: readonly StoreFailedFlightInspection[] } {
+    const rows = readStoreFlights();
+    if (rows.length === 0) return { flights: [], failed: [] };
     const names = analysisNamesById();
-    return flights.map((flight) => ({
-        spec: describeStoreFlightSpec(flight.row),
-        state: flight.row.state,
-        analyses: flight.analysisIds.map((id) => names.get(id) ?? id),
-    }));
+    const flights: StoreFlightInspection[] = [];
+    const failed: StoreFailedFlightInspection[] = [];
+    for (const flight of rows) {
+        if (flight.row.state === "failed") {
+            failed.push({ spec: describeStoreFlightSpec(flight.row), message: flight.row.message ?? "no reason was recorded" });
+            continue;
+        }
+        flights.push({
+            spec: describeStoreFlightSpec(flight.row),
+            state: flight.row.state,
+            analyses: flight.analysisIds.map((id) => names.get(id) ?? id),
+        });
+    }
+    return { flights, failed };
 }
 
 /** The pending adds, with the analysis named where the database holds a name. */
@@ -575,7 +594,9 @@ async function reapOrphanFarms(storeRoot: string, deps: ReclaimDeps): Promise<st
  */
 async function waitForNoLiveWork(waitMs: number, pollMs: number): Promise<Result<void, StoreActionError>> {
     for (let waited = 0; ; waited += pollMs) {
-        const flights = readStoreFlights();
+        // A `failed` row is a terminal record, not live work: it references
+        // nothing, it never advances, and a wait on it would never end.
+        const flights = readStoreFlights().filter((flight) => flight.row.state !== "failed");
         const compositions = liveInstanceLockHolds(FARM_LOCK_KEY_PREFIX);
         if (flights.length === 0 && compositions.length === 0) return ok(undefined);
         if (waited >= waitMs) {
@@ -593,6 +614,92 @@ async function waitForNoLiveWork(waitMs: number, pollMs: number): Promise<Result
             });
         }
         await Promise.sleep(pollMs);
+    }
+}
+
+// --- The debris collection ------------------------------------------------------
+
+/** What one silent debris pass did. `swept: false` is the yield: live work, a held lock, or nothing to free. */
+export type DebrisSweepOutcome = {
+    readonly swept: boolean;
+    /** The store directories the pass removed. */
+    readonly dirs: readonly string[];
+    /** How many stale acquire reports the pass removed. */
+    readonly reports: number;
+};
+
+/** The seams of a debris pass. Production passes none; a test pins the runner. */
+export type DebrisDeps = {
+    readonly run?: ProvisionerRunner;
+    readonly onProgress?: (line: string) => void;
+};
+
+/**
+ * Collect the debris tier silently: the store directories with no farm link
+ * and no graph node, plus the stale acquire reports. No user command starts
+ * this — the tail of a flush that ended with refusals and the one boot pass
+ * of the app call it, and `store reclaim` keeps its meaning and its approval
+ * gate.
+ *
+ * The pass YIELDS to live work, and it never waits: a held reclaim lock, a
+ * live flight, a live composition, or a live transfer each end it at once
+ * with `swept: false`. A live sandbox run needs no check of its own, because
+ * a run reaches store content only through the links of its farm, and a
+ * linked directory is never debris. The container starts only when the
+ * preview names something, thus a quiet pass costs no engine start.
+ */
+export async function collectStoreDebris(storeRoot: string, deps: DebrisDeps = {}): Promise<Result<DebrisSweepOutcome, StoreActionError>> {
+    const lock = acquireInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
+    if (!lock.acquired) return ok({ swept: false, dirs: [], reports: 0 });
+    try {
+        const liveFlight = readStoreFlights().some((flight) => flight.row.state !== "failed");
+        if (liveFlight || liveInstanceLockHolds(FARM_LOCK_KEY_PREFIX).length > 0 || liveInstanceLockHolds(TRANSFER_LOCK_KEY_PREFIX).length > 0) {
+            return ok({ swept: false, dirs: [], reports: 0 });
+        }
+        const preview = await debrisPreview(storeRoot);
+        if (preview.isErr()) return err(preview.error);
+        const { dirs, reports } = preview.value;
+        if (dirs.length === 0 && reports === 0) return ok({ swept: false, dirs: [], reports: 0 });
+        const run = deps.run ?? runProvisioner;
+        const ran = await run({ storeRoot, egressAllow: null, args: ["reclaim", "--debris"] }, (line) => deps.onProgress?.(line));
+        if (ran.isErr()) return err(ran.error);
+        return classifyProvisionerRun(ran.value).map(() => ({ swept: true, dirs, reports }));
+    } finally {
+        releaseInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
+    }
+}
+
+/**
+ * The debris tier as the host previews it: the directories with no farm link
+ * and no graph node, plus the count of the stale acquire reports. An
+ * unreadable or absent graph names NO directory, because the pass cannot then
+ * prove that a directory is unadvertised — the conservative branch frees
+ * nothing.
+ */
+async function debrisPreview(storeRoot: string): Promise<Result<{ dirs: readonly string[]; reports: number }, StoreActionError>> {
+    try {
+        const storeDir = join(storeRoot, "store");
+        const dirs: string[] = [];
+        if (existsSync(storeDir)) {
+            const advertised = readDepsGraph(storeRoot).match(
+                (graph) => new Set(graph.nodes.keys()),
+                () => null,
+            );
+            if (advertised !== null) {
+                const referenced = await referencedStoreDirs(storeRoot);
+                for (const entry of await readdir(storeDir, { withFileTypes: true })) {
+                    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+                    if (!referenced.has(entry.name) && !advertised.has(entry.name)) dirs.push(entry.name);
+                }
+            }
+        }
+        const downloadDir = join(storeRoot, ".inflexa-download");
+        const reports = existsSync(downloadDir)
+            ? (await readdir(downloadDir)).filter((name) => name.startsWith("acquire-") && name.endsWith(".json")).length
+            : 0;
+        return ok({ dirs: dirs.sort((a, b) => a.localeCompare(b)), reports });
+    } catch (cause) {
+        return err({ type: "io_failed", message: `Could not inspect the package store at ${storeRoot}.`, cause });
     }
 }
 
@@ -670,9 +777,14 @@ function printFlushOutcome(outcome: FlushSpecOutcome): void {
     }
 }
 
-/** Run one flush and print its outcomes, sharing the shape between the terminal add and the flush child. */
-async function flushAndPrint(storeRoot: string): Promise<void> {
-    const flushed = await flushPendingStoreAdds(storeRoot, { onProgress: (line) => console.log(line) });
+/**
+ * Run one flush and print its outcomes, sharing the shape between the terminal
+ * add and the flush child. The tail of a flush that ended with refusals runs
+ * the silent debris pass. Exported for the test of exactly that trigger; the
+ * command routes pass no `deps`, thus production runs the real seams.
+ */
+export async function flushAndPrint(storeRoot: string, deps: { readonly flush?: FlushDeps; readonly debris?: DebrisDeps } = {}): Promise<void> {
+    const flushed = await flushPendingStoreAdds(storeRoot, { onProgress: (line) => console.log(line), ...deps.flush });
     flushed.match((result) => {
         switch (result.type) {
             case "empty":
@@ -690,6 +802,23 @@ async function flushAndPrint(storeRoot: string): Promise<void> {
             }
         }
     }, reportError);
+    // The silent tail: a flush that ended with refusals — a whole-run error
+    // refuses everything — left never-advertised bytes, and the pass frees
+    // them at once. It yields when any other work is live, thus a live
+    // sibling flight keeps its staged directories.
+    const refused = flushed.match(
+        (result) => result.type === "flew" && result.outcomes.some((outcome) => outcome.kind === "refused"),
+        () => true,
+    );
+    if (!refused) return;
+    const collected = await collectStoreDebris(storeRoot, deps.debris ?? {});
+    collected.match(
+        (outcome) => {
+            if (outcome.swept)
+                console.log(`Removed ${outcome.dirs.length} debris director${outcome.dirs.length === 1 ? "y" : "ies"} and ${outcome.reports} stale report(s).`);
+        },
+        () => undefined,
+    );
 }
 
 /**
@@ -1033,6 +1162,7 @@ function printInspection(inspection: StoreInspection): void {
     if (!inspection.exists) {
         console.log("  Present  no — run `inflexa store download` to obtain the published catalog.");
         printFlights(inspection.flights);
+        printFailedFlights(inspection.failed);
         printPending(inspection.pending);
         printDownload(inspection.download);
         return;
@@ -1045,6 +1175,7 @@ function printInspection(inspection: StoreInspection): void {
         console.log(`    ${farm.name}  ${describeFarmOwner(farm)}  ${farm.links} link(s)  ${tracks}`);
     }
     printFlights(inspection.flights);
+    printFailedFlights(inspection.failed);
     printPending(inspection.pending);
     console.log(`  Disk     ${formatBytes(inspection.storeBytes)}`);
     // An update keeps each old version, thus a reclaimable total shows the disk that
@@ -1064,6 +1195,27 @@ function printFlights(flights: readonly StoreFlightInspection[]): void {
         const analyses = flight.analyses.length === 0 ? "no analysis subscribed" : `analyses: ${flight.analyses.join(", ")}`;
         console.log(`    ${flight.spec}  ${flight.state}  ${analyses}`);
     }
+}
+
+/** How much of a recorded failure reason one listing line carries. The row keeps the whole text. */
+const FAILURE_HEAD_CHARS = 120;
+
+/** The first line of a recorded reason, clamped — the render is bounded here, and never at record time. */
+function reasonHead(message: string): string {
+    const first = message.split("\n", 1)[0] ?? message;
+    return first.length <= FAILURE_HEAD_CHARS ? first : `${first.slice(0, FAILURE_HEAD_CHARS)}…`;
+}
+
+/**
+ * Print the failed flights with a short head of each reason. No failure is
+ * the common state, thus the block stays silent then. The retry remedy rides
+ * the block once, not each line.
+ */
+function printFailedFlights(failed: readonly StoreFailedFlightInspection[]): void {
+    if (failed.length === 0) return;
+    console.log(`  Failed   ${failed.length}`);
+    for (const flight of failed) console.log(`    ${flight.spec}  ${reasonHead(flight.message)}`);
+    console.log("    A new `inflexa store add` of the same package clears its failure.");
 }
 
 /** Print the pending adds. An empty queue is the common state, thus the block stays silent then. */
