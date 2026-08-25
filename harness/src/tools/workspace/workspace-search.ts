@@ -50,12 +50,15 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
             'previous era, one entity the dataset is about), "output" (files a step produced), ' +
             '"summary" (a step\'s summary), "synthesis" (a run\'s literature-grounded synthesis), ' +
             '"input-kind" (a repeating set, on a profile of the previous era). ' +
-            "For output/summary/synthesis the entry id IS the workspace path, and so it is for an " +
-            '"input" entry that annotates a file. An "input" entry for an ENTITY of a previous-era ' +
-            "profile addresses the entity, not a path — read its metadata rather than opening the id. " +
-            "For a group or a dimension the id is never a path, because each spans many files: search " +
-            "input-group for a group's display pattern, then list the tree for its members. Most input " +
-            "files carry no entry of their own — find them through their group and the listing tools.",
+            "A hit names a FILE exactly when its metadata carries `path` — the workspace path, which " +
+            "is also the entry id under the analysis root. Output/summary/synthesis entries and " +
+            '"input" entries that annotate a file do. A hit without `path` is a PATTERN spanning many ' +
+            "files — a group, a dimension, a kind, or a previous-era entity (`entity` in metadata) — " +
+            "so never read its id as a file: use its metadata, e.g. search input-group for a group's " +
+            "display pattern, then list the tree for its members. (An older index may lack `path` on " +
+            'its file entries; there an "input" entry without `entity` is still a file, and an ' +
+            "output/summary/synthesis id is always its path.) Most input files carry no entry of " +
+            "their own — find them through their group and the listing tools.",
         inputSchema: z.object({
             query: z.string().min(1).describe("What to search for, in natural language"),
             type: z

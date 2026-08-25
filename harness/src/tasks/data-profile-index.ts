@@ -15,6 +15,10 @@
  *
  * `type: "input"` keeps its existing meaning — one entry addressing one workspace path —
  * so a search filtered to it matches whichever era wrote the profile it reads.
+ *
+ * Every file-addressed entry stamps its workspace path into `metadata.path`; pattern
+ * entries (group, dimension, kind, entity) never do. That presence is the discriminator
+ * `workspace_search` documents, so a consumer needs no id parsing to tell them apart.
  */
 
 import type { ProfileDimensionView, ProfileGroupView } from "../app/data-profile-view.js";
@@ -221,6 +225,7 @@ function fileEntry(analysisId: string, file: DataProfileFile): ProfileIndexEntry
         text: `${file.path} — ${file.description}`,
         metadata: {
             type: "input",
+            path: file.path,
             ...(file.dataType ? { dataType: file.dataType } : {}),
             ...(file.format ? { format: file.format } : {}),
             ...(file.tags ? { tags: file.tags } : {}),

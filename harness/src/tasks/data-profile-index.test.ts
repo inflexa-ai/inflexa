@@ -243,5 +243,21 @@ describe("a snapshot of the kinds era", () => {
         expect(entries).toHaveLength(1);
         expect(entries[0]!.metadata.type).toBe("input");
         expect(entries[0]!.id).toBe("/a1/data/inputs/meta/sheet_1.csv");
+        expect(entries[0]!.metadata.path).toBe("data/inputs/meta/sheet_1.csv");
+    });
+
+    it("marks file-addressed entries with a metadata path and pattern entries with none", () => {
+        const resolved = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED });
+        for (const entry of resolved) {
+            if (entry.metadata.path !== undefined) expect(entry.id).toBe(`/a1/${entry.metadata.path as string}`);
+            else expect(entry.metadata.type).not.toBe("input");
+        }
+        expect(resolved.some((e) => e.metadata.path !== undefined)).toBe(true);
+
+        const legacy = buildProfileIndexEntries({ analysisId: "a1", result: LEGACY, scan: scanFixture() });
+        for (const entity of legacy.filter((e) => e.metadata.type === "input")) {
+            expect(entity.metadata.entity).toBeDefined();
+            expect(entity.metadata.path).toBeUndefined();
+        }
     });
 });

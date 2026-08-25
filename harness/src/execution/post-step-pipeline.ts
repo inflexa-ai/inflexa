@@ -275,7 +275,7 @@ export async function vectorIndexStepOutputs(deps: PostStepPipelineDeps, postCtx
     let indexed = 0;
     let failed = 0;
     for (const entry of liveMetadata) {
-        const ok = await indexOne(`/${input.analysisId}/${entry.dbPath}`, entry.description, { text: entry.description, type: "output", ...entry.metadata });
+        const ok = await indexOne(`/${input.analysisId}/${entry.dbPath}`, entry.description, { text: entry.description, type: "output", ...entry.metadata, path: entry.dbPath });
         if (ok) indexed++;
         else failed++;
     }
