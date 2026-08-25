@@ -52,6 +52,18 @@ The add path SHALL verify that each supplied path exists on disk before storing 
 - **WHEN** an add supplies one existing path and one non-existent path
 - **THEN** neither path is registered (the add is all-or-nothing) and the response names the non-existent path
 
+### Requirement: A marker that the database does not hold recovers its anchor row
+
+The add path MUST make sure that the anchor row of a found marker exists before it stores an anchored reference. A marker can name an anchor that the database does not hold. A replaced database, and a folder authored on a different machine, both make that state. The add MUST then insert the row again, keyed on the UUID of the marker, through the shared `getOrCreateAnchorForCwd`. The stored reference MUST carry the id of the recovered row. The add MUST NOT fail on the anchor foreign key, and it MUST NOT degrade the reference to an absolute path. The marker is the identity of the folder, thus the recovery keeps it.
+
+An `inputs add` is a deliberate user action, thus the recovery obeys the no-litter policy. The marker-present branch of the recovery writes nothing to disk.
+
+#### Scenario: A stale marker does not fail the add
+
+- **WHEN** `inflexa inputs add <path>` runs for a file inside a folder whose marker names an anchor the database does not hold
+- **THEN** the anchor row is inserted again with the UUID of the marker
+- **AND** the input registers as an anchor-relative reference under that anchor
+
 ### Requirement: Removing an input resolves against the registered set, not the filesystem
 
 Removing an input SHALL identify the target by matching the supplied reference against the analysis's currently registered inputs — NOT by requiring the underlying file to still exist — so an input whose file was moved or deleted can still be removed. A supplied reference that matches no current input SHALL be reported as "not a current input" (a no-op), never as a filesystem error.

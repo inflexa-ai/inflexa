@@ -5,12 +5,18 @@ import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { statResult } from "../../lib/fs.ts";
 import { canonicalPath, findMarkerUpwards } from "../anchor/marker.ts";
-import { resolveAnchor } from "../anchor/anchor.ts";
+import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
 
 /**
  * Classify a user-supplied path into a storable ref. Resolve to absolute, then walk up for
  * a marker: inside a tracked anchor → `(anchorId, relpath)`; else `(null, absolute)`. This
  * is how an input "lives under an anchor" — and rides it across moves — without any SQL scan.
+ *
+ * A found marker also RECOVERS its anchor row when the database lacks it (a replaced
+ * database, a folder authored on another machine), keyed on the marker's own UUID — the
+ * insert of the ref would otherwise trip the anchor foreign key. The sole caller is the
+ * add path of `addInputs`, a deliberate user action, which is what the no-litter policy
+ * demands of a recovery; the marker-present branch of the ensure writes nothing to disk.
  */
 /**
  * Expand a leading `~` to the home directory, then resolve against `cwd` — the front half of
@@ -44,7 +50,13 @@ export function classifyInputPath(analysisId: string, rawPath: string, cwd: stri
         // Only store anchor-relative when genuinely inside the marker dir: a `..`-escaping or
         // (Windows cross-drive) absolute relpath means the input is not under the anchor.
         if (!rel.startsWith("..") && !isAbsolute(rel)) {
-            return ok({ path: rel === "" ? "." : rel, isDir, analysisId, anchorId: found.marker.anchorId });
+            // The ensure re-establishes a row the database lost and heals a drifted
+            // cached path. The ref carries the id of the ENSURED row, not the raw
+            // marker read above: if the marker vanished between the two reads, the
+            // ensured id is the one row that really exists.
+            const ensured = getOrCreateAnchorForCwd(found.dir);
+            if (ensured.isErr()) return err(ensured.error);
+            return ok({ path: rel === "" ? "." : rel, isDir, analysisId, anchorId: ensured.value.id });
         }
     }
     return ok({ path: abs, isDir, analysisId, anchorId: null });
