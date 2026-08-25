@@ -31,17 +31,36 @@ images and of the catalog, through the same transfer children.
 ### Requirement: The TUI shows one live row per transfer until it completes
 
 The setup screen and the sidebar MUST render one progress row per live
-transfer: the kind, the state, and a transfer meter, read by poll. When a
-transfer completes, its row MUST disappear. No "ready" line stays behind,
-because a completed state that everyone has is noise. A terminal failure
-row MUST stay visible, with a short hint. A key push on the row MUST retry
-the transfer, and a command palette entry MUST give the same retry.
+transfer: the kind, the state, and a transfer meter, read by poll. Each
+row MUST carry its OWN meter. A transfer with an exact total renders the
+bar with the moved and the total bytes. The resolve of an image transfer
+MUST take its total from the registry manifest, as the sum of the layer
+sizes. A transfer with no total renders the moved bytes with the age of
+the last write, thus a live row never reads as stuck.
+
+When a transfer completes, its row MUST disappear. No "ready" line stays
+behind, because a completed state that everyone has is noise. A terminal
+failure row MUST stay visible, with a short hint. A key push on the row
+MUST retry the transfer, and a command palette entry MUST give the same
+retry.
 
 #### Scenario: The rows disappear on completion
 
 - **GIVEN** three transfers that complete
 - **WHEN** the sidebar renders again
 - **THEN** no transfer row and no "ready" line shows
+
+#### Scenario: An image pull meters against its manifest total
+
+- **GIVEN** a runtime-image transfer whose manifest layers sum to 3 GB
+- **WHEN** the sidebar renders the row
+- **THEN** the row shows the bar and the moved bytes against the 3 GB total
+
+#### Scenario: A transfer with no total still shows motion
+
+- **GIVEN** a transfer whose total is unknown
+- **WHEN** the sidebar renders the row
+- **THEN** the row shows the moved bytes and the age of the last write
 
 #### Scenario: A failure stays visible
 
