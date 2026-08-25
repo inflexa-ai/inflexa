@@ -3,13 +3,19 @@ import { ResultAsync, type Result } from "neverthrow";
 import {
     loadDataProfileStatus,
     loadPlan,
+    profileCaveats,
+    profileDimensions,
     queryActiveRunsByAnalysis,
     queryRunsByAnalysis,
     queryStepsByRun,
     type CortexRunRow,
+    type DataProfileGroup,
+    type DataProfilePartition,
+    type DataProfileResult,
     type DataProfileStatus,
     type DbError,
     type Pool,
+    type ProfileDimensionView,
     type RunStatus,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
@@ -259,13 +265,80 @@ export function absTimeShort(iso: string | null): string {
     return Number.isNaN(t) ? GLYPHS.emDash : new Date(t).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 }
 
+/** How many caveat lines the dialog prints before folding the rest into an `… and N more`. */
+const CAVEAT_LINE_CAP = 6;
+
+/** How many of a dimension's example values ride its one line. */
+const DIMENSION_SAMPLE_CAP = 3;
+
+/** The dataset's classification — domain, subtype, organism — or `null` when the snapshot carries none. */
+function datasetLineOf(r: DataProfileResult): string | null {
+    const parts = [r.domain, r.subtype, r.organism?.scientificName].filter((part): part is string => typeof part === "string" && part.length > 0);
+    return parts.length === 0 ? null : parts.join(` ${GLYPHS.middot} `);
+}
+
+/** The census in one line: kept files in groups, plus the unclassified/quarantined tallies only when nonzero. */
+function censusLineOf(p: DataProfilePartition): string {
+    const parts = [`${p.keptFiles} file${p.keptFiles === 1 ? "" : "s"} in ${p.groups} group${p.groups === 1 ? "" : "s"}`];
+    if (p.unclassifiedFiles > 0) parts.push(`${p.unclassifiedFiles} unclassified`);
+    if (p.quarantine.count > 0) parts.push(`${p.quarantine.count} quarantined`);
+    return parts.join(` ${GLYPHS.middot} `);
+}
+
+/** A group's dominant formats: the top two by file count, then a `+N` for the rest. */
+function formatsOf(formats: DataProfileGroup["formats"]): string | null {
+    if (formats.length === 0) return null;
+    const sorted = [...formats].sort((a, b) => b.count - a.count);
+    const names = sorted
+        .slice(0, 2)
+        .map((f) => f.format)
+        .join("/");
+    return sorted.length > 2 ? `${names} +${sorted.length - 2}` : names;
+}
+
+/**
+ * One group's line: identity (`count × memberRepresents`), scale (compact bytes), dominant formats,
+ * and the display pattern as the shape of the members. The swept residue is marked with the warning
+ * glyph — it is what no operation claimed, not a declared grouping.
+ */
+function groupLineOf(g: DataProfileGroup): string {
+    const facts = [`${g.count} ${GLYPHS.multiply} ${g.memberRepresents}`, g.totalBytes.formatBytes(), formatsOf(g.formats), g.displayPattern].filter(
+        (fact): fact is string => fact !== null && fact.length > 0,
+    );
+    return `  ${g.unclassified === true ? `${GLYPHS.warning} ` : ""}${g.name} ${GLYPHS.emDash} ${facts.join(` ${GLYPHS.middot} `)}`;
+}
+
+/** Largest first — bytes are the honest scale — with the swept residue always last. */
+function orderedGroups(groups: DataProfileGroup[]): DataProfileGroup[] {
+    return [...groups].sort((a, b) => Number(a.unclassified === true) - Number(b.unclassified === true) || b.totalBytes - a.totalBytes);
+}
+
+/**
+ * One dimension's line: label, every reported cardinality (observations that disagree both stand —
+ * the record declares no canonical count), and a bounded sample of values.
+ */
+function dimensionLineOf(d: ProfileDimensionView): string {
+    const facts: string[] = [];
+    if (d.cardinalities.length > 0) {
+        facts.push(`${d.cardinalities.join("/")} value${d.cardinalities.length === 1 && d.cardinalities[0] === 1 ? "" : "s"}`);
+    }
+    if (d.exampleValues.length > 0) {
+        const shown = d.exampleValues.slice(0, DIMENSION_SAMPLE_CAP);
+        const truncated = d.exampleValues.length > shown.length || d.cardinalities.some((c) => c > shown.length);
+        facts.push(shown.join(", ") + (truncated ? `, ${GLYPHS.ellipsis}` : ""));
+    }
+    return facts.length === 0 ? `  ${d.label}` : `  ${d.label} ${GLYPHS.emDash} ${facts.join(` ${GLYPHS.middot} `)}`;
+}
+
 /**
  * Compose the DATA PROFILE details view's lines from a {@link ProfileSnapshot}. Pure
  * (snapshot → string[]) so every kind is unit-testable: the degraded kinds each yield one placeholder
- * line, and `loaded` yields the ledger truth — a status line, the started/completed absolute local
- * times plus the run duration (or the elapsed-at-open age while a profile is still running), the error
- * (on failure), the summary split into lines, the per-file `path — description`, and the seed-input
- * count. Rendered verbatim by `ResultsDialog` (the design gallery drives it over a mock).
+ * line, and `loaded` yields the ledger truth, top-down — a status line, the started/completed absolute
+ * local times plus the run duration (or the elapsed-at-open age while a profile is still running), the
+ * error (on failure), then what the dataset IS (`dataset` classification + `census` partition line),
+ * the summary prose, a groups section (or the legacy per-file `path — description` list), a dimensions
+ * section, bounded caveats, and the seed-input count. Rendered verbatim by `ResultsDialog` (the design
+ * gallery drives it over a mock).
  */
 export function profileDetailLines(snap: ProfileSnapshot): string[] {
     switch (snap.kind) {
@@ -309,20 +382,41 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
                 for (const line of p.error.split("\n")) lines.push(line);
             }
             if (p.result) {
-                if (p.result.summary.trim().length > 0) {
+                const r = p.result;
+                const dataset = datasetLineOf(r);
+                const census = r.partition ? censusLineOf(r.partition) : null;
+                if (dataset !== null || census !== null) {
                     lines.push("");
-                    for (const line of p.result.summary.split("\n")) lines.push(line);
+                    if (dataset !== null) lines.push(`dataset ${dataset}`);
+                    if (census !== null) lines.push(`census ${census}`);
                 }
-                const groups = p.result.groups ?? [];
-                const files = p.result.files ?? [];
+                if (r.summary.trim().length > 0) {
+                    lines.push("");
+                    for (const line of r.summary.split("\n")) lines.push(line);
+                }
+                const groups = r.groups ?? [];
+                const files = r.files ?? [];
                 if (groups.length > 0) {
                     lines.push("");
                     lines.push(`groups (${groups.length}):`);
-                    for (const g of groups) lines.push(`  ${g.name} ${GLYPHS.emDash} ${g.count} member${g.count === 1 ? "" : "s"}, ${g.memberRepresents}`);
+                    for (const g of orderedGroups(groups)) lines.push(groupLineOf(g));
                 } else if (files.length > 0) {
                     lines.push("");
                     lines.push(`files (${files.length}):`);
                     for (const f of files) lines.push(`  ${f.path} ${GLYPHS.emDash} ${f.description}`);
+                }
+                const dimensions = profileDimensions(r);
+                if (dimensions.length > 0) {
+                    lines.push("");
+                    lines.push(`dimensions (${dimensions.length}):`);
+                    for (const d of dimensions) lines.push(dimensionLineOf(d));
+                }
+                const caveats = profileCaveats(r);
+                if (caveats.length > 0) {
+                    lines.push("");
+                    lines.push(`caveats (${caveats.length}):`);
+                    for (const caveat of caveats.slice(0, CAVEAT_LINE_CAP)) lines.push(`  ${GLYPHS.warning} ${caveat}`);
+                    if (caveats.length > CAVEAT_LINE_CAP) lines.push(`  ${GLYPHS.ellipsis} and ${caveats.length - CAVEAT_LINE_CAP} more`);
                 }
             }
             // `seedInputFileIds` is the desired-parity set; fall back to the count the profile itself
