@@ -33,8 +33,10 @@ import { retryTerminalTransfers, watchTransfers } from "./hooks/sandbox_gate.tsx
 import { commands, openParentSession, openReportSession } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
+import { FailedFlightDialog } from "./components/dialog/failed_flight_dialog.tsx";
 import { UsageDialog, readSessionUsage } from "./components/dialog/usage_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
+import { readStoreFlights } from "../modules/libs/store_flight.ts";
 import {
     useKeymapRoot,
     useBindings,
@@ -629,6 +631,14 @@ export function App(props: AppProps) {
     function openRunsFromSidebar(): void {
         if (renderer.getSelection()?.getSelectedText()) return;
         openRuns();
+    }
+    function openFailedFlightFromSidebar(flightId: string): void {
+        if (renderer.getSelection()?.getSelectedText()) return;
+        // The row reads FRESH at open: the line the user clicked is a poll-old
+        // snapshot, and a row a retry already claimed must not open as failed.
+        const row = readStoreFlights().find((flight) => flight.row.id === flightId && flight.row.state === "failed")?.row;
+        if (row === undefined) return;
+        dialogPush(() => <FailedFlightDialog flight={row} onClose={() => dialogClose()} />);
     }
     function openUsageFromSidebar(): void {
         if (renderer.getSelection()?.getSelectedText()) return;
@@ -1236,6 +1246,7 @@ export function App(props: AppProps) {
                             onOpenProfile={openProfileFromSidebar}
                             onOpenRuns={openRunsFromSidebar}
                             onOpenUsage={openUsageFromSidebar}
+                            onOpenFailedFlight={openFailedFlightFromSidebar}
                         />
                     </Show>
                 </box>

@@ -38,7 +38,7 @@ import { readConfig } from "../../lib/config.ts";
 import { readFileResult } from "../../lib/fs.ts";
 import { instanceLockHolder, isPidAlive, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
 import type { DbError } from "../../db/errors.ts";
-import { countStoreFlightSubscribers, listStoreFlights, type PendingStoreAdd } from "../../db/primary_query.ts";
+import { countStoreFlightSubscribers, listPendingStoreAdds, listStoreFlights, type PendingStoreAdd } from "../../db/primary_query.ts";
 import {
     claimPendingStoreAdds,
     claimStoreFlight,
@@ -754,4 +754,50 @@ export function anyLiveStoreFlight(): boolean {
 /** Whether a flight of one key still carries a subscriber. Exported for the surfaces that render a join. */
 export function storeFlightSubscribers(flightId: string): number {
     return countStoreFlightSubscribers(flightId).unwrapOr(0);
+}
+
+/** How much of a recorded reason the one-line renders carry. The row keeps the whole text. */
+const FAILURE_PROSE_HEAD_CHARS = 120;
+
+/** The plain sentence of each failure phase. The record keeps the phase token; only the render translates. */
+const FAILURE_PHASE_PROSE: Record<string, string> = {
+    resolve: "the version did not resolve against the index",
+    load_check: "the package failed its import proof inside the sandbox image",
+    commit: "a dependency of it did not land in the pool",
+};
+
+/**
+ * A recorded flight failure as user prose: the phase mapped onto one plain
+ * sentence, then a bounded head of the raw reason behind it. The record stays
+ * whole — this bounds and translates the RENDER only. The dialog, and the
+ * launch remedy, read failures through this one vocabulary.
+ */
+export function describeRecordedFlightFailure(message: string | null): string {
+    if (message === null || message.trim() === "") return "no reason was recorded";
+    const split = message.indexOf(": ");
+    const phase = split > 0 ? message.slice(0, split) : "";
+    const prose = FAILURE_PHASE_PROSE[phase];
+    const raw = prose === undefined ? message : message.slice(split + 2);
+    const first = raw.split("\n", 1)[0] ?? raw;
+    const head = first.length <= FAILURE_PROSE_HEAD_CHARS ? first : `${first.slice(0, FAILURE_PROSE_HEAD_CHARS)}…`;
+    return prose === undefined ? head : `${prose} (${head})`;
+}
+
+/**
+ * Classify one pool miss against the host rows, for the launch refusal: in
+ * flight, failed with its recorded reason, or unknown. `undefined` is the
+ * unknown case — the seam's own `absent` outcome already directs the ask, and
+ * a detail would only restate it.
+ */
+export function classifyPoolMiss(name: string): string | undefined {
+    const canonical = canonicalDistributionName(name);
+    const pending = listPendingStoreAdds()
+        .unwrapOr([])
+        .some((entry) => entry.name === canonical);
+    const rows = readStoreFlights();
+    const live = rows.some((flight) => flight.row.name === canonical && flight.row.state !== "failed");
+    if (pending || live) return "its acquisition is in flight — launch again when it lands";
+    const failed = rows.find((flight) => flight.row.name === canonical && flight.row.state === "failed");
+    if (failed !== undefined) return `its last flight failed: ${describeRecordedFlightFailure(failed.row.message)} — retry it or delete the record`;
+    return undefined;
 }

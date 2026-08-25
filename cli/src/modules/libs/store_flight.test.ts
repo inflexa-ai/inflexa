@@ -9,10 +9,10 @@ import { env } from "../../lib/env.ts";
 import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
 import { db } from "../../db/primary.ts";
 import { listPendingStoreAdds } from "../../db/primary_query.ts";
-import { claimPendingStoreAdds, deleteStoreFlight } from "../../db/primary_mutation.ts";
+import { claimPendingStoreAdds, claimStoreFlight, deleteStoreFlight, settleStoreFlightFailure } from "../../db/primary_mutation.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { CaptureResult } from "../../lib/container.ts";
-import { enqueueStoreAdd, flushPendingStoreAdds, readStoreFlights, storeFlightKey } from "./store_flight.ts";
+import { classifyPoolMiss, describeRecordedFlightFailure, enqueueStoreAdd, flushPendingStoreAdds, readStoreFlights, storeFlightKey } from "./store_flight.ts";
 import { flushAndPrint } from "./store.ts";
 import type { LoadCheckRunner, ProvisionerRunner } from "./provisioner.ts";
 
@@ -366,6 +366,47 @@ describe("the flush tail", () => {
         await flushAndPrint(root, { flush: { run, loadCheck: loadCheck([]) }, debris: { run: debrisRun } });
 
         expect(debrisInvocations).toHaveLength(0);
+    });
+});
+
+describe("describeRecordedFlightFailure", () => {
+    test("translates each phase into its plain sentence, with a bounded head of the raw reason", () => {
+        expect(describeRecordedFlightFailure("resolve: nothing provides scipy==99")).toBe(
+            "the version did not resolve against the index (nothing provides scipy==99)",
+        );
+        expect(describeRecordedFlightFailure("load_check: ImportError: no module named x\ntraceback line")).toBe(
+            "the package failed its import proof inside the sandbox image (ImportError: no module named x)",
+        );
+        expect(describeRecordedFlightFailure('commit: the dependency "a-1" resolves to nothing in the pool')).toBe(
+            'a dependency of it did not land in the pool (the dependency "a-1" resolves to nothing in the pool)',
+        );
+    });
+
+    test("an unknown or absent record degrades to a head, never to a throw", () => {
+        expect(describeRecordedFlightFailure(null)).toBe("no reason was recorded");
+        expect(describeRecordedFlightFailure("something odd happened")).toBe("something odd happened");
+        const long = `resolve: ${"x".repeat(300)}`;
+        expect(describeRecordedFlightFailure(long).length).toBeLessThan(200);
+    });
+});
+
+describe("classifyPoolMiss", () => {
+    test("a pending add and a live flight read as in flight", () => {
+        enqueueStoreAdd({ name: "Scanpy", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        expect(classifyPoolMiss("scanpy")).toContain("in flight");
+
+        claimStoreFlight({ id: "python::igraph::", ecosystem: "python", name: "igraph", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+        expect(classifyPoolMiss("igraph")).toContain("in flight");
+    });
+
+    test("a failed row carries its translated reason, and an unknown name carries nothing", () => {
+        claimStoreFlight({ id: "python::numba::", ecosystem: "python", name: "numba", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+        settleStoreFlightFailure({ id: "python::numba::", message: "resolve: the index timed out" })._unsafeUnwrap();
+
+        const detail = classifyPoolMiss("numba");
+        expect(detail).toContain("its last flight failed");
+        expect(detail).toContain("the version did not resolve against the index");
+        expect(classifyPoolMiss("nonesuch")).toBeUndefined();
     });
 });
 
