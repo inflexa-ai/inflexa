@@ -172,9 +172,18 @@ user. A silent Python-first win is a fault.
 ### Requirement: Reclamation is exclusive and lease-free
 
 `reclaim` MUST run under an exclusive lock, and it MUST remove only the
-store directories that no farm references. `remove-farm` MUST remove the
+store directories that no farm references. It MUST then prune the
+`deps.json` node of every store directory that is gone, and thin `by_name`
+to match. Thus the graph never advertises a package that no link can land.
+`remove-farm` MUST remove the
 named farm and its links, and it MUST NOT touch the pool. No lease guards a
 removal: the host gates its own delete flow on live work.
+
+#### Scenario: A reclaimed directory leaves the graph
+
+- **GIVEN** a committed store directory that no farm links
+- **WHEN** `reclaim` runs
+- **THEN** the directory and its graph node are both gone, and no `by_name` entry names it
 
 #### Scenario: A referenced directory survives reclamation
 

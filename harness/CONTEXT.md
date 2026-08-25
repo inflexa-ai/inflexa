@@ -185,6 +185,11 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
 - **Pool** (`store/`) — The content-addressed directories of the store, one
   per installed distribution, write-once. Ten analyses that use one package
   version share one copy.
+- **Store-directory markers** — Two one-line files inside each pool
+  directory. `.inflexa-pin` holds the request identity, `name==version`.
+  `.inflexa-hash` holds the full sha256 of the sorted tree, because the
+  directory name carries only its first 16 characters. The content hash and
+  the farm links exclude the markers, and they exclude uv's own `.lock` too.
 - **Farm** — The per-analysis symlink tree into the pool. A backend resolves
   it through the required `farmSource` config at each `createSandbox`, and it
   mounts as a second read-only bind nested inside the store bind. Under
