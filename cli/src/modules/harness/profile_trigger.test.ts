@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { err, errAsync, ok, okAsync } from "neverthrow";
-import { makeLocalAuth, type DataProfileInputFile, type DataProfileStatus, type DataProfileTriggerParams, computeInputSignature } from "@inflexa-ai/harness";
+import { makeLocalAuth, type DataProfileStatus, type DataProfileTriggerParams, type SignableInput, computeInputSignature } from "@inflexa-ai/harness";
 
 import { ensureProfileAtParity, forceReprofile, reprofileForInputChange, seedProfileLedger, type ProfileParitySeams } from "./profile_trigger.ts";
 import { __resetGaugeForTest } from "./agent_switch.ts";
@@ -37,30 +37,30 @@ function statusOf(status: DataProfileStatus["status"]): DataProfileStatus {
  * cares about the id set writes `file("f1")`, and one that exercises an in-place edit overrides `size`
  * or `mtimeMs` on the same id.
  */
-function file(fileId: string, size = 10, mtimeMs = 1000): DataProfileInputFile {
+function file(fileId: string, size = 10, mtimeMs = 1000): SignableInput {
     return { fileId, size, mtimeMs };
 }
 
 /** The path set a fresh enumerate would return for `files` — the ladder's "are there inputs" gate. */
-function enumerated(files: DataProfileInputFile[]): ReadonlySet<string> {
+function enumerated(files: SignableInput[]): ReadonlySet<string> {
     return new Set(files.map((f) => `inputs/local/${f.fileId}`));
 }
 
-/** A `completed` status whose profile was taken against exactly `files` — the drift comparand. */
-function completedWith(files: DataProfileInputFile[]): DataProfileStatus {
+/** A `completed` status of the pre-signature era — a result carrying no drift comparand. */
+function completedWith(): DataProfileStatus {
     return {
         status: "completed",
         error: null,
         startedAt: null,
         completedAt: null,
-        result: { summary: "s", files: [], inputFileIds: files.map((f) => f.fileId), inputFiles: files, profiledAt: "2026-01-01T00:00:00Z" },
+        result: { summary: "s", files: [], profiledAt: "2026-01-01T00:00:00Z" },
         workflowId: null,
         seedInputFileIds: null,
     };
 }
 
 /** A `completed` status written by a CURRENT harness: an input signature, and no per-file list. */
-function completedWithSignature(files: DataProfileInputFile[]): DataProfileStatus {
+function completedWithSignature(files: SignableInput[]): DataProfileStatus {
     return {
         status: "completed",
         error: null,
@@ -111,7 +111,7 @@ function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParit
 
 describe("ensureProfileAtParity — empty input set", () => {
     test("a settled profile over an emptied input set is cleared", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set<string>()), loadStatus: () => okAsync(completedWith([file("f1")])) });
+        const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set<string>()), loadStatus: () => okAsync(completedWith()) });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
         expect(outcome).toEqual({ kind: "cleared", materialized: false });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
@@ -120,7 +120,7 @@ describe("ensureProfileAtParity — empty input set", () => {
     test("a clear skipped by the running guard (raced a live run) is already_running", async () => {
         const { seams } = trackingSeams({
             enumerate: () => ok(new Set<string>()),
-            loadStatus: () => okAsync(completedWith([file("f1")])),
+            loadStatus: () => okAsync(completedWith()),
             clear: () => okAsync(false),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
@@ -129,7 +129,7 @@ describe("ensureProfileAtParity — empty input set", () => {
     test("a clear fault is failed", async () => {
         const { seams } = trackingSeams({
             enumerate: () => ok(new Set<string>()),
-            loadStatus: () => okAsync(completedWith([file("f1")])),
+            loadStatus: () => okAsync(completedWith()),
             clear: () => errAsync({ type: "query_failed", op: "clearDataProfile", cause: new Error("db down") }),
         });
         expect((await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).kind).toBe("failed");
@@ -171,7 +171,7 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // changed, and the party that would know re-profiles on its own edge.
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(enumerated([file("f1"), file("f2"), file("f3")])),
-            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
+            loadStatus: () => okAsync(completedWith()),
             materialized: () => ok(true),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
@@ -196,7 +196,7 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // withholds the user's files from the agent whatever the ledger says.
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(enumerated([file("f1"), file("f2")])),
-            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
+            loadStatus: () => okAsync(completedWith()),
             materialized: () => ok(false),
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
@@ -298,7 +298,7 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         let askedMaterialized = false;
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(enumerated([file("f1"), file("f2")])),
-            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
+            loadStatus: () => okAsync(completedWith()),
             materialized: () => {
                 askedMaterialized = true;
                 return ok(true);
@@ -326,7 +326,7 @@ describe("reprofileForInputChange", () => {
     test("re-profiles a completed row — the input mutation IS the evidence", async () => {
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(enumerated([file("f1"), file("f2"), file("f3")])),
-            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
+            loadStatus: () => okAsync(completedWith()),
             trigger: async () => "restarted",
         });
         expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
@@ -339,7 +339,7 @@ describe("reprofileForInputChange", () => {
         // Removing an input the workspace never held would otherwise leave the profile describing it.
         const { seams } = trackingSeams({
             enumerate: () => ok(enumerated([file("f1")])),
-            loadStatus: () => okAsync(completedWith([file("f1")])),
+            loadStatus: () => okAsync(completedWith()),
             materialized: () => ok(true),
             trigger: async () => "restarted",
         });
@@ -368,7 +368,7 @@ describe("reprofileForInputChange", () => {
     test("an emptied input set clears the profile rather than re-profiling nothing", async () => {
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(new Set<string>()),
-            loadStatus: () => okAsync(completedWith([file("f1")])),
+            loadStatus: () => okAsync(completedWith()),
         });
         expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "cleared", materialized: false });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
@@ -508,7 +508,7 @@ describe("forceReprofile", () => {
     test("a completed profile at parity still re-profiles (force ignores the drift gate)", async () => {
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(new Set(["f1", "f2"])),
-            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
+            loadStatus: () => okAsync(completedWith()),
             trigger: async () => "restarted",
         });
         expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });

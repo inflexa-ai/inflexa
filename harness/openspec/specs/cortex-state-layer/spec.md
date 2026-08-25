@@ -72,10 +72,10 @@ summary of it: the dataset-level classification (`summary`, `domain`, `subtype`,
 `organism` with its taxon id and confidence, `tissue`, `cellType`, `condition`,
 `accessions`, `experimentalDesign`, `qualityAssessment`) and the per-file records
 (`path`, `description`, `dataType`, `format`, `rows`, `cols`, `tags`, `warnings`,
-`metrics`), alongside `inputFileIds`, `inputFiles`, and `profiledAt`. This row is
+`metrics`), alongside the input signature and `profiledAt`. This row is
 the profile's only durable home — no profile file exists on disk — so the
 projection into it is total (see the data-profile-init spec). Every field past
-`summary`/`files`/`inputFileIds`/`profiledAt` SHALL be optional on read, so a
+`summary`/`profiledAt` SHALL be optional on read, so a
 snapshot written before the record was widened still renders.
 
 The table SHALL NOT have a `user_id` column — user identity is derived from the

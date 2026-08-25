@@ -199,7 +199,7 @@ function completedProfile(fileCount: number): DataProfileStatus {
         error: null,
         startedAt: "2026-07-08T00:00:00.000Z",
         completedAt: "2026-07-08T00:00:05.000Z",
-        result: { summary: "s", files, inputFileIds: [], profiledAt: "2026-07-08T00:00:05.000Z" },
+        result: { summary: "s", files, profiledAt: "2026-07-08T00:00:05.000Z" },
         workflowId: null,
         seedInputFileIds: null,
     };

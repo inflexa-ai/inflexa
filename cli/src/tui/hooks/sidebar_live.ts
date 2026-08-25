@@ -313,16 +313,21 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
                     lines.push("");
                     for (const line of p.result.summary.split("\n")) lines.push(line);
                 }
-                if (p.result.files.length > 0) {
+                const groups = p.result.groups ?? [];
+                const files = p.result.files ?? [];
+                if (groups.length > 0) {
                     lines.push("");
-                    lines.push(`files (${p.result.files.length}):`);
-                    for (const f of p.result.files) lines.push(`  ${f.path} ${GLYPHS.emDash} ${f.description}`);
+                    lines.push(`groups (${groups.length}):`);
+                    for (const g of groups) lines.push(`  ${g.name} ${GLYPHS.emDash} ${g.count} member${g.count === 1 ? "" : "s"}, ${g.memberRepresents}`);
+                } else if (files.length > 0) {
+                    lines.push("");
+                    lines.push(`files (${files.length}):`);
+                    for (const f of files) lines.push(`  ${f.path} ${GLYPHS.emDash} ${f.description}`);
                 }
             }
             // `seedInputFileIds` is the desired-parity set; fall back to the count the profile itself
-            // covered when the seed set was not recorded (older rows) — the input signature on current
-            // rows, the identity list on rows that predate it — else 0.
-            const seedCount = p.seedInputFileIds?.length ?? p.result?.inputSignature?.count ?? p.result?.inputFileIds?.length ?? 0;
+            // covered when the seed set was not recorded (older rows) — the input signature — else 0.
+            const seedCount = p.seedInputFileIds?.length ?? p.result?.inputSignature?.count ?? 0;
             lines.push("");
             lines.push(`${seedCount} seed input${seedCount === 1 ? "" : "s"}`);
             return lines;

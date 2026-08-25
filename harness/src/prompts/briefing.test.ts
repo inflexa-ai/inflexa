@@ -109,7 +109,6 @@ describe("renderOrientation", () => {
     const profile: DataProfileResult = {
         summary: "bulk RNA-seq of tumour vs normal",
         files: [{ path: "data/inputs/counts.csv", description: "raw counts", format: "CSV", rows: 20000, cols: 24 }],
-        inputFileIds: ["f1"],
         profiledAt: "2026-01-01T00:00:00.000Z",
         domain: "transcriptomics",
         subtype: "bulk-rna-seq",
@@ -132,7 +131,7 @@ describe("renderOrientation", () => {
         const huge: DataProfileResult = {
             ...profile,
             experimentalDesign: "x".repeat(10_000),
-            qualityAssessment: { concerns: Array.from({ length: 40 }, (_, i) => `concern ${i} ${"y".repeat(500)}`), strengths: [] },
+            qualityAssessment: { concerns: Array.from({ length: 40 }, (_, i) => `concern ${i} ${"y".repeat(500)}`) },
             files: Array.from({ length: 200 }, (_, i) => ({
                 path: `data/inputs/f${i}.csv`,
                 description: "z".repeat(1_000),
@@ -197,7 +196,6 @@ describe("composeStepBriefing", () => {
     const profile: DataProfileResult = {
         summary: "bulk RNA-seq",
         files: [],
-        inputFileIds: [],
         profiledAt: "2026-01-01T00:00:00.000Z",
         domain: "transcriptomics",
     };

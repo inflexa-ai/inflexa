@@ -90,7 +90,7 @@ function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
                 case "running":
                     return { glyph: GLYPHS.warning, role: "warning", text: `profiling${GLYPHS.ellipsis}` };
                 case "completed": {
-                    const n = p.result?.files.length ?? 0;
+                    const n = p.result?.partition?.keptFiles ?? p.result?.files?.length ?? 0;
                     // Absolute local completed time (not a compact relative age): a finished profile is a
                     // durable record read long after "8h ago" lost its anchor, so the rail matches the
                     // details dialog. It may soft-wrap on long locales — acceptable in the fixed-width rail.

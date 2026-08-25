@@ -52,7 +52,6 @@ function makeResult(overrides: Partial<DataProfileResult> = {}): DataProfileResu
             },
             { path: "data/inputs/f2/metadata.csv", description: "Sample metadata", dataType: "clinical-metadata", format: "CSV", rows: 24, cols: 6 },
         ],
-        inputFileIds: ["file-aaa", "file-bbb"],
         profiledAt: "2026-06-09T10:00:00.000Z",
         domain: "transcriptomics",
         subtype: "bulk-rna-seq",
@@ -62,7 +61,7 @@ function makeResult(overrides: Partial<DataProfileResult> = {}): DataProfileResu
         condition: "Ulcerative Colitis vs healthy controls",
         accessions: ["GSE123456"],
         experimentalDesign: "12 UC vs 12 control, paired by batch.",
-        qualityAssessment: { concerns: ["batch confounded with group"], strengths: ["balanced groups"] },
+        qualityAssessment: { concerns: ["batch confounded with group"] },
         ...overrides,
     };
 }
@@ -292,7 +291,6 @@ describe("scope: overview", () => {
         await completeWith({
             summary: "Three count matrices.",
             files: [{ path: "data/inputs/f1/counts.csv", description: "Raw counts" }],
-            inputFileIds: ["file-aaa"],
             profiledAt: "2026-01-02T03:04:05.000Z",
         });
 
@@ -452,7 +450,6 @@ describe("scope: groups — a snapshot of the kinds era", () => {
         await completeWith({
             summary: "Three count matrices.",
             files: [{ path: "data/inputs/f1/counts.csv", description: "Raw counts" }],
-            inputFileIds: ["file-aaa"],
             profiledAt: "2026-01-02T03:04:05.000Z",
         });
 
@@ -478,7 +475,6 @@ describe("scope: groups — a snapshot of the kinds era", () => {
         await completeWith({
             summary: "Legacy.",
             files: [{ path: "data/inputs/f1/counts.csv", description: "Raw counts" }],
-            inputFileIds: ["file-aaa"],
             profiledAt: "2026-01-02T03:04:05.000Z",
         });
 

@@ -25,7 +25,6 @@ export type {
     DataProfileFile,
     DataProfileGroup,
     DataProfileGroupSlot,
-    DataProfileInputFile,
     DataProfileInputSignature,
     DataProfileKind,
     DataProfileMemberAnnotation,

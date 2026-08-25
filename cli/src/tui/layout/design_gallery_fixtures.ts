@@ -449,7 +449,6 @@ export const mockDataProfile: DataProfileStatus = {
             { path: "data/counts.tsv", description: "gene-by-sample raw counts" },
             { path: "data/meta.csv", description: "sample metadata (condition, batch)" },
         ],
-        inputFileIds: ["mock-input-counts", "mock-input-meta"],
         profiledAt: Date.ago(4 * 60_000),
     },
     workflowId: null,
