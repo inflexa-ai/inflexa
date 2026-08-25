@@ -9,7 +9,7 @@ import { createStore } from "solid-js/store";
 // Side-effect import: installs `Date.relativeAge` (the loaded-profile timestamp lines call it) via the
 // same central loader the app boots with.
 import "../../extensions/index.ts";
-import type { CortexRunRow, DataProfileStatus, DbError, StepExecutionRow } from "@inflexa-ai/harness";
+import type { CortexRunRow, DataProfileResult, DataProfileStatus, DbError, StepExecutionRow } from "@inflexa-ai/harness";
 import type { LlmUsageTotals } from "../../db/primary_query.ts";
 import type { ResolvedHarnessConfig } from "../../modules/harness/config.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -1009,38 +1009,153 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
         expect(lines).toContain("files (2):");
         expect(lines.some((l) => l.includes("data/counts.tsv") && l.includes("raw counts"))).toBe(true);
         expect(lines.some((l) => l.includes("data/meta.csv") && l.includes("sample metadata"))).toBe(true);
+        // A legacy row carries no classification, no partition, no dimensions, no caveats — the
+        // groups-era sections must be absent, not rendered empty.
+        for (const prefix of ["dataset ", "census ", "groups (", "dimensions (", "caveats ("]) {
+            expect(lines.some((l) => l.startsWith(prefix))).toBe(false);
+        }
         // seedInputFileIds (3) wins over the profiled input-signature count.
         expect(lines[lines.length - 1]).toBe("3 seed inputs");
     });
 
-    test("loaded completed with groups → groups section, legacy files list suppressed", () => {
-        const lines = profileDetailLines(
-            loaded({
-                result: {
-                    summary: "s",
-                    groups: [
-                        {
-                            id: "per-sample-counts",
-                            name: "per-sample-counts",
-                            memberRepresents: "one sample's counts",
-                            description: "gene-level count tables",
-                            role: "primary-data",
-                            category: "expression-matrix",
-                            count: 2,
-                            fileCount: 2,
-                            totalBytes: 10,
-                            displayPattern: "counts/{sample}.tsv",
-                            formats: [{ format: "tsv", count: 2 }],
-                        },
+    /** A groups-era result: classification, census, three groups (one swept residue), dimensions, caveats. */
+    function groupsResult(over: Partial<DataProfileResult> = {}): DataProfileResult {
+        return {
+            summary: "s",
+            domain: "transcriptomics",
+            subtype: "bulk-rna-seq",
+            organism: { scientificName: "Homo sapiens", taxonId: "9606", source: "metadata", confidence: "high" },
+            partition: {
+                scannedFiles: 30,
+                keptFiles: 26,
+                keptMembers: 26,
+                groups: 3,
+                unclassifiedMembers: 1,
+                unclassifiedFiles: 1,
+                quarantine: { count: 4, totalBytes: 10, reasons: [{ reason: "hidden", count: 4 }], sample: [".DS_Store"] },
+            },
+            groups: [
+                {
+                    id: "per-sample-counts",
+                    name: "per-sample-counts",
+                    memberRepresents: "one sample's counts",
+                    description: "gene-level count tables",
+                    role: "primary-data",
+                    category: "expression-matrix",
+                    count: 24,
+                    fileCount: 24,
+                    totalBytes: 1_288_490_189,
+                    displayPattern: "counts/{sample}.tsv",
+                    formats: [
+                        { format: "tsv", count: 20 },
+                        { format: "csv", count: 4 },
                     ],
-                    files: [{ path: "a.csv", description: "d" }],
-                    profiledAt: "2026-07-08T00:00:05.000Z",
                 },
-            }),
+                // The residue is deliberately the byte-largest group: ordering must still pin it last.
+                {
+                    id: "unclassified",
+                    name: "unclassified",
+                    memberRepresents: "a file no operation claimed",
+                    description: "swept residue",
+                    role: "supplementary",
+                    category: "other",
+                    count: 1,
+                    fileCount: 1,
+                    totalBytes: 2_000_000_000,
+                    displayPattern: "",
+                    formats: [{ format: "txt", count: 1 }],
+                    unclassified: true,
+                },
+                {
+                    id: "metadata",
+                    name: "metadata",
+                    memberRepresents: "the sample sheet",
+                    description: "sample metadata",
+                    role: "sample-metadata",
+                    category: "sample-annotation",
+                    count: 1,
+                    fileCount: 1,
+                    totalBytes: 5_000,
+                    displayPattern: "meta.csv",
+                    formats: [{ format: "csv", count: 1 }],
+                },
+            ],
+            dimensions: [
+                {
+                    label: "sample",
+                    category: "biological-sample",
+                    scope: "biological",
+                    observations: [
+                        { kind: "slot", groupIds: ["per-sample-counts"], slotId: "s1", tokenClass: "alnum", cardinality: 24, sampleValues: ["S01", "S02", "S03", "S04"] },
+                    ],
+                },
+                {
+                    label: "condition",
+                    category: "condition",
+                    scope: "biological",
+                    observations: [{ kind: "column", path: "meta.csv", column: "condition", exampleValues: ["control", "treated"], distinctValues: 2 }],
+                },
+            ],
+            caveats: ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"],
+            files: [{ path: "a.csv", description: "d" }],
+            profiledAt: "2026-07-08T00:00:05.000Z",
+            ...over,
+        };
+    }
+
+    test("loaded completed with groups → dataset, census, groups, dimensions, caveats; legacy files list suppressed", () => {
+        const lines = profileDetailLines(loaded({ result: groupsResult() }));
+        expect(lines).toContain(`dataset transcriptomics ${GLYPHS.middot} bulk-rna-seq ${GLYPHS.middot} Homo sapiens`);
+        expect(lines).toContain(`census 26 files in 3 groups ${GLYPHS.middot} 1 unclassified ${GLYPHS.middot} 4 quarantined`);
+        // One line per group: name — count × memberRepresents · bytes · formats · pattern.
+        expect(lines).toContain("groups (3):");
+        expect(lines).toContain(
+            `  per-sample-counts ${GLYPHS.emDash} 24 ${GLYPHS.multiply} one sample's counts ${GLYPHS.middot} ${(1_288_490_189).formatBytes()} ${GLYPHS.middot} tsv/csv ${GLYPHS.middot} counts/{sample}.tsv`,
         );
-        expect(lines).toContain("groups (1):");
-        expect(lines.some((l) => l.includes("per-sample-counts") && l.includes("2 members"))).toBe(true);
+        // The residue group is warning-marked and its empty display pattern is omitted, not printed blank.
+        expect(lines).toContain(
+            `  ${GLYPHS.warning} unclassified ${GLYPHS.emDash} 1 ${GLYPHS.multiply} a file no operation claimed ${GLYPHS.middot} ${(2_000_000_000).formatBytes()} ${GLYPHS.middot} txt`,
+        );
         expect(lines.some((l) => l.startsWith("files ("))).toBe(false);
+        // One line per dimension: label — cardinality · a bounded sample (ellipsis only when values remain).
+        expect(lines).toContain("dimensions (2):");
+        expect(lines).toContain(`  sample ${GLYPHS.emDash} 24 values ${GLYPHS.middot} S01, S02, S03, ${GLYPHS.ellipsis}`);
+        expect(lines).toContain(`  condition ${GLYPHS.emDash} 2 values ${GLYPHS.middot} control, treated`);
+        // Caveats are warning-marked and bounded; the fold names what it hides.
+        expect(lines).toContain("caveats (8):");
+        expect(lines).toContain(`  ${GLYPHS.warning} c6`);
+        expect(lines.some((l) => l.includes("c7"))).toBe(false);
+        expect(lines).toContain(`  ${GLYPHS.ellipsis} and 2 more`);
+        expect(lines[lines.length - 1]).toBe("3 seed inputs");
+    });
+
+    test("the sections read top-down: dataset, census, summary, groups, dimensions, caveats", () => {
+        const lines = profileDetailLines(loaded({ result: groupsResult({ summary: "prose" }) }));
+        const order = [
+            lines.findIndex((l) => l.startsWith("dataset ")),
+            lines.findIndex((l) => l.startsWith("census ")),
+            lines.indexOf("prose"),
+            lines.indexOf("groups (3):"),
+            lines.indexOf("dimensions (2):"),
+            lines.indexOf("caveats (8):"),
+        ];
+        expect(order.every((i) => i >= 0)).toBe(true);
+        expect([...order].sort((a, b) => a - b)).toEqual(order);
+    });
+
+    test("groups list largest first, the residue last regardless of size", () => {
+        const lines = profileDetailLines(loaded({ result: groupsResult() }));
+        const at = (name: string): number => lines.findIndex((l) => l.includes(` ${name} ${GLYPHS.emDash} `));
+        expect(at("per-sample-counts")).toBeLessThan(at("metadata"));
+        expect(at("metadata")).toBeLessThan(at("unclassified"));
+    });
+
+    test("the census omits zero tallies rather than reporting them", () => {
+        const partition = { ...groupsResult().partition!, unclassifiedMembers: 0, unclassifiedFiles: 0, quarantine: { count: 0, totalBytes: 0, reasons: [], sample: [] } };
+        const lines = profileDetailLines(loaded({ result: groupsResult({ partition }) }));
+        expect(lines).toContain("census 26 files in 3 groups");
+        expect(lines.some((l) => l.includes("unclassified") && l.startsWith("census"))).toBe(false);
+        expect(lines.some((l) => l.includes("quarantined"))).toBe(false);
     });
 
     test("loaded failed → surfaces the multi-line error and a duration", () => {
