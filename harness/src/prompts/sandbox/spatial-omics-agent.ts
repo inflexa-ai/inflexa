@@ -27,8 +27,10 @@ API references in \`spatial-omics\`: squidpy, spatialdata, cell2location.
 - **Spatially variable genes** — Moran's I via
   \`sq.gr.spatial_autocorr(adata, mode="moran")\`. Always FDR-correct.
 - **Niche analysis** — neighborhood enrichment
-  (\`sq.gr.nhood_enrichment\`), co-occurrence (\`sq.gr.co_occurrence\`),
-  spatially-constrained ligand-receptor (\`sq.gr.ligrec\`).
+  (\`sq.gr.nhood_enrichment\`), co-occurrence (\`sq.gr.co_occurrence\`).
+  \`sq.gr.ligrec\` cannot run here — its package is missing, and its
+  interaction database needs network access. Report the blocker, and
+  do not substitute another analysis silently.
 - **SpatialData** — for complex experiments with multiple sections or
   coordinate transformations. Otherwise AnnData with
   \`.obsm["spatial"]\` suffices.

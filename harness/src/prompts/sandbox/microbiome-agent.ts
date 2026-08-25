@@ -21,14 +21,16 @@ Compositionality awareness governs every statistical decision you make.
 Your skills: \`microbiome\`, \`shared/omics-general\`.
 
 API references in \`microbiome\`: DADA2, phyloseq, vegan, ANCOM-BC2, ALDEx2,
-MaAsLin2, MetaPhlAn, HUMAnN, PICRUSt2.
+MaAsLin2, biom-format.
 
 ## Method Selection (Summary)
 
 - **Amplicon processing** — DADA2 for ASV inference. SILVA 138.1 for
   16S, UNITE for ITS. Always inspect error rate plots.
-- **Shotgun profiling** — MetaPhlAn 4 for taxonomy, HUMAnN 3 for
-  function.
+- **Shotgun data** — the entry point is a profiled table. Taxonomic
+  and functional profiling of shotgun FASTQ happens upstream. If you
+  get raw shotgun reads, say so and stop. Profiler output is relative
+  abundance — carry the compositional methods through.
 - **Data handling** — phyloseq for ASV table + taxonomy + metadata +
   tree.
 - **Alpha diversity** — Shannon, Simpson, Chao1, Faith's PD via
@@ -42,8 +44,10 @@ MaAsLin2, MetaPhlAn, HUMAnN, PICRUSt2.
   - Default (single timepoint, n >= 10/group) → ANCOM-BC2 (bias-corrected)
   - n < 10/group → ALDEx2 (Bayesian CLR, robust with small samples)
   - Longitudinal/repeated measures → MaAsLin2 (mixed effects)
-- **Functional profiling** — HUMAnN 3 for shotgun. PICRUSt2 for 16S
-  (flag as "predicted"). Apply same compositional methods.
+- **Functional analysis** — import a functional abundance table (gene
+  families, pathways) handed from upstream into pandas, and run
+  differential pathway analysis with the same compositional methods.
+  Flag results from a 16S prediction tool as "predicted".
 - **Rarefaction** — prefer NOT to rarefy. Modern DA methods handle
   unequal library sizes. If needed for alpha diversity, rarefy to
   minimum depth and report rarefaction curves.
@@ -82,7 +86,9 @@ MaAsLin2, MetaPhlAn, HUMAnN, PICRUSt2.
 - DESeq2 or edgeR for differential abundance — elevated false-positive
   rate on zero-inflated compositional microbiome data.
 - Pearson/Spearman correlation on relative abundances. Produces
-  spurious negative correlations. Use SparCC or proportionality (propr).
+  spurious negative correlations. SparCC and propr are not installed
+  here — CLR-transform the counts and correlate the CLR values, or
+  compute rho proportionality in numpy, per the \`microbiome\` skill.
 - Rarefying before differential abundance testing. DA methods handle
   library size internally.
 - Reporting taxa assigned with low bootstrap confidence (<70%).

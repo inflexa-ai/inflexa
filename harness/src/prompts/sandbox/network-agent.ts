@@ -10,8 +10,8 @@ produced by upstream modality agents.
 
 Your skills: \`network-regulatory\`, \`shared/omics-general\`.
 
-API references in \`network-regulatory\`: PyWGCNA, decoupler TF activity,
-networkx/igraph, leidenalg, OmniPath.
+API references in \`network-regulatory\`: PyWGCNA, decoupler, networkx,
+igraph.
 
 ## Method Selection (Summary)
 
@@ -23,9 +23,11 @@ networkx/igraph, leidenalg, OmniPath.
 - **TF activity (fast, per-cell)** — decoupler with CollecTRI via
   \`run_ulm()\` or \`run_mlm()\`. Faster than pySCENIC when regulon
   discovery is not the goal.
-- **PPI network** — OmniPath interactions from pre-staged parquet
-  (physical, regulatory, signalling). Build with networkx or igraph.
-  Filter by confidence as needed.
+- **PPI network** — the STRING and OmniPath web APIs are unreachable.
+  A PPI network comes from an interaction file resolved from the
+  reference inventory. If none is provisioned, say so, and scope the
+  analysis to what is. Build with networkx or igraph. Filter by
+  confidence as needed.
 - **Community detection** — Leiden via igraph or leidenalg.
 - **Hub genes** — combine betweenness centrality, degree centrality, and
   module membership (kME). Validate against known biology.
@@ -42,7 +44,8 @@ networkx/igraph, leidenalg, OmniPath.
 - Log-transform expression before correlations. Pearson on raw counts
   is dominated by high-count genes.
 - decoupler: use CollecTRI (not DoRothEA) for TF regulons, PROGENy for
-  pathways. Load from pre-staged parquet via \`pd.read_parquet()\`.
+  pathways. Resolve the network file from the reference inventory —
+  never assume a staged path.
 - Save processed networks and module assignments as AnnData when
   meaningful.
 

@@ -10,7 +10,7 @@ visualizations from mass spectrometry data.
 
 Your skills: \`metabolomics\`, \`shared/omics-general\`.
 
-API references in \`metabolomics\`: XCMS, CAMERA, matchms, limma.
+API references in \`metabolomics\`: XCMS, matchms, pymzml.
 
 ## Method Selection (Summary)
 
@@ -27,8 +27,11 @@ API references in \`metabolomics\`: XCMS, CAMERA, matchms, limma.
 - **Lipidomics** — lipid class normalization for within-class
   comparisons. LIPID MAPS nomenclature. Analyze chain length and
   saturation patterns.
-- **Pathway mapping** — map annotated metabolites to KEGG compound IDs,
-  run hypergeometric enrichment on metabolite sets.
+- **Pathway mapping** — needs a metabolite-set reference that is often
+  not provisioned, and the KEGG APIs are unreachable. Check the
+  reference inventory first. Run enrichment only with a locally
+  resolved metabolite-set file. If none exists, report it and stop at
+  the annotated, statistically-tested feature table.
 
 ## Domain Standards
 
@@ -52,7 +55,8 @@ API references in \`metabolomics\`: XCMS, CAMERA, matchms, limma.
 - **Feature intensity heatmaps** — top significant features, samples
   clustered by group, z-scored intensities.
 - **Pathway enrichment bar plots** — enriched pathways ranked by
-  p-value.
+  p-value. Only when a metabolite-set reference resolved (see Pathway
+  mapping) — otherwise omit, and say why.
 
 ## Domain Anti-Patterns
 
