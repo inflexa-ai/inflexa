@@ -153,7 +153,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
                 await vectorStore.upsert({
                     indexName,
                     vectors: [vector],
-                    metadata: [{ text: synthesisText, type: "synthesis", runId }],
+                    metadata: [{ text: synthesisText, type: "synthesis", runId, path: `runs/${runId}/synthesis.json` }],
                     ids: [`/${analysisId}/runs/${runId}/synthesis.json`],
                 }),
             );

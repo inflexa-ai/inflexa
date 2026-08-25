@@ -99,7 +99,7 @@ function fileEntry(rel: string, description: string): FileMetadataEntry {
     return {
         dbPath: `runs/${RUN_ID}/${STEP_ID}/${rel}`,
         description,
-        metadata: { path: rel, role: "step_output" },
+        metadata: { role: "step_output" },
     };
 }
 
@@ -158,12 +158,16 @@ describe("vectorIndexStepOutputs — per-item isolation", () => {
         // Direct await: a throw here would fail the test — the stage must swallow.
         await vectorIndexStepOutputs(deps, makePostCtx(analysisId), artifacts);
 
-        const ids = (await readIndex(pool, analysisId)).map((r) => r.id);
+        const rows = await readIndex(pool, analysisId);
+        const ids = rows.map((r) => r.id);
         expect(ids).toContain(vectorId(analysisId, "output/a.csv"));
         expect(ids).toContain(vectorId(analysisId, "output/c.csv"));
         expect(ids).toContain(vectorId(analysisId, "output/summary.md"));
         expect(ids).not.toContain(vectorId(analysisId, "output/poison.csv"));
         expect(ids).toHaveLength(3);
+        // File-addressed entries carry the workspace path in metadata — the marker
+        // workspace_search names as the file/pattern discriminator.
+        for (const row of rows) expect(row.metadata.path).toBe(row.id.slice(`/${analysisId}/`.length));
     });
 
     it("a poisoned summary still lands every file description", async () => {
