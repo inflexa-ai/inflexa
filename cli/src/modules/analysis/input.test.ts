@@ -4,6 +4,8 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import type { AnalysisInput } from "../../types/analysis.ts";
+import { getAnchor } from "../../db/primary_query.ts";
+import { deleteAnchor } from "../../db/primary_mutation.ts";
 import { classifyInputPath, expandAndResolve, matchInputRefs } from "./input.ts";
 import { canonicalPath, writeMarker } from "../anchor/marker.ts";
 
@@ -15,9 +17,13 @@ function tmp(): string {
     return dir;
 }
 
+/** The anchor ids these tests mint. The classify recovery inserts them into the shared sandbox database. */
+const TEST_ANCHOR_IDS = ["A1", "GHOST-ANCHOR"];
+
 afterEach(() => {
     for (const dir of created) rmSync(dir, { recursive: true, force: true });
     created.length = 0;
+    for (const id of TEST_ANCHOR_IDS) deleteAnchor(id).unwrapOr(0);
 });
 
 describe("classifyInputPath", () => {
@@ -35,6 +41,20 @@ describe("classifyInputPath", () => {
         const ref = classifyInputPath("ana1", ".", dir)._unsafeUnwrap();
         expect(ref.path).toBe(".");
         expect(ref.anchorId).toBe("A1");
+    });
+
+    test("a marker the database does not hold recovers its anchor row", () => {
+        const dir = tmp();
+        writeMarker(dir, "GHOST-ANCHOR")._unsafeUnwrap();
+        mkdirSync(join(dir, "src"));
+        expect(getAnchor("GHOST-ANCHOR")._unsafeUnwrap()).toBeNull();
+
+        const ref = classifyInputPath("ana1", "src", dir)._unsafeUnwrap();
+
+        // The ref keeps the identity of the marker, and the row exists again —
+        // the insert of the ref no longer trips the anchor foreign key.
+        expect(ref.anchorId).toBe("GHOST-ANCHOR");
+        expect(getAnchor("GHOST-ANCHOR")._unsafeUnwrap()?.cachedPath).toBe(canonicalPath(dir));
     });
 
     test("not under any anchor → an absolute ref with no anchor", () => {
