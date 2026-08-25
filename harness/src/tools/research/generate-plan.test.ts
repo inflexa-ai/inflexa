@@ -107,7 +107,6 @@ const RICH_PROFILE: DataProfileResult = {
         },
         { path: "data/inputs/f2/metadata.csv", description: "Sample metadata", dataType: "clinical-metadata", format: "CSV", rows: 12, cols: 4 },
     ],
-    inputFileIds: ["file-aaa", "file-bbb"],
     profiledAt: "2026-06-09T10:00:00.000Z",
     domain: "transcriptomics",
     subtype: "bulk-rna-seq",
@@ -117,9 +116,10 @@ const RICH_PROFILE: DataProfileResult = {
     experimentalDesign: "6 AD_lesional vs 6 Control, unpaired, single batch",
     qualityAssessment: {
         concerns: ["Sample S7 has a library size 4x below the median"],
-        strengths: ["Replicate correlation above 0.95"],
     },
 };
+
+const SEED_FILE_IDS = ["file-aaa", "file-bbb"];
 
 interface SeedOptions {
     /** `data_profile_status`. NULL is the honest "no profile" state. */
@@ -281,7 +281,7 @@ describe("generatePlan loop-driving tool", () => {
             await seedAnalysis(pool, analysisId, {
                 dpStatus: "completed",
                 result: RICH_PROFILE,
-                seed: RICH_PROFILE.inputFileIds,
+                seed: SEED_FILE_IDS,
             });
             const provider = blockImmediately();
 
@@ -354,7 +354,7 @@ describe("generatePlan loop-driving tool", () => {
             await seedAnalysis(pool, analysisId, {
                 dpStatus: "running",
                 result: RICH_PROFILE,
-                seed: RICH_PROFILE.inputFileIds,
+                seed: SEED_FILE_IDS,
             });
             const provider = blockImmediately();
 
@@ -401,7 +401,7 @@ describe("generatePlan loop-driving tool", () => {
             await seedAnalysis(pool, analysisId, {
                 dpStatus: "completed",
                 result: RICH_PROFILE,
-                seed: RICH_PROFILE.inputFileIds,
+                seed: SEED_FILE_IDS,
             });
             const provider = blockImmediately();
             const note = "Samples 3 and 7 were re-sequenced; treat batch B as the reference.";
@@ -445,7 +445,7 @@ describe("generatePlan loop-driving tool", () => {
 
         it("records a submitted plan once, at info, with the elapsed time and analysis", async () => {
             const analysisId = "an-log-ok";
-            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: SEED_FILE_IDS });
             const provider = scriptedProvider([
                 makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate() })], "tool_use"),
                 makeMessage([textBlock("Submitted.")], "end_turn"),
@@ -549,7 +549,7 @@ describe("generatePlan loop-driving tool", () => {
 
         it("opens with a seed census, so a run that never returns can be weighed against what it was handed", async () => {
             const analysisId = "an-log-seed";
-            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: SEED_FILE_IDS });
             const { tool, logger } = loggedToolFor(blockImmediately());
 
             await tool.execute({ ...INPUT, userConstraints: "Use limma-voom." }, toolContext(analysisId));
@@ -589,7 +589,7 @@ describe("generatePlan loop-driving tool", () => {
 
         it("nests model prose under one key and omits it where something else explains the outcome", async () => {
             const analysisId = "an-log-prose";
-            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: SEED_FILE_IDS });
             // A real planner narrates alongside its tool call, and that narration quotes the
             // dataset it was handed. On a submitted plan nothing needs it: the terminal tool
             // already recorded what was decided, so the prose would be model output describing
@@ -618,7 +618,7 @@ describe("generatePlan loop-driving tool", () => {
 
         it("shows a budget spent on rejected submits as exactly that, not as a silent no-outcome", async () => {
             const analysisId = "an-log-thrash";
-            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: SEED_FILE_IDS });
             // Every turn submits a plan whose `depends_on` names a step that does not exist:
             // schema-valid, semantically impossible, rejected forever. This is the shape that
             // burns a whole iteration budget while `holder.outcome` stays null.
@@ -654,7 +654,7 @@ describe("generatePlan loop-driving tool", () => {
 
         it("names the attempt a plan was accepted on — a success that nearly was not one", async () => {
             const analysisId = "an-log-late";
-            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: SEED_FILE_IDS });
             const { tool, logger } = loggedToolFor(
                 scriptedProvider([
                     makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate({ depends_on: ["T9S9"] }) })], "tool_use"),

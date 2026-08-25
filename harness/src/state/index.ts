@@ -74,7 +74,6 @@ export type {
     DataProfileDimension,
     DataProfileGroup,
     DataProfileGroupSlot,
-    DataProfileInputFile,
     DataProfileFile,
     DataProfileMemberAnnotation,
     DataProfileObservation,

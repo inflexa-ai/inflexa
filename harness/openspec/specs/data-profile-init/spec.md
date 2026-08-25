@@ -58,8 +58,9 @@ a sandbox.
 
 Every `StagedInput` the embedder hands the data-profile trigger SHALL carry `mtimeMs: number` — the
 source file's last-modification time in epoch milliseconds — alongside the existing `size`. Together
-`(fileId, size, mtimeMs)` form the file's **drift signature**: the value a consumer compares against a
-completed profile's `inputFiles` to decide whether the same bytes were profiled.
+`(fileId, size, mtimeMs)` form the file's **drift signature**: what feeds the kept-files
+`inputSignature` a completed profile persists, the comparand that decides whether the same bytes
+were profiled.
 
 `mtimeMs` SHALL be a value the embedder already holds when it produces the manifest: the CLI reads it
 from the `stat` it performs to record `size`; a managed service supplies the object store's
@@ -74,7 +75,7 @@ never interprets, compares, or validates it, and it never reads the source files
 #### Scenario: The harness does not interpret the signature
 
 - **WHEN** the data-profile workflow consumes a `StagedInput`
-- **THEN** it SHALL persist `mtimeMs` into the completed result's `inputFiles` verbatim
+- **THEN** it SHALL fold `mtimeMs` verbatim into the input signature the completed result persists
 - **AND** it SHALL NOT stat the source file, compare mtimes, or reject a manifest on the basis of them
 
 ### Requirement: The data-profiler agent delivers results through a terminal submit_profile tool
@@ -239,15 +240,18 @@ computed is carried through, not condensed. Concretely the snapshot SHALL carry:
 
 Computed facts and agent-authored caveats SHALL NOT mix: companion gaps, incomplete slot
 crossings, and reconciliation deltas live in structured fields the resolution writes;
-`caveats` is agent-authored only. The snapshot SHALL NOT carry `qualityAssessment.strengths`
-— nothing consumed it — and a legacy row carrying it SHALL still render.
+`caveats` is agent-authored only. `qualityAssessment.strengths` SHALL NOT be declared by
+the record type — nothing ever consumed it — and a legacy row carrying the key SHALL
+still render, the key ignored on read.
 
 The writer SHALL emit `groups` and `dimensions` only; it SHALL NOT write `kinds` or
 `axes`. Readers SHALL keep accepting legacy snapshots carrying `kinds`/`axes` — every
-field past the original core remains optional on read, a snapshot carries the fields of
-its era, and a reader renders it rather than rejects it. There SHALL be no schema version
-field: optionality is the compatibility mechanism, and a discriminator would be a second
-mechanism answering the same question.
+legacy field a reader still renders remains optional on read, a snapshot carries the
+fields of its era, and a reader renders it rather than rejects it. A legacy field
+nothing reads any more is retired from the record type outright, its key ignored on
+rows that carry it. There SHALL be no schema version field: optionality is the
+compatibility mechanism, and a discriminator would be a second mechanism answering the
+same question.
 
 The snapshot SHALL NOT carry a record per input file. The workspace filesystem is the
 authoritative list of what exists; the snapshot carries structure and judgement.
@@ -266,8 +270,8 @@ authoritative list of what exists; the snapshot carries structure and judgement.
 #### Scenario: Strengths are gone from new rows and harmless in old ones
 
 - **WHEN** a new profile is persisted
-- **THEN** it SHALL NOT carry `qualityAssessment.strengths`
-- **AND** a legacy row carrying strengths SHALL still render
+- **THEN** it SHALL NOT carry `qualityAssessment.strengths`, which the record type does not declare
+- **AND** a legacy row carrying the key SHALL still render, the key ignored on read
 
 #### Scenario: Computed facts are not caveats
 

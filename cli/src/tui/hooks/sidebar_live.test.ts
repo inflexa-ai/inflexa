@@ -52,7 +52,7 @@ function profileStatus(over: Partial<DataProfileStatus> = {}): DataProfileStatus
         error: null,
         startedAt: "2026-07-08T00:00:00.000Z",
         completedAt: "2026-07-08T00:00:05.000Z",
-        result: { summary: "s", files: [{ path: "a.csv", description: "d" }], inputFileIds: [], profiledAt: "2026-07-08T00:00:05.000Z" },
+        result: { summary: "s", files: [{ path: "a.csv", description: "d" }], profiledAt: "2026-07-08T00:00:05.000Z" },
         workflowId: null,
         seedInputFileIds: null,
         ...over,
@@ -165,7 +165,7 @@ function loaded(over: Partial<DataProfileStatus> = {}, usage?: LlmUsageTotals): 
                     { path: "data/counts.tsv", description: "raw counts" },
                     { path: "data/meta.csv", description: "sample metadata" },
                 ],
-                inputFileIds: ["i1", "i2"],
+                inputSignature: { count: 2, digest: "sig" },
                 profiledAt: "2026-07-08T00:00:05.000Z",
             },
             workflowId: null,
@@ -1009,8 +1009,38 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
         expect(lines).toContain("files (2):");
         expect(lines.some((l) => l.includes("data/counts.tsv") && l.includes("raw counts"))).toBe(true);
         expect(lines.some((l) => l.includes("data/meta.csv") && l.includes("sample metadata"))).toBe(true);
-        // seedInputFileIds (3) wins over the profiled inputFileIds count.
+        // seedInputFileIds (3) wins over the profiled input-signature count.
         expect(lines[lines.length - 1]).toBe("3 seed inputs");
+    });
+
+    test("loaded completed with groups → groups section, legacy files list suppressed", () => {
+        const lines = profileDetailLines(
+            loaded({
+                result: {
+                    summary: "s",
+                    groups: [
+                        {
+                            id: "per-sample-counts",
+                            name: "per-sample-counts",
+                            memberRepresents: "one sample's counts",
+                            description: "gene-level count tables",
+                            role: "primary-data",
+                            category: "expression-matrix",
+                            count: 2,
+                            fileCount: 2,
+                            totalBytes: 10,
+                            displayPattern: "counts/{sample}.tsv",
+                            formats: [{ format: "tsv", count: 2 }],
+                        },
+                    ],
+                    files: [{ path: "a.csv", description: "d" }],
+                    profiledAt: "2026-07-08T00:00:05.000Z",
+                },
+            }),
+        );
+        expect(lines).toContain("groups (1):");
+        expect(lines.some((l) => l.includes("per-sample-counts") && l.includes("2 members"))).toBe(true);
+        expect(lines.some((l) => l.startsWith("files ("))).toBe(false);
     });
 
     test("loaded failed → surfaces the multi-line error and a duration", () => {

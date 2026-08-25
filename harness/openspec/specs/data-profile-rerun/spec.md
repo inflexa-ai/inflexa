@@ -10,11 +10,10 @@ concurrent re-profile triggers dedup: only one CAS UPDATE wins and starts a work
 Every claim into `running` also requires a non-empty seeded input set, so a running
 profile always names the inputs it is profiling. The prior `data_profile_result` is
 deliberately preserved during the re-profile so the API can keep serving the last
-profile while the new one runs. The result snapshot records which inputs were
-profiled (`inputFileIds`), their per-file drift signatures (`inputFiles`), and when
-(`profiledAt`) — so both staleness (files added since the last profile) and drift (an
-in-place edit of an already-profiled file) are detectable against the current
-staged-input manifest.
+profile while the new one runs. The result snapshot records what was profiled as a
+kept-files `inputSignature` and when (`profiledAt`) — so both staleness (files added
+since the last profile) and drift (an in-place edit of an already-profiled file) are
+detectable against the current staged-input manifest.
 ## Requirements
 ### Requirement: A running profile always names a non-empty seeded input set
 
@@ -126,9 +125,9 @@ A consumer SHALL detect drift by computing the same signature — quarantine app
 over a freshly enumerated input set at stat cost and comparing it against
 `inputSignature`.
 
-`inputFileIds: string[]` and `inputFiles: { fileId, size, mtimeMs }[]` SHALL remain
-readable and SHALL be optional on read, with the existing fallback semantics: a snapshot
-carrying neither a signature nor an id list is drift, and re-profiling heals it.
+The retired per-file comparands (`inputFileIds`, `inputFiles`) SHALL NOT be declared by
+the record type — nothing compares them. A snapshot without an `inputSignature` is
+drift, and re-profiling heals it; unknown keys on such a row are ignored on read.
 
 The signature deliberately excludes the content hash: enumerating it would require
 reading every input in full on every parity check. An edit that preserves both byte
@@ -152,11 +151,11 @@ length and mtime is therefore not detected — a bounded, documented limitation.
 - **WHEN** the signature is computed over each
 - **THEN** the two digests SHALL be equal
 
-#### Scenario: A legacy snapshot still compares
+#### Scenario: A pre-signature snapshot is drift
 
-- **GIVEN** a snapshot written before `inputSignature` existed, carrying `inputFileIds`
+- **GIVEN** a snapshot written before `inputSignature` existed
 - **WHEN** a consumer evaluates staleness
-- **THEN** it SHALL fall back to comparing the identity list rather than treating the snapshot as drift
+- **THEN** it SHALL treat the snapshot as drift, and the re-profile that heals it persists a signature
 
 ### Requirement: Profile clearance when the input set empties
 

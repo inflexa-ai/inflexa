@@ -26,7 +26,7 @@ const LEGACY: DataProfileResult = {
     ],
     axes: [{ label: "subject", cardinality: 40, exampleValues: ["S001", "S002"] }],
     coverage: { matched: 80, unmatched: 2, total: 82 },
-    qualityAssessment: { concerns: ["batch is confounded with arm"], strengths: ["balanced groups"] },
+    qualityAssessment: { concerns: ["batch is confounded with arm"] },
 };
 
 const RESOLVED: DataProfileResult = {
@@ -118,7 +118,7 @@ describe("reading a snapshot of either era", () => {
         expect(profileDatasetFileCount({ ...BASE, files: [] })).toBeNull();
     });
 
-    it("reads a legacy row's concerns as caveats and drops the strengths nothing consumed", () => {
+    it("reads a legacy row's concerns as caveats", () => {
         expect(profileCaveats(RESOLVED)).toEqual(["one subject has no alignment"]);
         expect(profileCaveats(LEGACY)).toEqual(["batch is confounded with arm"]);
         expect(profileCaveats({ ...BASE })).toEqual([]);

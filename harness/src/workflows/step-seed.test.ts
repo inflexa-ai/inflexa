@@ -125,7 +125,6 @@ function input(steps: readonly AnalysisStep[]): ExecuteAnalysisInput {
 const PROFILE: DataProfileResult = {
     summary: "bulk RNA-seq of tumour vs normal",
     files: [{ path: "data/inputs/counts.csv", description: "raw counts", format: "CSV", rows: 20000, cols: 24 }],
-    inputFileIds: ["f1"],
     profiledAt: "2026-01-01T00:00:00.000Z",
     domain: "transcriptomics",
     subtype: "bulk-rna-seq",

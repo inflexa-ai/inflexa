@@ -19,7 +19,6 @@ const RICH: DataProfileResult = {
         },
         { path: "data/inputs/f2/metadata.csv", description: "Sample metadata", dataType: "clinical-metadata", format: "CSV", rows: 24, cols: 6 },
     ],
-    inputFileIds: ["file-aaa", "file-bbb"],
     profiledAt: "2026-06-09T10:00:00.000Z",
     domain: "transcriptomics",
     subtype: "bulk-rna-seq",
@@ -30,7 +29,6 @@ const RICH: DataProfileResult = {
     experimentalDesign: "Two groups (12 UC, 12 control), paired by sequencing batch.",
     qualityAssessment: {
         concerns: ["batch confounded with group in batch 2", "3 low-depth samples"],
-        strengths: ["balanced group sizes"],
     },
 };
 
@@ -41,7 +39,6 @@ const LEGACY: DataProfileResult = {
         { path: "data/inputs/f1/counts.csv", description: "Raw count matrix" },
         { path: "data/inputs/f2/metadata.csv", description: "Sample metadata" },
     ],
-    inputFileIds: ["file-aaa", "file-bbb"],
     profiledAt: "2026-01-02T03:04:05.000Z",
 };
 
@@ -73,7 +70,6 @@ describe("buildDataProfileOrientation", () => {
         const sparse: DataProfileResult = {
             summary: "Unlabelled counts.",
             files: [{ path: "data/inputs/f1/counts.csv", description: "Counts", format: "CSV" }],
-            inputFileIds: ["file-aaa"],
             profiledAt: "2026-06-09T10:00:00.000Z",
             domain: "transcriptomics",
             organism: null,
@@ -119,7 +115,7 @@ describe("buildDataProfileOrientation", () => {
     it("caps caveats at 3 and counts the remainder", () => {
         const many: DataProfileResult = {
             ...RICH,
-            qualityAssessment: { concerns: ["c1", "c2", "c3", "c4", "c5"], strengths: [] },
+            qualityAssessment: { concerns: ["c1", "c2", "c3", "c4", "c5"] },
         };
         expect(buildDataProfileOrientation(many, ANALYSIS_ID)).toContain("Caveats: c1; c2; c3 (+2 more)");
     });
@@ -138,7 +134,6 @@ describe("buildDataProfileOrientation", () => {
                 cols: 1,
                 warnings: Array.from({ length: 50 }, () => "W".repeat(500)),
             })),
-            inputFileIds: [],
             profiledAt: "2026-06-09T10:00:00.000Z",
             domain: "D".repeat(3_000),
             subtype: "S".repeat(3_000),
@@ -147,7 +142,7 @@ describe("buildDataProfileOrientation", () => {
             cellType: "C".repeat(3_000),
             condition: "X".repeat(3_000),
             experimentalDesign: "E".repeat(10_000),
-            qualityAssessment: { concerns: Array.from({ length: 100 }, () => "Q".repeat(1_000)), strengths: [] },
+            qualityAssessment: { concerns: Array.from({ length: 100 }, () => "Q".repeat(1_000)) },
         };
 
         expect(buildDataProfileOrientation(monstrous, ANALYSIS_ID).length).toBeLessThanOrEqual(DATA_PROFILE_ORIENTATION_MAX_CHARS);

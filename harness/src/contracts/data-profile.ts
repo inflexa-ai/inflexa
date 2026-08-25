@@ -82,12 +82,10 @@ export interface DataProfileFile {
 
 /**
  * Dataset-wide quality findings, on rows of the era that recorded them. Superseded by
- * `caveats`, which is agent-authored prose and nothing else; `strengths` is not written
- * any more, because nothing ever consumed it.
+ * `caveats`, which is agent-authored prose and nothing else.
  */
 export interface DataProfileQualityAssessment {
     concerns: string[];
-    strengths?: string[];
 }
 
 /**
@@ -401,18 +399,6 @@ export interface DataProfileCoverage {
 }
 
 /**
- * One profiled input file's legacy drift signature. `fileId` is a path identity (two
- * files at the same path share it regardless of content), so `size` + `mtimeMs` are what
- * let a consumer notice the bytes behind a path changed. Superseded by
- * {@link DataProfileInputSignature}, and still readable on older rows.
- */
-export interface DataProfileInputFile {
-    fileId: string;
-    size: number;
-    mtimeMs: number;
-}
-
-/**
  * The profile snapshot stored in `cortex_analysis_state.data_profile_result`.
  *
  * It carries the profiler's full finding rather than a summary of it: this row is the
@@ -452,14 +438,10 @@ export interface DataProfileResult {
     kinds?: DataProfileKind[];
     /** What varies across those sets, on a snapshot of the same era. */
     axes?: DataProfileAxis[];
-    /** The drift comparand. Preferred over `inputFileIds`, which it replaces. */
+    /** The drift comparand. */
     inputSignature?: DataProfileInputSignature;
     /** How much of the scanned tree the kinds describe, on a snapshot of the kinds era. Superseded by `partition`. */
     coverage?: DataProfileCoverage;
-    /** The legacy identity-list comparand, on rows written before the signature existed. */
-    inputFileIds?: string[];
-    /** The legacy per-file drift signature, on rows of the same era. */
-    inputFiles?: DataProfileInputFile[];
     /** ISO 8601 timestamp of profile completion. */
     profiledAt: string;
 

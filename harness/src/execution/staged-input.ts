@@ -27,10 +27,10 @@ export interface StagedInput {
     readonly hash: string;
     readonly size: number;
     /**
-     * Last-modification time in epoch milliseconds. With `size` and `fileId` it forms
-     * the file's drift signature — the value a consumer compares against a completed
-     * profile's `inputFiles` to decide whether the same bytes were profiled, since a
-     * `fileId` is a path identity and survives an in-place content edit unchanged.
+     * Last-modification time in epoch milliseconds. With `size` and `fileId` it feeds
+     * the kept-files `inputSignature` a completed profile persists — what lets a
+     * consumer notice the bytes behind a path changed, since a `fileId` is a path
+     * identity and survives an in-place content edit unchanged.
      *
      * Embedder-supplied and opaque: the CLI reads it from the same `stat` that yields
      * `size`; a managed service supplies its object store's last-modified epoch. The

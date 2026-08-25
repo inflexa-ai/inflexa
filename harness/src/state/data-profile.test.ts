@@ -63,11 +63,6 @@ const SAMPLE_RESULT = {
         { path: "data/inputs/f1/counts.csv", description: "Raw count matrix" },
         { path: "data/inputs/f2/metadata.csv", description: "Sample metadata" },
     ],
-    inputFileIds: ["file-aaa", "file-bbb"],
-    inputFiles: [
-        { fileId: "file-aaa", size: 1024, mtimeMs: 1_780_000_000_000 },
-        { fileId: "file-bbb", size: 2048, mtimeMs: 1_780_000_001_000 },
-    ],
     profiledAt: "2026-06-09T10:00:00.000Z",
 };
 
@@ -528,11 +523,6 @@ describe("the persisted profile record", () => {
                 metrics: { missingRate: 0 },
             },
         ],
-        inputFileIds: ["file-aaa", "file-bbb"],
-        inputFiles: [
-            { fileId: "file-aaa", size: 1024, mtimeMs: 1_780_000_000_000 },
-            { fileId: "file-bbb", size: 2048, mtimeMs: 1_780_000_001_000 },
-        ],
         profiledAt: "2026-06-09T10:00:00.000Z",
         domain: "transcriptomics",
         subtype: "bulk-rna-seq",
@@ -550,7 +540,6 @@ describe("the persisted profile record", () => {
         experimentalDesign: "Two groups (12 UC, 12 control), paired by sequencing batch, no technical replicates.",
         qualityAssessment: {
             concerns: ["batch confounded with group in batch 2", "3 low-depth samples"],
-            strengths: ["balanced group sizes", "deep coverage in 21/24 samples"],
         },
     };
 
@@ -566,7 +555,7 @@ describe("the persisted profile record", () => {
     });
 
     it("a legacy collapsed row still reads — the widened fields simply come back undefined", async () => {
-        // The exact shape written before the record was widened: four fields, and per-file
+        // The exact shape written before the record was widened: three fields, and per-file
         // entries with nothing but a path and a description.
         await writeRawResult("a-legacy", {
             summary: "3 RNA-seq count matrices",
@@ -574,7 +563,6 @@ describe("the persisted profile record", () => {
                 { path: "data/inputs/f1/counts.csv", description: "Raw count matrix" },
                 { path: "data/inputs/f2/metadata.csv", description: "Sample metadata" },
             ],
-            inputFileIds: ["file-aaa", "file-bbb"],
             profiledAt: "2026-01-02T03:04:05.000Z",
         });
 
@@ -584,14 +572,12 @@ describe("the persisted profile record", () => {
         // It parses — no throw, no null. The original four fields are intact.
         expect(status?.status).toBe("completed");
         expect(result?.summary).toBe("3 RNA-seq count matrices");
-        expect(result?.inputFileIds).toEqual(["file-aaa", "file-bbb"]);
         expect(result?.profiledAt).toBe("2026-01-02T03:04:05.000Z");
         expect(result?.files).toHaveLength(2);
         expect(result?.files[0]?.path).toBe("data/inputs/f1/counts.csv");
         expect(result?.files[0]?.description).toBe("Raw count matrix");
 
         // And every field added by the widening is absent, not a lie.
-        expect(result?.inputFiles).toBeUndefined();
         expect(result?.domain).toBeUndefined();
         expect(result?.subtype).toBeUndefined();
         expect(result?.organism).toBeUndefined();
@@ -612,7 +598,6 @@ describe("the persisted profile record", () => {
         const noOrganism: DataProfileResult = {
             summary: "Unlabelled count matrix.",
             files: [{ path: "data/inputs/f1/counts.csv", description: "Counts", dataType: "count-matrix", format: "CSV", rows: 100, cols: 4 }],
-            inputFileIds: ["file-aaa"],
             profiledAt: "2026-06-09T10:00:00.000Z",
             domain: "transcriptomics",
             organism: null,
