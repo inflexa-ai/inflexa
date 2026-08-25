@@ -487,6 +487,13 @@ export async function reclaimPreview(storeRoot: string): Promise<Result<readonly
  * whose analysis is gone keeps pool content alive for nobody, and the preview
  * that follows names the content the removal freed.
  */
+/** The graph nodes whose store directory is gone. An unreadable graph reads as none, because with no graph there is nothing to heal. */
+function danglingGraphNodes(storeRoot: string): readonly string[] {
+    const read = readDepsGraph(storeRoot);
+    if (read.isErr()) return [];
+    return [...read.value.nodes.keys()].filter((dir) => !existsSync(join(storeRoot, "store", dir)));
+}
+
 export async function reclaimStore(params: { readonly storeRoot: string }, deps: ReclaimDeps = {}): Promise<Result<ReclaimOutcome, StoreActionError>> {
     const lock = acquireInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     if (!lock.acquired) {
@@ -503,7 +510,10 @@ export async function reclaimStore(params: { readonly storeRoot: string }, deps:
         if (preview.isErr()) return err(preview.error);
         const candidates = preview.value;
         deps.onPreview?.(candidates);
-        if (candidates.length === 0) return ok({ reclaimed: [], farmsReaped });
+        // A dangling graph node justifies the run on its own: the provisioner
+        // prunes the graph entries of gone directories, and only its run heals
+        // a graph that advertises a package no link can land.
+        if (candidates.length === 0 && danglingGraphNodes(params.storeRoot).length === 0) return ok({ reclaimed: [], farmsReaped });
         const run = deps.run ?? runProvisioner;
         const ran = await run({ storeRoot: params.storeRoot, egressAllow: null, args: ["reclaim"] }, (line) => deps.onProgress?.(line));
         if (ran.isErr()) return err(ran.error);
@@ -948,7 +958,10 @@ export async function runStoreReclaim(): Promise<void> {
             onProgress: (line) => console.log(line),
             onPreview: (candidates) => {
                 if (candidates.length === 0) {
-                    console.log("No unreferenced packages. Nothing to reclaim.");
+                    // The run can still proceed past an empty preview: a dangling
+                    // graph node heals through the provisioner prune, and its
+                    // lines print through onProgress.
+                    console.log("No unreferenced packages.");
                     return;
                 }
                 console.log("These store packages have no farm and will be removed:");
