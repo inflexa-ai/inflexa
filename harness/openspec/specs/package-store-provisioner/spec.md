@@ -179,6 +179,13 @@ to match. Thus the graph never advertises a package that no link can land.
 named farm and its links, and it MUST NOT touch the pool. No lease guards a
 removal: the host gates its own delete flow on live work.
 
+`reclaim --debris` MUST narrow the pass to the tier that nothing
+references: a store directory with no farm link and no graph node, plus
+the stale acquire reports under `.inflexa-download/`. It MUST NOT remove a
+directory that the graph advertises, thus a pre-fetched package survives.
+It MUST NOT change the graph. The host owns the triggers of the debris
+pass, and it gates them on live work.
+
 #### Scenario: A reclaimed directory leaves the graph
 
 - **GIVEN** a committed store directory that no farm links
@@ -190,3 +197,15 @@ removal: the host gates its own delete flow on live work.
 - **GIVEN** a store directory that one farm links
 - **WHEN** `reclaim` runs
 - **THEN** the directory stays
+
+#### Scenario: The debris pass removes only the unadvertised tier
+
+- **GIVEN** one directory with a graph node and no farm link, and one directory with neither
+- **WHEN** `reclaim --debris` runs
+- **THEN** only the directory with neither leaves, and the graph is unchanged
+
+#### Scenario: The debris pass removes a stale acquire report
+
+- **GIVEN** an acquire report file that an ended flush left behind
+- **WHEN** `reclaim --debris` runs
+- **THEN** the report file is gone
