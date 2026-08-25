@@ -805,8 +805,43 @@ def _referenced_store_dirs() -> set[str]:
     return referenced
 
 
+def _prune_dangling_nodes() -> int:
+    """Drop every deps.json node whose store directory is gone, and thin
+    `by_name` to match.
+
+    The graph is the advertised truth of the pool. A node that outlives its
+    directory advertises a package that no link can land, and the composition
+    then refuses on a store_dir that does not exist. The sweep keys on the
+    disk, not on this run's removal list, thus a node that dangled before the
+    run heals too.
+    """
+    deps_path = LIBS / "deps.json"
+    if not deps_path.is_file():
+        return 0
+    graph = json.loads(deps_path.read_text())
+    nodes = graph.get("nodes", {})
+    gone = [d for d in nodes if not (STORE / d).is_dir()]
+    if not gone:
+        return 0
+    for d in gone:
+        del nodes[d]
+        log(f"  pruned graph node {d}")
+    for track_names in graph.get("by_name", {}).values():
+        for name in list(track_names):
+            kept = [d for d in track_names[name] if d in nodes]
+            if kept:
+                track_names[name] = kept
+            else:
+                del track_names[name]
+    temp = deps_path.with_name(deps_path.name + ".tmp")
+    temp.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
+    os.replace(temp, deps_path)
+    return len(gone)
+
+
 def cmd_reclaim(_args) -> int:
-    """Remove store directories that no farm references.
+    """Remove store directories that no farm references, and prune their
+    graph nodes.
 
     Explicit and host-invoked, never automatic — an unreferenced package is
     kept until this runs, thus an old analysis can be rebuilt.
@@ -824,7 +859,9 @@ def cmd_reclaim(_args) -> int:
                 shutil.rmtree(d, ignore_errors=True)
                 removed += 1
                 log(f"  reclaimed {d.name}")
-        log(f"reclaim: {removed} unreferenced store dir(s) removed, {len(referenced)} still referenced")
+        pruned = _prune_dangling_nodes()
+        log(f"reclaim: {removed} unreferenced store dir(s) removed, "
+            f"{pruned} graph node(s) pruned, {len(referenced)} still referenced")
         return 0
 
 
@@ -1422,7 +1459,10 @@ def cmd_prepare(args) -> int:
         cache_root = Path(env["NUMBA_CACHE_DIR"])
 
         def child(script: Path, environment: dict[str, str]) -> subprocess.CompletedProcess:
-            proc = subprocess.run([PYTHON, str(script)], env=environment,
+            # -P keeps the script directory off sys.path. A warm script carries the
+            # name of the package it warms, and without the flag `import matplotlib`
+            # inside warm/matplotlib.py imports the script itself.
+            proc = subprocess.run([PYTHON, "-P", str(script)], env=environment,
                                   capture_output=True, text=True)
             if proc.returncode != 0:
                 tail = (proc.stderr or "").strip().splitlines()[-8:]
