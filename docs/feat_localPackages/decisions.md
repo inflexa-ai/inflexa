@@ -239,3 +239,82 @@ The two OpenSpec changes carry the later decisions, and the grill documents
 On confirmation of this record: OpenSpec changes, harness first, then the CLI,
 per the boundary rule. The build side lives in the harness spec tree
 (`lib-store-build` today, renamed per decision 14).
+
+## The first-live-run grill (the package-flow truth pass)
+
+The first end-to-end chat run surfaced three faults. The agent asked for
+packages that the pool already held. The sidebar mixed the flights into
+TRANSFERS, with no progress and no failure affordance. And the agent claimed
+an acquisition ordering that no mechanism gives. The grill settled the seven
+decisions below.
+
+### 17. The inventory answers per scope (Q1, Q10)
+
+`list_available_packages` reads the farm lock of the analysis, and a new
+farm is empty. Thus every pool package read as absent, and the agent asked
+for held packages. The conversation agent and the planner get a POOL-scope
+inventory, read from `deps.json`, bound at the composition root of the CLI.
+The sandbox agents keep the farm view, because a step imports only what the
+farm links. The planner grounding reads the same binding, thus the fix
+reaches it too.
+
+### 18. Every inventory answer carries the version (Q10)
+
+Each view renders `name==version`. The data exists in each source: the
+graph node, the pin marker, and the farm lock. The versionless render and
+its rationale in the tool leave. The targeted `names` path, and the
+failed-flight dialog, also carry the store directory and the full hash. A
+full listing carries no hashes, because a thousand rows of sha256 bury the
+signal.
+
+### 19. No chat-time link, and no link approval (Q2 part)
+
+A pool-held package needs no ask and no chat action. The launch links the
+package union of the plan into the farm before the run reserves anything.
+`link_packages` extends the farm mid-run. Both run without approval,
+because a link writes no new content into the pool.
+
+### 20. The launch gate stays, and the remedy classifies (Q7, Q11)
+
+The pool-miss refusal at launch IS the ordering gate: a plan package that
+did not land refuses the whole launch, thus no run is wasted. The CLI
+remedy wrapper classifies each missing name against its own rows. In
+flight: launch again when it lands. Failed: the recorded reason, with
+retry or delete. Unknown: the store-add ask. The chat path gains this
+wrapper — today only the dev run has one. The prompt gains one rule: never
+claim an acquisition ordering that no mechanism gives.
+
+### 21. The sidebar splits into TRANSFERS and PACKAGES (Q3, Q8, Q12)
+
+TRANSFERS keeps the three machine downloads: the runtime image, the
+provisioner image, and the catalog. PACKAGES carries the per-analysis
+pipeline: the pending adds, the queued and running flights with the newest
+provisioner progress line, and the failed rows. A summary line gives the
+queued and running counts. The two lifecycles differ, thus one mixed
+section misleads — the first live run proved it.
+
+### 22. Each transfer row meters its own progress (Q13)
+
+One meter per row, in the notation of the RUNS embed: label, bar cells,
+and `3.2/7.7 GiB`. The image resolve sums the layer sizes from the
+registry manifest, thus an image pull gains a real total. An unknown total
+falls back to the moving byte count with the age of the last write. A row
+that moves is never read as stuck.
+
+### 23. The failed flight opens a dialog (Q4, Q9, Q5)
+
+A failed row in PACKAGES opens a dialog, by mouse or through the palette.
+The dialog shows the spec, the phase as one plain sentence, the whole
+recorded reason, the store directory, and the hash. The actions are copy,
+retry, and delete. Retry enqueues the spec again and starts the detached
+flush — the click is the consent. Delete removes the row, and the silent
+debris pass frees the bytes. The record stays whole, and only the render
+translates the phase.
+
+### The next step of this pass
+
+On confirmation of this record: one OpenSpec change per tree. The harness
+change carries the inventory scope, the version render, and the refusal
+text of the launch. The CLI change carries the bindings, the remedy
+classification, the two sidebar sections, the meters, the dialog, and the
+prompt rules.
