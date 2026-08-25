@@ -21,7 +21,9 @@ limma/voom, sva. Check contrast syntax there before writing it.
 - **Raw counts, simple design, n=3-50 per group** — PyDESeq2 (default).
 - **Raw counts, complex design (interactions, >2 factors)** — DESeq2 via rpy2.
 - **Raw counts, n > 50 per group** — limma-voom via rpy2 (scales better).
-- **Raw counts, n < 3 per group** — edgeR QLF via rpy2.
+- **Raw counts, n = 2 per group** — edgeR QLF via rpy2.
+- **No biological replication in any group (1 vs 1)** — no inferential
+  DE. Report descriptive log2 fold changes only, and state why.
 - **Pre-normalized (TPM, FPKM, log-CPM, microarray intensities)** — limma
   via rpy2.
 - **Raw microarray CEL** — out of scope: reading them needs a per-design

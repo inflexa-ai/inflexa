@@ -30,7 +30,9 @@ export const meta: AgentMeta = {
     // `single-cell` carries the scirpy reference, which is the route from 10x
     // VDJ / AIRR files to called clonotypes — the input every repertoire metric
     // in `immune-profiling` assumes it already has.
-    skills: ["immune-profiling", "single-cell", "shared/omics-general"],
+    // `statistical-modeling` carries the survival-cutpoint correction and the
+    // multiplicity rules that the immune-clinical correlation work demands.
+    skills: ["immune-profiling", "single-cell", "statistical-modeling", "shared/omics-general"],
     tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "lookupAnnotation", "searchInteractions", "searchGeoDatasets", "opentargets"],
 };
 
