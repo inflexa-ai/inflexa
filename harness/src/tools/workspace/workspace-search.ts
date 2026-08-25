@@ -37,6 +37,25 @@ function indexName(analysisId: string): string {
     return name;
 }
 
+/** Entry types that address a pattern spanning many files, never a single one. */
+const PATTERN_TYPES = new Set(["input-group", "input-dimension", "input-kind"]);
+
+/**
+ * The workspace path a hit addresses, or `undefined` for a pattern entry. Resolved here,
+ * once, across every index era — group/dimension/kind entries and previous-era entity
+ * entries (`entity` in metadata) are patterns; everything else is a file whose path is
+ * stamped in metadata or, on rows older than the stamp, is the id minus the resource
+ * segment. The consumer branches on presence, nothing else.
+ */
+export function fileTargetOf(id: string, metadata: unknown): string | undefined {
+    const meta = metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
+    const type = typeof meta.type === "string" ? meta.type : undefined;
+    if (type !== undefined && PATTERN_TYPES.has(type)) return undefined;
+    if (type === "input" && meta.entity !== undefined) return undefined;
+    if (typeof meta.path === "string") return meta.path;
+    return id.replace(/^\/[^/]+\//, "");
+}
+
 export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvider) {
     return defineTool({
         id: "workspace_search",
@@ -50,15 +69,11 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
             'previous era, one entity the dataset is about), "output" (files a step produced), ' +
             '"summary" (a step\'s summary), "synthesis" (a run\'s literature-grounded synthesis), ' +
             '"input-kind" (a repeating set, on a profile of the previous era). ' +
-            "A hit names a FILE exactly when its metadata carries `path` — the workspace path, which " +
-            "is also the entry id under the analysis root. Output/summary/synthesis entries and " +
-            '"input" entries that annotate a file do. A hit without `path` is a PATTERN spanning many ' +
-            "files — a group, a dimension, a kind, or a previous-era entity (`entity` in metadata) — " +
-            "so never read its id as a file: use its metadata, e.g. search input-group for a group's " +
-            "display pattern, then list the tree for its members. (An older index may lack `path` on " +
-            'its file entries; there an "input" entry without `entity` is still a file, and an ' +
-            "output/summary/synthesis id is always its path.) Most input files carry no entry of " +
-            "their own — find them through their group and the listing tools.",
+            "A hit carrying `path` is a FILE — read that path to see its contents. A hit without " +
+            "`path` is a PATTERN spanning many files (a group, a dimension, an entity): use its " +
+            "metadata, e.g. search input-group for a group's display pattern, then list the tree for " +
+            "its members. Most input files carry no entry of their own — find them through their " +
+            "group and the listing tools.",
         inputSchema: z.object({
             query: z.string().min(1).describe("What to search for, in natural language"),
             type: z
@@ -105,11 +120,15 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
                 ),
             );
             return ok({
-                results: rows.map((r) => ({
-                    id: r.id,
-                    score: r.score,
-                    metadata: r.metadata,
-                })),
+                results: rows.map((r) => {
+                    const path = fileTargetOf(r.id, r.metadata);
+                    return {
+                        id: r.id,
+                        score: r.score,
+                        ...(path !== undefined ? { path } : {}),
+                        metadata: r.metadata,
+                    };
+                }),
             });
         },
     });
