@@ -324,6 +324,55 @@ class StoreLockTests(StoreTestCase):
                     self.assertTrue((provision.STORE / ".staging-live").exists())
 
 
+class ReclaimTests(StoreTestCase):
+    """Reclaim removes the unreferenced directories, and the graph obeys."""
+
+    def test_reclaim_prunes_the_graph_nodes_of_gone_directories(self):
+        keep, drop, ghost = "keep-1.0-aaaa", "drop-2.0-bbbb", "ghost-3.0-cccc"
+        (provision.STORE / keep).mkdir()
+        (provision.STORE / drop).mkdir()
+        farm = provision.FARMS / "f1"
+        farm.mkdir(parents=True)
+        os.symlink(f"{provision.LIBS}/store/{keep}/keep", farm / "keep-link")
+        # `ghost` has a node and no directory: the pre-dangling shape this
+        # sweep heals, because it keys on the disk and not on the removals.
+        graph = {
+            "version": 1,
+            "nodes": {
+                keep: {"name": "keep", "version": "1.0", "track": "python", "order": "0001", "imports": [], "entry_points": [], "edges": [], "r_dir": None},
+                drop: {"name": "drop", "version": "2.0", "track": "python", "order": "0002", "imports": [], "entry_points": [], "edges": [], "r_dir": None},
+                ghost: {"name": "ghost", "version": "3.0", "track": "python", "order": "0003", "imports": [], "entry_points": [], "edges": [], "r_dir": None},
+            },
+            "by_name": {"python": {"keep": [keep], "drop": [drop], "ghost": [ghost]}},
+        }
+        (provision.LIBS / "deps.json").write_text(json.dumps(graph))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            provision.cmd_reclaim(None)
+
+        self.assertTrue((provision.STORE / keep).is_dir())
+        self.assertFalse((provision.STORE / drop).exists())
+        after = json.loads((provision.LIBS / "deps.json").read_text())
+        self.assertEqual(sorted(after["nodes"]), [keep])
+        self.assertEqual(after["by_name"]["python"], {"keep": [keep]})
+
+    def test_reclaim_with_a_clean_graph_rewrites_nothing(self):
+        keep = "keep-1.0-aaaa"
+        (provision.STORE / keep).mkdir()
+        farm = provision.FARMS / "f1"
+        farm.mkdir(parents=True)
+        os.symlink(f"{provision.LIBS}/store/{keep}/keep", farm / "keep-link")
+        graph = {"version": 1, "nodes": {keep: {"name": "keep"}}, "by_name": {"python": {"keep": [keep]}}}
+        path = provision.LIBS / "deps.json"
+        path.write_text(json.dumps(graph))
+        before = path.stat().st_mtime_ns
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            provision.cmd_reclaim(None)
+
+        self.assertEqual(path.stat().st_mtime_ns, before)
+
+
 class FarmAssemblyTests(StoreTestCase):
     """The farm assembly invariants for the Python and R tracks."""
 

@@ -68,7 +68,9 @@ def cache_entry_key(path: str, root: Path) -> str:
 
 def replay(label: str, script: Path, root: Path) -> tuple[set[str], set[str]]:
     """Run one warm workload again, and report what it loaded and what it saved."""
-    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
+    # -P keeps the script directory off sys.path: a warm script carries the name
+    # of the package it warms, and would import itself without the flag.
+    proc = subprocess.run([sys.executable, "-P", str(script)], capture_output=True, text=True,
                           env={**os.environ, "NUMBA_DEBUG_CACHE": "1"})
     if proc.returncode != 0:
         tail = (proc.stderr or "").strip().splitlines()[-STDERR_TAIL_LINES:]
