@@ -373,6 +373,54 @@ class ReclaimTests(StoreTestCase):
         self.assertEqual(path.stat().st_mtime_ns, before)
 
 
+class DebrisTests(StoreTestCase):
+    """`reclaim --debris` frees only the tier that nothing references, and it
+    never touches the graph."""
+
+    def test_debris_removes_only_the_unadvertised_tier_and_the_stale_reports(self):
+        linked, advertised, debris = "linked-1.0-aaaa", "adver-2.0-bbbb", "orphan-3.0-cccc"
+        for d in (linked, advertised, debris):
+            (provision.STORE / d).mkdir()
+        farm = provision.FARMS / "f1"
+        farm.mkdir(parents=True)
+        os.symlink(f"{provision.LIBS}/store/{linked}/pkg", farm / "pkg-link")
+        # `advertised` has a graph node and no farm link: a pre-fetched package,
+        # and the debris pass must keep it.
+        graph = {"version": 1, "nodes": {advertised: {"name": "adver"}}, "by_name": {"python": {"adver": [advertised]}}}
+        path = provision.LIBS / "deps.json"
+        path.write_text(json.dumps(graph))
+        before = path.stat().st_mtime_ns
+        download = provision.LIBS / ".inflexa-download"
+        download.mkdir()
+        (download / "acquire-4242-x.json").write_text("{}")
+        (download / "catalog.tmp").write_text("")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.cmd_reclaim(SimpleNamespace(debris=True)), 0)
+
+        self.assertTrue((provision.STORE / linked).is_dir())
+        self.assertTrue((provision.STORE / advertised).is_dir())
+        self.assertFalse((provision.STORE / debris).exists())
+        self.assertFalse((download / "acquire-4242-x.json").exists())
+        self.assertTrue((download / "catalog.tmp").exists())
+        self.assertEqual(path.stat().st_mtime_ns, before)
+
+    def test_debris_prunes_no_dangling_node(self):
+        # A node whose directory is gone is the full reclaim's work: the debris
+        # pass narrows to removals, thus the graph file stays byte-identical.
+        ghost = "ghost-1.0-dddd"
+        graph = {"version": 1, "nodes": {ghost: {"name": "ghost"}}, "by_name": {"python": {"ghost": [ghost]}}}
+        path = provision.LIBS / "deps.json"
+        path.write_text(json.dumps(graph))
+        before = path.stat().st_mtime_ns
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.cmd_reclaim(SimpleNamespace(debris=True)), 0)
+
+        self.assertEqual(path.stat().st_mtime_ns, before)
+        self.assertEqual(json.loads(path.read_text())["nodes"], {ghost: {"name": "ghost"}})
+
+
 class FarmAssemblyTests(StoreTestCase):
     """The farm assembly invariants for the Python and R tracks."""
 
