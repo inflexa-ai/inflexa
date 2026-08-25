@@ -13,6 +13,7 @@ import { DialogPanel } from "../components/dialog/dialog_panel.tsx";
 import { PromptDialog } from "../components/dialog/prompt_dialog.tsx";
 import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
 import { AlertDialog } from "../components/dialog/alert_dialog.tsx";
+import { FailedFlightDialog } from "../components/dialog/failed_flight_dialog.tsx";
 import { ResultsDialog } from "../components/dialog/results_dialog.tsx";
 import { ExportOptionsDialog } from "../components/dialog/export_options_dialog.tsx";
 import { PlanStepDetailDialog } from "../components/dialog/plan_step_detail_dialog.tsx";
@@ -254,6 +255,24 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>ResultsDialog — read-only scrollable lines (lg, fixed height):</text>
                     <DialogShowcase>
                         <ResultsDialog title="Projects" lines={["acme — 3 analyses", "demo — 1 analysis"]} emptyText="No projects yet" onClose={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>FailedFlightDialog — a failed acquisition: the record whole, with copy/retry/delete:</text>
+                    <DialogShowcase>
+                        <FailedFlightDialog
+                            flight={{
+                                id: "python::scipy::==1.18.1",
+                                createdAt: 0,
+                                updatedAt: 0,
+                                state: "failed",
+                                ecosystem: "python",
+                                name: "scipy",
+                                specifier: "==1.18.1",
+                                progress: null,
+                                message: 'commit: the dependency "scipy-1.18.1-ac47ce3c59033b5f" resolves to nothing in the pool',
+                                holderPid: 0,
+                            }}
+                            onClose={noop}
+                        />
                     </DialogShowcase>
                     <text fg={theme().fgMuted}>ResultsDialog — with a single-key footer action affordance (inert here):</text>
                     <DialogShowcase>

@@ -37,6 +37,7 @@ function seams(over: Partial<SandboxGateSeams> & { notices?: Notice[] }): Sandbo
         storeRoot: () => "/tmp/store",
         readTransfers: () => [],
         readFlights: () => [],
+        readPending: () => [],
         inspect: async () => "installed",
         takeFarmFailure: () => null,
         sandboxImage: () => "ghcr.io/inflexa-ai/sandbox-base:latest",

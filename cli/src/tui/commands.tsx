@@ -18,6 +18,8 @@ import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme, theme, type Notice } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
+import { FailedFlightDialog } from "./components/dialog/failed_flight_dialog.tsx";
+import { describeStoreFlightSpec, readStoreFlights } from "../modules/libs/store_flight.ts";
 import { createThreadStore, loadPlan, queryActiveRunsByAnalysis, queryRunsByAnalysis, queryStepsByRun, reportSessionDir } from "@inflexa-ai/harness";
 import type { AnalysisPurgeOutcome, CortexRunRow, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
@@ -2883,6 +2885,44 @@ export const commands: Command[] = [
                 },
                 (error) => notify({ kind: "error", text: error.message }),
             );
+        },
+    },
+    {
+        // The keyboard half of the failed-flight detail (the
+        // package-store-management spec): the sidebar row answers a click, and
+        // this entry serves the keyboard through a picker of the failed rows.
+        id: "store.failed-flights",
+        title: "Failed package flights",
+        description: "Open a failed acquisition flight: the recorded reason, with copy, retry, and delete",
+        category: "Sandbox",
+        enabled: () => readStoreFlights().some((flight) => flight.row.state === "failed"),
+        run: (ctx) => {
+            const failed = readStoreFlights()
+                .filter((flight) => flight.row.state === "failed")
+                .map((flight) => flight.row);
+            const first = failed[0];
+            if (first === undefined) {
+                notify({ kind: "info", text: "No failed package flight." });
+                return;
+            }
+            if (failed.length === 1) {
+                ctx.openDialog(() => <FailedFlightDialog flight={first} onClose={() => ctx.closeDialog()} />);
+                return;
+            }
+            ctx.openDialog(() => (
+                <SelectDialog
+                    title="Failed package flights"
+                    placeholder={`Search flights${GLYPHS.ellipsis}`}
+                    items={failed.map((row) => ({ value: row.id, title: describeStoreFlightSpec(row) }))}
+                    emptyText="No failed flights"
+                    onCancel={() => ctx.closeDialog()}
+                    onSelect={(id: string) => {
+                        ctx.closeDialog();
+                        const row = failed.find((candidate) => candidate.id === id);
+                        if (row !== undefined) ctx.openDialog(() => <FailedFlightDialog flight={row} onClose={() => ctx.closeDialog()} />);
+                    }}
+                />
+            ));
         },
     },
     {

@@ -8,6 +8,7 @@ import { isPublishedSandboxImage } from "../../modules/libs/images.ts";
 import { takeFarmCompositionFailure, type FarmCompositionFailure } from "../../modules/libs/composition.ts";
 import { configuredSandboxImage } from "../../modules/libs/pull.ts";
 import { inspectStoreContent, startCatalogTransfer, type StoreContentState } from "../../modules/libs/store_download.ts";
+import { listPendingStoreAdds } from "../../db/primary_query.ts";
 import { describeStoreFlightSpec, readStoreFlights, type StoreFlightReport, type StoreFlightStatus } from "../../modules/libs/store_flight.ts";
 import { readTransferReports, startImageTransfer, type TransferReport } from "../../modules/libs/transfers.ts";
 import type { Notice } from "../theme.ts";
@@ -31,22 +32,36 @@ import { notify } from "./notice.ts";
 
 /** One acquisition flight as the sidebar renders it: a live one, or a terminal `failed` record. */
 export type StoreFlightLine = {
+    /** The flight key, which a detail opener passes back to find the row. */
+    readonly id: string;
     /** The spec of the flight, as a user reads it. */
     readonly spec: string;
     /** The state: waiting for a slot under the cap, running, or failed. */
     readonly state: StoreFlightStatus;
     /** How many analyses subscribe to the flight. */
     readonly subscribers: number;
+    /** The newest provisioner line of a running flight, or `null`. */
+    readonly progress: string | null;
+};
+
+/** One enqueued add that no flush took yet, as the pipeline section renders it. */
+export type PendingAddLine = {
+    /** The spec of the add, as a user reads it. */
+    readonly spec: string;
 };
 
 const [transfers, setTransfers] = createSignal<readonly TransferReport[]>([]);
 const [flights, setFlights] = createSignal<readonly StoreFlightLine[]>([]);
+const [pendingAdds, setPendingAdds] = createSignal<readonly PendingAddLine[]>([]);
 
 /** The three transfer reports as last read — call inside a tracking scope for reactivity. */
 export const transferReports = transfers;
 
-/** The live acquisition flights — call inside a tracking scope for reactivity. */
+/** The acquisition flights, live and failed — call inside a tracking scope for reactivity. */
 export const storeFlightLines = flights;
+
+/** The pending adds that no flush took yet — call inside a tracking scope for reactivity. */
+export const pendingAddLines = pendingAdds;
 
 /**
  * How often the watcher and the gate re-read the rows.
@@ -69,6 +84,8 @@ export type SandboxGateSeams = {
     readonly readTransfers: () => readonly TransferReport[];
     /** The acquisition flights that are live now. Real: {@link readStoreFlights}. */
     readonly readFlights: () => readonly StoreFlightReport[];
+    /** The pending adds that no flush took yet. Real: the pending-set listing. */
+    readonly readPending: () => readonly { readonly ecosystem: "python" | "r" | null; readonly name: string; readonly specifier: string }[];
     /** The cheap local state of the store content. Real: {@link inspectStoreContent}. */
     readonly inspect: (root: string) => Promise<StoreContentState>;
     /**
@@ -99,6 +116,7 @@ export const realSandboxGateSeams: SandboxGateSeams = {
     storeRoot: () => env.packageStoreDir,
     readTransfers: readTransferReports,
     readFlights: readStoreFlights,
+    readPending: () => listPendingStoreAdds().unwrapOr([]),
     inspect: inspectStoreContent,
     takeFarmFailure: takeFarmCompositionFailure,
     sandboxImage: configuredSandboxImage,
@@ -116,17 +134,20 @@ export const realSandboxGateSeams: SandboxGateSeams = {
     pollMs: TRANSFER_POLL_MS,
 };
 
-/** Refresh the two signals from the rows: the transfers, and the flights that ride the same poll. */
+/** Refresh the three signals from the rows: the transfers, the flights, and the pending adds that ride the same poll. */
 export function refreshTransferState(seams: SandboxGateSeams = realSandboxGateSeams): readonly TransferReport[] {
     const reports = seams.readTransfers();
     setTransfers(reports);
     setFlights(
         seams.readFlights().map((flight) => ({
+            id: flight.row.id,
             spec: describeStoreFlightSpec(flight.row),
             state: flight.row.state,
             subscribers: flight.analysisIds.length,
+            progress: flight.row.progress,
         })),
     );
+    setPendingAdds(seams.readPending().map((entry) => ({ spec: describeStoreFlightSpec(entry) })));
     return reports;
 }
 
@@ -297,9 +318,15 @@ export function __setStoreFlightLinesForTest(next: readonly StoreFlightLine[]): 
     setFlights(next);
 }
 
+/** Test hook: publish a set of pending adds directly, with no database. Test-only. */
+export function __setPendingAddLinesForTest(next: readonly PendingAddLine[]): void {
+    setPendingAdds(next);
+}
+
 /** Test hook: drop the signals and the in-flight flow back to idle. Test-only. */
 export function __resetSandboxGateForTest(): void {
     gateFlowInflight = null;
     setTransfers([]);
     setFlights([]);
+    setPendingAdds([]);
 }

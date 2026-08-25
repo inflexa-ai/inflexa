@@ -453,6 +453,8 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             "(`list_available_packages` answers that), and then ask for each missing one with its own gated " +
             '["store", "add", "<name>"] call — one package per call, `--version <v>` when the plan pins one, `--lang python|r` when the name is ambiguous. ' +
             "Each approved add ENQUEUES; the acquisitions run as one batch when this turn settles, so do not wait for bytes between asks. " +
+            "Never tell the user that packages install before a run — no mechanism orders the two. " +
+            "A launch whose plan needs a package the pool lacks refuses on its own, naming each missing package with what to do about it. " +
             "Invite a swap: the user can name a different package in place of a proposed one, and then you revise the plan toward it and do not ask for the replaced one again. " +
             "A declined ask is guidance, never an error: propose an alternative or replan, and never send the same ask again. " +
             'When a package you asked for is still missing in a later turn, run ["store", "ls"] BEFORE any second ask: ' +

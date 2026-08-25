@@ -49,7 +49,8 @@ import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { analysisFarmPath, linkPackagesIntoFarm, resolveAnalysisFarm } from "../libs/composition.ts";
-import { imagePackagesFile } from "../libs/packages.ts";
+import { imagePackagesFile, readPoolInventorySections } from "../libs/packages.ts";
+import { classifyPoolMiss } from "../libs/store_flight.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
@@ -1129,15 +1130,27 @@ async function bootHarnessRuntimeOnce(
             // Gives the planner reference discovery over the same store the sandbox
             // mounts, so a plan can name what this install actually holds.
             refStorePath: env.refsDir,
-            // The same inventory the sandbox agents read. Without it, answering "is this
-            // package installed?" would otherwise cost a durable analysis run just to
-            // import one name.
+            // The farm lock stays the fallback; the POOL reader below is what this
+            // agent answers from. Its question is "what does the store hold", and
+            // the farm of a new analysis is empty — a farm view here would read
+            // every pool package as absent, and the agent would ask for held ones.
             ...(farmLockFile ? { farmLockFile } : {}),
             ...(imagePackages ? { imagePackagesFile: imagePackages } : {}),
+            readPoolInventory: () => readPoolInventorySections(env.packageStoreDir),
             // The link seam of the conversation side: the pre-launch pass of
             // `execute_analysis` links the packages of the plan through it, and the
-            // `link_packages` tool of the agent exists because it is bound.
-            extendAnalysisFarm: (id, requests) => linkPackagesIntoFarm(env.packageStoreDir, id, requests),
+            // `link_packages` tool of the agent exists because it is bound. A pool
+            // miss gains the host classification — in flight, failed with the
+            // recorded reason — thus the launch refusal tells the agent what to do
+            // instead of a bare "the pool does not hold".
+            extendAnalysisFarm: async (id, requests) => {
+                const outcomes = await linkPackagesIntoFarm(env.packageStoreDir, id, requests);
+                return outcomes.map((outcome) => {
+                    if (outcome.kind !== "absent") return outcome;
+                    const detail = classifyPoolMiss(outcome.name);
+                    return detail === undefined ? outcome : { ...outcome, detail };
+                });
+            },
             chrome: {},
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove
