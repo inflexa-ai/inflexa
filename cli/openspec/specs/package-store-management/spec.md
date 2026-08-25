@@ -126,6 +126,20 @@ package can stay missing in a later turn. The prompt MUST then direct the
 agent to read `store ls` before any second ask, because the failed flight
 row carries the reason.
 
+The conversation agent and the planner MUST read a POOL-scope inventory,
+with the pinned versions, bound at the composition root. The farm view
+answers a different question — what a step imports now — and an empty new
+farm read as "everything is absent". Thus the ask list holds only the
+packages that the pool does not hold. The prompt MUST also forbid an
+ordering claim: no mechanism runs an acquisition before the run, and the
+agent MUST NOT tell the user that one does.
+
+#### Scenario: A pool-held package raises no ask
+
+- **GIVEN** a plan that names pandas, and a pool that holds pandas at any version
+- **WHEN** the post-plan conversation marks the packages of the plan
+- **THEN** no ask for pandas is sent, and the launch links it from the pool
+
 #### Scenario: The user swaps a package
 
 - **GIVEN** a plan that names pandas, and a user answer "use polars instead"
@@ -144,6 +158,45 @@ row carries the reason.
 - **WHEN** the agent notices the package still missing
 - **THEN** it reads `store ls`, and its next message carries the recorded reason instead of a repeated ask
 
+### Requirement: The launch refusal classifies each missing package
+
+A launch whose plan packages cannot link MUST refuse before the run
+reserves anything — the harness link pass is that gate. The remedy text of
+the refusal MUST classify each missing name against the host rows. A name
+with a pending add or a live flight reads as in flight, with "launch again
+when it lands". A name with a failed row carries the recorded reason, with
+the retry and the delete remedies. An unknown name carries the store-add
+ask. Thus the agent replans from the true state, and no run is wasted on a
+package that never landed.
+
+#### Scenario: An in-flight package defers the launch with its state
+
+- **GIVEN** a plan package whose flight still runs
+- **WHEN** the launch refuses on the pool miss
+- **THEN** the remedy names the package as in flight, and directs a later launch, not a second ask
+
+#### Scenario: A failed package surfaces its recorded reason at launch
+
+- **GIVEN** a plan package with a `failed` flight row
+- **WHEN** the launch refuses on the pool miss
+- **THEN** the remedy carries the recorded reason, with the retry and the delete remedies
+
+### Requirement: The sidebar carries the package pipeline
+
+The sidebar MUST render the package pipeline in a section of its own,
+apart from the machine transfers. A transfer is machine state, and a
+flight is analysis work — one mixed section misleads the reader about
+both. The section holds the pending adds, the queued
+and the running flights, and the failed rows. A running flight row MUST
+carry the newest provisioner progress line. A summary line MUST give the
+queued and the running counts.
+
+#### Scenario: A running flight shows its progress line
+
+- **GIVEN** a live flight whose provisioner wrote a progress line
+- **WHEN** the sidebar renders the pipeline section
+- **THEN** the flight row carries that newest line
+
 ### Requirement: A refused flight leaves a durable row
 
 A spec that a flight refuses MUST settle as a terminal `failed` flight row,
@@ -158,6 +211,14 @@ clears with the retry. `store ls` MUST list the failed flights with their
 reasons. The sidebar MUST keep one failure line per failed flight. A
 flight-claim query failure MUST surface as its own refusal, and it MUST NOT
 read as an in-flight duplicate.
+
+A failed row in the TUI MUST open a detail view, by mouse and through the
+command palette. The view shows the spec, the phase as one plain sentence,
+the whole recorded reason, and the store directory with its hash where
+known. Its actions are copy, retry, and delete. Retry enqueues the same
+spec and starts the detached flush — the action itself is the consent.
+Delete removes the row, and the silent debris pass frees the bytes. The
+record stays whole, and only the render translates the phase.
 
 #### Scenario: A load-check refusal survives the detached flush
 
@@ -176,6 +237,18 @@ read as an in-flight duplicate.
 - **GIVEN** a database in which the flight table is unreadable
 - **WHEN** a flush claims a spec
 - **THEN** the outcome is a refusal that names the ledger problem, not "joined"
+
+#### Scenario: The dialog retry clears the failure
+
+- **GIVEN** a failed row open in the detail view
+- **WHEN** the user chooses retry
+- **THEN** the spec enqueues, the detached flush starts, and the row returns to `queued`
+
+#### Scenario: The dialog delete removes the record
+
+- **GIVEN** a failed row open in the detail view
+- **WHEN** the user chooses delete
+- **THEN** the row leaves the ledger, and the debris pass frees the never-advertised bytes
 
 ### Requirement: Debris collects without a command
 
