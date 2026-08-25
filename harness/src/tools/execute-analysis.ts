@@ -132,7 +132,10 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
     }
     if (union.size === 0) return;
     const outcomes = await extendAnalysisFarm(analysisId, [...union.values()]);
-    const missing = outcomes.filter((o) => o.kind === "absent").map((o) => o.name);
+    // A seam-supplied detail classifies the miss in host terms (in flight,
+    // failed with its reason, never requested), and it rides beside the name
+    // so the agent replans from the true state instead of re-asking.
+    const missing = outcomes.filter((o) => o.kind === "absent").map((o) => (o.detail === undefined ? o.name : `${o.name} — ${o.detail}`));
     const collisions = outcomes.filter((o) => o.kind === "collision").map((o) => o.name);
     if (missing.length > 0 || collisions.length > 0) {
         throw new PlanPackagesMissingError(missing, collisions);
