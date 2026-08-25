@@ -1067,6 +1067,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             const listAvailablePackages = createListAvailablePackagesTool({
                 ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
                 ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
+                ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
             });
             // A path-separator query matches every reference path and selects the
             // tool's recursive leaf scan, so the seed contains usable file paths,

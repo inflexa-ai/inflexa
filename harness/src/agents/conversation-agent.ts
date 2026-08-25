@@ -213,6 +213,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         refStorePath,
         farmLockFile,
         imagePackagesFile,
+        readPoolInventory,
         usageRecorder,
         citationResolver,
     } = deps;
@@ -260,10 +261,16 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // blind is how a user gets asked to download something already installed, or
         // told nothing is missing when it is; this is the only tool that can tell.
         createListAvailableRefsTool({ ...(refStorePath ? { refStorePath } : {}) }),
-        // What is importable inside a sandbox. Reads the same manifest a sandbox agent
-        // reads, host-side — so "is scanpy available?" is a manifest lookup here rather
-        // than launching analysis computation to run one import.
-        createListAvailablePackagesTool({ ...(farmLockFile ? { farmLockFile } : {}), ...(imagePackagesFile ? { imagePackagesFile } : {}) }),
+        // What the STORE holds, pool-scope where the embedder binds the reader:
+        // the ask flow of this agent marks the packages the pool does not hold,
+        // and the farm of a new analysis is empty — a farm view here would read
+        // every pool package as absent. The farm-lock fallback keeps a host
+        // with no pool reader on the old answer.
+        createListAvailablePackagesTool({
+            ...(farmLockFile ? { farmLockFile } : {}),
+            ...(imagePackagesFile ? { imagePackagesFile } : {}),
+            ...(readPoolInventory ? { readPoolInventory } : {}),
+        }),
         // Execution.
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.
@@ -277,6 +284,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             ...(refStorePath ? { refStorePath } : {}),
             ...(farmLockFile ? { farmLockFile } : {}),
             ...(imagePackagesFile ? { imagePackagesFile } : {}),
+            ...(readPoolInventory ? { readPoolInventory } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         createExecuteAnalysisTool({

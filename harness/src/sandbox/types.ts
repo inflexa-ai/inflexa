@@ -81,7 +81,10 @@ export interface PackageRequest {
  * - `linked` — the pool held the package, and this call linked it.
  * - `present` — the farm linked it already.
  * - `absent` — the pool does not hold it. `acquisitionPossible` states that
- *   the host can acquire that ecosystem, or that it cannot.
+ *   the host can acquire that ecosystem, or that it cannot. `detail`, when
+ *   the realization gives one, classifies the miss in host terms — in
+ *   flight, failed with a recorded reason, or never requested — and the
+ *   launch refusal renders it beside the name.
  * - `collision` — the request resolves to two store directories: two
  *   versions of one distribution, or one name that both tracks hold. The
  *   outcome is terminal for the request.
@@ -89,7 +92,7 @@ export interface PackageRequest {
 export type PackageRequestOutcome =
     | { readonly kind: "linked"; readonly name: string; readonly version: string }
     | { readonly kind: "present"; readonly name: string; readonly version: string }
-    | { readonly kind: "absent"; readonly name: string; readonly acquisitionPossible: boolean }
+    | { readonly kind: "absent"; readonly name: string; readonly acquisitionPossible: boolean; readonly detail?: string }
     | { readonly kind: "collision"; readonly name: string; readonly storeDirs: readonly [string, string] };
 
 /**

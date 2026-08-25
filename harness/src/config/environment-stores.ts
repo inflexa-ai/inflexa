@@ -53,4 +53,31 @@ export interface EnvironmentStorePaths {
      * normal state.
      */
     readonly imagePackagesFile?: string;
+    /**
+     * The pool-scope inventory of the package store: every package the pool
+     * holds, whether or not a farm links it yet. Bind it for a conversation
+     * or planning surface — the ask flow marks the packages that the POOL
+     * does not hold, and the farm of a new analysis is empty, which would
+     * read as "everything is absent". Leave it unbound for a sandbox agent,
+     * because a step imports only what its farm links. `null` means the pool
+     * cannot be read, and the tool reports the set as UNKNOWN.
+     */
+    readonly readPoolInventory?: () => Promise<readonly PoolInventorySection[] | null>;
+}
+
+/** One package entry of an inventory section, with the store identity where the source records it. */
+export interface PoolInventoryPackage {
+    readonly name: string;
+    /** The pinned version, rendered as `name==version`. Absent for an image-fragment tool. */
+    readonly version?: string;
+    /** The content-addressed store directory of the package. */
+    readonly storeDir?: string;
+    /** The full sha256 of the sorted store tree. */
+    readonly hash?: string;
+}
+
+/** One language-track section of an inventory, as `list_available_packages` renders it. */
+export interface PoolInventorySection {
+    readonly title: string;
+    readonly packages: readonly PoolInventoryPackage[];
 }

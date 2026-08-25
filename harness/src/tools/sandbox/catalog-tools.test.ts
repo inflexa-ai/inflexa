@@ -34,12 +34,12 @@ const SECTIONS = parsePackagesFile(PACKAGES_TXT);
 describe("parsePackagesFile", () => {
     it("splits the real packages.txt shape into per-track sections of names", () => {
         expect(SECTIONS.map((s) => s.title)).toEqual(["R (CRAN)", "R (Bioconductor)", "Python (pip)", "System tools (CLI)", "Node (npm)"]);
-        expect(SECTIONS[0]!.packages).toEqual(["Seurat", "dplyr", "ggplot2"]);
-        expect(SECTIONS[3]!.packages).toEqual(["bcftools", "samtools"]);
+        expect(SECTIONS[0]!.packages.map((p) => p.name)).toEqual(["Seurat", "dplyr", "ggplot2"]);
+        expect(SECTIONS[3]!.packages.map((p) => p.name)).toEqual(["bcftools", "samtools"]);
     });
 
     it("ignores the `#` advisory header lines", () => {
-        expect(SECTIONS.flatMap((s) => s.packages).some((p) => p.startsWith("#"))).toBe(false);
+        expect(SECTIONS.flatMap((s) => s.packages).some((p) => p.name.startsWith("#"))).toBe(false);
     });
 });
 
@@ -146,8 +146,17 @@ describe("list_available_packages — reading the inventory", () => {
         )._unsafeUnwrap() as { available: true; checked: { requested: string; present: boolean }[] };
 
         expect(result.available).toBe(true);
+        // The lock records the store identity, thus the targeted check carries it.
         expect(result.checked).toEqual([
-            { requested: "Seurat", present: true, name: "Seurat", section: "R (CRAN)" },
+            {
+                requested: "Seurat",
+                present: true,
+                name: "Seurat",
+                section: "R (CRAN)",
+                version: "5.1.0",
+                storeDir: "seurat-5.1.0-abcd1234abcd1234",
+                hash: "a".repeat(64),
+            },
             { requested: "nonesuch", present: false },
         ]);
     });
@@ -170,6 +179,32 @@ describe("list_available_packages — reading the inventory", () => {
         expect(result.content).toContain("Python (pip)");
         expect(result.content).toContain("System tools (CLI)");
         expect(result.content).toContain("samtools");
+    });
+
+    it("a bound pool reader wins over the farm lock, and the listing renders name==version", async () => {
+        const readPoolInventory = async () => [
+            { title: "Python (pip)", packages: [{ name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000", hash: "b".repeat(64) }] },
+        ];
+        // No farmLockFile: with a pool reader, the lock must not even be tried.
+        const tool = createListAvailablePackagesTool({ readPoolInventory });
+
+        const listing = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap() as { available: true; content: string };
+        expect(listing.content).toContain("scipy==1.16.3");
+
+        const checked = (await tool.execute({ names: ["SCIPY"] }, makeToolContext().ctx))._unsafeUnwrap() as {
+            available: true;
+            checked: { present: boolean; version?: string; storeDir?: string }[];
+        };
+        expect(checked.checked[0]).toMatchObject({ present: true, name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000" });
+    });
+
+    it("an unreadable pool reads as UNKNOWN, never as empty", async () => {
+        const tool = createListAvailablePackagesTool({ readPoolInventory: async () => null });
+
+        const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap() as { available: false; content: string };
+
+        expect(result.available).toBe(false);
+        expect(result.content).toContain("UNKNOWN");
     });
 
     it("still reports the farm inventory when no image fragment is readable", async () => {

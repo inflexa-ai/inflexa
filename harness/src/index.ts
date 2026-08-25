@@ -584,6 +584,9 @@ export type {
 // farms writes this shape, and the mount gate reads it — one schema, no copy.
 export { FARM_LOCK_FILE, FarmLockSchema, readFarmLock, readFarmLockFile } from "./sandbox/farm.js";
 export type { FarmLock, FarmLockError } from "./sandbox/farm.js";
+// The pool-scope inventory seam: an embedder that binds `readPoolInventory`
+// builds these sections, and `list_available_packages` renders them.
+export type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventorySection } from "./config/environment-stores.js";
 export { MachineBudgetSchema, ResourceLimitsSchema, ResourcePolicySchema, ResourceSpecSchema, parseResourcePolicy } from "./config/resource-limits.js";
 export type { MachineBudget, ResourceLimits, ResourcePolicy, ResourceSpec } from "./config/resource-limits.js";
 export { createWorkspaceFilesystem } from "./workspace/filesystem.js";

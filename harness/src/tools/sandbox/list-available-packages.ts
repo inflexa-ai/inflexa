@@ -1,20 +1,25 @@
 /**
- * listAvailablePackages — query the R/Python/CLI/Node packages available in the
- * sandbox.
+ * listAvailablePackages — query the R/Python/CLI/Node packages of the
+ * environment, from the inventory source the embedder binds.
  *
- * The primary source is the `inflexa.lock` of the mounted farm — the one
- * metadata file of a farm (the lib-store spec) — read from wherever the HOST
- * can see it: the farm container path when the host mounts the same farm, an
- * injected path when it does not. The baked image inventory fragment
- * (`image-packages.txt`, at `/opt/inflexa` in the image) merges into the
+ * Two sources exist, one per vantage. A SANDBOX agent reads the
+ * `inflexa.lock` of the mounted farm — what a step can import right now —
+ * from wherever the HOST can see it: the farm container path when the host
+ * mounts the same farm, an injected path when it does not. A CONVERSATION or
+ * planning surface reads the pool-scope inventory (`readPoolInventory`) —
+ * everything the store holds, whether or not a farm links it yet — because
+ * the ask flow marks the packages the POOL does not hold, and the farm of a
+ * new analysis is empty. The baked image inventory fragment
+ * (`image-packages.txt`, at `/opt/inflexa` in the image) merges into either
  * report when the host can read one. The fragment keeps the section format:
  *
  *     ## System tools (CLI)
  *     samtools, bcftools, ...
  *
- * The rendered listing carries **names only, without version strings**, so
- * this tool reports presence and language track and does not report a
- * version.
+ * Each entry renders as `name==version` where the source pins a version, and
+ * a targeted `names` lookup also carries the store directory and the full
+ * content hash where the source records them. A full listing carries no
+ * hashes — a thousand rows of sha256 would bury the signal.
  */
 
 import { readFile } from "node:fs/promises";
@@ -23,7 +28,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
+import type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventorySection } from "../../config/environment-stores.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
@@ -52,14 +57,17 @@ const TRACK_TITLES: Record<string, string> = {
 /**
  * Group the lock packages into sections, one per track, in a stable order:
  * the known tracks first, then an unknown track at its first occurrence.
+ * Each entry keeps the lock's version, store directory, and hash, so the
+ * targeted `names` path can report the exact store identity.
  */
 export function lockSections(lock: FarmLock): Section[] {
-    const byTrack = new Map<string, string[]>();
+    const byTrack = new Map<string, SectionPackage[]>();
     for (const track of Object.keys(TRACK_TITLES)) byTrack.set(track, []);
     for (const pkg of lock.packages) {
+        const entry: SectionPackage = { name: pkg.name, version: pkg.version, storeDir: pkg.store_dir, hash: pkg.hash };
         const open = byTrack.get(pkg.track);
-        if (open) open.push(pkg.name);
-        else byTrack.set(pkg.track, [pkg.name]);
+        if (open) open.push(entry);
+        else byTrack.set(pkg.track, [entry]);
     }
     return [...byTrack.entries()].filter(([, packages]) => packages.length > 0).map(([track, packages]) => ({ title: TRACK_TITLES[track] ?? track, packages }));
 }
@@ -87,16 +95,32 @@ const UNAVAILABLE_NOTE =
     'R `requireNamespace("<pkg>", quietly = TRUE)`) and degrade gracefully when it is absent. ' +
     "Nothing can be installed at runtime.";
 
-/** One language track of the store, in `packages.txt` section order. */
-export interface Section {
-    /** The section heading verbatim, e.g. `R (CRAN)`, `Python (pip)`. */
-    readonly title: string;
-    readonly packages: readonly string[];
-}
+/**
+ * The pool-scope twin of {@link UNAVAILABLE_NOTE}. It names no runtime probe,
+ * because a conversation surface has no runtime to probe, and an unreadable
+ * pool must read as UNKNOWN rather than as empty.
+ */
+const POOL_UNAVAILABLE_NOTE =
+    "Package list not available — the package pool could not be read, so what the store holds is UNKNOWN. " +
+    "Do not assume a package is present, and do not report a package as absent.";
 
-/** One `names` lookup: present + canonical spelling + track, or absent. */
+/** One package entry of a section, with the store identity where the source records it. */
+export type SectionPackage = PoolInventoryPackage;
+
+/** One language track of the store, in `packages.txt` section order. The seam shape and the render shape are one. */
+export type Section = PoolInventorySection;
+
+/** One `names` lookup: present + canonical spelling + track + store identity, or absent. */
 export type CheckedPackage =
-    | { readonly requested: string; readonly present: true; readonly name: string; readonly section: string }
+    | {
+          readonly requested: string;
+          readonly present: true;
+          readonly name: string;
+          readonly section: string;
+          readonly version?: string;
+          readonly storeDir?: string;
+          readonly hash?: string;
+      }
     | { readonly requested: string; readonly present: false };
 
 /**
@@ -126,7 +150,7 @@ const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
  * are preserved as-is — a downstream image may add its own track.
  */
 export function parsePackagesFile(content: string): Section[] {
-    const sections: { title: string; packages: string[] }[] = [];
+    const sections: { title: string; packages: SectionPackage[] }[] = [];
     for (const line of content.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) continue;
@@ -139,10 +163,15 @@ export function parsePackagesFile(content: string): Section[] {
         if (!open) continue;
         for (const name of trimmed.split(",")) {
             const pkg = name.trim();
-            if (pkg) open.packages.push(pkg);
+            if (pkg) open.packages.push({ name: pkg });
         }
     }
     return sections;
+}
+
+/** One entry as the listing renders it: `name==version` where the source pins a version, the bare name otherwise. */
+function renderPackage(entry: SectionPackage): string {
+    return entry.version === undefined ? entry.name : `${entry.name}==${entry.version}`;
 }
 
 /** Render sections to the agent-facing listing, bounded at `limit` packages. */
@@ -158,7 +187,7 @@ function renderListing(sections: readonly Section[], limit: number): { content: 
         }
         const shown = section.packages.slice(0, room);
         returned += shown.length;
-        lines.push(`\n## ${section.title}`, `  ${shown.join(", ")}`);
+        lines.push(`\n## ${section.title}`, `  ${shown.map(renderPackage).join(", ")}`);
         const hidden = section.packages.length - shown.length;
         if (hidden > 0) lines.push(`  … and ${hidden} more in this section (raise \`limit\` or narrow with \`query\`).`);
     }
@@ -181,19 +210,29 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
     // Presence check — the cheap, targeted path. Answers "is X available, and in
     // which track" without returning the catalog.
     if (names && names.length > 0) {
-        const index = new Map<string, { name: string; section: string }>();
+        const index = new Map<string, { entry: SectionPackage; section: string }>();
         for (const section of sections) {
             for (const pkg of section.packages) {
                 // First writer wins: `packages.txt` sections are ordered, so a name
                 // colliding across tracks resolves to the earliest one.
-                if (!index.has(pkg.toLowerCase())) index.set(pkg.toLowerCase(), { name: pkg, section: section.title });
+                if (!index.has(pkg.name.toLowerCase())) index.set(pkg.name.toLowerCase(), { entry: pkg, section: section.title });
             }
         }
         const checked = names.map((requested): CheckedPackage => {
             const hit = index.get(requested.trim().toLowerCase());
+            if (!hit) return { requested, present: false };
             // `name` echoes the catalog's canonical spelling — R package names are
             // case-sensitive at `library()`, so the exact one is what the caller needs.
-            return hit ? { requested, present: true, name: hit.name, section: hit.section } : { requested, present: false };
+            // The store identity rides only where the source records it.
+            return {
+                requested,
+                present: true,
+                name: hit.entry.name,
+                section: hit.section,
+                ...(hit.entry.version === undefined ? {} : { version: hit.entry.version }),
+                ...(hit.entry.storeDir === undefined ? {} : { storeDir: hit.entry.storeDir }),
+                ...(hit.entry.hash === undefined ? {} : { hash: hit.entry.hash }),
+            };
         });
         return { available: true, checked };
     }
@@ -204,7 +243,7 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
         .filter((s) => matchesLanguage(s.title))
         .map((s) => ({
             title: s.title,
-            packages: needle ? s.packages.filter((p) => p.toLowerCase().includes(needle)) : s.packages,
+            packages: needle ? s.packages.filter((p) => p.name.toLowerCase().includes(needle)) : s.packages,
         }))
         .filter((s) => s.packages.length > 0);
 
@@ -224,22 +263,34 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
     return { available: true, total, returned, hasMore: returned < total, content };
 }
 
-export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile">;
+export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory">;
 
-/** Create the package inventory over a host-readable farm `inflexa.lock`, merged with the image fragment. */
+/**
+ * Create the package inventory over the bound source: the pool-scope reader
+ * when the embedder binds one (a conversation or planning surface), the
+ * host-readable farm `inflexa.lock` otherwise (a sandbox agent). The image
+ * fragment merges into either report.
+ */
 export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps = {}) {
     const lockCandidates = deps.farmLockFile ? [deps.farmLockFile] : DEFAULT_FARM_LOCK_FILES;
     const imagePackagesFile = deps.imagePackagesFile ?? DEFAULT_IMAGE_PACKAGES_FILE;
+    const readPoolInventory = deps.readPoolInventory;
+    // The scope decides the framing sentence: a sandbox agent reads what it can
+    // import NOW, and a conversation surface reads what the store HOLDS — a
+    // package absent from the pool needs an acquisition, not a shrug.
+    const scopeSentence = readPoolInventory
+        ? "Query the R, Python, CLI, and Node packages the package pool holds — the set a run can link into an analysis. A package reported present needs no acquisition; a package absent here is not in the store yet. "
+        : "Query the R, Python, CLI, and Node packages installed in the sandbox. No packages can be installed at runtime — only what this tool reports is importable. ";
     return defineTool({
         id: "list_available_packages",
         description:
-            "Query the R, Python, CLI, and Node packages installed in the sandbox. No packages can be installed at runtime — only what this tool reports is importable. " +
+            scopeSentence +
             "A full listing is small (a few hundred packages) and is returned whole by default, so a listing you get back is the complete set unless `hasMore` says otherwise. " +
             '`names`: check specific packages (e.g. ["Seurat", "scanpy"]) — returns present/absent plus the language track for each, case-insensitively; this is the cheapest call and the right one for \'is X available?\'. ' +
             "`query`: case-insensitive substring filter over package names. " +
             "`language`: restrict to one track (r | python | cli | node). " +
             "`limit`: cap the packages listed; the response always carries the true `total` and a `hasMore` flag, so truncation is never silent. " +
-            'The package list carries NO version numbers — this tool cannot report a package\'s version. Check a version at runtime instead (e.g. `python -c "import scanpy; print(scanpy.__version__)"`).',
+            "Each entry renders as `name==version` where the source pins a version, and a `names` check also reports the store directory and the content hash where the source records them.",
         inputSchema: z.object({
             names: z
                 .array(z.string())
@@ -281,8 +332,19 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
             return "full package list";
         },
         execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
+            // The baked image fragment merges in when the host can read one; a
+            // missing fragment merges nothing, and that is the normal state for
+            // a host that runs outside the image.
+            const fragmentSections: Section[] = await readFile(imagePackagesFile, "utf-8")
+                .then(parsePackagesFile)
+                .catch((): Section[] => []);
             // An unreadable inventory is an expected environment state — model it as an
             // `available: false` data variant telling the caller the set is UNKNOWN.
+            if (readPoolInventory) {
+                const pool = await readPoolInventory().catch((): null => null);
+                if (pool === null) return ok({ available: false, content: POOL_UNAVAILABLE_NOTE });
+                return ok(queryPackages([...pool, ...fragmentSections], input));
+            }
             let lock: FarmLock | null = null;
             for (const candidate of lockCandidates) {
                 lock = readFarmLockFile(candidate).unwrapOr(null);
@@ -291,12 +353,6 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
             if (lock === null) {
                 return ok({ available: false, content: UNAVAILABLE_NOTE });
             }
-            // The baked image fragment merges in when the host can read one; a
-            // missing fragment merges nothing, and that is the normal state for
-            // a host that runs outside the image.
-            const fragmentSections: Section[] = await readFile(imagePackagesFile, "utf-8")
-                .then(parsePackagesFile)
-                .catch((): Section[] => []);
             return ok(queryPackages([...lockSections(lock), ...fragmentSections], input));
         },
     });
