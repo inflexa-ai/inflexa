@@ -29,10 +29,10 @@ describe("list_launch_dir tool", () => {
     let dir = "";
     let analysisId = "";
 
-    beforeEach(() => {
+    beforeEach(async () => {
         freshDb();
         dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-ld-")));
-        analysisId = createAnalysis({ cwd: dir, name: str256("ld")._unsafeUnwrap() })._unsafeUnwrap().id;
+        analysisId = (await createAnalysis({ cwd: dir, name: str256("ld")._unsafeUnwrap() }))._unsafeUnwrap().id;
     });
 
     afterEach(() => {

@@ -43,11 +43,11 @@ describe("usage command action", () => {
         return logs.join("\n");
     }
 
-    beforeEach(() => {
+    beforeEach(async () => {
         freshDb();
         origCwd = process.cwd();
         dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-usage-")));
-        const analysis = createAnalysis({ cwd: dir, name: str256("usage")._unsafeUnwrap() })._unsafeUnwrap();
+        const analysis = (await createAnalysis({ cwd: dir, name: str256("usage")._unsafeUnwrap() }))._unsafeUnwrap();
         analysisId = analysis.id;
         anchorId = analysis.anchorId;
         process.chdir(dir);
@@ -82,8 +82,8 @@ describe("usage command action", () => {
         expect(out).toMatch(/planner\s+1\s+400\s+100/);
     });
 
-    test("resolves the analysis named by --analysis rather than the working context", () => {
-        const other = createAnalysis({ cwd: dir, name: str256("other")._unsafeUnwrap() })._unsafeUnwrap();
+    test("resolves the analysis named by --analysis rather than the working context", async () => {
+        const other = (await createAnalysis({ cwd: dir, name: str256("other")._unsafeUnwrap() }))._unsafeUnwrap();
         record("k1", { usage: { inputTokens: 999 } });
         upsertLlmUsage({
             recordKey: "k2",
@@ -237,11 +237,11 @@ describe("usage grain subcommand actions", () => {
         return logs.join("\n");
     }
 
-    beforeEach(() => {
+    beforeEach(async () => {
         freshDb();
         origCwd = process.cwd();
         dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-usage-grain-")));
-        const analysis = createAnalysis({ cwd: dir, name: str256("usage")._unsafeUnwrap() })._unsafeUnwrap();
+        const analysis = (await createAnalysis({ cwd: dir, name: str256("usage")._unsafeUnwrap() }))._unsafeUnwrap();
         analysisId = analysis.id;
         anchorId = analysis.anchorId;
         process.chdir(dir);

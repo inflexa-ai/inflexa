@@ -11,6 +11,7 @@ import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { commitStagedNodes } from "./store_flight.ts";
 import {
     closureOf,
+    composeFullFarm,
     extendFarm,
     linkPackagesIntoFarm,
     makeEmptyFarm,
@@ -534,10 +535,71 @@ describe("makeEmptyFarm", () => {
     });
 });
 
+// --- The full heal ----------------------------------------------------------------
+
+describe("composeFullFarm heals a farm-less analysis from the catalog", () => {
+    test("links the whole catalog closure, and the lock is the catalog copy", async () => {
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+
+        const farm = (await composeFullFarm({ storeRoot: root, analysisId }))._unsafeUnwrap();
+
+        expect(farm.farmPath).toBe(join(root, "farms", analysisId));
+        expect([...farm.storeDirs]).toEqual([ALPHA, BETA, DELTA, EXTRADEP, GAMMA, RPKGA, RPKGB, TYPING]);
+        expect([...farm.roots]).toEqual([BETA, GAMMA, RPKGA, TYPING]);
+        // The lock is the catalog lock VERBATIM, thus the advertised inventory
+        // equals the linked content and the warm records ride.
+        expect(readFileSync(join(farm.farmPath, "inflexa.lock"), "utf8")).toBe(readFileSync(join(root, "farms", "catalog", "inflexa.lock"), "utf8"));
+        const tree = treeOf(farm.farmPath);
+        expect(tree.get("python/site-packages/beta")).toBe(`link:${MOUNT}/store/${BETA}/beta`);
+        expect(tree.get("r/cran/Rpkga")).toBe(`link:${MOUNT}/store/${RPKGA}/Rpkga`);
+        expect(tree.get("cache/numba-cache/warm.bin")).toBe("file");
+        // The swap published whole: no staging directory stays behind.
+        expect(readdirSync(join(root, "farms")).filter((name) => name.startsWith("."))).toEqual([]);
+    });
+
+    test("a present farm stays untouched, empty or composed", async () => {
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+        (await makeEmptyFarm({ storeRoot: root, analysisId }))._unsafeUnwrap();
+        const before = farmLockOf(join(root, "farms", analysisId));
+
+        const healed = (await composeFullFarm({ storeRoot: root, analysisId }))._unsafeUnwrap();
+
+        expect(healed.added).toEqual([]);
+        expect(farmLockOf(join(root, "farms", analysisId))).toEqual(before);
+    });
+
+    test("two heals of one analysis serialize, and the second serves the published farm", async () => {
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+
+        const [first, second] = await Promise.all([composeFullFarm({ storeRoot: root, analysisId }), composeFullFarm({ storeRoot: root, analysisId })]);
+
+        const results = [first._unsafeUnwrap(), second._unsafeUnwrap()];
+        // Exactly one composed, and the other served the published farm unchanged.
+        expect(results.filter((farm) => farm.added.length > 0).length).toBe(1);
+        expect(readFileSync(join(root, "farms", analysisId, "inflexa.lock"), "utf8")).toBe(
+            readFileSync(join(root, "farms", "catalog", "inflexa.lock"), "utf8"),
+        );
+    });
+
+    test("no catalog refuses with the download remedy, and it makes no farm", async () => {
+        const root = tempStore();
+        rmSync(join(root, "farms", "catalog"), { recursive: true });
+        const analysisId = randomUUIDv7();
+
+        const result = await composeFullFarm({ storeRoot: root, analysisId });
+
+        expect(result._unsafeUnwrapErr().type).toBe("template_unusable");
+        expect(existsSync(join(root, "farms", analysisId))).toBe(false);
+    });
+});
+
 // --- The farm resolver ------------------------------------------------------------
 
 describe("resolveAnalysisFarm", () => {
-    test("heals a missing farm as an empty one, and its location carries the cache", async () => {
+    test("heals a missing farm FULL from the catalog, and its location carries the cache", async () => {
         const root = tempStore();
         const analysisId = randomUUIDv7();
 
@@ -547,7 +609,25 @@ describe("resolveAnalysisFarm", () => {
             kind: "available",
             location: { farmPath: join(root, "farms", analysisId), cachePath: join(root, "farms", analysisId, "cache") },
         });
-        expect(existsSync(join(root, "farms", analysisId, "inflexa.lock"))).toBe(true);
+        // The backstop heal is the FULL composition: a farm-less analysis predates
+        // the farms, and the old images carried every package.
+        expect(readFileSync(join(root, "farms", analysisId, "inflexa.lock"), "utf8")).toBe(
+            readFileSync(join(root, "farms", "catalog", "inflexa.lock"), "utf8"),
+        );
+    });
+
+    test("with no catalog, a missing farm resolves unavailable, and the reason names the download", async () => {
+        const root = tempStore();
+        rmSync(join(root, "farms", "catalog"), { recursive: true });
+        const analysisId = randomUUIDv7();
+
+        const resolution = await resolveAnalysisFarm(root, analysisId);
+
+        // An empty heal here would consume the pre-release discriminator: the farm
+        // would then exist, and the catalog landing could never heal it full.
+        expect(resolution.kind).toBe("unavailable");
+        if (resolution.kind === "unavailable") expect(resolution.reason).toContain("store download");
+        expect(existsSync(join(root, "farms", analysisId))).toBe(false);
     });
 
     test("answers an existing farm with one stat, and it re-seeds a cache the user removed", async () => {

@@ -251,6 +251,20 @@ async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"
         const reports = refreshTransferState(seams);
         const live = reports.filter((report) => report.live);
         if (live.length === 0) break;
+        // A live CATALOG transfer over a store that cannot serve yet is the
+        // between-consent-and-landing state of a farm-less analysis. Its landing
+        // is a multi-gigabyte download, and that is not a wait a launch can
+        // hold. The refusal classifies the state the way the launch refusal
+        // classifies a pool miss: in flight, launch again when it lands. A
+        // catalog UPDATE over a usable store keeps the wait, because the merge
+        // into the store root is the hazard the hold exists for.
+        if (live.some((report) => report.kind === "catalog")) {
+            const content = await seams.inspect(seams.storeRoot());
+            if (content !== "installed" && content !== "local") {
+                seams.notify({ kind: "error", text: "The package-store catalog transfer is in flight. Launch again when it lands." });
+                return "blocked";
+            }
+        }
         if (!announced) {
             announced = true;
             seams.notify({

@@ -1282,6 +1282,79 @@ export async function makeEmptyFarm(params: {
 }
 
 /**
+ * Compose the FULL farm of a farm-less analysis from the catalog closure.
+ *
+ * The missing farm is the pre-release discriminator: creation makes the farm
+ * with the analysis, thus an analysis without one predates the farms, and the
+ * old images carried every package. The heal gives it the same reach again — it
+ * links the whole closure that the catalog farm records, and the lock of the
+ * healed farm is the catalog `inflexa.lock` VERBATIM. Thus the advertised
+ * inventory equals the linked content, and the warm records ride.
+ *
+ * The composition builds into a dot-staging directory beside the farms and
+ * publishes with one rename, thus a crash leaves a dot-directory that every
+ * scanner skips, and the analysis stays farm-less until the next trigger. A
+ * present farm returns unchanged, and that check runs INSIDE the mutex, thus
+ * two concurrent heals serialize and the second serves the published farm.
+ *
+ * It yields to a live reclamation, because it links pool content — refer to
+ * {@link underFarmMutex}.
+ */
+export async function composeFullFarm(
+    params: { readonly storeRoot: string; readonly analysisId: string },
+    deps: FarmCompositionDeps = {},
+): Promise<Result<FarmComposition, FarmCompositionError>> {
+    const farmPath = analysisFarmPath(params.storeRoot, params.analysisId);
+    const catalogLock = join(params.storeRoot, FARMS_DIR, CATALOG_FARM, FARM_LOCK_FILE);
+    const stagePath = join(params.storeRoot, FARMS_DIR, `.heal-${params.analysisId}`);
+    const made = await underFarmMutex(params.analysisId, reclaimYield(deps), () => {
+        if (existsSync(join(farmPath, FARM_LOCK_FILE))) {
+            const lock = readOwnLock(farmPath);
+            return ok<FarmComposition, FarmCompositionError>({
+                farmPath,
+                roots: lock === null ? [] : lock.packages.filter((entry) => entry.requested).map((entry) => entry.store_dir),
+                storeDirs: lock === null ? [] : lock.packages.map((entry) => entry.store_dir),
+                added: [],
+                tracks: [],
+            });
+        }
+        return readTemplate(params.storeRoot).andThen((template) =>
+            readDepsGraph(params.storeRoot).andThen((graph) => {
+                const closure = readFarmClosure(join(params.storeRoot, FARMS_DIR, CATALOG_FARM));
+                const roots = readFarmRoots(join(params.storeRoot, FARMS_DIR, CATALOG_FARM));
+                // The catalog and the graph publish together. A catalog member that
+                // the graph does not hold would link short, thus the walk refuses.
+                const unknown = [...closure].filter((key) => !graph.nodes.has(key)).sort();
+                if (unknown.length > 0) return err<FarmComposition, FarmCompositionError>({ type: "unknown_root", roots: unknown });
+                return tryFs("make the staging farm", () => {
+                    // A dot-directory from a crashed heal is debris, and a farm
+                    // directory WITHOUT a lock is one too: the mount gate refuses
+                    // it, and the rename below needs the slot free.
+                    rmSync(stagePath, { recursive: true, force: true });
+                    rmSync(farmPath, { recursive: true, force: true });
+                    mkdirSync(stagePath, { recursive: true });
+                })
+                    .andThen(() => linkClosure(params.storeRoot, stagePath, graph, closure, template, roots))
+                    .andThen((composed) =>
+                        tryFs("publish the healed farm", () => {
+                            cpSync(catalogLock, join(stagePath, FARM_LOCK_FILE));
+                            seedFarmCache(params.storeRoot, stagePath);
+                            renameSync(stagePath, farmPath);
+                        }).map(() => ({ ...composed, farmPath })),
+                    );
+            }),
+        );
+    });
+    // The same channel that `makeEmptyFarm` writes: the resolver calls this heal
+    // inside the harness, and the sandbox gate is the surface that names a failure.
+    pendingFailure = made.match(
+        () => null,
+        (error) => ({ analysisId: params.analysisId, reason: describeFarmCompositionError(error) }),
+    );
+    return made;
+}
+
+/**
  * Extend the farm of an analysis with the closure of more roots.
  *
  * This is the ONE writer of the package links of a farm. It links the closure of
@@ -1352,6 +1425,15 @@ export function analysisFarmPath(storeRoot: string, analysisId: string): string 
     return join(storeRoot, FARMS_DIR, analysisId);
 }
 
+/**
+ * The catalog farm on the host, at `<storeRoot>/farms/catalog`. The heal
+ * triggers read its lock for presence, with the same naming rule as
+ * {@link analysisFarmPath}.
+ */
+export function catalogFarmPath(storeRoot: string): string {
+    return join(storeRoot, FARMS_DIR, CATALOG_FARM);
+}
+
 // --- The two seam realizations ------------------------------------------------
 
 /**
@@ -1364,10 +1446,11 @@ export function analysisFarmPath(storeRoot: string, analysisId: string): string 
  * composes nothing: the packages of a farm come from the plan of the analysis and
  * from the steps, which name them long before and long after this call.
  *
- * The resolver makes an empty farm when the farm is ABSENT — a user can delete the
- * store by hand, and a miss that did not heal would refuse every later sandbox of
- * the analysis. An empty farm invents no package set, thus the heal breaks no
- * rule.
+ * A MISSING farm is the pre-release discriminator, and the resolver is the
+ * backstop of the heal: it composes the FULL farm from the catalog closure
+ * ({@link composeFullFarm}), for a sandbox that no analysis open preceded. An
+ * empty heal here would consume the discriminator, and the analysis would lose
+ * the everything-available reach of the old images forever.
  *
  * The location carries the read-write cache of the farm beside it, thus the
  * sandbox mounts the cache at `/mnt/libs/cache` and a warm entry persists between
@@ -1386,7 +1469,7 @@ export async function resolveAnalysisFarm(storeRoot: string, analysisId: string)
         seedFarmCache(storeRoot, farmPath);
         return { kind: "available", location: { farmPath, cachePath: join(farmPath, FARM_CACHE_DIR) } };
     }
-    const made = await makeEmptyFarm({ storeRoot, analysisId });
+    const made = await composeFullFarm({ storeRoot, analysisId });
     return made.match(
         (farm): FarmResolution => ({ kind: "available", location: { farmPath: farm.farmPath, cachePath: join(farm.farmPath, FARM_CACHE_DIR) } }),
         (error): FarmResolution => ({ kind: "unavailable", reason: describeFarmCompositionError(error) }),

@@ -54,10 +54,10 @@ describe("manage_inputs tool", () => {
     let dir = "";
     let analysisId = "";
 
-    beforeEach(() => {
+    beforeEach(async () => {
         freshDb();
         dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-mi-")));
-        analysisId = createAnalysis({ cwd: dir, name: str256("mi")._unsafeUnwrap() })._unsafeUnwrap().id;
+        analysisId = (await createAnalysis({ cwd: dir, name: str256("mi")._unsafeUnwrap() }))._unsafeUnwrap().id;
     });
 
     afterEach(() => {

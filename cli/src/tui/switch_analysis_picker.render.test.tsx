@@ -37,9 +37,9 @@ afterEach(() => {
     for (const dir of [dirA, dirB]) rmSync(dir, { recursive: true, force: true });
 });
 
-function analysisIn(dir: string, name: string): Analysis {
+async function analysisIn(dir: string, name: string): Promise<Analysis> {
     writeFileSync(join(dir, "one.txt"), "x");
-    return createAnalysis({ cwd: dir, name: str256(name)._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] })._unsafeUnwrap();
+    return (await createAnalysis({ cwd: dir, name: str256(name)._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] }))._unsafeUnwrap();
 }
 
 function usageEntry(analysisId: string, recordKey: string, usage: LlmUsageEntry["usage"]): LlmUsageEntry {
@@ -104,8 +104,8 @@ function openSwitchPicker(workspace: Workspace): void {
 
 describe("Switch analysis picker figures", () => {
     test("each row carries its OWN analysis's total, and an analysis with none carries no figure", async () => {
-        const spent = analysisIn(dirA, "rna-seq");
-        const untouched = analysisIn(dirB, "atac-seq");
+        const spent = await analysisIn(dirA, "rna-seq");
+        const untouched = await analysisIn(dirB, "atac-seq");
         upsertLlmUsage(usageEntry(spent.id, "a-1", { inputTokens: 767_600, outputTokens: 33_100 }))._unsafeUnwrap();
         // A row belonging to ANOTHER analysis must not leak into either figure.
         upsertLlmUsage(usageEntry(untouched.id + "-nope", "a-2", { inputTokens: 999_000 }))._unsafeUnwrap();
@@ -137,8 +137,8 @@ describe("Switch analysis picker figures", () => {
     });
 
     test("every analysis stays listed and selectable, figures or not", async () => {
-        analysisIn(dirA, "rna-seq");
-        const second = analysisIn(dirB, "atac-seq");
+        await analysisIn(dirA, "rna-seq");
+        const second = await analysisIn(dirB, "atac-seq");
         upsertLlmUsage(usageEntry(second.id, "b-1", { outputTokens: 40 }))._unsafeUnwrap();
 
         // The spies live on the CONTEXT workspace, not on the one handed to `run`: the dialog reads
@@ -185,8 +185,8 @@ describe("Switch analysis picker identity", () => {
     test("two analyses of one name are told apart by their anchor headers", async () => {
         // The reason this grouping exists: a slug is unique only WITHIN an anchor, so the same name
         // in two folders produces two rows that are identical down to the character.
-        const inA = analysisIn(dirA, "A1");
-        const inB = analysisIn(dirB, "A1");
+        const inA = await analysisIn(dirA, "A1");
+        const inB = await analysisIn(dirB, "A1");
 
         const workspace = ws();
         const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
@@ -212,7 +212,7 @@ describe("Switch analysis picker identity", () => {
     });
 
     test("the row date is absolute, and the cursor row gives the id and the slug", async () => {
-        const only = analysisIn(dirA, "rna-seq");
+        const only = await analysisIn(dirA, "rna-seq");
 
         const workspace = ws();
         const setup = await testRender(harnessNode(workspace), { width: 110, height: 24 });
@@ -235,7 +235,7 @@ describe("Switch analysis picker identity", () => {
     });
 
     test("ctrl+y copies the cursor row's analysis id", async () => {
-        const only = analysisIn(dirA, "rna-seq");
+        const only = await analysisIn(dirA, "rna-seq");
         const copied: string[] = [];
         const restore = __setClipboardWriterForTest(async (text) => {
             copied.push(text);
@@ -258,8 +258,8 @@ describe("Switch analysis picker identity", () => {
     });
 
     test("a typed y filters instead of copying — the chord needs ctrl", async () => {
-        analysisIn(dirA, "rna-seq");
-        analysisIn(dirB, "yeast");
+        await analysisIn(dirA, "rna-seq");
+        await analysisIn(dirB, "yeast");
         const copied: string[] = [];
         const restore = __setClipboardWriterForTest(async (text) => {
             copied.push(text);

@@ -80,10 +80,10 @@ function seamsFor(runs: CortexRunRow[]): RefreshSeams {
     };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     freshDb();
     dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-app-panel-")));
-    analysis = createAnalysis({ cwd: dir, name: str256("panel-test")._unsafeUnwrap(), inputPaths: [] })._unsafeUnwrap();
+    analysis = (await createAnalysis({ cwd: dir, name: str256("panel-test")._unsafeUnwrap(), inputPaths: [] }))._unsafeUnwrap();
     // `ready` is what opens the input gate and stops the boot indicator claiming rows of its own.
     __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
     __setAgentModelsForTest({ current: { conversation: "m", sandbox: "m", utility: "m" }, pending: new Map() });

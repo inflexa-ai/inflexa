@@ -78,6 +78,20 @@ describe("awaitSandboxReady", () => {
         expect(notices.filter((notice) => notice.text.includes("Waiting for the catalog transfer"))).toHaveLength(1);
     });
 
+    test("a live catalog transfer over an unusable store refuses with the classified in-flight reason", async () => {
+        const notices: Notice[] = [];
+        const gate = seams({
+            notices,
+            inspect: async () => "missing",
+            readTransfers: () => [report("catalog", "running", true)],
+        });
+
+        // The store cannot serve a sandbox before the catalog lands, and the
+        // landing of a multi-gigabyte download is not a wait a launch can hold.
+        expect(await awaitSandboxReady(gate)).toBe("blocked");
+        expect(notices.some((notice) => notice.kind === "error" && notice.text.includes("in flight") && notice.text.includes("Launch again"))).toBe(true);
+    });
+
     test("refuses an absent image with the pull command, and the failed row's reason rides along", async () => {
         const notices: Notice[] = [];
         const gate = seams({

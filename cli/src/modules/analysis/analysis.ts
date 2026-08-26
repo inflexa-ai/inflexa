@@ -8,7 +8,7 @@ import type { DbError } from "../../db/errors.ts";
 import { findAnalysesByRef, listAnalysesByAnchor, listAnalysesByProject, listAnalysisInputs, listAnalyses } from "../../db/primary_query.ts";
 import { insertAnalysis, insertAnalysisInput, deleteAnalysisInput, renameAnalysis } from "../../db/primary_mutation.ts";
 import { currentUserActor } from "../prov/prov.ts";
-import { makeEmptyFarm } from "../libs/composition.ts";
+import { analysisFarmPath, describeFarmCompositionError, makeEmptyFarm } from "../libs/composition.ts";
 import { Bus } from "../../lib/bus.ts";
 import { env } from "../../lib/env.ts";
 import { renameResult } from "../../lib/fs.ts";
@@ -203,7 +203,7 @@ export function applyInputsDiff(analysisId: string, toAdd: string[], toRemove: A
  * write: the workspace at `<cwd>/.inflexa/analyses/<slug>/` is where everything the analysis
  * touches will live, so a folder that cannot host it must fail creation — there is no fallback.
  */
-export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, WorkspaceError> {
+export async function createAnalysis(opts: CreateAnalysisInput): Promise<Result<Analysis, WorkspaceError>> {
     if (!isDirWritable(opts.cwd)) {
         return err({
             type: "workspace_unavailable",
@@ -212,44 +212,55 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, Work
                 `Create the analysis in a writable folder (inputs can be referenced from anywhere).`,
         });
     }
-    return getOrCreateAnchorForCwd(opts.cwd).andThen((anchor) =>
-        uniqueSlugForAnchor(anchor.id, opts.name).andThen((slug): Result<Analysis, WorkspaceError> => {
-            const now = Date.now();
-            const analysis: Analysis = {
-                id: randomUUIDv7(),
-                projectId: opts.projectId ?? null,
-                anchorId: anchor.id,
-                name: opts.name,
-                slug,
-                createdAt: now,
-                updatedAt: now,
-            };
-            // Inputs are user-driven: an analysis created without explicit paths starts with NONE.
-            // We MUST NOT default to the anchor/cwd — that would silently enroll the entire working
-            // directory (potentially tens of thousands of files) and let the open-time parity check
-            // auto-trigger a data profile over all of it. Enrolling an input is always a deliberate
-            // act (the file picker, `inflexa new <paths>`, or a later `addInputs`).
-            const inputPaths = opts.inputPaths ?? [];
-            return (
-                insertAnalysis(analysis)
-                    // Seed the provenance document with the creation event before any input events.
-                    .andThen((created) => {
-                        Bus.emit("inflexa", {
-                            type: "prov.analysis_created",
-                            analysisId: created.id,
-                            actor: currentUserActor(),
-                        });
-                        // The farm is made WITH the analysis, empty, and its cache seeds
-                        // from the catalog (the farm-composition spec). Fire-and-forget,
-                        // because a farm failure must not fail the creation: the failure
-                        // records on the gate channel, and the farm resolver heals a
-                        // missing farm at the first sandbox action.
-                        void makeEmptyFarm({ storeRoot: env.packageStoreDir, analysisId: created.id });
-                        return ok(created);
-                    })
-                    .andThen((created) => (inputPaths.length > 0 ? addInputs(created.id, inputPaths, opts.cwd).map(() => created) : ok(created)))
-            );
-        }),
+    const anchor = getOrCreateAnchorForCwd(opts.cwd);
+    if (anchor.isErr()) return err(anchor.error);
+    const slug = uniqueSlugForAnchor(anchor.value.id, opts.name);
+    if (slug.isErr()) return err(slug.error);
+
+    const now = Date.now();
+    const analysis: Analysis = {
+        id: randomUUIDv7(),
+        projectId: opts.projectId ?? null,
+        anchorId: anchor.value.id,
+        name: opts.name,
+        slug: slug.value,
+        createdAt: now,
+        updatedAt: now,
+    };
+
+    // The farm is made WITH the analysis, empty, BEFORE the row lands. The missing
+    // farm is the pre-release discriminator of the heal, thus every created
+    // analysis must carry one, and an analysis whose farm could not be made would
+    // be a broken shell. A failure stops the creation whole: no row, no event.
+    const farm = await makeEmptyFarm({ storeRoot: env.packageStoreDir, analysisId: analysis.id });
+    if (farm.isErr()) {
+        return err({
+            type: "workspace_unavailable",
+            message:
+                `The package farm at ${analysisFarmPath(env.packageStoreDir, analysis.id)} could not be made: ` +
+                `${describeFarmCompositionError(farm.error)}. Fix the cause, then create the analysis again.`,
+            cause: farm.error,
+        });
+    }
+
+    // Inputs are user-driven: an analysis created without explicit paths starts with NONE.
+    // We MUST NOT default to the anchor/cwd — that would silently enroll the entire working
+    // directory (potentially tens of thousands of files) and let the open-time parity check
+    // auto-trigger a data profile over all of it. Enrolling an input is always a deliberate
+    // act (the file picker, `inflexa new <paths>`, or a later `addInputs`).
+    const inputPaths = opts.inputPaths ?? [];
+    return (
+        insertAnalysis(analysis)
+            // Seed the provenance document with the creation event before any input events.
+            .andThen((created) => {
+                Bus.emit("inflexa", {
+                    type: "prov.analysis_created",
+                    analysisId: created.id,
+                    actor: currentUserActor(),
+                });
+                return ok(created);
+            })
+            .andThen((created) => (inputPaths.length > 0 ? addInputs(created.id, inputPaths, opts.cwd).map(() => created) : ok(created)))
     );
 }
 

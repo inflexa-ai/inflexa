@@ -60,6 +60,7 @@ import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
 import { watchProfileParity, driveForceReprofile } from "./hooks/profile_parity.ts";
+import { watchFarmHeal } from "./hooks/farm_heal.tsx";
 import { listAnalysisInputs } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
 
@@ -496,6 +497,11 @@ export function App(props: AppProps) {
     // in-place analysis swap, fire-and-forget, mapping the outcome to a notice. An app-level reactive
     // hook so the boot/analysis watch runs under App's reactive owner; never fires before `ready`.
     watchProfileParity(workspace);
+
+    // Heal the farm of a pre-release analysis at the open and at the catalog
+    // landing (the transfer poll observes it). With no catalog and no live
+    // transfer, the open prompts for the download, with one consent.
+    watchFarmHeal(workspace);
 
     // Bind the open chat's pg conversation thread once boot reaches `ready` (Postgres is its only
     // source), and keep that thread's row snapshot — the sidebar SESSION section's title/age — in step
