@@ -197,7 +197,7 @@ describe("genePreclinicalProfile — human phenotype half", () => {
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1" }, ctx))._unsafeUnwrap();
 
         expect(result.phenotypes).toBeUndefined();
-        expect(seen.some((u) => u.includes("monarchinitiative.org"))).toBe(false);
+        expect(seen.some((u) => new URL(u).hostname === "api-v3.monarchinitiative.org")).toBe(false);
     });
 });
 
