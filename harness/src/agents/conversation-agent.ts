@@ -246,6 +246,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             pool,
             resourcePolicy,
             usageRecorder,
+            bioKeys,
             ...(refStorePath ? { refStorePath } : {}),
             ...(packagesFile ? { packagesFile } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
