@@ -8,11 +8,16 @@ The `inflexa store` command family and the acquisition flights. An approved add 
 
 The CLI MUST expose the `inflexa store` family: `add`, `link`, `ls`,
 `download`, `cancel`, and `reclaim`. No `store use` and no `store verify`
-exist. Each command declares its agent policy at registration: `add` and
-`download` are `approval`, `ls` is `auto` with no flags, `link` is `auto`
-with `analysis` in its safe flags, and `reclaim` is `approval`. The chat
-install path of today MUST keep working: the agent runs `store add` through
-the run-inflexa tool, and each call pauses on the TUI ask.
+exist. Each command declares its agent policy at registration. `add`,
+`download`, and `reclaim` are `approval`. `ls` is `auto` with no flags.
+`link` is `auto` with `analysis` and `lang` in its safe flags. The safe
+flags MUST cover the natural agent call whole, because a link takes no ask.
+An unsafe flag on the natural call makes the auto policy dead in practice.
+A bare `store link` MUST resolve the analysis from the anchor of the
+working directory. A folder that anchors none, or more than one, MUST
+refuse with the flag. The chat install path of today MUST keep working: the
+agent runs `store add` through the run-inflexa tool, and each call pauses
+on the TUI ask.
 
 #### Scenario: The agent installs with one gated call
 
@@ -23,6 +28,12 @@ the run-inflexa tool, and each call pauses on the TUI ask.
 
 - **WHEN** the command tree is listed
 - **THEN** no `store use` and no `store verify` command exists
+
+#### Scenario: The natural link call runs without an ask
+
+- **GIVEN** the agent runs `store link jinja2==3.1.6 --lang python` through run-inflexa, inside the analysis folder
+- **WHEN** the tool classifies the call
+- **THEN** the command runs with no approval ask, and the farm of the anchored analysis gains the link
 
 ### Requirement: store add takes one package with explicit flags
 
@@ -48,23 +59,33 @@ stops with an ask to the user.
 
 An approved `store add` MUST enqueue into a host-side pending set, not start
 its own provisioner run. The pending set MUST persist in the primary
-database, thus a crash loses no approved entry. The flight MUST launch when
-the agent turn ends, or on an explicit flush. The turn end is the true end
-of the asks: an approved add only enqueues, and no ask comes after the turn.
-A mid-turn grace timer is rejected. The formulation time of the agent has
-no bound, thus a timer would split one batch.
+database, thus a crash loses no approved entry. The flight MUST launch at
+the first of three moments: the end of the agent turn, an explicit flush,
+or 10 seconds after the pending set becomes non-empty. The 10-second gate
+bounds the wait of a long turn. An add approved early must not sit queued
+behind minutes of agent work, because the acquisition can run beside that
+work. The gate anchors on the first observation of a non-empty set. It does
+not slide, thus a burst of asks still lands in one batch. The split of
+one turn into two flights is accepted, and it costs one more container run,
+because the provisioner resolves each spec alone.
 
-One one-shot provisioner run MUST resolve the whole approved set. A direct
-terminal `store add` flushes the whole set at once. A flush can claim the
-entries that another live turn queued, and that split is accepted: each
-spec still reports through its own flight. One flight exists per normalized
-spec, and the flight concurrency cap stays configurable.
+One provisioner run MUST take the whole claimed set. A direct terminal
+`store add` flushes the whole set at once. A flush can claim the entries
+that another live turn queued, and that split is accepted: each spec still
+reports through its own flight. One flight exists per normalized spec, and
+the flight concurrency cap stays configurable.
 
 #### Scenario: Three approvals share one run
 
-- **GIVEN** an agent turn in which the user approves three package asks
-- **WHEN** the turn ends
-- **THEN** one provisioner run resolves the three specs together
+- **GIVEN** an agent turn in which the user approves three package asks inside the gate window
+- **WHEN** the flush claims the set
+- **THEN** one provisioner run takes the three specs together
+
+#### Scenario: The gate flushes a long turn
+
+- **GIVEN** an approved add, and an agent turn that continues past the gate
+- **WHEN** 10 seconds pass from the first observation of the pending set
+- **THEN** the detached flush starts, and the flight runs beside the turn
 
 #### Scenario: A failing spec drops without the batch
 
@@ -169,6 +190,13 @@ the retry and the delete remedies. An unknown name carries the store-add
 ask. Thus the agent replans from the true state, and no run is wasted on a
 package that never landed.
 
+A version collision MUST name the two store directories and the closure
+members that pull each side. The dependent is the remedy surface: the fix
+is to drop or re-pin a dependent, and a bare name makes the reader guess
+it. An unreadable dependency graph MUST refuse as one store-level reason,
+never as a per-package absence. A false absence sends the agent after
+packages the pool holds, and it hides the structural fault.
+
 #### Scenario: An in-flight package defers the launch with its state
 
 - **GIVEN** a plan package whose flight still runs
@@ -180,6 +208,18 @@ package that never landed.
 - **GIVEN** a plan package with a `failed` flight row
 - **WHEN** the launch refuses on the pool miss
 - **THEN** the remedy carries the recorded reason, with the retry and the delete remedies
+
+#### Scenario: A collision names the dependents
+
+- **GIVEN** a plan whose closure pulls two pins of one distribution
+- **WHEN** the launch refuses on the collision
+- **THEN** the refusal names both store directories, each with the closure members that pull it
+
+#### Scenario: A broken graph refuses as itself
+
+- **GIVEN** a dependency graph with a dangling edge
+- **WHEN** the launch runs its link pass
+- **THEN** the refusal carries the graph reason, and no package reads as absent
 
 ### Requirement: The sidebar carries the package pipeline
 
@@ -250,6 +290,30 @@ record stays whole, and only the render translates the phase.
 - **WHEN** the user chooses delete
 - **THEN** the row leaves the ledger, and the debris pass frees the never-advertised bytes
 
+### Requirement: The reclaim removes only unadvertised content
+
+`store reclaim` MUST remove only a store directory that no farm links AND
+that the dependency graph does not advertise. A graph-advertised directory
+is pool inventory, for two reasons. A locally acquired package holds no
+farm link until a run links it, thus "no farm link" marks fresh inventory
+as well as waste. And an edge of a surviving node must keep its target. A
+removal that ignores edges leaves a dangling edge, and the strict graph
+reader then refuses the whole pool. The reclaimable readout of `store ls`
+MUST count the same set as the removal. The provisioner run MUST still
+prune the graph nodes whose directories are gone.
+
+#### Scenario: An acquired package survives the reclaim
+
+- **GIVEN** a committed package that no farm links yet
+- **WHEN** `store reclaim` runs
+- **THEN** the directory and its graph node stay, and the readout counted nothing for it
+
+#### Scenario: The dependency of a surviving node survives
+
+- **GIVEN** a store directory that only the edge of another node references
+- **WHEN** `store reclaim` runs
+- **THEN** the directory stays, thus the graph keeps every edge resolvable
+
 ### Requirement: Debris collects without a command
 
 The app MUST collect debris silently, with no user command. Debris is the
@@ -264,7 +328,8 @@ store content only through the links of its farm, and a linked directory
 is never debris. Both MUST hold the reclaim exclusivity, and both MUST
 yield to live work. The collection MUST NOT touch a directory that the
 graph references, thus a pre-fetched package survives. `store reclaim`
-keeps its meaning and its approval gate.
+keeps its approval gate, and it removes the same tier plus the graph
+prune.
 
 #### Scenario: A failed acquisition frees itself
 
