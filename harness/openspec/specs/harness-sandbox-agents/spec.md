@@ -139,9 +139,13 @@ layer MUST NOT exist.
 
 The tool links what the host staged, and it MUST NOT install, download, or
 acquire anything. It MUST return one outcome per request: `linked`,
-`present`, `absent` with `acquisitionPossible`, or `collision` with the two
-store directories. A link MUST be live in the running sandbox, with no
-restart. The tool description MUST state these facts.
+`present`, `absent` with `acquisitionPossible`, `collision`, or
+`unavailable`. A `collision` MUST carry the two store directories, and its
+detail MUST name the packages that pull each side. An `unavailable` outcome
+MUST carry the reason that the link pass cannot answer. It MUST NOT render
+as an absence, because a false absence sends the agent after packages the
+pool holds. A link MUST be live in the running sandbox, with no restart.
+The tool description MUST state these facts.
 
 #### Scenario: A bound seam adds the tool
 
@@ -160,6 +164,12 @@ restart. The tool description MUST state these facts.
 - **GIVEN** a request for a package that the pool does not hold
 - **WHEN** `link_packages` returns
 - **THEN** the outcome is `absent`, and `acquisitionPossible` states whether the host can acquire that ecosystem
+
+#### Scenario: A link pass that cannot answer says why
+
+- **GIVEN** a store whose dependency graph the realization cannot read
+- **WHEN** `link_packages` returns
+- **THEN** each outcome is `unavailable` with the graph reason, and no outcome is `absent`
 
 ### Requirement: The package-link prompt layer appends only with the seam
 

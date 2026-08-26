@@ -184,7 +184,9 @@ content hash when the source gives them. A full listing carries no hashes,
 because a thousand rows of sha256 bury the signal. A missing or unreadable
 source is an expected state: the tool MUST NOT throw — it MUST return an
 `available: false` data variant carrying a fallback note rather than an
-error.
+error. When the pool-scope source reports itself unavailable, the note
+MUST carry the reason of the embedder. Without the reason, a structural
+fault reads as a transient one, and the agent retries without end.
 
 #### Scenario: Packages available
 
@@ -200,6 +202,11 @@ error.
 
 - **WHEN** a conversation surface asks `names: ["scipy"]` against a pool that pins `scipy==1.16.3`
 - **THEN** the answer marks it present as `scipy==1.16.3`, with the store directory and the full hash
+
+#### Scenario: An unreadable pool names its reason
+
+- **WHEN** the pool-scope source answers unavailable with a reason
+- **THEN** the tool returns `available: false`, and the content carries that reason beside the UNKNOWN note
 
 ### Requirement: The lib-store resolver env is injected only when the store is mounted
 

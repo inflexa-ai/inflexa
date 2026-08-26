@@ -318,3 +318,60 @@ change carries the inventory scope, the version render, and the refusal
 text of the launch. The CLI change carries the bindings, the remedy
 classification, the two sidebar sections, the meters, the dialog, and the
 prompt rules.
+
+## The second live-run pass (the spiral postmortem)
+
+The second live run spiraled on one mundane task: add polars, then launch.
+The investigation found five defects that stack, and the user set three
+directions. The decisions below correct the record, and the corrective
+work edits the tree specs directly.
+
+### 24. The 10-second flush gate (issue 1)
+
+The flight starts at the first of three moments: the turn end, an explicit
+flush, or 10 seconds after the pending set becomes non-empty. This
+supersedes the turn-end-only half of decision 16. The live run showed the
+cost: an add approved early sat behind minutes of agent work, and one turn
+ended with "launch next turn". The batch argument was weaker than
+recorded, because the provisioner resolves each spec alone — a split batch
+costs one container run, not correctness. The gate anchors on the first
+observation of the non-empty set, and it does not slide, thus a burst of
+asks still batches. The transfer poll of the TUI carries the gate, and the
+turn-end call stays as the sweep.
+
+### 25. The link runs without an ask in practice (issue 2)
+
+Decision 19 said "no link approval", and the registration gave it half:
+`--lang` sat outside the safe flags, and the agent passes `--lang` on its
+natural call, thus every call escalated. `lang` joins the safe flags,
+because no value of it changes the effect class. A bare `store link` also
+resolves the analysis from the anchor of the working directory. The
+`run_inflexa` tool runs inside the analysis folder, thus the flag
+round-trip through `inflexa ls` leaves.
+
+### 26. The reclaim reference set gains the graph (issue 3)
+
+Plain `store reclaim` removed every directory with no farm link, and a
+locally acquired package has none until a run links it. Thus the reclaim
+deleted fresh inventory, and it cut a live edge — the dangling edge then
+broke every strict graph read. The reference set becomes farm links plus
+graph nodes, the same rule the debris pass holds. The `store ls` readout
+counts the same set, and its hint says "debris". What removes a regretted
+local acquisition is future work, for example a `store remove` command.
+
+### 27. A collision refusal names the dependents (issue 3)
+
+The version-collision error carries the closure members that pull each
+pin, as `name==version`. Each render names them: the launch refusal, the
+`store link` message, and the `link_packages` outcome detail. The
+dependent is the remedy surface — the live run guessed the culprit wrong,
+and five turns of store surgery followed.
+
+### 28. A pass that cannot answer says why (issue 3)
+
+An unreadable dependency graph reports `unavailable` with the graph
+reason, on every surface: the link seam, the launch refusal, and the
+pool inventory of `list_available_packages`. It never renders as a
+per-package absence, and it never renders as a bare UNKNOWN. The live run
+read the bare UNKNOWN as a transient flake for three turns, while `store
+ls` — which reads pins from disk — contradicted it.
