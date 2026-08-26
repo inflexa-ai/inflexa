@@ -12,12 +12,13 @@ name: Store Pipeline
 
 on:
   workflow_dispatch:
-  # A branch push fires nothing in this repository — every push-fired run in
-  # its history sits on main. The pull_request event is the proven path: the
-  # open PR fires it on each push, and it runs the workflow files of the
-  # branch. The path filter keeps a normal push from starting a build.
-  pull_request:
-    paths: [.github/workflows/store-pipeline.yml]
+  # TEMPORARY, remove before the merge to main — the proven device of the
+  # spike (lib-store-provisioner.yml). A push trigger runs on any branch,
+  # and a touch of the sentinel file starts a run. The trigger commit
+  # itself starts nothing, because the sentinel exists before it changes.
+  push:
+    branches: [feat/local-package-store]
+    paths: [".store-pipeline-trigger"]
 
 concurrency:
   group: ${{ github.workflow }}
