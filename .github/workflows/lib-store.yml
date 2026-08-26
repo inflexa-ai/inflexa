@@ -1,24 +1,15 @@
 name: Store Pipeline
 
 # TEMPORARY, remove before merge: the branch-side driver of the three store
-# workflows. A dispatch-only workflow that never reached the default branch
-# is not registered, thus gh cannot dispatch it. The called workflows run
-# INSIDE this run, thus they work without registration, and the `needs`
-# chain runs them in a strict sequence on the shared builders.
-#
-# The push trigger fires only when this file itself changes, thus a normal
-# branch push starts no multi-hour build. The lock commit-back of the store
-# build pushes to the branch, and the path filter keeps that push inert.
+# workflows. GitHub creates runs only for workflows that its registry
+# knows, and this branch cannot register a new file. The lib-store.yml
+# PATH is registered from main, and a dispatch with --ref runs the file of
+# the given ref at that path. Thus the pipeline lives in this slot on the
+# branch, and the called workflows run INSIDE its run, in a strict
+# sequence on the shared builders.
 
 on:
   workflow_dispatch:
-  # TEMPORARY, remove before the merge to main — the proven device of the
-  # spike (lib-store-provisioner.yml). A push trigger runs on any branch,
-  # and a touch of the sentinel file starts a run. The trigger commit
-  # itself starts nothing, because the sentinel exists before it changes.
-  push:
-    branches: [feat/local-package-store]
-    paths: [".store-pipeline-trigger"]
 
 concurrency:
   group: ${{ github.workflow }}
@@ -31,24 +22,3 @@ jobs:
   images:
     uses: ./.github/workflows/sandbox-images-build.yml
     secrets: inherit
-    permissions:
-      contents: read
-      packages: write
-
-  store:
-    needs: images
-    uses: ./.github/workflows/package-store-build.yml
-    secrets: inherit
-    permissions:
-      # The lock commit-back job of the store build writes to the branch.
-      contents: write
-      packages: write
-
-  acceptance:
-    needs: store
-    uses: ./.github/workflows/package-store-acceptance.yml
-    secrets: inherit
-    permissions:
-      contents: read
-      packages: read
-      actions: read
