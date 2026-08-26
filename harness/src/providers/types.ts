@@ -7,6 +7,7 @@
  */
 
 import type { FinishReason, LanguageModel, ModelMessage, ToolSet } from "ai";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { ResultAsync } from "neverthrow";
 
@@ -43,6 +44,11 @@ export interface ChatRequest {
     readonly tools: ToolSet;
     readonly toolChoice?: "auto" | "none" | "required" | { readonly type: "tool"; readonly toolName: string };
     readonly providerOptions?: ProviderOptions;
+    /**
+     * How deep the model reasons on this call. Absent sends no directive, thus
+     * the model applies its own default. Refer to `ReasoningPolicy`.
+     */
+    readonly reasoning?: ReasoningPolicy;
 }
 
 /**
@@ -60,15 +66,23 @@ export type PromptCachePolicy = { readonly ttl: "5m" | "1h" } | "off";
 /**
  * How deep a model reasons, in harness-neutral names.
  *
- * `{ effort }` asks the provider for that reasoning depth, and `"off"` sends no
- * reasoning directive at all. The five values are the ladder that both vendor
- * families accept. A model with no reasoning support ignores the directive
- * rather than fails on it, thus the policy is a no-op for that model. Refer to
- * `./reasoning.ts`, the single place where the harness translates this into
- * vendor wire options.
+ * This is the `reasoning` call setting of the AI SDK, and the harness passes the
+ * value through without a change. Each provider package maps the name onto its
+ * own wire shape, and each one holds the table of what its models accept. The
+ * Anthropic package selects adaptive thinking with the matching `effort`, and it
+ * lowers a level that the model does not accept. The OpenAI-compatible package
+ * sends the name as `reasoning_effort`.
+ *
+ * `"provider-default"` sends no directive, thus the model applies its own
+ * default. `"none"` asks for no reasoning. The other names are the ladder from
+ * the shallowest depth to the deepest depth.
+ *
+ * CAUTION: never write `providerOptions.anthropic.effort` or
+ * `providerOptions.openai.reasoningEffort` in place of this field. A value on
+ * either key turns the per-model table off, and the raw name then reaches the
+ * wire. A model that does not accept that name answers 400.
  */
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
-export type ReasoningPolicy = { readonly effort: ReasoningEffort } | "off";
+export type ReasoningPolicy = NonNullable<LanguageModelV4CallOptions["reasoning"]>;
 
 /**
  * Token accounting for one chat call, in harness-neutral names.

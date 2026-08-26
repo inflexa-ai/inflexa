@@ -642,6 +642,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         // bound, because the headers of a non-streaming response arrive
                         // when the model completes.
                         providerOptions: req.providerOptions,
+                        reasoning: req.reasoning,
                     });
                 });
                 return ok(responseFromGenerate(result, { requestedModelId, servedModelId: capture.servedModelId() }));
@@ -687,6 +688,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // thus it feeds neither bound.
                     ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
                     providerOptions: req.providerOptions,
+                    reasoning: req.reasoning,
                 });
                 const iterator = result.fullStream[Symbol.asyncIterator]();
                 const first = await pullNextDelta(iterator);
@@ -846,38 +848,6 @@ function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageMod
 }
 
 /**
- * Mirror the neutral reasoning effort into the namespace of an
- * OpenAI-compatible connection.
- *
- * The compatible provider reads `providerOptions[<the name of the connection>]`
- * rather than `providerOptions.openai`, and it derives that namespace from the
- * first dot-separated segment of the name. The loop cannot write that key,
- * because only this seam knows the name. Thus the middleware copies
- * `reasoningEffort` across at request time. A value that the caller already set
- * on the namespace wins, and a request with no effort passes through untouched.
- */
-function withCompatibleReasoning(model: LanguageModelV4, name: string): LanguageModelV4 {
-    const namespace = name.split(".")[0]?.trim();
-    if (namespace === undefined || namespace === "") return model;
-    return wrapLanguageModel({
-        model,
-        middleware: {
-            transformParams: async ({ params }) => {
-                const effort = params.providerOptions?.["openai"]?.["reasoningEffort"];
-                if (effort === undefined) return params;
-                return {
-                    ...params,
-                    providerOptions: {
-                        ...params.providerOptions,
-                        [namespace]: { reasoningEffort: effort, ...params.providerOptions?.[namespace] },
-                    },
-                };
-            },
-        },
-    });
-}
-
-/**
  * Realize an `AiSdkProviderConfig` into a `ChatProvider` bound to that config's
  * connection and model. The model is closed into the returned provider here (it
  * is never passed per `ChatRequest`), so N models require N provider
@@ -961,7 +931,9 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         fetch: effectiveFetch as typeof fetch | undefined,
     });
     return createAiSdkProvider({
-        model: withCompatibleReasoning(provider.chatModel(config.model), config.name),
+        // The compatible package reads the neutral `reasoning` of the call, thus
+        // the seam needs no middleware to carry the depth into its namespace.
+        model: provider.chatModel(config.model),
         resolveBilling: deps.resolveBilling,
         capabilities: config.capabilities,
         logger: deps.logger,
