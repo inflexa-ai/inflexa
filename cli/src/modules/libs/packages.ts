@@ -18,11 +18,11 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { PoolInventoryPackage, PoolInventorySection } from "@inflexa-ai/harness";
+import type { PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "@inflexa-ai/harness";
 
 import { capture, type ContainerRuntime } from "../../lib/container.ts";
 import { mkdirResult, writeFileResult } from "../../lib/fs.ts";
-import { readDepsGraph } from "./composition.ts";
+import { describeFarmCompositionError, readDepsGraph } from "./composition.ts";
 
 /** The container path of the baked inventory fragment inside the runtime image. */
 const IMAGE_PACKAGES_PATH = "/opt/inflexa/image-packages.txt";
@@ -115,13 +115,16 @@ async function readHashMarker(storeDir: string): Promise<string | undefined> {
  * question is "what does the store hold", and the farm of a new analysis is
  * empty — a farm view there reads every pool package as absent.
  *
- * `null` means the graph cannot be read, and the tool then reports the set
- * as UNKNOWN. An absent graph is a store that advertises nothing yet, and
- * UNKNOWN is the honest answer for it too.
+ * An unreadable graph reads as `unavailable` WITH the graph reason, and the
+ * tool reports the set as UNKNOWN plus that reason. The reason is the whole
+ * point: a dangling edge is a structural fault, and without the cause the
+ * agent reads the state as a transient flake and retries without end. An
+ * absent graph is a store that advertises nothing yet, and it carries the
+ * same honest answer.
  */
-export async function readPoolInventorySections(storeRoot: string): Promise<readonly PoolInventorySection[] | null> {
+export async function readPoolInventorySections(storeRoot: string): Promise<PoolInventoryRead> {
     const graph = readDepsGraph(storeRoot);
-    if (graph.isErr()) return null;
+    if (graph.isErr()) return { kind: "unavailable", reason: describeFarmCompositionError(graph.error) };
     const sections: PoolInventorySection[] = [];
     for (const [track, title] of Object.entries(POOL_TRACK_TITLES)) {
         const shelf = graph.value.byName[track as keyof typeof graph.value.byName];
@@ -143,5 +146,5 @@ export async function readPoolInventorySections(storeRoot: string): Promise<read
         }
         if (packages.length > 0) sections.push({ title, packages });
     }
-    return sections;
+    return { kind: "sections", sections };
 }

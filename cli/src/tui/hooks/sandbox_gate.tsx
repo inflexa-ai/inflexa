@@ -9,6 +9,7 @@ import { takeFarmCompositionFailure, type FarmCompositionFailure } from "../../m
 import { configuredSandboxImage } from "../../modules/libs/pull.ts";
 import { inspectStoreContent, startCatalogTransfer, type StoreContentState } from "../../modules/libs/store_download.ts";
 import { listPendingStoreAdds } from "../../db/primary_query.ts";
+import { startPendingFlushChild } from "../../modules/libs/store.ts";
 import { describeStoreFlightSpec, readStoreFlights, type StoreFlightReport, type StoreFlightStatus } from "../../modules/libs/store_flight.ts";
 import { readTransferReports, startImageTransfer, type TransferReport } from "../../modules/libs/transfers.ts";
 import type { Notice } from "../theme.ts";
@@ -20,11 +21,15 @@ import { notify } from "./notice.ts";
 // action (`awaitSandboxReady`) while a transfer is live, refusing a terminal state with the retry
 // command.
 //
-// The gate STARTS NOTHING and OPENS NO CONSENT (the package-store-transfers spec). `inflexa setup`,
-// `inflexa sandbox pull`, and `inflexa store download` start the children, and each owns its consent.
-// The gate is a reader: it reads the rows, it reports the state, and it names the retry command. The
-// deliberate retry surfaces — the sidebar key and the command palette — route through
+// The gate STARTS NO TRANSFER and OPENS NO CONSENT (the package-store-transfers spec). `inflexa
+// setup`, `inflexa sandbox pull`, and `inflexa store download` start the children, and each owns its
+// consent. The gate is a reader: it reads the rows, it reports the state, and it names the retry
+// command. The deliberate retry surfaces — the sidebar key and the command palette — route through
 // {@link retryTerminalTransfers}, which is a user action and not the gate.
+//
+// The ONE start the poll owns is the pending-set flush child (the 10-second gate of the
+// package-store-management spec). It carries no consent question: the user approved each add at its
+// ask, and the gate only bounds how long the approved set waits — a schedule, not a permission.
 //
 // The FILESYSTEM decides usability, never a row. A store root that `inflexa store add` built carries
 // no catalog receipt and is completely usable; a row that reports `installed` over an absent store
@@ -72,6 +77,21 @@ export const pendingAddLines = pendingAdds;
  */
 const TRANSFER_POLL_MS = 2000;
 
+/**
+ * How long the pending set may wait before the poll starts the flush child.
+ * The turn end flushes first when it comes sooner. The bound exists for the
+ * long turn: an add approved early must not sit queued behind minutes of
+ * agent work, because the acquisition can run beside that work.
+ */
+const PENDING_FLUSH_AFTER_MS = 10_000;
+
+/**
+ * When the poll first saw a non-empty pending set, or `null` while it is
+ * empty. The anchor does NOT slide on growth, thus a burst of asks still
+ * lands in one batch and the wait stays bounded at the gate.
+ */
+let pendingSince: number | null = null;
+
 /** The readiness of the sandbox image, as the seam reports it without a pull. */
 export type ImageReadiness =
     { readonly kind: "present" } | { readonly kind: "absent" } | { readonly kind: "custom" } | { readonly kind: "engine_error"; readonly message: string };
@@ -104,6 +124,10 @@ export type SandboxGateSeams = {
      * test that must observe several polls cannot spend the production cadence on each of them.
      */
     readonly pollMs: number;
+    /** How long the pending set may wait before the poll starts the flush child. Real: {@link PENDING_FLUSH_AFTER_MS}. */
+    readonly pendingFlushAfterMs: number;
+    /** Start the detached flush child over the pending set. Real: {@link startPendingFlushChild}. */
+    readonly startFlush: () => number | null;
 };
 
 /** The first line of a multi-line message, so a hint with its remedy stays one toast line. */
@@ -132,6 +156,8 @@ export const realSandboxGateSeams: SandboxGateSeams = {
     },
     notify,
     pollMs: TRANSFER_POLL_MS,
+    pendingFlushAfterMs: PENDING_FLUSH_AFTER_MS,
+    startFlush: startPendingFlushChild,
 };
 
 /** Refresh the three signals from the rows: the transfers, the flights, and the pending adds that ride the same poll. */
@@ -147,7 +173,22 @@ export function refreshTransferState(seams: SandboxGateSeams = realSandboxGateSe
             progress: flight.row.progress,
         })),
     );
-    setPendingAdds(seams.readPending().map((entry) => ({ spec: describeStoreFlightSpec(entry) })));
+    const pending = seams.readPending();
+    setPendingAdds(pending.map((entry) => ({ spec: describeStoreFlightSpec(entry) })));
+    // The 10-second flush gate. The anchor is the first poll that saw the set
+    // non-empty, and firing clears it: the child claims the rows, and the set
+    // empties on a later poll. A child that could not spawn leaves the set
+    // non-empty, thus the next poll re-arms and the gate retries on its own.
+    // The turn-end flush call stays the sweep, and a double start is safe —
+    // the flush child exits at once over an empty or claimed set.
+    if (pending.length === 0) {
+        pendingSince = null;
+    } else if (pendingSince === null) {
+        pendingSince = Date.now();
+    } else if (Date.now() - pendingSince >= seams.pendingFlushAfterMs) {
+        pendingSince = null;
+        seams.startFlush();
+    }
     return reports;
 }
 
@@ -323,9 +364,10 @@ export function __setPendingAddLinesForTest(next: readonly PendingAddLine[]): vo
     setPendingAdds(next);
 }
 
-/** Test hook: drop the signals and the in-flight flow back to idle. Test-only. */
+/** Test hook: drop the signals, the in-flight flow, and the flush gate back to idle. Test-only. */
 export function __resetSandboxGateForTest(): void {
     gateFlowInflight = null;
+    pendingSince = null;
     setTransfers([]);
     setFlights([]);
     setPendingAdds([]);

@@ -892,11 +892,13 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
     clearAsks();
     // The turn is ending — clear any armed interrupt window so it never carries into idle or the next turn.
     disarmInterrupt();
-    // The flush of the pending package adds (the package-store-management
-    // spec): each approved `store add` of this turn only ENQUEUED, and the
-    // batch runs as ONE provisioner flight now that the asks of the turn are
-    // settled. The child is detached, so a flight that takes minutes holds
-    // nothing of the next turn; an empty pending set spawns nothing.
+    // The turn-end SWEEP of the pending package adds (the package-store-management
+    // spec): each approved `store add` of this turn only ENQUEUED. The
+    // 10-second gate of the transfer poll flushes a long turn's set early,
+    // and this call covers what that gate has not taken yet, so no approved
+    // add outlives its turn unflushed. The child is detached, so a flight
+    // that takes minutes holds nothing of the next turn; an empty pending
+    // set spawns nothing.
     void import("../../modules/libs/store.ts").then((store) => store.startPendingFlushChild());
     switch (outcome.kind) {
         case "ok":

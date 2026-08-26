@@ -2,12 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import type { Notice } from "../theme.ts";
 import type { TransferReport } from "../../modules/libs/transfers.ts";
-import { awaitSandboxReady, __resetSandboxGateForTest, type SandboxGateSeams } from "./sandbox_gate.tsx";
+import { awaitSandboxReady, refreshTransferState, __resetSandboxGateForTest, type SandboxGateSeams } from "./sandbox_gate.tsx";
 
 // The gate holds a sandbox-making action while a transfer is live, and it
-// refuses a terminal state with the retry command. It starts NOTHING and it
-// opens NO consent — the seams below carry no start and no dialog, which makes
-// that structural rather than asserted.
+// refuses a terminal state with the retry command. It starts NO TRANSFER and
+// it opens NO consent — the seams below carry no transfer start and no
+// dialog, which makes that structural rather than asserted. The one start the
+// poll owns is the pending-set flush child, whose consent each add's ask
+// already carried; its default stub starts nothing and records nothing.
 
 /** One report in the shape the rows give, with everything else quiet. */
 function report(kind: TransferReport["kind"], state: TransferReport["state"], live: boolean, message: string | null = null): TransferReport {
@@ -44,6 +46,8 @@ function seams(over: Partial<SandboxGateSeams> & { notices?: Notice[] }): Sandbo
         imageReadiness: async () => ({ kind: "present" }),
         notify: (notice) => notices.push(notice),
         pollMs: 5,
+        pendingFlushAfterMs: 10_000,
+        startFlush: () => null,
         ...over,
     };
 }
@@ -128,5 +132,76 @@ describe("awaitSandboxReady", () => {
         expect(notices.map((notice) => notice.text).join("\n")).toContain("the catalog farm is absent");
         // The read CONSUMED the record, thus the next action is not refused on it.
         expect(await awaitSandboxReady(gate)).toBe("ready");
+    });
+});
+
+describe("the pending flush gate", () => {
+    const PENDING = [{ ecosystem: "python" as const, name: "polars", specifier: "" }];
+
+    test("the poll starts the flush child once the pending set outwaits the gate", async () => {
+        const starts: number[] = [];
+        const gate = seams({
+            readPending: () => PENDING,
+            pendingFlushAfterMs: 20,
+            startFlush: () => {
+                starts.push(Date.now());
+                return 4242;
+            },
+        });
+
+        refreshTransferState(gate);
+        expect(starts).toHaveLength(0);
+        await Bun.sleep(30);
+        refreshTransferState(gate);
+
+        expect(starts).toHaveLength(1);
+    });
+
+    test("a set that empties before the gate fires starts nothing, and the anchor clears", async () => {
+        let pending = PENDING;
+        let started = 0;
+        const gate = seams({
+            readPending: () => pending,
+            pendingFlushAfterMs: 20,
+            startFlush: () => {
+                started += 1;
+                return 4242;
+            },
+        });
+
+        refreshTransferState(gate);
+        pending = [];
+        refreshTransferState(gate);
+        await Bun.sleep(30);
+        refreshTransferState(gate);
+
+        // The empty poll cleared the anchor, thus the elapsed time before it
+        // counts for nothing and no child starts.
+        expect(started).toBe(0);
+    });
+
+    test("the anchor does not slide while the set grows, thus a burst still flushes at the bound", async () => {
+        let pending = PENDING;
+        let started = 0;
+        const gate = seams({
+            readPending: () => pending,
+            pendingFlushAfterMs: 40,
+            startFlush: () => {
+                started += 1;
+                return 4242;
+            },
+        });
+
+        refreshTransferState(gate);
+        await Bun.sleep(25);
+        // The set GROWS below the bound: a sliding anchor would restart the
+        // wait here, and the fire below would prove it did not.
+        pending = [...PENDING, { ecosystem: "python" as const, name: "rpy2", specifier: "" }];
+        refreshTransferState(gate);
+        expect(started).toBe(0);
+        await Bun.sleep(25);
+        refreshTransferState(gate);
+
+        expect(started).toBe(1);
     });
 });

@@ -846,17 +846,20 @@ export function buildProgram(): Command {
         },
     );
 
-    // `auto` with `analysis` safe: a link writes symbolic links into the farm
-    // of the named analysis and nothing else, and the pool decides what can
-    // link. `--lang` is NOT safe: it is new, and only the user widens the set.
+    // `auto` with `analysis` and `lang` safe: a link writes symbolic links
+    // into the farm of the named analysis and nothing else, and the pool
+    // decides what can link. `--lang` only narrows which track answers a
+    // name, thus no value of it changes the effect class. The agent passes
+    // both flags on its natural call, so an unsafe listing here would make
+    // the auto policy dead in practice (decision 19: a link takes no ask).
     registerAction(
         store
             .command("link")
             .description("Link packages the pool already holds into the farm of one analysis (no download, no container)")
             .argument("<packages...>", "The packages to link (name, or name==version)")
-            .option("--analysis <ref>", "The analysis whose farm gains the links (id or name)")
+            .option("--analysis <ref>", "The analysis whose farm gains the links (id or name; the analysis of this folder otherwise)")
             .option("--lang <ecosystem>", "The ecosystem: python or r (asked on a both-hit otherwise)"),
-        { kind: "auto", safeFlags: ["analysis"] },
+        { kind: "auto", safeFlags: ["analysis", "lang"] },
         async (packages: string[], options: { analysis?: string; lang?: string }) => {
             const { runStoreLink } = await import("../modules/libs/store.ts");
             if (options.lang !== undefined && options.lang !== "python" && options.lang !== "r") {

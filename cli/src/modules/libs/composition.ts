@@ -246,9 +246,19 @@ export type FarmCompositionError =
     | { readonly type: "template_unusable"; readonly path: string; readonly detail: string }
     /**
      * Two store directories claim one top-level name, and the composer cannot merge
-     * them. The farm stays exactly as it was.
+     * them. The farm stays exactly as it was. Each `neededBy` list holds the
+     * closure members whose edges pull that side, as `name==version` — empty
+     * for a requested root. Without the dependents, a reader must guess which
+     * package pulls each pin, and a wrong guess turns into store surgery.
      */
-    | { readonly type: "version_collision"; readonly name: string; readonly existing: string; readonly incoming: string }
+    | {
+          readonly type: "version_collision";
+          readonly name: string;
+          readonly existing: string;
+          readonly incoming: string;
+          readonly existingNeededBy: readonly string[];
+          readonly incomingNeededBy: readonly string[];
+      }
     /** A different process composes this farm right now, and it did not finish inside the wait. */
     | { readonly type: "farm_locked"; readonly analysisId: string; readonly holderPid: number }
     /** A reclamation of the pool runs right now, and it did not finish inside the wait. */
@@ -267,8 +277,18 @@ export function describeFarmCompositionError(error: FarmCompositionError): strin
             return `the dependency graph holds no store directory named ${error.roots.join(", ")}`;
         case "template_unusable":
             return error.detail;
-        case "version_collision":
-            return `two store directories claim the name "${error.name}": ${error.existing} and ${error.incoming}`;
+        case "version_collision": {
+            // The dependents ARE the remedy surface: the fix is to drop or re-pin
+            // a dependent, thus the one line must name it. The render caps the
+            // list, and the error keeps it whole.
+            const side = (dir: string, neededBy: readonly string[]): string => {
+                if (neededBy.length === 0) return `${dir} (a requested package)`;
+                const head = neededBy.slice(0, 3).join(", ");
+                const rest = neededBy.length > 3 ? ` and ${neededBy.length - 3} more` : "";
+                return `${dir} (needed by ${head}${rest})`;
+            };
+            return `two store directories claim the name "${error.name}": ${side(error.existing, error.existingNeededBy)} and ${side(error.incoming, error.incomingNeededBy)}`;
+        }
         case "farm_locked":
             return `another process (pid ${error.holderPid}) composes this farm right now`;
         case "reclaim_in_flight":
@@ -931,6 +951,21 @@ function tracksOf(graph: DepsGraph, closure: readonly string[]): string[] {
 }
 
 /**
+ * The closure members whose edges name `storeDir`, as sorted `name==version`
+ * lines. The scan stays inside the CLOSURE, because a dependent outside it
+ * did not put the directory into this link set — only an in-closure edge
+ * explains why the collision exists for THIS farm.
+ */
+function closureDependents(graph: DepsGraph, closure: ReadonlySet<string>, storeDir: string): string[] {
+    const dependents: string[] = [];
+    for (const member of closure) {
+        const node = graph.nodes.get(member);
+        if (node !== undefined && node.edges.includes(storeDir)) dependents.push(`${node.name}==${node.version}`);
+    }
+    return dependents.sort();
+}
+
+/**
  * Link a closure into a farm, and write its lock.
  *
  * The pass is additive by construction: it plans against the farm as it is, and it
@@ -975,7 +1010,14 @@ function linkClosure(
         return plan;
     });
     if (planned.isErr()) return err(planned.error);
-    if (plan.collision) return err({ type: "version_collision", ...plan.collision });
+    if (plan.collision) {
+        return err({
+            type: "version_collision",
+            ...plan.collision,
+            existingNeededBy: closureDependents(graph, closure, plan.collision.existing),
+            incomingNeededBy: closureDependents(graph, closure, plan.collision.incoming),
+        });
+    }
 
     const applied = tryFs("write the links of the farm", () => {
         applyLinkPlan(plan.ops);
@@ -1399,9 +1441,12 @@ export async function linkPackagesIntoFarm(
 ): Promise<readonly PackageRequestOutcome[]> {
     const read = readDepsGraph(storeRoot);
     if (read.isErr()) {
-        // A store with no readable graph answers nothing at all. An acquisition
-        // cannot heal that, thus each request is a dead end.
-        return requests.map((request) => ({ kind: "absent", name: canonicalDistributionName(request.name), acquisitionPossible: false }));
+        // A store with no readable graph answers NOTHING about presence, thus
+        // each request reports `unavailable` with the one graph reason. A bare
+        // "absent" here would be a fabrication: it sends the agent after
+        // packages the pool holds, while the true fault sits in the graph.
+        const reason = describeFarmCompositionError(read.error);
+        return requests.map((request) => ({ kind: "unavailable", name: canonicalDistributionName(request.name), reason }));
     }
     const graph = read.value;
 
@@ -1430,13 +1475,16 @@ export async function linkPackagesIntoFarm(
                     return { kind: linkedAlready.has(answer.storeDir) ? "present" : "linked", name: answer.name, version: answer.version };
                 }
                 const error = extended.error;
-                // A version collision names the two store directories, and the tool
-                // reports both and stops. Each resolved request of the batch carries
-                // it, because the extension refused whole and the farm stayed exactly
-                // as it was.
+                // A version collision names the two store directories WITH their
+                // dependents, and the tool reports both and stops. Each resolved
+                // request of the batch carries it, because the extension refused
+                // whole and the farm stayed exactly as it was. Every other
+                // extension error reports `unavailable` with its reason — a
+                // locked farm or a failed write says nothing about presence, and
+                // an "absent" there would misdirect the caller into asks.
                 return error.type === "version_collision"
-                    ? { kind: "collision", name: error.name, storeDirs: [error.existing, error.incoming] }
-                    : { kind: "absent", name: answer.name, acquisitionPossible: false };
+                    ? { kind: "collision", name: error.name, storeDirs: [error.existing, error.incoming], detail: describeFarmCompositionError(error) }
+                    : { kind: "unavailable", name: answer.name, reason: describeFarmCompositionError(error) };
             },
             (failure) => absentOutcome(request, failure),
         ),
