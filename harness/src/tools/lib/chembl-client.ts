@@ -335,13 +335,22 @@ export async function searchTargets(query: string, limit = 25): Promise<ChemblTa
     return (res.value.targets ?? []).map(mapTarget);
 }
 
+/** Which column of the ChEMBL activity table the supplied id indexes. */
+export type BioactivityIdType = "compound" | "target" | "assay";
+
+const ACTIVITY_ID_FIELD: Record<BioactivityIdType, string> = {
+    compound: "molecule_chembl_id",
+    target: "target_chembl_id",
+    assay: "assay_chembl_id",
+};
+
 export async function getBioactivity(
     chemblId: string,
-    type: "compound" | "target",
+    type: BioactivityIdType,
     options: { activityType?: string; limit?: number } = {},
 ): Promise<ChemblActivity[]> {
     const limit = options.limit ?? 500;
-    const idParam = type === "compound" ? `molecule_chembl_id=${encodeURIComponent(chemblId)}` : `target_chembl_id=${encodeURIComponent(chemblId)}`;
+    const idParam = `${ACTIVITY_ID_FIELD[type]}=${encodeURIComponent(chemblId)}`;
     let url = `${CHEMBL_BASE}/activity.json?${idParam}&limit=${limit}`;
     if (options.activityType) {
         url += `&standard_type=${encodeURIComponent(options.activityType)}`;

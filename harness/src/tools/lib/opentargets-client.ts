@@ -45,6 +45,18 @@ export interface SafetyLiability {
     source: string;
 }
 
+/**
+ * One disease or trait that Open Targets holds, as the free-text resolver
+ * returns it. The `id` is the identifier that `searchDiseaseAssociations`
+ * accepts. Open Targets keys a disease on the EFO ontology, which imports
+ * MONDO, Orphanet and HP, thus an id can read `EFO_…`, `MONDO_…` or `HP_…`.
+ */
+export interface DiseaseCandidate {
+    id: string;
+    name: string;
+    description: string | null;
+}
+
 export interface BaselineExpressionEntry {
     tissueId: string;
     tissueLabel: string;
@@ -94,6 +106,19 @@ const DISEASE_QUERY = `
             score
           }
         }
+      }
+    }
+  }
+`;
+
+const DISEASE_SEARCH_QUERY = `
+  query DiseaseSearch($queryString: String!, $size: Int!) {
+    search(queryString: $queryString, entityNames: ["disease"], page: { size: $size, index: 0 }) {
+      total
+      hits {
+        id
+        name
+        description
       }
     }
   }
@@ -199,6 +224,25 @@ const DiseaseAssociationsDataSchema = z.object({
                         .nullable()
                         .optional(),
                 })
+                .optional(),
+        })
+        .nullable()
+        .optional(),
+});
+
+const DiseaseSearchDataSchema = z.object({
+    search: z
+        .object({
+            total: z.number().nullable().optional(),
+            hits: z
+                .array(
+                    z.object({
+                        id: z.string(),
+                        name: z.string().nullable().optional(),
+                        description: z.string().nullable().optional(),
+                    }),
+                )
+                .nullable()
                 .optional(),
         })
         .nullable()
@@ -321,6 +365,25 @@ export async function searchDiseaseAssociations(efoId: string, limit = 25): Prom
         somaticMutationScore: extractDatatype(row.datatypeScores ?? [], "somatic_mutation"),
         literaturePmids: [],
     }));
+}
+
+/**
+ * Resolve a free-text disease or trait name to the disease ids that
+ * `searchDiseaseAssociations` accepts. A name that matches nothing gives an
+ * empty candidate list, which is a normal outcome and not an error.
+ */
+export async function searchDiseases(query: string, limit = 10): Promise<{ total: number; candidates: DiseaseCandidate[] }> {
+    const data = await gqlFetch(DISEASE_SEARCH_QUERY, { queryString: query, size: limit }, DiseaseSearchDataSchema);
+
+    const hits = data.search?.hits ?? [];
+    return {
+        total: data.search?.total ?? hits.length,
+        candidates: hits.map((hit) => ({
+            id: hit.id,
+            name: hit.name ?? "",
+            description: hit.description ?? null,
+        })),
+    };
 }
 
 /** Fetch known safety liabilities for a target. */

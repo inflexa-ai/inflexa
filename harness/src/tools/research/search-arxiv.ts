@@ -15,9 +15,14 @@ const source = createArxivSource({ maxRetries: 3, retryDelayMs: 1_000, timeoutMs
 export const searchArxivTool = defineTool({
     id: "search_arxiv",
     description:
-        "Search arXiv for preprints in ML, physics, math, control theory, " +
-        "economics, and related quantitative fields. Returns id, title, " +
-        "abstract, authors, publication date, arXiv categories, and URLs.",
+        "Search arXiv — the open preprint server of Cornell University — for work in machine learning, physics, math, quantitative biology, control " +
+        "theory, economics and the related quantitative fields. Returns id, title, abstract, authors, publication date, arXiv categories, and URLs.\n" +
+        "It carries PREPRINTS, thus a paper here may not be peer reviewed, and it is where a method appears months before a journal holds it. For the " +
+        "clinical and biomedical literature use pubmed, which indexes MEDLINE; for cross-domain coverage of any field use search_semantic_scholar.\n" +
+        "ACCEPTED IDENTIFIERS: free text in `query`, and arXiv category codes in `categories` ('cs.LG', 'q-bio.GN', 'math.OC'). An arXiv ID " +
+        "('2301.00001') also matches as free text.\n" +
+        "ABSENCE IS NORMAL: an empty papers array means arXiv holds nothing for the query, and `success: false` with an `error` string means the service " +
+        "could not be reached. Report either one and continue, do not retry unchanged.",
     inputSchema: z.object({
         query: z.string().describe('Free-text query. Example: "adaptive control feedback stabilization".'),
         categories: z

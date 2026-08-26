@@ -1,9 +1,10 @@
 /**
  * Pure async client functions for the NHGRI-EBI GWAS Catalog REST API.
  *
- * Public, no key required. Three search paths: by gene (SNP-by-gene lookup then
- * per-SNP associations), by trait (EFO trait search then its associations), and
- * by variant (direct rsID associations).
+ * Public, no key required. Four search paths: by gene (SNP-by-gene lookup then
+ * per-SNP associations), by trait (EFO trait search then its associations), by
+ * variant (direct rsID associations), and by study (the associations of one
+ * GCST study accession).
  */
 
 import { z } from "zod";
@@ -27,7 +28,7 @@ export interface GwasAssociation {
     sampleSize: string;
 }
 
-export type GwasSearchType = "gene" | "trait" | "variant";
+export type GwasSearchType = "gene" | "trait" | "variant" | "study";
 
 // GWAS Catalog raw wire shapes (HAL+JSON), validated at the fetch boundary.
 // Every field is optional because the API omits absent values; leaf strings
@@ -55,10 +56,10 @@ const RawGwasAssociationSchema = z.object({
     study: RawGwasStudySchema.optional(),
     pvalueMantissa: z.number().optional(),
     pvalueExponent: z.number().optional(),
-    riskFrequency: z.string().optional(),
+    riskFrequency: z.string().nullable().optional(),
     orPerCopyNum: z.number().nullable().optional(),
     betaNum: z.number().nullable().optional(),
-    range: z.string().optional(),
+    range: z.string().nullable().optional(),
 });
 type RawGwasAssociation = z.infer<typeof RawGwasAssociationSchema>;
 
@@ -160,6 +161,11 @@ export async function searchGwasCatalog(
     if (searchType === "variant") {
         const rsId = query.startsWith("rs") ? query : `rs${query}`;
         associationsUrl = `${GWAS_BASE}/singleNucleotidePolymorphisms/${rsId}/associations?projection=associationBySnp`;
+    } else if (searchType === "study") {
+        // The study endpoint keys on the accession alone. The projection nests
+        // the study record on each association, thus `mapAssociation` reads the
+        // accession, the PubMed id and the sample size without a second request.
+        associationsUrl = `${GWAS_BASE}/studies/${encodeURIComponent(query)}/associations?projection=associationByStudy&size=${limit}`;
     } else {
         const traitRes = await apiFetchValidated(
             `${GWAS_BASE}/efoTraits/search/findBySearchQuery?query=${encodeURIComponent(query)}`,
@@ -177,7 +183,12 @@ export async function searchGwasCatalog(
     }
 
     const res = await apiFetchValidated(associationsUrl, GwasEmbeddedSchema, { headers: GWAS_HEADERS });
-    if (res.isErr()) throw new Error(describeApiError(res.error));
+    if (res.isErr()) {
+        // An accession or an rsID that the catalog does not hold is absence, not
+        // a failure, thus it returns an empty record set.
+        if (res.error.type === "http_status" && res.error.status === 404) return { totalFound: 0, associations: [] };
+        throw new Error(describeApiError(res.error));
+    }
 
     const rawAssocs = res.value?._embedded?.associations ?? [];
     const totalFound = res.value?.page?.totalElements ?? rawAssocs.length;

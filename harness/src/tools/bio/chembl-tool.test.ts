@@ -319,6 +319,15 @@ describe("chembl — action: bioactivity", () => {
         expect(requestedUrls[0]).not.toContain("standard_type=");
     });
 
+    it("indexes the assay side for idType='assay'", async () => {
+        stubRoutes([["/activity.json", ACTIVITY_ROWS]]);
+
+        const activities = resultKey(await callChembl({ action: "bioactivity", chemblId: "CHEMBL829584", idType: "assay" }), "activities");
+
+        expect(activities[0]!.assayChemblId).toBe("CHEMBL829584");
+        expect(requestedUrls[0]).toContain("/activity.json?assay_chembl_id=CHEMBL829584&limit=25");
+    });
+
     it("returns an empty activities list when ChEMBL responds 404 (not is_error)", async () => {
         stubStatus(404, "not found");
 

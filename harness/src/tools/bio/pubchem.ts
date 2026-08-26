@@ -93,8 +93,11 @@ type PubchemOutput = { results: PubChemCompound[] } | { crossRefs: PubChemCrossR
 export const pubchemTool = defineTool({
     id: "pubchem",
     description:
-        "Query PubChem (110M+ compounds) — pick the lookup with `action`: 'compound' (resolve an identifier), 'crossrefs' (external registry ids for a CID), 'assays' (bioassay screening " +
-        "summaries for a CID). See `action` for what each returns. " +
+        "Query PubChem — the open chemical database of the NCBI, with over 110M compounds and their BioAssay screening records. Pick the lookup with " +
+        "`action`: 'compound' (resolve an identifier), 'crossrefs' (external registry ids for a CID), 'assays' (bioassay screening summaries for a CID). " +
+        "See `action` for what each returns. " +
+        "ACCEPTED IDENTIFIERS: for 'compound', the form named by `searchBy` — a chemical name ('aspirin'), a SMILES string, an InChI, an InChIKey " +
+        "('BSYNRYMUTXBXSQ-UHFFFAOYSA-N') or a numeric CID ('2244'). 'crossrefs' and 'assays' take the numeric CID only. " +
         "Reach for PubChem when ChEMBL misses the compound — it covers metabolites, vendor chemicals, food additives and environmental compounds that ChEMBL does not. " +
         "PubChem carries no curated mechanism or potency data, so resolve broadly HERE and then bridge OUT: action 'compound' to get the cid, action 'crossrefs' to take its ChEMBL ID, " +
         "then chembl action='mechanism' / 'bioactivity' there for curated activity data. " +

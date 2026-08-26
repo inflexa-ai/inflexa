@@ -63,6 +63,13 @@ const ReactomeSearchResponseSchema = z.object({
 /** Participant list — `searchReactome` reads `displayName` per participant. */
 const ReactomeParticipantsSchema = z.array(z.object({ displayName: z.string().optional() }));
 
+/** One Reactome event record, as `/data/query/{stId}` serves it. */
+const ReactomeEntrySchema = z.object({
+    stId: z.string().optional(),
+    displayName: z.string().optional(),
+    summation: z.array(z.object({ text: z.string().optional() })).optional(),
+});
+
 /** Participant list — `getPathwayMemberships` reads `refEntities` per participant. */
 const ReactomeParticipantEntitiesSchema = z.array(
     z.object({
@@ -162,6 +169,64 @@ export async function searchPathways(query: string, options: PathwaySearchOption
     }
     const results = await Promise.all(tasks);
     return results.flat();
+}
+
+/** A Reactome stable identifier, for example `R-HSA-109581`. */
+const REACTOME_ID_RE = /^R-[A-Z]{3}-\d+(\.\d+)?$/;
+
+/** A KEGG pathway identifier, for example `hsa04010` or `map04010`. */
+const KEGG_ID_RE = /^[a-z]{3,4}\d{5}$/;
+
+/** Read one field out of a KEGG flat-file record. */
+function keggField(record: string, field: string): string | null {
+    const match = new RegExp(`^${field}\\s+(.*)$`, "m").exec(record);
+    return match?.[1]?.trim() || null;
+}
+
+async function getKeggPathway(id: string): Promise<Pathway | null> {
+    const res = await apiFetch<string>(`${KEGG_BASE}/get/${encodeURIComponent(id)}`, { parseAs: "text" });
+    if (res.isErr()) return null;
+    const record = res.value;
+    const name = keggField(record, "NAME");
+    if (!name) return null;
+    const description = keggField(record, "DESCRIPTION");
+    return {
+        id,
+        name,
+        source: "kegg",
+        ...(description ? { description } : {}),
+        url: `https://www.kegg.jp/pathway/${id}`,
+    };
+}
+
+async function getReactomePathway(id: string): Promise<Pathway | null> {
+    const res = await apiFetchValidated(`${REACTOME_BASE}/data/query/${encodeURIComponent(id)}`, ReactomeEntrySchema, {
+        headers: { Accept: "application/json" },
+    });
+    if (res.isErr()) return null;
+    const entry = res.value;
+    const stId = entry.stId ?? id;
+    const description = entry.summation?.map((s) => s.text ?? "").find((text) => text.length > 0);
+    return {
+        id: stId,
+        name: stripHtmlAndCollapseWs(entry.displayName ?? ""),
+        source: "reactome",
+        ...(description ? { description: stripHtmlAndCollapseWs(description) } : {}),
+        url: `https://reactome.org/content/detail/${stId}`,
+    };
+}
+
+/**
+ * Read one pathway by its own identifier. The prefix of the identifier picks
+ * the database, thus the caller passes the id back exactly as a search
+ * returned it. An identifier that neither database holds gives null, which is
+ * absence and not a failure.
+ */
+export async function getPathwayById(id: string): Promise<Pathway | null> {
+    const trimmed = id.trim();
+    if (REACTOME_ID_RE.test(trimmed)) return getReactomePathway(trimmed);
+    if (KEGG_ID_RE.test(trimmed)) return getKeggPathway(trimmed);
+    return null;
 }
 
 /** Pathway memberships for a gene symbol — used directly by §3.7 collector. */

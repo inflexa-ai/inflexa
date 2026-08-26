@@ -20,7 +20,7 @@ import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
 import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
-import { searchPathways, type Pathway } from "../lib/pathway-client.js";
+import { getPathwayById, searchPathways, type Pathway } from "../lib/pathway-client.js";
 
 const QUICKGO_BASE = "https://www.ebi.ac.uk/QuickGO/services";
 const HEADERS = { Accept: "application/json" };
@@ -102,15 +102,24 @@ const inputSchema = z
             .describe(
                 "'go' — Gene Ontology via QuickGO (EBI); needs ONE of goId, query, or geneProductId. Returns terms[] { id, name, definition, aspect } " +
                     "and/or annotations[] { geneProductId, goId, goName, aspect, evidenceCode, qualifier }. " +
-                    "'kegg' / 'reactome' — one pathway database; needs query. 'pathways' — both, in parallel; needs query. " +
-                    "Returns pathways[] { id, name, source, url, genes? }.",
+                    "'kegg' / 'reactome' — one pathway database; needs query or pathwayId. 'pathways' — both, in parallel; needs query or pathwayId. " +
+                    "Returns pathways[] { id, name, source, url, description?, genes? }.",
             ),
         query: z
             .string()
             .min(1)
             .optional()
             .describe(
-                "Free-text term. Required for the pathway vocabularies ('apoptosis', 'MAPK signaling'); for 'go' it is one of the three accepted inputs.",
+                "Free-text term. Required for the pathway vocabularies ('apoptosis', 'MAPK signaling') unless pathwayId is given; for 'go' it is one of " +
+                    "the three accepted inputs.",
+            ),
+        pathwayId: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+                "Pathway vocabularies only. ONE pathway identifier, read back exactly as a search returned it — a Reactome stable ID ('R-HSA-109581') " +
+                    "or a KEGG pathway ID ('hsa04010'). The prefix picks the database, so `vocabulary` and `organism` are ignored for it.",
             ),
         goId: z
             .string()
@@ -135,9 +144,13 @@ const inputSchema = z
             .optional()
             .describe(`Max records per vocabulary queried (default ${DEFAULT_LIMIT}, max 100); with 'pathways' it applies to KEGG and Reactome separately.`),
     })
-    .refine((d) => d.vocabulary === "go" || (d.query !== undefined && d.query.trim().length > 0), {
-        message: "query is required for vocabulary 'kegg', 'reactome' and 'pathways' — the pathway term to search for",
+    .refine((d) => d.vocabulary === "go" || (d.query !== undefined && d.query.trim().length > 0) || (d.pathwayId !== undefined && d.pathwayId.length > 0), {
+        message: "vocabulary 'kegg', 'reactome' and 'pathways' need query (the pathway term to search for) or pathwayId (one 'R-HSA-…' or 'hsa…' identifier)",
         path: ["query"],
+    })
+    .refine((d) => d.vocabulary !== "go" || d.pathwayId === undefined, {
+        message: "pathwayId belongs to the pathway vocabularies — vocabulary 'go' takes goId instead",
+        path: ["pathwayId"],
     })
     .refine((d) => d.vocabulary !== "go" || d.goId !== undefined || d.query !== undefined || d.geneProductId !== undefined, {
         message: "vocabulary 'go' needs at least one of goId (term by ID), query (free-text term search), or geneProductId (a protein's annotations)",
@@ -157,17 +170,34 @@ type AnnotationOutput = { terms?: GoTerm[]; annotations?: GoAnnotation[] } | { p
 export const lookupAnnotationTool = defineTool({
     id: "lookup_annotation",
     description:
-        "Functional annotation for a gene, protein or term — Gene Ontology (QuickGO) and the pathway databases (KEGG, Reactome) behind one `vocabulary`. " +
-        "Names what a gene is known to do, resolves a GO or pathway identifier, or finds the pathways a term belongs to.\n" +
+        "Functional annotation for a gene, protein or term — the Gene Ontology (through EBI QuickGO) and the pathway databases KEGG and Reactome, behind " +
+        "one `vocabulary`. Names what a gene is known to do, resolves a GO or pathway identifier, or finds the pathways a term belongs to.\n" +
+        "ACCEPTED IDENTIFIERS: a GO term ID ('GO:0008150'), a UniProt accession for a protein's annotations ('P04637'), an NCBI Taxon ID ('9606'), a " +
+        "Reactome stable ID ('R-HSA-109581'), a KEGG pathway ID ('hsa04010'), and free text for any of the vocabularies ('apoptosis').\n" +
         "This is annotation LOOKUP, not enrichment: to test whether a gene SET is over-represented in GO/KEGG/Reactome terms use " +
         "search_interactions({action:'enrichment'}), which does the statistics.\n" +
-        "An empty terms / annotations / pathways array is valid no-data — do not retry the same input.",
+        "An empty terms / annotations / pathways array is valid no-data — report it and continue, do not retry the same input. An empty pathways array " +
+        "for a pathwayId means neither database holds that identifier.",
     inputSchema,
     describeCall: "none",
-    execute: async ({ vocabulary, query, goId, geneProductId, taxonId, organism, includeGenes, limit }): Promise<Result<AnnotationOutput, ToolError>> => {
+    execute: async ({
+        vocabulary,
+        query,
+        pathwayId,
+        goId,
+        geneProductId,
+        taxonId,
+        organism,
+        includeGenes,
+        limit,
+    }): Promise<Result<AnnotationOutput, ToolError>> => {
         const cap = limit ?? DEFAULT_LIMIT;
 
         if (vocabulary !== "go") {
+            if (pathwayId) {
+                const pathway = await getPathwayById(pathwayId);
+                return ok({ pathways: pathway ? [pathway] : [] });
+            }
             const pathways = await searchPathways(query!, {
                 source: vocabulary === "pathways" ? "both" : vocabulary,
                 organism: organism ?? "hsa",

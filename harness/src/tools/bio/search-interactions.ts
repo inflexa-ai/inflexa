@@ -16,13 +16,17 @@ type InteractionsOutput =
 export const searchInteractionsTool = defineTool({
     id: "search_interactions",
     description:
-        "Query STRING DB for protein-protein interactions and gene-set functional enrichment. " +
+        "Query the STRING database — the protein-protein association network of EMBL, which folds experimental, database, co-expression and text-mined " +
+        "evidence into one confidence score — for interactions and gene-set functional enrichment. " +
         "'partners' — the one-hop interaction partners of the input proteins, score-sorted: 'what else does this protein work with?'. " +
         "'network' — the interactions AMONG the input proteins only, no new nodes: 'is my gene set actually connected?'. " +
         "'enrichment' — statistical over-representation of GO, KEGG, Reactome and Pfam terms in the input set, FDR-sorted: the enrichment TEST, as " +
         "opposed to lookup_annotation, which just reads a vocabulary. " +
+        "ACCEPTED IDENTIFIERS: STRING resolves each one itself, so a HUGO gene symbol ('TP53'), a UniProt accession ('P04637'), an Ensembl protein ID " +
+        "('ENSP00000269305') and a full protein name all work, mixed in one call. `species` takes an NCBI Taxonomy ID (9606 = human).\n" +
         "`limit` applies to all three actions and defaults small: a network over N proteins grows with N² edges. `totalEdges` / `totalTerms` give the " +
-        "pre-trim counts. An empty result is valid no-data (unconnected set, no enriched term, unresolvable identifiers) — do not retry.",
+        "pre-trim counts. An empty result is valid no-data (unconnected set, no enriched term, unresolvable identifiers) — report it and continue, do " +
+        "not retry.",
     inputSchema: z.object({
         identifiers: z.array(z.string()).min(1).max(100).describe("Protein/gene identifiers (e.g. ['TP53', 'BRCA1'])"),
         species: z.number().int().default(9606).describe("NCBI Taxonomy ID (9606 = human, 10090 = mouse)"),

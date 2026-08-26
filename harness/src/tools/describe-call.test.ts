@@ -106,17 +106,17 @@ describe("describeCall — conversation roster", () => {
         expect(describeCall(tool, { action: "fulltext", pmcId: "PMC1234567" })).toBe("fulltext PMC1234567");
     });
 
-    it("search_gene names the symbols", () => {
-        expect(describeCall(searchGeneTool, { symbols: ["BRCA1", "TP53"], species: "homo_sapiens" })).toBe("BRCA1, TP53");
+    it("search_gene names the identifiers", () => {
+        expect(describeCall(searchGeneTool, { identifiers: ["BRCA1", "ENSG00000141510"], species: "homo_sapiens" })).toBe("BRCA1, ENSG00000141510");
     });
 
     // A batch this size joins to well over the 120-character cap. Left to the cap, the string
     // arrives ending mid-symbol — a fragment that reads as a real gene and says nothing about how
     // many were dropped. The count leads instead, so the sample after it can be trimmed harmlessly.
     it("search_gene counts a large batch rather than letting the cap sever a symbol", () => {
-        const symbols = Array.from({ length: 60 }, (_, i) => `GENE${i}`);
+        const identifiers = Array.from({ length: 60 }, (_, i) => `GENE${i}`);
 
-        const detail = describeCall(searchGeneTool, { symbols, species: "homo_sapiens" });
+        const detail = describeCall(searchGeneTool, { identifiers, species: "homo_sapiens" });
 
         expect(detail).toBe("60 genes: GENE0, GENE1, GENE2, GENE3, GENE4, GENE5, GENE6, GENE7, …");
         expect(normalizeDetail(detail)).toBe(detail);

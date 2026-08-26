@@ -9,6 +9,10 @@ afterEach(() => {
     globalThis.fetch = realFetch;
 });
 
+function json(body: unknown): Response {
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+}
+
 function stubFetch(response: () => Response): void {
     globalThis.fetch = (async () => response()) as unknown as typeof fetch;
 }
@@ -37,7 +41,7 @@ describe("searchGene (bio-lookup family)", () => {
         const result = (
             await searchGeneTool.execute(
                 {
-                    symbols: ["BRCA1"],
+                    identifiers: ["BRCA1"],
                     species: "homo_sapiens",
                     expand: false,
                 },
@@ -57,7 +61,7 @@ describe("searchGene (bio-lookup family)", () => {
         const result = (
             await searchGeneTool.execute(
                 {
-                    symbols: ["NOTAGENE"],
+                    identifiers: ["NOTAGENE"],
                     species: "homo_sapiens",
                     expand: false,
                 },
@@ -73,6 +77,55 @@ describe("searchGene (bio-lookup family)", () => {
         stubFetch(() => new Response("upstream down", { status: 500 }));
 
         const { ctx } = makeToolContext();
-        await expect(searchGeneTool.execute({ symbols: ["BRCA1"], species: "homo_sapiens", expand: false }, ctx)).rejects.toThrow();
+        await expect(searchGeneTool.execute({ identifiers: ["BRCA1"], species: "homo_sapiens", expand: false }, ctx)).rejects.toThrow();
+    });
+
+    it("resolves an Ensembl gene ID to its approved symbol before it reaches Ensembl", async () => {
+        const seen: string[] = [];
+        globalThis.fetch = (async (input: unknown) => {
+            const url = String(input);
+            seen.push(url);
+            if (url.includes("genenames.org")) {
+                return json({
+                    response: {
+                        docs: [
+                            {
+                                symbol: "TP53",
+                                name: "tumor protein p53",
+                                hgnc_id: "HGNC:11998",
+                                ensembl_gene_id: "ENSG00000141510",
+                                uniprot_ids: ["P04637"],
+                            },
+                        ],
+                    },
+                });
+            }
+            if (url.includes("uniprot.org")) {
+                return json({ results: [{ primaryAccession: "P04637", genes: [{ geneName: { value: "TP53" } }] }] });
+            }
+            if (url.includes("ebi.ac.uk/chembl")) return json({ targets: [] });
+            return json({ id: "ENSG00000141510", display_name: "TP53", biotype: "protein_coding" });
+        }) as unknown as typeof fetch;
+
+        const { ctx } = makeToolContext();
+        const result = (await searchGeneTool.execute({ identifiers: ["ENSG00000141510"], species: "homo_sapiens" }, ctx))._unsafeUnwrap();
+
+        expect(result.resolvedFrom).toEqual([{ input: "ENSG00000141510", symbol: "TP53" }]);
+        expect(result.genes[0]!.symbol).toBe("TP53");
+        expect(seen.some((u) => u.includes("/lookup/symbol/homo_sapiens/TP53"))).toBe(true);
+    });
+
+    it("reports an identifier that anchors on no human gene as notFound, not an error", async () => {
+        globalThis.fetch = (async (input: unknown) => {
+            const url = String(input);
+            if (url.includes("ensembl.org")) return json({ id: "", display_name: "" });
+            return json({});
+        }) as unknown as typeof fetch;
+
+        const { ctx } = makeToolContext();
+        const result = (await searchGeneTool.execute({ identifiers: ["CHEMBL99999999"], species: "homo_sapiens" }, ctx))._unsafeUnwrap();
+
+        expect(result.notFound).toEqual(["CHEMBL99999999"]);
+        expect(result.genes).toEqual([]);
     });
 });

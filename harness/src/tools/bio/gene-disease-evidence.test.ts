@@ -227,4 +227,48 @@ describe("geneDiseaseEvidence — fan-out", () => {
     it("rejects a limit above the per-source ceiling at the schema boundary", async () => {
         await expect(tool.inputSchema.parseAsync({ query: "PCSK9", queryType: "gene", limit: 999 })).rejects.toThrow();
     });
+
+    it("keeps cbioportal out of the default set — it scans every curated study", async () => {
+        stubFetch((url) => {
+            if (url.includes("disgenet")) return json([]);
+            if (url.includes("esearch")) return json({ esearchresult: { idlist: [], count: "0" } });
+            return json({ _embedded: { singleNucleotidePolymorphisms: [] } });
+        });
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ query: "PCSK9", queryType: "gene" }, ctx))._unsafeUnwrap();
+
+        expect(result.perSource.map((s) => s.source)).not.toContain("cbioportal");
+    });
+
+    it("reads one GWAS study back by its accession, and marks the other corpora not_applicable", async () => {
+        const seen: string[] = [];
+        stubFetch((url) => {
+            seen.push(url);
+            return json({ _embedded: { associations: [GWAS_ASSOCIATION] }, page: { totalElements: 1 } });
+        });
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ query: "GCST000392", queryType: "gwas_study" }, ctx))._unsafeUnwrap();
+
+        expect(seen[0]).toContain("/studies/GCST000392/associations");
+        expect(outcome(result.perSource, "gwas")).toMatchObject({ status: "ok", returned: 1 });
+        expect(result.perSource.filter((s) => s.status === "not_applicable")).toHaveLength(0);
+        expect(result.disgenet).toBeUndefined();
+    });
+
+    it("reads one ClinVar record back by its accession, and reports the corpora that cannot", async () => {
+        const seen: string[] = [];
+        stubFetch((url) => {
+            seen.push(url);
+            return json({ esearchresult: { idlist: [], count: "0" } });
+        });
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ query: "VCV000012345", queryType: "clinvar_accession", sources: ["clinvar", "gwas"] }, ctx))._unsafeUnwrap();
+
+        expect(seen.every((u) => u.includes("eutils"))).toBe(true);
+        expect(outcome(result.perSource, "clinvar")).toMatchObject({ status: "no_data" });
+        expect(outcome(result.perSource, "gwas")).toMatchObject({ status: "not_applicable" });
+    });
 });

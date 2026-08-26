@@ -79,10 +79,17 @@ function escapeQueryPhrase(value: string): string {
     return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+/**
+ * A boolean operator is separated by a space, never by a literal `+`. The whole
+ * search string goes through `encodeURIComponent`, which turns a `+` into
+ * `%2B`. openFDA then reads that as a character of the term and matches
+ * nothing, but it reads `%20` as the separator that it is.
+ */
+
 function buildSearch(drugName: string, serious: boolean): string {
     const escaped = escapeQueryPhrase(drugName);
     let search = `patient.drug.openfda.generic_name:"${escaped}"`;
-    if (serious) search += "+AND+serious:1";
+    if (serious) search += " AND serious:1";
     return search;
 }
 
@@ -142,7 +149,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
     }
 
     async function countWith(field: string): Promise<number> {
-        const q = `${search}+AND+${field}:1`;
+        const q = `${search} AND ${field}:1`;
         const url = `${OPENFDA_BASE}?search=${encodeURIComponent(q)}&limit=1`;
         const res = await apiFetchValidated(url, FaersMetaResponseSchema);
         if (res.isErr()) return 0;
@@ -228,15 +235,17 @@ const OpenFdaLabelResponseSchema = z.object({
 });
 
 /**
- * Fetch FDA Structured Product Label entries by generic drug name. Returns
- * the most recent N labels (sorted by effective_time desc); each row carries
- * the boxed-warning text, the Section 5 warnings_and_cautions excerpt, and a
- * REMS indicator. Returns [] on 404 / no match.
+ * Fetch FDA Structured Product Label entries by drug name. The name matches
+ * the generic name or the brand name, thus a caller that holds only a brand
+ * name reads the generic name back off each row. Returns the most recent N
+ * labels (sorted by effective_time desc). Each row carries the boxed-warning
+ * text, the Section 5 warnings_and_cautions excerpt, and a REMS indicator.
+ * Returns [] on 404 / no match.
  */
-export async function getDrugLabelActions(genericName: string, options: { limit?: number } = {}): Promise<DrugLabelAction[]> {
+export async function getDrugLabelActions(drugName: string, options: { limit?: number } = {}): Promise<DrugLabelAction[]> {
     const limit = options.limit ?? 5;
-    const escaped = escapeQueryPhrase(genericName);
-    const search = `openfda.generic_name:"${escaped}"`;
+    const escaped = escapeQueryPhrase(drugName);
+    const search = `(openfda.generic_name:"${escaped}" OR openfda.brand_name:"${escaped}")`;
     const url = `${OPENFDA_LABEL_BASE}?search=${encodeURIComponent(search)}` + `&sort=effective_time:desc&limit=${limit}`;
     const res = await apiFetchValidated(url, OpenFdaLabelResponseSchema);
     if (res.isErr()) {

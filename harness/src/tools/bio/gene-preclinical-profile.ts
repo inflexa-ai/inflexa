@@ -1,17 +1,20 @@
 /**
- * genePreclinicalProfile — the in-vivo preclinical picture of one gene: where
- * it is expressed at baseline (Bgee) and what removing it does to a mouse
- * (IMPC), behind one `include`.
+ * genePreclinicalProfile — the in-vivo picture of one gene: where it is
+ * expressed at baseline (Bgee), what removing it does to a mouse (IMPC), and
+ * what people who carry variation in it present with (Monarch, HPO), behind
+ * one `include`.
  *
- * The two halves share an input exactly — ONE human gene symbol, with the
- * per-species orthologs resolved internally — and answer one question between
- * them: is this target expressed where it needs to act, and is a model organism
- * a fair surrogate for it. They were two tools that were called as a pair.
+ * The three halves share an input exactly — ONE human gene symbol, with the
+ * per-species orthologs and the gene curie resolved internally — and answer one
+ * question between them: is this target expressed where it needs to act, is a
+ * model organism a fair surrogate for it, and what does losing it do to a
+ * person. The first two were two tools that were called as a pair.
  *
- * Neither source caps its own output: Bgee returns every annotated tissue per
- * species and IMPC every significant phenotype term, so both halves are trimmed
- * here rather than in the clients — the target-assessment collectors read the
- * same clients and legitimately want full fidelity for the dossier.
+ * No source caps its own output: Bgee returns every annotated tissue per
+ * species, IMPC every significant phenotype term, and Monarch every curated
+ * HPO annotation, so each half is trimmed here rather than in the clients — the
+ * target-assessment collectors read the same clients and legitimately want full
+ * fidelity for the dossier.
  */
 
 import { ok } from "neverthrow";
@@ -19,7 +22,9 @@ import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
 import { SUPPORTED_SPECIES, getMultiSpeciesExpression, type ExpressionRank, type SupportedSpecies, type TissueRow } from "../lib/bgee-client.js";
+import { resolveTarget } from "../lib/identifier-resolver.js";
 import { getKoPhenotypeProfile, type MpTerm, type ViabilityCall, type ViabilityCategory } from "../lib/impc-client.js";
+import { getGenePhenotypeProfile, type MonarchPhenotypeAssociation } from "../lib/monarch-client.js";
 
 /** Ordered weakest → strongest so `minRank` can be a numeric floor. */
 const RANK_ORDER: Record<ExpressionRank, number> = { absent: 0, low: 1, medium: 2, high: 3 };
@@ -46,6 +51,23 @@ interface ExpressionHalf {
     notFound: string[];
 }
 
+/**
+ * One curated human phenotype. The HPO ancestor closure of the source record
+ * is dropped here: it exists so a dossier collector can resolve an organ system
+ * by identifier, and it runs to hundreds of ids that a reader never uses.
+ */
+type HumanPhenotypeTerm = Omit<MonarchPhenotypeAssociation, "ancestorIds">;
+
+interface HumanPhenotypeHalf {
+    /** The curie Monarch was queried by, e.g. `HGNC:1100`; null when the symbol did not anchor on HGNC. */
+    geneCurie: string | null;
+    hpoTerms: HumanPhenotypeTerm[];
+    /** Curated HPO annotations before `phenotypeLimit`. */
+    phenotypeCount: number;
+    /** True when `phenotypeLimit` trimmed `hpoTerms`; `phenotypeCount` is the real total. */
+    phenotypesTrimmed: boolean;
+}
+
 interface KnockoutHalf {
     mouseMarkerSymbol: string | null;
     mgiAccessionId: string | null;
@@ -68,12 +90,14 @@ const inputSchema = z.object({
                 "orthologs are resolved for you.",
         ),
     include: z
-        .array(z.enum(["expression", "knockout"]))
+        .array(z.enum(["expression", "knockout", "phenotypes"]))
         .min(1)
         .optional()
         .describe(
-            "Default BOTH — two sides of one judgement, one request each. 'expression': Bgee baseline (healthy, untreated) expression per species and " +
-                "tissue. 'knockout': IMPC mouse loss-of-function phenotype.",
+            "Default ['expression','knockout'] — two sides of one judgement, one request each. 'expression': Bgee baseline (healthy, untreated) " +
+                "expression per species and tissue. 'knockout': IMPC mouse loss-of-function phenotype. 'phenotypes': the HUMAN counterpart — the curated " +
+                "HPO phenotypes that Monarch attributes to variation in this gene, from HPOA, OMIM and Orphanet, each with its PMIDs and the disease it " +
+                "was annotated under. Ask for it explicitly, and pair it with 'knockout' when the question is whether the mouse recapitulates the person.",
         ),
     species: z
         .array(z.enum(SUPPORTED_SPECIES))
@@ -107,8 +131,9 @@ const inputSchema = z.object({
         .max(200)
         .optional()
         .describe(
-            `'knockout' only. Max MP phenotype terms, best p-value first (default ${DEFAULTS.phenotypeLimit}, max 200). \`phenotypeCount\` gives the ` +
-                "true total; `organSystems` is never trimmed, so the top-line picture survives.",
+            `'knockout' and 'phenotypes'. Max phenotype terms per half — MP terms best p-value first, HPO terms in curation order (default ` +
+                `${DEFAULTS.phenotypeLimit}, max 200). Each half reports its own \`phenotypeCount\` for the true total; \`organSystems\` is never ` +
+                "trimmed, so the top-line knockout picture survives.",
         ),
 });
 
@@ -116,6 +141,7 @@ type PreclinicalOutput = {
     geneSymbol: string;
     expression?: ExpressionHalf;
     knockout?: KnockoutHalf;
+    phenotypes?: HumanPhenotypeHalf;
 };
 
 function boundExpression(raw: Awaited<ReturnType<typeof getMultiSpeciesExpression>>, minRank: ExpressionRank, tissueLimit: number): ExpressionHalf {
@@ -152,26 +178,56 @@ function boundKnockout(raw: Awaited<ReturnType<typeof getKoPhenotypeProfile>>, p
     };
 }
 
+/**
+ * Anchor the symbol on HGNC and read the curated human phenotypes. A symbol
+ * that anchors on no HGNC id gives a null curie and an empty term list, which
+ * is absence and not a failure.
+ */
+async function fetchHumanPhenotypes(geneSymbol: string, phenotypeLimit: number): Promise<HumanPhenotypeHalf> {
+    let geneCurie: string | null;
+    try {
+        geneCurie = (await resolveTarget(geneSymbol)).ids.hgnc;
+    } catch {
+        geneCurie = null;
+    }
+    if (!geneCurie) return { geneCurie: null, hpoTerms: [], phenotypeCount: 0, phenotypesTrimmed: false };
+
+    const profile = await getGenePhenotypeProfile(geneCurie);
+    return {
+        geneCurie: profile.geneCurie,
+        hpoTerms: profile.phenotypes.slice(0, phenotypeLimit).map(({ ancestorIds: _ancestorIds, ...term }) => term),
+        phenotypeCount: profile.phenotypes.length,
+        phenotypesTrimmed: profile.phenotypes.length > phenotypeLimit,
+    };
+}
+
 export const genePreclinicalProfileTool = defineTool({
     id: "gene_preclinical_profile",
     description:
-        "The in-vivo preclinical profile of ONE human gene — baseline expression (Bgee) and mouse-knockout phenotype (IMPC) in one call. Answers " +
-        "tissue-of-action ('where does this target act?'), model-organism suitability ('is the mouse a fair surrogate?') and essentiality ('what happens " +
-        "when this gene is lost?').\n" +
+        "The in-vivo profile of ONE human gene across three corpora in one call — baseline expression from Bgee, the mouse-knockout phenotype from IMPC " +
+        "(the International Mouse Phenotyping Consortium), and the curated human phenotypes from the Monarch Initiative (HPO terms sourced from HPOA, " +
+        "OMIM and Orphanet). Answers tissue-of-action ('where does this target act?'), model-organism suitability ('is the mouse a fair surrogate?'), " +
+        "essentiality ('what happens when this gene is lost?') and the human read-out ('what do people carrying variation in it present with?').\n" +
         "Expression is BASELINE (healthy, untreated) only — differential expression between conditions is the analysis pipeline's job, never this tool.\n" +
+        "ACCEPTED IDENTIFIERS: one HUMAN gene symbol, e.g. 'BRCA1'. The ENSG, the per-species orthologs and the HGNC curie are resolved for you; an " +
+        "Ensembl ID, a mouse symbol and an MGI ID are not accepted here — put those through search_gene first.\n" +
         "Output is trimmed by default (see `minRank`, `tissueLimit`, `phenotypeLimit`); the accompanying counts distinguish a trimmed list from a sparse one.\n" +
         "SPARSE OUTPUT IS VALID NO-DATA, not an error — do not retry. A null humanEnsemblId means the symbol did not resolve; a null mouseMarkerSymbol " +
-        "with no phenotype terms means the gene has not been IMPC-phenotyped, which is common.",
+        "with no phenotype terms means the gene has not been IMPC-phenotyped, which is common; an empty hpoTerms list means Monarch curates no human " +
+        "phenotype for the gene, and a null geneCurie means the symbol anchored on no HGNC id.",
     inputSchema,
     describeCall: "none",
     execute: async ({ geneSymbol, include, species, minRank, tissueLimit, phenotypeLimit }) => {
         const halves = include ?? ["expression", "knockout"];
         const wantExpression = halves.includes("expression");
         const wantKnockout = halves.includes("knockout");
+        const wantPhenotypes = halves.includes("phenotypes");
+        const termLimit = phenotypeLimit ?? DEFAULTS.phenotypeLimit;
 
-        const [expressionRaw, knockoutRaw] = await Promise.all([
+        const [expressionRaw, knockoutRaw, phenotypesHalf] = await Promise.all([
             wantExpression ? getMultiSpeciesExpression(geneSymbol, [...(species ?? DEFAULT_SPECIES)]) : Promise.resolve(null),
             wantKnockout ? getKoPhenotypeProfile(geneSymbol) : Promise.resolve(null),
+            wantPhenotypes ? fetchHumanPhenotypes(geneSymbol, termLimit) : Promise.resolve(null),
         ]);
 
         const output: PreclinicalOutput = { geneSymbol };
@@ -179,7 +235,10 @@ export const genePreclinicalProfileTool = defineTool({
             output.expression = boundExpression(expressionRaw, minRank ?? DEFAULTS.minRank, tissueLimit ?? DEFAULTS.tissueLimit);
         }
         if (knockoutRaw) {
-            output.knockout = boundKnockout(knockoutRaw, phenotypeLimit ?? DEFAULTS.phenotypeLimit);
+            output.knockout = boundKnockout(knockoutRaw, termLimit);
+        }
+        if (phenotypesHalf) {
+            output.phenotypes = phenotypesHalf;
         }
         return ok(output);
     },

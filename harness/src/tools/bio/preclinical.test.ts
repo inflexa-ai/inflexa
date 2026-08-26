@@ -119,6 +119,88 @@ describe("genePreclinicalProfile — knockout half", () => {
     });
 });
 
+describe("genePreclinicalProfile — human phenotype half", () => {
+    /** Anchor the symbol on HGNC, then serve Monarch's HPO annotations for that curie. */
+    const PHENOTYPE_ROUTES: Array<[string, () => Response]> = [
+        ["genenames.org", () => geneDocs([{ symbol: "BRCA1", name: "BRCA1 DNA repair associated", hgnc_id: "HGNC:1100", uniprot_ids: ["P38398"] }])],
+        ["uniprot.org", () => json({ results: [{ primaryAccession: "P38398", genes: [{ geneName: { value: "BRCA1" } }] }] })],
+        ["ebi.ac.uk/chembl", () => json({ targets: [] })],
+        ["rest.ensembl.org", () => json({ id: "ENSG00000012048" })],
+        [
+            "monarchinitiative.org",
+            () =>
+                json({
+                    items: [
+                        {
+                            subject_taxon: "NCBITaxon:9606",
+                            object: "HP:0003002",
+                            object_label: "Breast carcinoma",
+                            object_closure: ["HP:0000001", "HP:0002664"],
+                            publications: ["PMID:12345678"],
+                            disease_context_qualifier: "MONDO:0007254",
+                            has_percentage: 60,
+                        },
+                        { subject_taxon: "NCBITaxon:10090", object: "MP:0001392", object_label: "a mouse term" },
+                    ],
+                }),
+        ],
+    ];
+
+    it("returns the curated human phenotypes, without the ancestor closure", async () => {
+        stubFetch(PHENOTYPE_ROUTES);
+
+        const { ctx } = makeToolContext();
+        const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1", include: ["phenotypes"] }, ctx))._unsafeUnwrap();
+
+        expect(result.phenotypes!.geneCurie).toBe("HGNC:1100");
+        expect(result.phenotypes!.phenotypeCount).toBe(1);
+        expect(result.phenotypes!.hpoTerms[0]).toEqual({
+            hpoId: "HP:0003002",
+            label: "Breast carcinoma",
+            publications: ["PMID:12345678"],
+            diseaseContext: "MONDO:0007254",
+            frequencyPercent: 60,
+            primaryKnowledgeSource: null,
+        });
+        expect(result.expression).toBeUndefined();
+        expect(result.knockout).toBeUndefined();
+    });
+
+    it("reports a symbol that anchors on no HGNC id as a null curie, not an error", async () => {
+        stubFetch([
+            ["genenames.org", () => geneDocs([])],
+            ["uniprot.org", () => json({ results: [] })],
+            ["ebi.ac.uk/chembl", () => json({ targets: [] })],
+            ["rest.ensembl.org", () => json({ id: "" })],
+        ]);
+
+        const { ctx } = makeToolContext();
+        const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "NOTAGENE", include: ["phenotypes"] }, ctx))._unsafeUnwrap();
+
+        expect(result.phenotypes).toEqual({ geneCurie: null, hpoTerms: [], phenotypeCount: 0, phenotypesTrimmed: false });
+    });
+
+    it("stays out of the default include set", async () => {
+        const seen: string[] = [];
+        globalThis.fetch = (async (url: string | URL) => {
+            const u = String(url);
+            seen.push(u);
+            if (u.includes("ensembl")) return json({ id: "ENSG00000012048" });
+            if (u.includes("bgee")) return json({ data: { calls: [] } });
+            for (const [needle, make] of IMPC_ROUTES) {
+                if (u.includes(needle)) return make();
+            }
+            return new Response("unrouted", { status: 404 });
+        }) as typeof fetch;
+
+        const { ctx } = makeToolContext();
+        const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1" }, ctx))._unsafeUnwrap();
+
+        expect(result.phenotypes).toBeUndefined();
+        expect(seen.some((u) => u.includes("monarchinitiative.org"))).toBe(false);
+    });
+});
+
 describe("genePreclinicalProfile — both halves", () => {
     it("fetches expression and knockout together by default", async () => {
         const seen: string[] = [];

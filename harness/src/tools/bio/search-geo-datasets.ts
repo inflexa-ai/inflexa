@@ -47,7 +47,10 @@ const GeoEsummaryResponseSchema = z.object({
 export const searchGeoDatasetsTool = defineTool({
     id: "search_geo_datasets",
     description:
-        "Search NCBI GEO for public gene-expression datasets by disease, tissue, or experimental condition — use it to find external validation cohorts or to cite published data. " +
+        "Search the NCBI Gene Expression Omnibus (GEO) — the public functional-genomics repository of the U.S. National Library of Medicine — for " +
+        "gene-expression datasets by disease, tissue, or experimental condition. Use it to find external validation cohorts or to cite published data. " +
+        "ACCEPTED IDENTIFIERS: an Entrez free-text query with optional field tags ('breast cancer RNA-seq'), a GEO accession ('GSE12345', 'GDS1234'), and " +
+        "an organism scientific name ('Homo sapiens') in `organism`. " +
         "Returns totalFound plus datasets[]: { accession (GSE…/GDS…), title, summary (truncated to 300 chars), platform, sampleCount, organism, pubmedIds }. " +
         "HARD CAVEAT: this tool returns metadata only, and sandbox containers have no network — never plan an in-sandbox step that downloads a GEO dataset. " +
         "Bringing the data itself in is a capability of the surrounding environment, not of this tool: consult the tools you actually have rather than assuming it is possible or that it is not. " +
