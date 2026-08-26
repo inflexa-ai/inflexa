@@ -375,3 +375,31 @@ pool inventory of `list_available_packages`. It never renders as a
 per-package absence, and it never renders as a bare UNKNOWN. The live run
 read the bare UNKNOWN as a transient flake for three turns, while `store
 ls` — which reads pins from disk — contradicted it.
+
+## The add-time guards (the convergent pool)
+
+A live probe on the real store settled the uv-add question. Both adds
+succeeded, and the pool shelved every pin cleanly. But one stale farm
+refused EVERY extension — a polars link too — because a later add
+moved a held graph edge. The verdict: no command sequence can produce a
+broken state, thus the fix belongs inside the add, and no repair command
+exists.
+
+### 29. The first resolution of a store directory is durable
+
+The commit rewrote a held node when a batch staged its directory again,
+and every add stages its WHOLE closure — the reused members too. An add
+that shared one dependency with held content thus moved a held edge.
+The moved edge then blocked every later extension of a composed farm. The
+commit now skips a held node, thus no add can invalidate a farm. A repair
+command was rejected — the cause leaves, not the symptom.
+
+### 30. The acquire resolves under the pins of the pool
+
+A solo add resolved blind, and it minted a second jinja2 pin while nine
+held chains pinned the first. The Python resolve now rides the shelf-head
+pins as constraints, and a true conflict drops them — the committed-lock
+pattern of the catalog build. A second pin appears only when the ranges
+force it. The uv-add flight was rejected as needless. With the two guards
+no add sequence can produce a broken state. The collision refusal remains
+only for the plan that no resolver can satisfy.

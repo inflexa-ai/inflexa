@@ -102,6 +102,19 @@ check, it appends the staged nodes to the graph under the metadata lock. A
 failed check MUST leave no advertised state: no graph node, no farm link,
 and a reported refusal. `store reclaim` frees the orphaned bytes.
 
+The Python resolve of phase one MUST ride the pins of the pool as
+constraints, from the head of each shelf. Thus an add reuses a held pin
+whenever its ranges permit it, and no needless second pin lands. When the
+constrained resolve fails, the resolve MUST run again without constraints —
+the committed-lock pattern of the catalog build. A second pin of one name
+appears only when the ranges force it.
+
+The commit MUST NOT rewrite a node the graph already holds. The first
+resolution of a store directory is durable. Thus a later add can never move
+a held edge, and a composed farm can never go stale. Without this rule, an
+add that shares one dependency with held content re-resolves that node.
+The moved edge then blocks every later extension of a composed farm.
+
 #### Scenario: A green check commits
 
 - **GIVEN** an acquired set whose load check passes
@@ -113,6 +126,30 @@ and a reported refusal. `store reclaim` frees the orphaned bytes.
 - **GIVEN** an acquired package that fails its load check
 - **WHEN** the flight completes
 - **THEN** the graph holds no node for it, and the failure reports with the load error
+
+#### Scenario: The acquire reuses a held pin
+
+- **GIVEN** a pool whose jinja2 shelf head is 3.0.3, and an add whose ranges permit that version
+- **WHEN** the acquire resolves
+- **THEN** the closure reuses jinja2==3.0.3, and no second pin lands
+
+#### Scenario: A true conflict still lands a second pin
+
+- **GIVEN** an add whose ranges exclude every held pin of one name
+- **WHEN** the constrained resolve fails
+- **THEN** the resolve runs again without constraints, and the second pin lands
+
+#### Scenario: A held node keeps its edges
+
+- **GIVEN** a graph node whose store directory a new batch stages again
+- **WHEN** the commit runs
+- **THEN** the published edges stay, and the staged edges of that node drop
+
+#### Scenario: A later add cannot brick a farm
+
+- **GIVEN** a farm composed from held pins
+- **WHEN** a later add commits a batch that re-stages a held node
+- **THEN** every extension of that farm still composes, because no held edge moved
 
 ### Requirement: A flight launches the provisioner with the acquisition egress classes
 
