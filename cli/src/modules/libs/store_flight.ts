@@ -291,6 +291,10 @@ type CommitRefusal = { readonly storeDir: string; readonly reason: string };
  * graph reader refuses a dangling edge whole — thus the commit refuses that
  * NODE instead, and its spec drops out with the reason.
  *
+ * A node the graph already holds NEVER rewrites: the first resolution of a
+ * store directory is durable, thus no later batch can move a held edge and
+ * invalidate a farm that composed under it.
+ *
  * The `by_name` order stays the emitter's: ascending by the `order` string of
  * each node, then by the directory name. The host compares strings and orders
  * nothing itself.
@@ -321,10 +325,25 @@ export async function commitStagedNodes(
             }
 
             const refused: CommitRefusal[] = [];
+            // The first resolution of a store directory is DURABLE. A batch
+            // stages its whole closure — the reused members too — and its
+            // fresh solo resolve can pin a shared dependency differently. A
+            // rewrite would move a held edge, and a farm composed under the
+            // old edge then refuses every later extension. The staged copy
+            // drops. The held directory still counts as committed, because
+            // the caller links subscriber farms from that list, and "already
+            // advertised" is a success, not a refusal.
+            const kept: string[] = [];
+            const pending = new Map(Object.entries(staged));
+            for (const storeDir of [...pending.keys()]) {
+                if (raw.nodes[storeDir] !== undefined) {
+                    kept.push(storeDir);
+                    pending.delete(storeDir);
+                }
+            }
             const accepted = new Map<string, ReportNode>();
             // A node commits only when each of its edges resolves. The pass repeats,
             // because a node whose edge names a refused sibling must drop with it.
-            const pending = new Map(Object.entries(staged));
             for (;;) {
                 let moved = false;
                 for (const [storeDir, node] of [...pending.entries()]) {
@@ -364,7 +383,9 @@ export async function commitStagedNodes(
                 }
             }
 
-            if (accepted.size === 0) return ok({ committed: [], refused });
+            // An all-held batch writes nothing: the graph already advertises
+            // every directory, and a no-op write would only churn the file.
+            if (accepted.size === 0) return ok({ committed: kept, refused });
 
             for (const [storeDir, node] of accepted) {
                 raw.nodes[storeDir] = node as Record<string, unknown>;
@@ -396,7 +417,7 @@ export async function commitStagedNodes(
                     message: `Could not write the dependency graph at ${graphPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
                 });
             }
-            return ok({ committed: [...accepted.keys()], refused });
+            return ok({ committed: [...accepted.keys(), ...kept], refused });
         },
     );
 }

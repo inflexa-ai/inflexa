@@ -8,6 +8,7 @@ import { randomUUIDv7 } from "bun";
 import { env } from "../../lib/env.ts";
 import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
+import { commitStagedNodes } from "./store_flight.ts";
 import {
     closureOf,
     extendFarm,
@@ -809,6 +810,32 @@ describe("linkPackagesIntoFarm", () => {
             expect(first.detail).toContain("needed by beta==0.4.1");
             expect(first.detail).toContain("a requested package");
         }
+    });
+});
+
+// --- The durable first resolution ------------------------------------------------
+
+describe("the durable first resolution", () => {
+    test("a re-staged batch cannot brick a composed farm", async () => {
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+        (await extendFarm({ storeRoot: root, analysisId, roots: [BETA] }))._unsafeUnwrap();
+
+        // A later add re-stages beta with a MOVED edge: alpha 2.0.0 instead
+        // of the 1.2.0 the farm linked. The durable-node rule drops the
+        // rewrite, thus the next extension — an UNRELATED package — still
+        // composes. Without the rule, the moved edge puts both alpha pins
+        // into one closure, and even a gamma link refuses.
+        const staged = {
+            [BETA]: { track: "python", name: "beta", version: "0.4.1", order: "0b", edges: [ALPHA_2] },
+        } as Parameters<typeof commitStagedNodes>[1];
+        (await commitStagedNodes(root, staged))._unsafeUnwrap();
+
+        const extended = await extendFarm({ storeRoot: root, analysisId, roots: [GAMMA] });
+
+        expect(extended.isOk()).toBe(true);
+        const graph = readDepsGraph(root)._unsafeUnwrap();
+        expect(graph.nodes.get(BETA)?.edges).toEqual([ALPHA]);
     });
 });
 
