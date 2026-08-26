@@ -22,3 +22,24 @@ jobs:
   images:
     uses: ./.github/workflows/sandbox-images-build.yml
     secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+
+  store:
+    needs: images
+    uses: ./.github/workflows/package-store-build.yml
+    secrets: inherit
+    permissions:
+      # The lock commit-back job of the store build writes to the branch.
+      contents: write
+      packages: write
+
+  acceptance:
+    needs: store
+    uses: ./.github/workflows/package-store-acceptance.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+      actions: read
