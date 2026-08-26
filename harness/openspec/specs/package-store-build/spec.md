@@ -119,6 +119,17 @@ repositories, the GitHub hosts for the `github` track, and
 only the first two classes. The workflow documentation MUST record the
 privilege asymmetry between the two containers.
 
+The entrypoint MUST write each resolved address of a permitted host into
+`/etc/hosts` before the rules freeze. The rules and every later connect
+then agree on one address set. Thus a host that rotates its addresses
+under a short TTL cannot orphan its own rule during a long build.
+
+#### Scenario: A rotated address does not break a permitted host
+
+- **GIVEN** a permitted host that rotates its addresses during a build
+- **WHEN** a connect to that host opens after the rotation
+- **THEN** the connect uses a pinned address and the rules accept it
+
 #### Scenario: droast covers the provisioner
 
 - **WHEN** the droast configuration is read
@@ -227,6 +238,56 @@ library path and form one dependency chain.
 - **GIVEN** an arm64 leg that fails
 - **WHEN** the workflow completes
 - **THEN** the amd64 artifact publishes, and the arm64 failure reports
+
+### Requirement: The github track installs through pak, with the token present
+
+A build whose manifest names a `github` entry MUST refuse to start when
+`GITHUB_PAT` is absent. The refusal MUST name the anonymous rate cap as the
+reason, because an anonymous run fails late with 403 answers. The github
+stage MUST install each repository through pak, the same resolver as the
+bulk. Thus the stage reads the metadata that the bulk wrote, and the token
+of the environment authenticates every API call. Each repository installs
+best-effort, and a failed repository MUST NOT stop the stage.
+
+#### Scenario: A build without the token refuses early
+
+- **GIVEN** a manifest with a `github` entry and no `GITHUB_PAT` in the environment
+- **WHEN** the build starts
+- **THEN** it refuses before any track resolves, and the message names the rate cap
+
+#### Scenario: One failed repository does not stop the stage
+
+- **GIVEN** a github repository whose install fails
+- **WHEN** the github stage completes
+- **THEN** the other repositories install, and the failure reports per repository
+
+### Requirement: A failed install keeps the held package
+
+When the install of a package fails in a build, the farm MUST NOT lose the
+package. The condition is: the previous catalog farm advertised it, and the
+pool still holds its store directory. The new farm then links the held
+directory, and the lock carries its entry, and the log reports the keep. A
+dependency carries over only when a kept or wanted package reaches it
+through the graph. A package whose manifest entry was removed MUST NOT
+carry over.
+
+#### Scenario: A github failure keeps the held pin
+
+- **GIVEN** a github package that the previous farm advertised and whose install now fails
+- **WHEN** the farm publishes
+- **THEN** the farm links the held store directory, and the lock carries its entry
+
+#### Scenario: A bulk failure keeps the held closure
+
+- **GIVEN** a dependency whose source build fails, with a kept dependent that reaches it
+- **WHEN** the farm publishes
+- **THEN** the dependency links from the pool, and the closure of the dependent stays whole
+
+#### Scenario: A removed manifest entry leaves the farm
+
+- **GIVEN** a package whose manifest entry was removed since the previous build
+- **WHEN** the farm publishes
+- **THEN** the farm holds no link for it, even though the pool still holds its bytes
 
 ### Requirement: Acceptance is a non-gating post-publish validation
 
