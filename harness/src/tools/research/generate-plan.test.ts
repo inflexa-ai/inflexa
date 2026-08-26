@@ -224,8 +224,11 @@ describe("generatePlan loop-driving tool", () => {
             toolContext(),
         );
 
-        expect(Object.keys(provider.calls[0]!.tools)).not.toContain("list_available_refs");
-        expect(Object.keys(provider.calls[0]!.tools)).toEqual(expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker"]));
+        expect(Object.keys(provider.calls[0]!.tools)).toEqual(
+            expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker", "list_available_refs"]),
+        );
+        // The census still rides in the seed. The tool is for the narrow second
+        // look, thus the planner never has to call one to learn what is staged.
         expect(transcript(provider)).toContain("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
         // The planner sees the same meaning-bearing labels a sandbox agent does.
         expect(transcript(provider)).toContain("regulon");

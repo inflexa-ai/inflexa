@@ -31,7 +31,7 @@ const Context7DocsResponseSchema = z.object({ content: z.string().optional() });
 export const resolveLibraryIdTool = defineTool({
     id: "resolve_library_id",
     description:
-        "Resolve a package name (e.g., 'scanpy', 'DESeq2', 'scikit-learn') to a Context7 library ID. Call this BEFORE queryDocs to get the library ID needed for documentation lookup. Returns matching libraries ranked by relevance.",
+        "Resolve a package name (e.g., 'scanpy', 'DESeq2', 'scikit-learn') to a Context7 library ID. Call this BEFORE `query_docs` to get the library ID needed for documentation lookup. Returns matching libraries ranked by relevance.",
     inputSchema: z.object({
         libraryName: z.string().describe("Package or library name to search for (e.g., 'scanpy', 'pysam', 'lifelines')."),
         query: z.string().describe("What you need help with — used to rank results by relevance (e.g., 'how to run differential expression')."),
@@ -62,9 +62,9 @@ export const resolveLibraryIdTool = defineTool({
 export const queryDocsTool = defineTool({
     id: "query_docs",
     description:
-        "Query up-to-date documentation and code examples for a library. You must call resolve-library-id first to get the libraryId. Use this to verify function signatures, parameters, and usage patterns before writing code.",
+        "Query up-to-date documentation and code examples for a library. You must call `resolve_library_id` first to get the libraryId. Use this to verify function signatures, parameters, and usage patterns before writing code.",
     inputSchema: z.object({
-        libraryId: z.string().describe("Context7 library ID from resolve-library-id (e.g., '/scverse/scanpy')."),
+        libraryId: z.string().describe("Context7 library ID from `resolve_library_id` (for example '/scverse/scanpy')."),
         query: z.string().describe("Specific question about the library (e.g., 'rank_genes_groups function parameters and usage')."),
     }),
     describeCall: "none",

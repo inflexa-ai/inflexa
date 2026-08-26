@@ -902,7 +902,8 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
  * A tool here never writes and never computes. Thus the worst outcome of a
  * needless call is latency, and the prompt is what bounds that.
  */
-function buildPlannerSearchTools(bioKeys: BioToolKeys): Tool[] {
+function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
+    const bioKeys = deps.bioKeys;
     const ncbi = createNcbiTools(bioKeys);
     return [
         // Comparable public studies — the design, the platform, and the sample
@@ -919,6 +920,12 @@ function buildPlannerSearchTools(bioKeys: BioToolKeys): Tool[] {
         // The API of a staged package, so a step names a function that exists.
         resolveLibraryIdTool,
         queryDocsTool,
+        // The environment itself. The seed already carries a rendered census of
+        // both stores. These two tools are for the narrow second look: one
+        // collection of the reference store, or one package name that a step is
+        // about to import.
+        createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
+        createListAvailablePackagesTool(deps.packagesFile === undefined ? {} : { packagesFile: deps.packagesFile }),
     ];
 }
 
@@ -1118,7 +1125,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // dep, thus the tool must stay constructible from an empty bag. The tool
             // definitions are identical across invocations, thus the request prefix
             // that the cache keys on does not move.
-            const searchTools = buildPlannerSearchTools(deps.bioKeys);
+            const searchTools = buildPlannerSearchTools(deps);
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),

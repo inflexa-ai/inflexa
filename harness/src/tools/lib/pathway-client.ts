@@ -9,7 +9,11 @@ import { z } from "zod";
 import { apiFetch, apiFetchValidated, parseTSV } from "./api-utils.js";
 
 const KEGG_BASE = "https://rest.kegg.jp";
-const REACTOME_BASE = "https://reactome.org/ContentService";
+// The ContentService of the primary host answers 404 on each path. The release
+// host serves the same API, and a probe of `search/query`, `data/query/{stId}`
+// and `data/participants/{stId}` returned 200 on it. The web pages that a result
+// links to stay on the primary host, thus only the API base moves.
+const REACTOME_BASE = "https://release.reactome.org/ContentService";
 
 export function stripHtmlAndCollapseWs(s: string): string {
     // Strip tags to a fixpoint: a single pass can leave a `<…>` behind when
