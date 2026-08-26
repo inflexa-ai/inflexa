@@ -1688,5 +1688,137 @@ class ImageOwnedPackageTests(unittest.TestCase):
             self.fail(report)
 
 
+class BuildGithubTokenGateTests(StoreTestCase):
+    """A github manifest refuses without the token, before any track runs."""
+
+    def test_a_github_manifest_without_the_token_refuses_early(self):
+        args = SimpleNamespace(manifest=str(self.root / "m.yaml"),
+                               lock=None, farm="catalog")
+        manifest = {"r": {"github": ["owner/widget"]}}
+        with unittest.mock.patch.object(provision, "load_manifest",
+                                        return_value=manifest), \
+                unittest.mock.patch.dict(os.environ), \
+                contextlib.redirect_stdout(io.StringIO()):
+            os.environ.pop("GITHUB_PAT", None)
+            with self.assertRaises(SystemExit) as ctx:
+                provision.cmd_build(args)
+        self.assertIn("GITHUB_PAT", str(ctx.exception))
+        self.assertIn("60", str(ctx.exception))
+        # The refusal is early: no track ran, and no farm published.
+        self.assertEqual(self.calls, [])
+        self.assertFalse((provision.FARMS / "catalog").exists())
+
+
+class BuildGithubPakTests(StoreTestCase):
+    """The github stage installs through pak, the same resolver as the bulk."""
+
+    def test_the_github_install_runs_through_pak(self):
+        recorded: list[list[str]] = []
+
+        def record(cmd, *args, **kwargs):
+            recorded.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="4.6.0", stderr="")
+
+        args = SimpleNamespace(manifest=str(self.root / "m.yaml"),
+                               lock=None, farm="catalog")
+        manifest = {"r": {"github": ["owner/widget"]}}
+        with unittest.mock.patch.object(provision, "load_manifest",
+                                        return_value=manifest), \
+                unittest.mock.patch.object(provision.subprocess, "run", record), \
+                unittest.mock.patch.dict(os.environ, {"GITHUB_PAT": "t"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.cmd_build(args), 0)
+
+        installs = [argv for argv in recorded
+                    if argv[:1] == ["R"] and any("owner/widget" in a for a in argv)]
+        self.assertEqual(len(installs), 1)
+        expr = next(a for a in installs[0] if "owner/widget" in a)
+        self.assertIn("pak::pkg_install('owner/widget'", expr)
+        self.assertNotIn("remotes::install_github", expr)
+
+
+class CarryHeldREntriesTests(StoreTestCase):
+    """The pool fallback: a failed install keeps the held farm entry."""
+
+    def _held(self, key: str, inner: str) -> Path:
+        d = provision.STORE / key
+        (d / inner).mkdir(parents=True)
+        return d
+
+    @staticmethod
+    def _entry(name: str, track: str, store_dir: str, requested: bool) -> dict:
+        return {"name": name, "version": "1.0", "track": track,
+                "store_dir": store_dir, "requested": requested}
+
+    NO_R = {"cran": [], "bioconductor": [], "github": []}
+    NO_WANT = {"cran": [], "bioconductor": [], "git": [], "github": []}
+
+    def test_a_failed_github_install_keeps_the_held_pin(self):
+        held = self._held("projectils-3.0.0-00000000000000aa", "ProjecTILs")
+        old = {"packages": [self._entry("ProjecTILs", "github", held.name, True)]}
+        wanted = {**self.NO_WANT, "github": ["carmonalab/ProjecTILs"]}
+
+        kept = provision.carry_held_r_entries(old, dict(self.NO_R), wanted,
+                                              {"nodes": {}})
+
+        self.assertEqual(kept, [("github", "ProjecTILs", held, True)])
+
+    def test_a_bulk_failure_keeps_the_reachable_dependency(self):
+        root = self._held("flowcore-1.0-00000000000000bb", "flowCore")
+        dep = self._held("cytolib-1.0-00000000000000cc", "cytolib")
+        old = {"packages": [
+            self._entry("flowCore", "bioconductor", root.name, True),
+            self._entry("cytolib", "bioconductor", dep.name, False),
+        ]}
+        wanted = {**self.NO_WANT, "bioconductor": ["flowCore"]}
+        graph = {"nodes": {root.name: {"edges": [dep.name]},
+                           dep.name: {"edges": []}}}
+
+        kept = provision.carry_held_r_entries(old, dict(self.NO_R), wanted, graph)
+
+        self.assertEqual(sorted(kept), sorted([
+            ("bioconductor", "flowCore", root, True),
+            ("bioconductor", "cytolib", dep, False),
+        ]))
+
+    def test_a_removed_manifest_entry_does_not_carry(self):
+        held = self._held("widget-1.0-00000000000000dd", "widget")
+        old = {"packages": [self._entry("widget", "github", held.name, True)]}
+
+        kept = provision.carry_held_r_entries(old, dict(self.NO_R),
+                                              dict(self.NO_WANT), {"nodes": {}})
+
+        self.assertEqual(kept, [])
+
+    def test_an_unreachable_dependency_does_not_carry(self):
+        dep = self._held("cytolib-1.0-00000000000000ee", "cytolib")
+        old = {"packages": [self._entry("cytolib", "bioconductor", dep.name, False)]}
+
+        kept = provision.carry_held_r_entries(old, dict(self.NO_R),
+                                              dict(self.NO_WANT), {"nodes": {}})
+
+        self.assertEqual(kept, [])
+
+    def test_a_staged_name_wins_over_the_held_copy(self):
+        held = self._held("numbat-1.0-00000000000000ff", "numbat")
+        fresh = self._held("numbat-1.1-00000000000000f0", "numbat")
+        old = {"packages": [self._entry("numbat", "github", held.name, True)]}
+        stored = {**self.NO_R, "github": [("numbat", fresh)]}
+        wanted = {**self.NO_WANT, "github": ["kharchenkolab/numbat"]}
+
+        kept = provision.carry_held_r_entries(old, stored, wanted, {"nodes": {}})
+
+        self.assertEqual(kept, [])
+
+    def test_a_reclaimed_store_directory_does_not_carry(self):
+        old = {"packages": [self._entry("gone", "cran", "gone-1.0-0000000000000000", True)]}
+        wanted = {**self.NO_WANT, "cran": ["gone"]}
+
+        kept = provision.carry_held_r_entries(old, dict(self.NO_R), wanted,
+                                              {"nodes": {}})
+
+        self.assertEqual(kept, [])
+
+
 if __name__ == "__main__":
     unittest.main()

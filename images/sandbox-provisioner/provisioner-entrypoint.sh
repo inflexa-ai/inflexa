@@ -10,9 +10,11 @@
 #
 # The rules install BEFORE the program runs: loopback, established return
 # traffic, DNS, and the resolved addresses of each named host. Everything
-# else drops. The list resolves once at start — a rotated CDN address after
-# that point drops, and the run then fails loudly rather than reaching an
-# unlisted host.
+# else drops. The list resolves once at start, and each resolved address
+# pins into /etc/hosts. The rules and every later connect then agree on
+# one address set, thus a host that rotates its addresses under a short
+# TTL (GitHub rotates under 60 seconds) cannot orphan its own rule during
+# a long build.
 #
 # An unset INFLEXA_EGRESS_ALLOW execs the program directly. The workflow and
 # the host set the variable; a bare local run stays usable.
@@ -28,13 +30,17 @@ if [ -n "${INFLEXA_EGRESS_ALLOW:-}" ]; then
 
     # Keep IFS at its default: the inner loop splits the one-address-per-line
     # getent output, and a multi-address host breaks under IFS=','.
+    pinned=0
     for host in $(printf '%s' "$INFLEXA_EGRESS_ALLOW" | tr ',' ' '); do
         [ -n "$host" ] || continue
         for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
             iptables -A OUTPUT -d "$ip" -p tcp --dport 443 -j ACCEPT
             iptables -A OUTPUT -d "$ip" -p tcp --dport 80 -j ACCEPT
+            printf '%s %s\n' "$ip" "$host" >> /etc/hosts
+            pinned=$((pinned + 1))
         done
     done
+    echo "[provisioner-entrypoint] pinned ${pinned} resolved address(es) into /etc/hosts"
 
     iptables -P OUTPUT DROP
     if [ -f /proc/net/if_inet6 ]; then
