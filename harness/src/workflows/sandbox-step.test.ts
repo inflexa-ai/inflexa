@@ -22,8 +22,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock, test } fro
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { okAsync } from "neverthrow";
+import { ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
+import { z } from "zod";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 import { isReconciling, type CortexChatPartType } from "@inflexa-ai/harness/contracts/part-registry.js";
 
@@ -36,7 +37,9 @@ import type { SandboxClient } from "../sandbox/client.js";
 import type { CreateSandboxMeta, SandboxRef } from "../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../execution/artifact-registry.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
-import { createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "./sandbox-step.js";
+import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
+import { defineTool } from "../tools/define-tool.js";
+import { CAPPED_OUT_EMPTY_REASON, createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "./sandbox-step.js";
 
 const RUN = "run-9";
 
@@ -558,5 +561,135 @@ describe("sandbox-step lineage attestation", () => {
         const failure = stepFailure(logger);
         expect(failure?.errorClass).toBe("lineage_attestation");
         expect(failure?.err).toContain(SYNC_FAILURE);
+    });
+});
+
+// ── capped-out steps with no deliverables route to blocked ───────────
+
+/**
+ * The narrow rule (see the harness-sandbox-agents spec): a loop that spent its
+ * whole iteration budget and persisted nothing terminates `blocked` with a
+ * deterministic reason, so its dependents never run against an empty manifest.
+ * A blocker outcome keeps its own reason, a capped-out step with artifacts
+ * stays `completed`, and a clean empty finish stays `completed`.
+ */
+describe("sandbox-step capped-out empty manifest", () => {
+    /**
+     * A pool that records every query's bind values, so the ledger write is
+     * assertable. `updateStepExecution` calls `query({ text, values })` (the
+     * config form) while other writers use `query(text, params)` — record both.
+     */
+    function makeRecordingPool(): { pool: Pool; values: unknown[] } {
+        const values: unknown[] = [];
+        const pool = {
+            query: async (arg: unknown, params?: unknown[]) => {
+                if (typeof arg === "object" && arg !== null && "values" in arg) {
+                    values.push(...((arg as { values?: unknown[] }).values ?? []));
+                }
+                values.push(...(params ?? []));
+                return { rows: [], rowCount: 0 };
+            },
+        } as unknown as Pool;
+        return { pool, values };
+    }
+
+    /**
+     * Deps whose loop caps out: a one-iteration agent with one `echo` tool, and
+     * a provider whose first reply is a tool call. The wrap-up call (and every
+     * post-step producer call after it) gets a plain "done", so the loop ends
+     * with `finish.cappedOut: true` and `reason: "max_iterations"`.
+     */
+    function cappedOutDeps(args: { blockerReason?: string } = {}): { deps: SandboxStepDeps; values: unknown[] } {
+        const { pool, values } = makeRecordingPool();
+        const provider = scriptedProvider((i) =>
+            i === 0 ? makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use") : makeMessage([textBlock("done")], "end_turn"),
+        );
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            pool,
+            provider,
+            buildAgent: ({ blockerHolder }) => ({
+                id: USAGE_AGENT_ID,
+                systemPrompt: "you are a test step agent",
+                model: STEP_MODEL_ID,
+                tools: [
+                    defineTool({
+                        id: "echo",
+                        description: "Echo the label back.",
+                        inputSchema: z.object({ label: z.string() }),
+                        describeCall: "none",
+                        execute: async ({ label }) => {
+                            if (args.blockerReason !== undefined) {
+                                blockerHolder.outcome = { kind: "blocker", reason: args.blockerReason };
+                            }
+                            return ok({ label });
+                        },
+                    }),
+                ],
+                maxIterations: 1,
+            }),
+        };
+        return { deps, values };
+    }
+
+    function blockedParts(parts: ReadonlyArray<Record<string, unknown>>): Array<Record<string, unknown>> {
+        return parts.filter((p) => p.type === "data-step-blocked");
+    }
+
+    it("terminates blocked with the deterministic reason when the cap hits an empty manifest", async () => {
+        const { deps, values } = cappedOutDeps();
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("blocked");
+        expect(result.error).toBe(CAPPED_OUT_EMPTY_REASON);
+        expect(result.finishReason).toBe("max_iterations");
+        // The ledger write carries the reason (error + blocked_reason) and the cap.
+        expect(values).toContain("blocked");
+        expect(values.filter((v) => v === CAPPED_OUT_EMPTY_REASON).length).toBe(2);
+        const emitted = blockedParts(dbosState.emittedParts);
+        expect(emitted.length).toBe(1);
+        expect(emitted[0]!.reason).toBe(CAPPED_OUT_EMPTY_REASON);
+    });
+
+    it("stays completed when the capped-out step persisted artifacts", async () => {
+        const dir = join(workspaceRoot, "runs", USAGE_RUN_ID, USAGE_STEP_ID, "output");
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "result.csv"), "gene,count\nTP53,7\n");
+        const { deps, values } = cappedOutDeps();
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("complete");
+        expect(result.finishReason).toBe("max_iterations");
+        expect(values).toContain("completed");
+        // hit_max_steps binds as 1 on the mark-complete write.
+        expect(values).toContain(1);
+        expect(blockedParts(dbosState.emittedParts)).toEqual([]);
+    });
+
+    it("stays completed on a clean empty finish under the cap", async () => {
+        // The pre-existing contract: no files, no blocker, and a stop before the
+        // cap is a legitimately-empty step, and no artifact-count inference runs.
+        const { pool, values } = makeRecordingPool();
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), pool };
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("complete");
+        expect(values).toContain("completed");
+        expect(blockedParts(dbosState.emittedParts)).toEqual([]);
+    });
+
+    it("keeps the blocker's own reason when the step also capped out", async () => {
+        const { deps } = cappedOutDeps({ blockerReason: "the input has no batch column" });
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("blocked");
+        expect(result.error).toBe("the input has no batch column");
+        const emitted = blockedParts(dbosState.emittedParts);
+        expect(emitted.length).toBe(1);
+        expect(emitted[0]!.reason).toBe("the input has no batch column");
     });
 });
