@@ -24,7 +24,7 @@ import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-m
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
-import { DEFAULT_REASONING, mergeProviderOptions, reasoningProviderOptions } from "../providers/reasoning.js";
+import { DEFAULT_REASONING } from "../providers/reasoning.js";
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
@@ -116,14 +116,15 @@ export interface RunAgentOptions {
     readonly promptCache?: PromptCachePolicy;
     /**
      * Reasoning policy for every LLM call this run makes. Defaults to
-     * `DEFAULT_REASONING` (adaptive thinking at `xhigh`) — an agent loop drives
-     * tools over many iterations, and a shallow turn there costs more in wasted
-     * calls than the deeper turn costs in tokens.
+     * `DEFAULT_REASONING` (`xhigh`) — an agent loop drives tools over many
+     * iterations, and a shallow turn there costs more in wasted calls than the
+     * deeper turn costs in tokens. The provider package resolves the name for
+     * the model that it is bound to.
      *
      * The policy lives here, on the run, rather than on the provider, for the
      * same reason that the cache policy does: a one-shot LLM call elsewhere has
      * its own depth needs and must not inherit the depth of a loop. A host on a
-     * model with no reasoning support passes `"off"`.
+     * model with no reasoning support passes `"provider-default"`.
      */
     readonly reasoning?: ReasoningPolicy;
     /**
@@ -234,10 +235,10 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // Resolved once, not per iteration: an identical options object across every
     // call is itself part of the cache contract — the request prefix has to be
     // byte-identical to be read back.
-    const providerOptions = mergeProviderOptions(
-        promptCacheProviderOptions(opts.promptCache ?? DEFAULT_PROMPT_CACHE),
-        reasoningProviderOptions(opts.reasoning ?? DEFAULT_REASONING),
-    );
+    const providerOptions = promptCacheProviderOptions(opts.promptCache ?? DEFAULT_PROMPT_CACHE);
+    // The depth is a neutral name, and the provider package resolves it for the
+    // model. A vendor key here would turn that resolution off.
+    const reasoning = opts.reasoning ?? DEFAULT_REASONING;
     const usage: AgentRunUsage = {};
 
     // Exactly one record per completed run — never one per iteration. That bound is
@@ -400,6 +401,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             tools: toolDefs,
             ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
             providerOptions,
+            reasoning,
         };
         const llmStepName = formatStepName.llm(i);
         const reply = await resultStep(runStep)(llmStepName, () => provider.chat(request, session, signal));
@@ -524,7 +526,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // cache_write_tokens counter is what makes that waste visible.
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
     const wrapUp = await resultStep(runStep)(wrapUpStepName, () =>
-        provider.chat({ system: agent.systemPrompt, messages, tools: {}, toolChoice: "none", providerOptions }, session, signal),
+        provider.chat({ system: agent.systemPrompt, messages, tools: {}, toolChoice: "none", providerOptions, reasoning }, session, signal),
     );
     accountForCall(wrapUp, wrapUpStepName);
 

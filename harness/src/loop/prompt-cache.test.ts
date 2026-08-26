@@ -25,14 +25,6 @@ import type { AgentDefinition } from "./types.js";
 
 const ANTHROPIC_5M = { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } };
 
-/** The reasoning half of the merged bag — the default policy of `run-agent`. */
-const REASONING_XHIGH = { anthropic: { effort: "xhigh", thinking: { type: "adaptive" } }, openai: { reasoningEffort: "xhigh" } };
-
-/** The whole bag the loop attaches when both defaults are in force. */
-const MERGED_5M = {
-    anthropic: { ...ANTHROPIC_5M.anthropic, ...REASONING_XHIGH.anthropic },
-    openai: REASONING_XHIGH.openai,
-};
 
 const echoTool = defineTool({
     id: "echo",
@@ -95,7 +87,7 @@ describe("runAgent prompt-cache directive", () => {
         // 3 iterations + the forced tool-less wrap-up.
         expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
-            expect(call.providerOptions).toEqual(MERGED_5M);
+            expect(call.providerOptions).toEqual(ANTHROPIC_5M);
         }
 
         // The wrap-up is the call that empties the tool set — it must still carry
@@ -104,7 +96,7 @@ describe("runAgent prompt-cache directive", () => {
         const wrapUp = chat.calls.at(-1)!;
         expect(Object.keys(wrapUp.tools)).toHaveLength(0);
         expect(wrapUp.toolChoice).toBe("none");
-        expect(wrapUp.providerOptions).toEqual(MERGED_5M);
+        expect(wrapUp.providerOptions).toEqual(ANTHROPIC_5M);
     });
 
     it("sends the same directive object on every call, so the prefix stays byte-identical", async () => {
@@ -134,11 +126,38 @@ describe("runAgent prompt-cache directive", () => {
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
 
         expect(chat.calls).toHaveLength(3);
-        // The bag is not empty — the reasoning policy still writes its own keys.
-        // What caching off means is that no cache directive rides in it.
+        // Caching off leaves no bag at all. The reasoning depth rides on its own
+        // neutral field, thus it writes no vendor key here.
         for (const call of chat.calls) {
-            expect(call.providerOptions?.["anthropic"]?.["cacheControl"]).toBeUndefined();
-            expect(call.providerOptions).toEqual(REASONING_XHIGH);
+            expect(call.providerOptions).toBeUndefined();
+            expect(call.reasoning).toBe("xhigh");
+        }
+    });
+});
+
+describe("runAgent reasoning directive", () => {
+    it("carries the neutral depth on every call, and writes no vendor key for it", async () => {
+        const chat = neverTerminating();
+
+        await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+
+        expect(chat.calls).toHaveLength(4);
+        for (const call of chat.calls) {
+            expect(call.reasoning).toBe("xhigh");
+            // The vendor key is what turned the per-model table of the provider
+            // package off, thus nothing may write it again.
+            expect(call.providerOptions?.["anthropic"]?.["effort"]).toBeUndefined();
+            expect(call.providerOptions?.["openai"]).toBeUndefined();
+        }
+    });
+
+    it("honours an explicit depth from the composition root", async () => {
+        const chat = neverTerminating();
+
+        await runAgent(agentDef(2), GO, makeSession(), opts(chat, { reasoning: "low" }));
+
+        for (const call of chat.calls) {
+            expect(call.reasoning).toBe("low");
         }
     });
 });

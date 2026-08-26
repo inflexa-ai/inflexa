@@ -1,35 +1,18 @@
 /**
- * Reasoning policy → provider wire options.
+ * The reasoning depth of a run.
  *
- * This is the **only** place in the harness that names a vendor for reasoning
- * depth. Everything upstream — `ReasoningPolicy` and `RunAgentOptions` — speaks
- * the neutral harness concept. This module translates it one time, at the
- * provider seam, thus the loop never learns which vendor it talks to. It is the
- * sibling of `prompt-cache.ts`, and it obeys the same rules.
+ * The harness states the depth one time, on `ChatRequest.reasoning`, with the
+ * neutral names of the AI SDK. It names no vendor key. Each provider package
+ * holds the table of what its own models accept, and it maps the neutral name
+ * onto the wire. The Anthropic package also selects adaptive thinking there.
  *
- * ## Why the emitted options are safe on every provider
+ * ## Why the harness names no vendor key
  *
- * `providerOptions` of the AI SDK is a namespaced bag. Each provider reads only
- * `providerOptions[<its own name>]`, and it ignores each other key. Thus the
- * `anthropic` namespace is inert on an OpenAI model, and the `openai` namespace
- * is inert on an Anthropic model. Neither one is an error.
- *
- * ## What each namespace does
- *
- * The Anthropic namespace carries two keys, because the vendor splits the
- * concept in two:
- *
- *  - `thinking: { type: "adaptive" }` says that the model reasons, and it lets
- *    the model choose the depth for each turn. A fixed `budgetTokens` is removed
- *    on the current models, and it returns a 400 there.
- *  - `effort` says how deep the model reasons and how much it spends in total.
- *    The vendor default is `high`.
- *
- * The OpenAI namespace carries one key, `reasoningEffort`, which takes the same
- * five values. An OpenAI-compatible endpoint reads the same key, but from a
- * namespace that carries the *name of the connection* rather than `openai`. The
- * provider seam mirrors the value into that namespace, because only the seam
- * knows the name (`providers/ai-sdk.ts`).
+ * The harness wrote `providerOptions.anthropic.effort` before. A value on that
+ * key turns the per-model table of the Anthropic package off, thus the raw name
+ * reached the wire. A model that accepts `high` but not `xhigh` answered 400.
+ * The neutral field has no such hazard, because the package resolves the name
+ * for the model that it is bound to.
  *
  * ## Where the policy belongs
  *
@@ -38,46 +21,17 @@
  * depth needs, and it must not inherit the depth of an agent loop.
  */
 
-import type { ProviderOptions, ReasoningPolicy } from "./types.js";
+import type { ReasoningPolicy } from "./types.js";
 
 /**
- * The default policy: adaptive thinking at the `xhigh` effort.
+ * The default policy: the deepest name of the neutral ladder.
  *
- * `xhigh` sits between `high` and `max`. It is the vendor recommendation for
- * coding and agentic work, and each agent of the harness drives tools over many
- * iterations. `max` costs more than the remaining quality is worth for a routine
- * turn, thus it is not the default. A host that wants a cheaper loop passes a
- * lower effort, and a host on a model with no reasoning support passes `"off"`.
- */
-export const DEFAULT_REASONING: ReasoningPolicy = { effort: "xhigh" };
-
-/**
- * Translate a neutral reasoning policy into provider wire options.
+ * Each agent of the harness drives tools over many iterations. A shallow turn
+ * there wastes more calls than a deeper turn costs in tokens. The Anthropic
+ * package sends `xhigh` to a model that accepts it, and `max` to a model that
+ * does not. The OpenAI-compatible package sends the name as it is.
  *
- * Returns `undefined` for `"off"`, thus the caller can leave `providerOptions`
- * unset rather than send an empty bag.
+ * A host that wants a cheaper loop passes a lower name. A host on a model with
+ * no reasoning support passes `"provider-default"`.
  */
-export function reasoningProviderOptions(policy: ReasoningPolicy): ProviderOptions | undefined {
-    if (policy === "off") return undefined;
-    return {
-        anthropic: { effort: policy.effort, thinking: { type: "adaptive" } },
-        openai: { reasoningEffort: policy.effort },
-    };
-}
-
-/**
- * Merge two option bags one namespace at a time.
- *
- * A plain spread of the two bags drops a whole namespace when both sides carry
- * it, and the cache policy and the reasoning policy both write `anthropic`. The
- * right-hand bag wins for a key that both sides set.
- */
-export function mergeProviderOptions(left: ProviderOptions | undefined, right: ProviderOptions | undefined): ProviderOptions | undefined {
-    if (left === undefined) return right;
-    if (right === undefined) return left;
-    const merged: ProviderOptions = { ...left };
-    for (const [namespace, options] of Object.entries(right)) {
-        merged[namespace] = { ...merged[namespace], ...options };
-    }
-    return merged;
-}
+export const DEFAULT_REASONING: ReasoningPolicy = "xhigh";
