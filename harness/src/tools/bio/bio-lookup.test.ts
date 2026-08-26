@@ -85,7 +85,8 @@ describe("searchGene (bio-lookup family)", () => {
         globalThis.fetch = (async (input: unknown) => {
             const url = String(input);
             seen.push(url);
-            if (url.includes("genenames.org")) {
+            const { hostname, pathname } = new URL(url);
+            if (hostname === "rest.genenames.org") {
                 return json({
                     response: {
                         docs: [
@@ -100,10 +101,10 @@ describe("searchGene (bio-lookup family)", () => {
                     },
                 });
             }
-            if (url.includes("uniprot.org")) {
+            if (hostname === "rest.uniprot.org") {
                 return json({ results: [{ primaryAccession: "P04637", genes: [{ geneName: { value: "TP53" } }] }] });
             }
-            if (url.includes("ebi.ac.uk/chembl")) return json({ targets: [] });
+            if (hostname === "www.ebi.ac.uk" && pathname.startsWith("/chembl")) return json({ targets: [] });
             return json({ id: "ENSG00000141510", display_name: "TP53", biotype: "protein_coding" });
         }) as unknown as typeof fetch;
 
@@ -118,7 +119,7 @@ describe("searchGene (bio-lookup family)", () => {
     it("reports an identifier that anchors on no human gene as notFound, not an error", async () => {
         globalThis.fetch = (async (input: unknown) => {
             const url = String(input);
-            if (url.includes("ensembl.org")) return json({ id: "", display_name: "" });
+            if (new URL(url).hostname === "rest.ensembl.org") return json({ id: "", display_name: "" });
             return json({});
         }) as unknown as typeof fetch;
 
