@@ -201,6 +201,44 @@ describe("opentargets — action 'disease'", () => {
     });
 });
 
+describe("opentargets — action 'resolve_disease'", () => {
+    it("turns a plain disease name into the ids the 'disease' action accepts", async () => {
+        const seen = stubOpenTargets(() =>
+            gqlResponse({
+                search: {
+                    total: 2,
+                    hits: [
+                        { id: "MONDO_0005148", name: "type 2 diabetes mellitus", description: "A type of diabetes mellitus." },
+                        { id: "EFO_0004541", name: "HbA1c measurement", description: null },
+                    ],
+                },
+            }),
+        );
+
+        const { ctx } = makeToolContext();
+        const result = (await openTargetsTool.execute({ action: "resolve_disease", diseaseName: "type 2 diabetes", limit: 5 }, ctx))._unsafeUnwrap();
+
+        expect(seen[0]!.operation).toBe("DiseaseSearch");
+        expect(seen[0]!.variables).toMatchObject({ queryString: "type 2 diabetes", size: 5 });
+        expect(result).toEqual({
+            totalFound: 2,
+            candidates: [
+                { id: "MONDO_0005148", name: "type 2 diabetes mellitus", description: "A type of diabetes mellitus." },
+                { id: "EFO_0004541", name: "HbA1c measurement", description: null },
+            ],
+        });
+    });
+
+    it("returns an empty candidate list for a name that matches no disease", async () => {
+        stubOpenTargets(() => gqlResponse({ search: { total: 0, hits: [] } }));
+
+        const { ctx } = makeToolContext();
+        const result = (await openTargetsTool.execute({ action: "resolve_disease", diseaseName: "not a disease" }, ctx))._unsafeUnwrap();
+
+        expect(result).toEqual({ totalFound: 0, candidates: [] });
+    });
+});
+
 describe("opentargets — input validation", () => {
     it("emits a flat object schema whose only required field is the discriminator", () => {
         expect(openTargetsTool.jsonSchema.type).toBe("object");
@@ -226,6 +264,21 @@ describe("opentargets — input validation", () => {
 
     it("rejects a 'target' whose ensemblId is blank", () => {
         expect(openTargetsTool.inputSchema.safeParse({ action: "target", ensemblId: "  " }).success).toBe(false);
+    });
+
+    it("rejects 'resolve_disease' with no diseaseName", () => {
+        const parsed = openTargetsTool.inputSchema.safeParse({ action: "resolve_disease" });
+
+        expect(parsed.success).toBe(false);
+        const message = parsed.success ? "" : parsed.error.issues.map((i) => i.message).join(" ");
+        expect(message).toContain("diseaseName is required");
+    });
+
+    it("points a missing efoId at the resolver rather than leaving the caller stuck", () => {
+        const parsed = openTargetsTool.inputSchema.safeParse({ action: "disease" });
+
+        const message = parsed.success ? "" : parsed.error.issues.map((i) => i.message).join(" ");
+        expect(message).toContain("resolve_disease");
     });
 
     it("rejects 'disease' with no efoId, naming the identifier it needs", () => {

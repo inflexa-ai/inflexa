@@ -77,4 +77,58 @@ describe("searchClinicalTrials (translational-medicine family)", () => {
         const { ctx } = makeToolContext();
         await expect(searchClinicalTrialsTool.execute({ query: "imatinib", phase: undefined, status: undefined, limit: 20 }, ctx)).rejects.toThrow();
     });
+
+    it("selects the attrition statuses the registry serves", () => {
+        for (const status of ["TERMINATED", "WITHDRAWN", "SUSPENDED"]) {
+            expect(searchClinicalTrialsTool.inputSchema.safeParse({ query: "imatinib", status }).success).toBe(true);
+        }
+    });
+});
+
+describe("searchClinicalTrials — action 'details'", () => {
+    it("reads one study back by its NCT id, with its outcomes and adverse events", async () => {
+        const seen: string[] = [];
+        globalThis.fetch = (async (input: unknown) => {
+            seen.push(String(input));
+            return trialsResponse({
+                protocolSection: {
+                    identificationModule: { nctId: "NCT01234567", briefTitle: "A Study of Imatinib in CML" },
+                    statusModule: { overallStatus: "TERMINATED", whyStopped: "Slow accrual" },
+                    outcomesModule: { primaryOutcomes: [{ measure: "Overall survival", timeFrame: "24 months" }] },
+                },
+                resultsSection: {
+                    adverseEventsModule: {
+                        eventGroups: [{ id: "EG000", title: "Imatinib" }],
+                        seriousEvents: [{ term: "Neutropenia", organSystem: "Blood", stats: [{ groupId: "EG000", numAffected: 3, numAtRisk: 40 }] }],
+                    },
+                },
+            });
+        }) as unknown as typeof fetch;
+
+        const { ctx } = makeToolContext();
+        const result = (await searchClinicalTrialsTool.execute({ action: "details", nctId: "NCT01234567" }, ctx))._unsafeUnwrap();
+
+        expect(seen[0]).toContain("/studies/NCT01234567");
+        expect(result.trial!.trial.nctId).toBe("NCT01234567");
+        expect(result.trial!.whyStopped).toBe("Slow accrual");
+        expect(result.trial!.outcomes[0]!.measure).toBe("Overall survival");
+        expect(result.trial!.adverseEvents[0]).toMatchObject({ term: "Neutropenia", serious: true });
+    });
+
+    it("returns a null trial for an NCT id the registry does not hold (not is_error)", async () => {
+        stubFetch(() => new Response("not found", { status: 404 }));
+
+        const { ctx } = makeToolContext();
+        const result = (await searchClinicalTrialsTool.execute({ action: "details", nctId: "NCT99999999" }, ctx))._unsafeUnwrap();
+
+        expect(result.trial).toBeNull();
+    });
+
+    it("rejects 'details' with no nctId at the schema boundary", () => {
+        const parsed = searchClinicalTrialsTool.inputSchema.safeParse({ action: "details" });
+
+        expect(parsed.success).toBe(false);
+        const message = parsed.success ? "" : parsed.error.issues.map((i) => i.message).join(" ");
+        expect(message).toContain("nctId is required");
+    });
 });

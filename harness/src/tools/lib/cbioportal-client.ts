@@ -61,6 +61,8 @@ const RawCancerStudySchema = z.object({
     cancerType: z.object({ name: z.string().optional(), cancerTypeId: z.string().optional() }).optional(),
     name: z.string().optional(),
     description: z.string().optional(),
+    /** The denominator of a study. The sample-list SUMMARY projection carries no count. */
+    allSampleCount: z.number().optional(),
 });
 type RawCancerStudy = z.infer<typeof RawCancerStudySchema>;
 
@@ -69,6 +71,22 @@ async function listStudies(): Promise<RawCancerStudy[]> {
     const res = await apiFetchValidated(url, z.array(RawCancerStudySchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     return res.value ?? [];
+}
+
+/**
+ * The cancer-type vocabulary, keyed by its id. The study SUMMARY projection
+ * carries the id alone, thus a row would otherwise report `esca` where it must
+ * report `Esophageal Adenocarcinoma`.
+ */
+async function cancerTypeNames(): Promise<Map<string, string>> {
+    const url = `${CBIOPORTAL_BASE}/cancer-types?pageSize=10000`;
+    const res = await apiFetchValidated(url, z.array(z.object({ cancerTypeId: z.string().optional(), name: z.string().optional() })), { headers: HEADERS });
+    const names = new Map<string, string>();
+    if (res.isErr()) return names;
+    for (const row of res.value ?? []) {
+        if (row.cancerTypeId && row.name) names.set(row.cancerTypeId, row.name);
+    }
+    return names;
 }
 
 async function listAllSampleLists(): Promise<RawSampleList[]> {
@@ -128,7 +146,7 @@ export async function getSomaticMutationFrequencies(
     const entrezGeneId = await resolveEntrezId(geneSymbol);
     if (entrezGeneId == null) return { entrezGeneId: null, rows: [] };
 
-    const [studies, profiles, sampleLists] = await Promise.all([listStudies(), listMutationProfiles(), listAllSampleLists()]);
+    const [studies, profiles, sampleLists, typeNames] = await Promise.all([listStudies(), listMutationProfiles(), listAllSampleLists(), cancerTypeNames()]);
 
     const allSampleListByStudy = new Map<string, RawSampleList>();
     for (const sl of sampleLists) {
@@ -155,11 +173,11 @@ export async function getSomaticMutationFrequencies(
 
     const byCancerType = new Map<string, { name: string; total: number; mutated: number; studies: Set<string> }>();
     for (const studyId of studiesWithMutations) {
-        const sl = allSampleListByStudy.get(studyId);
-        if (!sl?.sampleCount) continue;
         const study = studyById.get(studyId);
+        const sampleCount = study?.allSampleCount ?? 0;
+        if (sampleCount === 0) continue;
         const cancerTypeId = study?.cancerType?.cancerTypeId ?? study?.cancerTypeId ?? "unknown";
-        const cancerTypeName = study?.cancerType?.name ?? cancerTypeId;
+        const cancerTypeName = study?.cancerType?.name ?? typeNames.get(cancerTypeId) ?? cancerTypeId;
         if (!byCancerType.has(cancerTypeId)) {
             byCancerType.set(cancerTypeId, {
                 name: cancerTypeName,
@@ -169,7 +187,7 @@ export async function getSomaticMutationFrequencies(
             });
         }
         const bucket = byCancerType.get(cancerTypeId)!;
-        bucket.total += sl.sampleCount;
+        bucket.total += sampleCount;
         bucket.mutated += mutatedStudySamples.get(studyId)?.size ?? 0;
         bucket.studies.add(studyId);
     }

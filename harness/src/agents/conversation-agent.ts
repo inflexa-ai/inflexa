@@ -54,7 +54,14 @@ import {
 import { createNcbiTools, createChemDbTools, type BioToolKeys } from "../tools/bio/keys.js";
 
 // Dependency-bearing tool factories.
-import { createGeneratePlanTool, createInspectRunTool, createInspectDataProfileTool, createGenerateAnalogyReportTool } from "../tools/research/index.js";
+import {
+    createGeneratePlanTool,
+    createInspectRunTool,
+    createInspectDataProfileTool,
+    createGenerateAnalogyReportTool,
+    createSearchSemanticScholarTool,
+    searchArxivTool,
+} from "../tools/research/index.js";
 import {
     createFileStatTool,
     createGrepTool,
@@ -208,6 +215,10 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         ncbi.pubmed,
         // Verification of one caller-supplied citation (distinct from discovery).
         createResolveCitationTool(citationResolver),
+        // Literature outside PubMed. A question about a method, a model or a
+        // preprint has no MEDLINE record, thus PubMed alone cannot answer it.
+        createSearchSemanticScholarTool({ ...(bioKeys.semanticScholar === undefined ? {} : { apiKey: bioKeys.semanticScholar }) }),
+        searchArxivTool,
         // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
         chemblTool,
         // PubChem (compound / crossrefs / assays behind one action).

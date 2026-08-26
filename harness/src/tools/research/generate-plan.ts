@@ -925,7 +925,6 @@ function buildPlannerSearchTools(bioKeys: BioToolKeys): Tool[] {
 /** Build the `generate_plan` tool bound to its provider and pool. */
 export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
     const baseLogger = (deps.logger ?? createNoopLogger()).named("generate-plan");
-    const searchTools = buildPlannerSearchTools(deps.bioKeys);
     return defineTool({
         id: "generate_plan",
         description:
@@ -1115,6 +1114,11 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 parentPlanId: input.parentPlanId ?? null,
             };
             const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger);
+            // Built here rather than at construction: a `describeCall` hook reads no
+            // dep, thus the tool must stay constructible from an empty bag. The tool
+            // definitions are identical across invocations, thus the request prefix
+            // that the cache keys on does not move.
+            const searchTools = buildPlannerSearchTools(deps.bioKeys);
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),

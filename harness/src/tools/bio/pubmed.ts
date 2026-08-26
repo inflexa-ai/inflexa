@@ -148,12 +148,18 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
     return defineTool({
         id: "pubmed",
         description:
-            "Search and read the biomedical literature via PubMed / PubMed Central (NCBI E-utilities). The three actions form a chain " +
-            "— search, then details on the relevant hits, then fulltext; see the action parameter for what each needs and returns. Read " +
+            "Search and read the biomedical literature in PubMed and PubMed Central — the MEDLINE citation index and the open-access full-text archive of " +
+            "the U.S. National Library of Medicine, through the NCBI E-utilities. The three actions form a chain " +
+            "— search, then details on the relevant hits, then fulltext; see the action parameter for what each needs and returns.\n" +
+            "ACCEPTED IDENTIFIERS: an Entrez free-text query with optional field tags for 'search' ('PCSK9[Title] AND 2020:2024[dp]'); PMIDs for " +
+            "'details' ('34567890'); and a PMID or a PMC ID for 'fulltext' ('PMC7096066'). For literature outside MEDLINE — a method, a model, a " +
+            "preprint — use search_semantic_scholar or search_arxiv instead.\n" +
+            "Read " +
             "fulltext sparingly — only where the 'details' abstract is not enough, and only for articles that have a pmcId (open-access). " +
             "A full article is larger than everything else this tool returns combined, so it comes back trimmed to a character budget: take the " +
             "`outline` from the first call and re-request the specific `sections` you need rather than raising maxChars. " +
-            "available: false is an expected outcome, not an error — do not retry it.",
+            "An empty result set and available: false are expected outcomes, not errors — an article with no PMC record simply has no open full text. " +
+            "Report it and continue, do not retry it.",
         inputSchema,
         // One tool, three jobs. The action alone would still render three
         // different searches identically, so each action names its own subject:

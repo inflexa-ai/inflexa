@@ -51,7 +51,9 @@ const inputSchema = z
                     "(INHIBITOR, AGONIST, …), targetChemblId + targetName, moleculeChemblId. Curated mainly for clinical/approved molecules, so tool " +
                     "compounds often have none.\n" +
                     "'bioactivity' (chemblId + idType) — measured activity rows: the curated, QUOTABLE potency. → standardType, standardValue + " +
-                    "standardUnits, pchemblValue (normalized -log10), assayChemblId, assayType, compoundChemblId, targetChemblId.\n" +
+                    "standardUnits, pchemblValue (normalized -log10), assayChemblId, assayType, compoundChemblId, targetChemblId. With idType='assay' " +
+                    "it reads ONE assay back by the assayChemblId that an earlier bioactivity row carried — every measurement made under the same " +
+                    "protocol, which is how you compare compounds on like terms.\n" +
                     "'targets' (query) — resolve a gene symbol or protein name to a ChEMBL target, producing the ID that bioactivity (idType='target') " +
                     "and compounds (searchType='target') need. → targetChemblId, preferredName, targetType, organism, geneNames. Check `organism`: the " +
                     "top hit for a human symbol may be a non-human ortholog.",
@@ -77,15 +79,15 @@ const inputSchema = z
             .min(1)
             .optional()
             .describe(
-                "Required for 'mechanism' and 'bioactivity'. A molecule ID ('CHEMBL25' = aspirin), or — for bioactivity with idType='target' — a target " +
-                    "ID ('CHEMBL203' = EGFR). 'mechanism' takes a molecule ID only.",
+                "Required for 'mechanism' and 'bioactivity'. A molecule ID ('CHEMBL25' = aspirin), or — for bioactivity — a target ID ('CHEMBL203' = " +
+                    "EGFR) with idType='target', or an assay ID ('CHEMBL1217643') with idType='assay'. 'mechanism' takes a molecule ID only.",
             ),
         idType: z
-            .enum(["compound", "target"])
+            .enum(["compound", "target", "assay"])
             .optional()
             .describe(
-                "Required for 'bioactivity' — which side of the activity table `chemblId` indexes. 'compound': everything that molecule was assayed " +
-                    "against. 'target': every compound assayed against that target.",
+                "Required for 'bioactivity' — which column of the activity table `chemblId` indexes. 'compound': everything that molecule was assayed " +
+                    "against. 'target': every compound assayed against that target. 'assay': every measurement made under that one assay protocol.",
             ),
         activityType: z
             .string()
@@ -138,10 +140,13 @@ export type ChemblOutput =
 export const chemblTool = defineTool({
     id: "chembl",
     description:
-        "ChEMBL — the manually curated database of drug-like bioactives (~2.4M compounds), the targets they were measured against, their mechanisms and " +
-        "their approval status. Five lookups; pick with `action`, which gives each one's params and return fields.\n" +
-        "IDs are resolved, never guessed: a `chemblId` comes from a prior action='compounds'/'drug' (molecules) or action='targets' (targets), or from " +
-        "pubchem action='crossrefs'. A compound or gene name is not a ChEMBL ID.\n" +
+        "ChEMBL — the manually curated database of drug-like bioactives of EMBL-EBI (~2.4M compounds), the targets they were measured against, their " +
+        "mechanisms and their approval status. Five lookups; pick with `action`, which gives each one's params and return fields.\n" +
+        "ACCEPTED IDENTIFIERS: free text for 'compounds', 'drug' and 'targets' — a compound name ('imatinib'), an indication ('melanoma'), a gene symbol " +
+        "('EGFR') or a SMILES string. A ChEMBL ID for 'mechanism' and 'bioactivity' — a molecule ID ('CHEMBL25'), a target ID ('CHEMBL203') or an assay " +
+        "ID ('CHEMBL1217643'), named by `idType`.\n" +
+        "IDs are resolved, never guessed: a `chemblId` comes from a prior action='compounds'/'drug' (molecules), action='targets' (targets), the " +
+        "assayChemblId of a bioactivity row (assays), or pubchem action='crossrefs'. A compound or gene name is not a ChEMBL ID.\n" +
         "Being curated, ChEMBL is what you quote from: prefer action='bioactivity' over pubchem action='assays' for any number you will cite, and resolve " +
         "compounds here first. If ChEMBL misses the compound, resolve it via pubchem action='compound' and bridge back with pubchem action='crossrefs'.\n" +
         "An empty array is valid no-data, not an error — do not retry the same call.",

@@ -22,10 +22,16 @@ export function createSearchSemanticScholarTool(options: { readonly apiKey?: str
     return defineTool({
         id: "search_semantic_scholar",
         description:
-            "Search Semantic Scholar for academic papers across all sciences " +
-            "(biology, ML, physics, math, economics, engineering, etc.). Returns " +
-            "paper id, title, abstract, year, venue, citation count, authors, and " +
-            "external IDs (DOI, ArXiv). Best for cross-domain analogical search.",
+            "Search Semantic Scholar — the cross-disciplinary literature corpus of the Allen Institute for AI, which indexes over 200M papers across " +
+            "biology, medicine, machine learning, physics, math, economics and engineering. Returns paper id, title, abstract, year, venue, citation " +
+            "count, authors, and external IDs (DOI, arXiv). Its citation counts are what rank a field by influence, and its breadth is what makes it the " +
+            "tool for a cross-domain analogical search.\n" +
+            "For the clinical and biomedical literature alone, pubmed indexes MEDLINE more precisely; for preprints in the quantitative fields use " +
+            "search_arxiv.\n" +
+            "ACCEPTED IDENTIFIERS: free text in `query`. A DOI or an arXiv ID also matches as free text, and each result carries its DOI and arXiv ID " +
+            "back for a citation.\n" +
+            "ABSENCE IS NORMAL: an empty papers array means the corpus holds nothing for the query, and `success: false` with an `error` string means the " +
+            "service could not be reached (its unkeyed rate limit lands here). Report either one and continue, do not retry unchanged.",
         inputSchema: z.object({
             query: z
                 .string()
