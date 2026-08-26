@@ -40,8 +40,9 @@ is impossible by structure, because argparse accepts one subcommand:
   prepare     — the store build workflow. It runs the warm script of each
                 manifest entry that names one, against the catalog farm, and
                 it records the cache entries per package in the farm lock.
-  reclaim     — the host reclamation command. It removes unreferenced store
-                directories under the exclusive lock.
+  reclaim     — the host reclamation command. It removes the store
+                directories that no farm links and the graph does not
+                advertise, under the exclusive lock.
   remove-farm — the analysis delete flow of the host. It removes one farm and
                 never touches the pool.
 
@@ -848,25 +849,27 @@ def _graph_node_dirs() -> set[str]:
 
 
 def cmd_reclaim(args) -> int:
-    """Remove store directories that no farm references, and prune their
-    graph nodes.
+    """Remove store directories that no farm links AND the graph does not
+    advertise, and prune the graph nodes whose directories are gone.
 
-    Explicit and host-invoked, never automatic — an unreferenced package is
-    kept until this runs, thus an old analysis can be rebuilt.
+    A graph-advertised directory is pool inventory, never waste, for two
+    reasons. A locally acquired package holds no farm link until a run
+    links it, thus "no farm link" marks fresh inventory as well as waste.
+    And an edge of a surviving node must keep a target: a removal that
+    ignores edges leaves the graph with a dangling edge, and the strict
+    graph reader then refuses the WHOLE pool. Explicit and host-invoked,
+    never automatic.
 
-    With --debris the pass narrows to the tier that nothing references at
-    all: a directory with no farm link AND no graph node, plus the stale
-    acquire reports. A directory the graph advertises stays, thus a
-    pre-fetched package survives, and the graph itself stays untouched.
+    With --debris the pass additionally removes the stale acquire reports,
+    and it never rewrites the graph — the boot pass and the flush tail call
+    it, thus it stays cheap and write-free on the metadata.
     """
     debris = bool(getattr(args, "debris", False))
     with store_lock(shared=False):
         if not STORE.is_dir():
             log("reclaim: no store")
             return 0
-        referenced = _referenced_store_dirs()
-        if debris:
-            referenced |= _graph_node_dirs()
+        referenced = _referenced_store_dirs() | _graph_node_dirs()
         removed = 0
         for d in sorted(STORE.iterdir()):
             if not d.is_dir() or d.name.startswith("."):
