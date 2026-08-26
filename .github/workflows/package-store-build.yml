@@ -94,9 +94,10 @@ jobs:
             best_effort: true
     runs-on: ${{ fromJSON(matrix.runner) }}
     continue-on-error: ${{ matrix.best_effort }}
-    # PROVISIONAL backstop, tighter than the 6-hour default. A cold build whose
-    # binary route degrades to source can spend four hours in the download
-    # phase alone, thus the budget must hold that shape plus the compile.
+    # PROVISIONAL backstop, equal to the 6-hour default, made explicit. A cold
+    # build whose binary route degrades to source can spend four hours in the
+    # download phase alone. Thus the budget must hold that phase plus the
+    # compile.
     timeout-minutes: 360
     env:
       PLATFORM: ${{ matrix.platform }}
@@ -196,22 +197,24 @@ jobs:
       # package on both arches, while the metadata reads of the same host
       # worked. The probe separates the candidate causes ON THE BUILDER: it
       # replicates the egress firewall of provisioner-entrypoint.sh, then it
-      # fetches one pinned-snapshot binary whole. A 404 names the snapshot, a
-      # stall or a reset names the network path, and a clean fetch clears the
-      # transport and points back at pak. Non-fatal by design — the build
-      # after it meets the same wall either way, and the probe output is the
-      # diagnosis.
+      # fetches one pinned-snapshot binary whole. A 404 names the snapshot. A
+      # stall or a reset names the network path. A clean fetch clears the
+      # transport, and the cause is then in pak. The probe is non-fatal by
+      # design: if the route is broken, the build after the probe fails the
+      # same way, and the probe output is the diagnosis.
       - name: Probe the P3M binary route (inside the egress firewall)
         run: |
+          # The default step shell is `bash -e {0}`, thus `-e` stays active.
+          # The `|| SNAPSHOT=""` guard keeps the snapshot read non-fatal.
           set -uo pipefail
-          SNAPSHOT=$(docker run --rm --entrypoint Rscript "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" -e 'cat(getOption("repos")[[1]])')
+          SNAPSHOT=$(docker run --rm --entrypoint Rscript "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" -e 'cat(getOption("repos")[[1]])') || SNAPSHOT=""
           echo "pinned snapshot: ${SNAPSHOT}"
           case "$ARCH" in
             amd64) UA="R (4.6.0 x86_64-pc-linux-gnu x86_64 linux-gnu)" ;;
             *)     UA="R (4.6.0 aarch64-unknown-linux-gnu aarch64 linux-gnu)" ;;
           esac
-          # The heredoc keeps the inner quoting plain; the script rides in on a
-          # read-only mount, and the firewall block mirrors the entrypoint.
+          # The heredoc keeps the inner quoting plain. The script mounts
+          # read-only, and the firewall block is the block of the entrypoint.
           cat > probe.sh <<'EOS'
           set -u
           iptables -A OUTPUT -o lo -j ACCEPT
@@ -226,13 +229,23 @@ jobs:
             done
           done
           iptables -P OUTPUT DROP
+          if [ -f /proc/net/if_inet6 ]; then
+            # The entrypoint drops v6 too. Without this drop, a v6 route can
+            # give the probe a clean fetch that the real build does not get.
+            ip6tables -A OUTPUT -o lo -j ACCEPT
+            ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+            ip6tables -P OUTPUT DROP
+          fi
           echo "== pinned p3m addresses:"
           grep p3m /etc/hosts || echo "(none pinned)"
           # digest 0.6.39 is a resolved entry of the pinned snapshot, thus the
           # version is stable for this base digest.
           URL="${SNAPSHOT}/src/contrib/digest_0.6.39.tar.gz"
           echo "== HEAD ${URL}"
-          curl -sI -m 30 -A "$UA" "$URL" | grep -i '^HTTP/\|binary-tag\|content-length' || echo "HEAD failed (exit $?)"
+          # Two commands, so that the exit code is the code of curl, not the
+          # code of grep at the end of a pipe.
+          curl -sI -m 30 -A "$UA" -o /tmp/probe.head "$URL" || echo "HEAD failed (exit $?)"
+          grep -i '^HTTP/\|binary-tag\|content-length' /tmp/probe.head 2>/dev/null || echo "(no matched header)"
           echo "== full GET"
           curl -s -m 120 -A "$UA" -o /tmp/probe.tar.gz -w 'bytes=%{size_download} seconds=%{time_total} code=%{http_code}\n' "$URL" || echo "GET failed (exit $?)"
           true
