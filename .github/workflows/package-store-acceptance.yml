@@ -39,12 +39,8 @@ on:
         description: "Published store version to mount, e.g. 20260721-14213e2. Empty = the current latest-<arch> pointer."
         required: false
         type: string
-  # TEMPORARY, remove before merge: the registration device of the two build
-  # workflows. The existing job condition skips a push-fired run, thus the
-  # registration costs no builder time and validates nothing prematurely.
-  push:
-    branches: [feat/local-package-store]
-    paths: [.github/workflows/package-store-acceptance.yml]
+  # The store pipeline calls this workflow as a job, after the two builds.
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}
@@ -55,9 +51,10 @@ permissions:
 
 jobs:
   acceptance:
-    # Manual runs always proceed; automatic runs only when the build succeeded
-    # (a fully-failed build has no candidate artifact to read).
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Only the automatic path gates on the build conclusion — a fully-failed
+    # build has no candidate artifact to read. A manual run and a pipeline
+    # call always proceed, because their publishes already exist.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     strategy:
       fail-fast: false
       # Arch list — keep in lock-step with the build workflow matrix and its

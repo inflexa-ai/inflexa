@@ -1,0 +1,50 @@
+name: Store Pipeline
+
+# TEMPORARY, remove before merge: the branch-side driver of the three store
+# workflows. A dispatch-only workflow that never reached the default branch
+# is not registered, thus gh cannot dispatch it. The called workflows run
+# INSIDE this run, thus they work without registration, and the `needs`
+# chain runs them in a strict sequence on the shared builders.
+#
+# The push trigger fires only when this file itself changes, thus a normal
+# branch push starts no multi-hour build. The lock commit-back of the store
+# build pushes to the branch, and the path filter keeps that push inert.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/local-package-store]
+    paths: [.github/workflows/store-pipeline.yml]
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    uses: ./.github/workflows/sandbox-images-build.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+
+  store:
+    needs: images
+    uses: ./.github/workflows/package-store-build.yml
+    secrets: inherit
+    permissions:
+      # The lock commit-back job of the store build writes to the branch.
+      contents: write
+      packages: write
+
+  acceptance:
+    needs: store
+    uses: ./.github/workflows/package-store-acceptance.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+      actions: read
