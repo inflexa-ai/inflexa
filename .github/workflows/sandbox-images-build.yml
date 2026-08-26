@@ -33,7 +33,9 @@ on:
   workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}
+  # A literal group: under a reusable call, github.workflow names the
+  # CALLER, and the shared group then deadlocks against the parent run.
+  group: sandbox-images-build
   cancel-in-progress: true
 
 permissions:
