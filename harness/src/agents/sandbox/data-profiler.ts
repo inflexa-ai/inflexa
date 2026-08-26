@@ -19,7 +19,6 @@ export const meta: AgentMeta = {
     // differently. Declared rather than bolted on, so the resolved roster stays
     // `meta.tools` plus the always-on set.
     tools: [...BASE_SANDBOX_TOOLS, "scanInputs"],
-    defaultMaxSteps: 85,
     plannable: false,
 };
 

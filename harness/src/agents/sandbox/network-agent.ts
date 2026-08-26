@@ -13,7 +13,6 @@ export const meta: AgentMeta = {
     suitableFor: ["expression-matrices", "correlation-matrices", "general-omics"],
     skills: ["network-regulatory", "shared/omics-general"],
     tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "lookupAnnotation", "searchInteractions"],
-    defaultMaxSteps: 35,
 };
 
 export function createNetworkAgent(deps: SandboxAgentDeps): AgentDefinition {

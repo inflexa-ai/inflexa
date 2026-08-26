@@ -5,7 +5,7 @@ import { bulkTranscriptomicsAgentPrompt } from "../../prompts/sandbox/bulk-trans
 import { dataProfilerPrompt } from "../../prompts/sandbox/data-profiler.js";
 
 import { makeFakeSandboxAgentDeps } from "./__fixtures__/deps.js";
-import { createSandboxAgents, SANDBOX_AGENT_META } from "./index.js";
+import { createSandboxAgents, SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS, SANDBOX_AGENT_META } from "./index.js";
 
 describe("createSandboxAgents", () => {
     const deps = makeFakeSandboxAgentDeps();
@@ -88,8 +88,13 @@ describe("createSandboxAgents", () => {
         expect(agents["data-profiler"]!.systemPrompt.includes(dataProfilerPrompt.trim())).toBe(true);
     });
 
-    it("network-agent has the per-meta defaultMaxSteps override (35)", () => {
-        expect(agents["network-agent"]!.maxIterations).toBe(35);
+    it("every agent takes the shared default cap — no per-agent override", () => {
+        for (const [id, meta] of Object.entries(SANDBOX_AGENT_META)) {
+            expect(meta.defaultMaxSteps, id).toBeUndefined();
+        }
+        for (const [id, def] of Object.entries(agents)) {
+            expect(def.maxIterations, id).toBe(SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS);
+        }
     });
 
     it("non-plannable agents flagged in meta carry plannable=false", () => {
