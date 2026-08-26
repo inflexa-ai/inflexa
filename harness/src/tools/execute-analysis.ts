@@ -99,8 +99,14 @@ export class PlanPackagesMissingError extends Error {
     constructor(
         readonly missing: string[],
         readonly collisions: string[],
+        readonly unavailable?: string,
     ) {
         const parts = [
+            // The store-level reason FIRST, because it invalidates the rest: with an
+            // unreadable graph, no per-package claim below it is trustworthy.
+            unavailable !== undefined
+                ? `the store cannot answer (${unavailable}) — this says nothing about the packages themselves, so do not re-request them`
+                : null,
             missing.length > 0 ? `the pool does not hold: ${missing.join(", ")}` : null,
             collisions.length > 0 ? `a collision refused: ${collisions.join(", ")}` : null,
         ].filter((p): p is string => p !== null);
@@ -132,11 +138,20 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
     }
     if (union.size === 0) return;
     const outcomes = await extendAnalysisFarm(analysisId, [...union.values()]);
+    // An `unavailable` outcome preempts everything: the link pass could not
+    // answer at all (an unreadable graph, a locked farm), so a per-package
+    // absence list would be a fabrication. One reason covers the batch.
+    const unavailable = outcomes.find((o) => o.kind === "unavailable");
+    if (unavailable !== undefined) {
+        throw new PlanPackagesMissingError([], [], unavailable.reason);
+    }
     // A seam-supplied detail classifies the miss in host terms (in flight,
     // failed with its reason, never requested), and it rides beside the name
-    // so the agent replans from the true state instead of re-asking.
+    // so the agent replans from the true state instead of re-asking. A
+    // collision's detail names the two pins and what needs each side — the
+    // remedy is to drop or re-pin a DEPENDENT, so the refusal must name it.
     const missing = outcomes.filter((o) => o.kind === "absent").map((o) => (o.detail === undefined ? o.name : `${o.name} — ${o.detail}`));
-    const collisions = outcomes.filter((o) => o.kind === "collision").map((o) => o.name);
+    const collisions = outcomes.filter((o) => o.kind === "collision").map((o) => (o.detail === undefined ? o.name : `${o.name} — ${o.detail}`));
     if (missing.length > 0 || collisions.length > 0) {
         throw new PlanPackagesMissingError(missing, collisions);
     }

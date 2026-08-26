@@ -59,11 +59,22 @@ export interface EnvironmentStorePaths {
      * or planning surface — the ask flow marks the packages that the POOL
      * does not hold, and the farm of a new analysis is empty, which would
      * read as "everything is absent". Leave it unbound for a sandbox agent,
-     * because a step imports only what its farm links. `null` means the pool
-     * cannot be read, and the tool reports the set as UNKNOWN.
+     * because a step imports only what its farm links. An `unavailable` read
+     * carries the reason of the embedder — a damaged dependency graph reads
+     * as unavailable WITH its cause, never as an empty pool, because the
+     * cause is what tells the agent the state is structural and not
+     * transient.
      */
-    readonly readPoolInventory?: () => Promise<readonly PoolInventorySection[] | null>;
+    readonly readPoolInventory?: () => Promise<PoolInventoryRead>;
 }
+
+/**
+ * What one pool-scope inventory read produced: the sections, or the reason
+ * the pool cannot answer. There is no empty-on-error shape — an unreadable
+ * pool must stay distinguishable from a pool that holds nothing.
+ */
+export type PoolInventoryRead =
+    { readonly kind: "sections"; readonly sections: readonly PoolInventorySection[] } | { readonly kind: "unavailable"; readonly reason: string };
 
 /** One package entry of an inventory section, with the store identity where the source records it. */
 export interface PoolInventoryPackage {
