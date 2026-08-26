@@ -41,6 +41,12 @@ import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { createListAvailablePackagesTool } from "../sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { createReportBlockerToolFor } from "../sandbox/report-blocker.js";
+import { searchGeoDatasetsTool } from "../bio/search-geo-datasets.js";
+import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
+import { queryDocsTool, resolveLibraryIdTool } from "./context7-docs.js";
+import { searchArxivTool } from "./search-arxiv.js";
+import { createSearchGithubReposTool } from "./search-github-repos.js";
+import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../../app/data-profile-orientation.js";
 import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/resource-limits.js";
@@ -60,10 +66,16 @@ import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, ty
 const PLANNER_AGENT_ID = "planner";
 
 /**
- * Budget for the planner's internal loop: one draft/submit attempt plus
- * correction retries and headroom.
+ * Budget for the planner's internal loop: a bounded research phase, one
+ * draft/submit attempt, correction retries, and headroom.
+ *
+ * The planner holds search tools, thus a plan against an unfamiliar assay or an
+ * unfamiliar method costs some lookups before the draft. A well-grounded plan
+ * still costs two or three calls, because the prompt gates the research phase on
+ * what the seed does not already answer. The wall-clock guard, not this number,
+ * is what bounds the worst case.
  */
-const PLANNER_MAX_ITERATIONS = 13;
+const PLANNER_MAX_ITERATIONS = 40;
 
 /** Wall-clock guard for a single plan-generation invocation. */
 const PLAN_TIMEOUT_MS = 600_000;
@@ -85,7 +97,7 @@ const MAX_LOGGED_ISSUE_CHARS = 240;
 const MAX_LOGGED_REJECTIONS = 6;
 /** Excerpt of the planner's last words — the one artifact that explains a run ending on prose. */
 const MAX_LOGGED_PROSE_CHARS = 800;
-/** Tool-call trace length. The planner's whole budget is ~16 turns, so this rarely truncates. */
+/** Tool-call trace length. The planner's whole budget is ~43 turns, so this rarely truncates. */
 const MAX_LOGGED_TOOL_CALLS = 48;
 
 /** Trim to `max`, marking the cut so a truncated value never reads as a complete one. */
@@ -873,11 +885,46 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
     readonly logger?: Logger;
     /** LLM usage-accounting seam for the planner loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** API keys for the search tools the planner uses to ground a plan. */
+    readonly bioKeys: BioToolKeys;
+}
+
+/**
+ * The search tools of the planner — built one time, not per invocation.
+ *
+ * The set answers the two questions that a seed cannot. "What did a study of
+ * this kind do before?" reaches the public dataset records and the literature.
+ * "What does this package actually give me?" reaches the developer docs. The
+ * planner reads its reference and package inventories from the seed, thus the
+ * docs pair is what turns a package name into a real function.
+ *
+ * A tool here never writes and never computes. Thus the worst outcome of a
+ * needless call is latency, and the prompt is what bounds that.
+ */
+function buildPlannerSearchTools(bioKeys: BioToolKeys): Tool[] {
+    const ncbi = createNcbiTools(bioKeys);
+    return [
+        // Comparable public studies — the design, the platform, and the sample
+        // count that a plan for the same assay must answer to.
+        searchGeoDatasetsTool,
+        // Prior methods, in three corpora that do not overlap: the biomedical
+        // literature, the statistics and machine-learning preprints, and the
+        // cross-field index that ranks a method paper best.
+        ncbi.pubmed,
+        searchArxivTool,
+        createSearchSemanticScholarTool({ ...(bioKeys.semanticScholar === undefined ? {} : { apiKey: bioKeys.semanticScholar }) }),
+        // The same approach as running code — a pipeline that someone published.
+        createSearchGithubReposTool({ githubToken: bioKeys.github }),
+        // The API of a staged package, so a step names a function that exists.
+        resolveLibraryIdTool,
+        queryDocsTool,
+    ];
 }
 
 /** Build the `generate_plan` tool bound to its provider and pool. */
 export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
     const baseLogger = (deps.logger ?? createNoopLogger()).named("generate-plan");
+    const searchTools = buildPlannerSearchTools(deps.bioKeys);
     return defineTool({
         id: "generate_plan",
         description:
@@ -1071,7 +1118,10 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
                 model: deps.conversation.model,
-                tools: innerTools.terminal,
+                // The search tools come first, and the terminal tools come last.
+                // The order is the order of the prompt, and it is stable across
+                // every invocation, thus the cached request prefix holds.
+                tools: [...searchTools, ...innerTools.terminal],
                 maxIterations: PLANNER_MAX_ITERATIONS,
             };
 

@@ -14,6 +14,9 @@ import type { DataProfileResult } from "../../state/index.js";
 import type { Tool, ToolContext } from "../define-tool.js";
 import { createGeneratePlanTool } from "./generate-plan.js";
 
+/** The key slice the search tools of the planner take. An empty key keeps every tool constructible offline. */
+const TEST_BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
+
 /** A ToolContext whose session scopes the tool to `analysisId` — where it reads the profile from. */
 function toolContext(analysisId = "analysis-001"): ToolContext {
     return {
@@ -155,7 +158,7 @@ describe("generatePlan loop-driving tool", () => {
 
     /** Rebuild the tool per test — the provider is the only thing that varies. */
     function toolFor(provider: ScriptedProvider): Tool {
-        return createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool });
+        return createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS });
     }
 
     // ── Outcome shaping ──────────────────────────────────────────────
@@ -216,7 +219,10 @@ describe("generatePlan loop-driving tool", () => {
         await writeFile(join(root, "managed", "collectri-human", "2.0", "CollecTRI_regulons.csv"), "source,target");
 
         const provider = refsProbe();
-        await createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, refStorePath: root }).execute(INPUT, toolContext());
+        await createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, refStorePath: root, bioKeys: TEST_BIO_KEYS }).execute(
+            INPUT,
+            toolContext(),
+        );
 
         expect(Object.keys(provider.calls[0]!.tools)).not.toContain("list_available_refs");
         expect(Object.keys(provider.calls[0]!.tools)).toEqual(expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker"]));
@@ -266,7 +272,8 @@ describe("generatePlan loop-driving tool", () => {
 
     describe("data context", () => {
         it("takes no dataset field from the caller at all", () => {
-            const schema = createGeneratePlanTool({ conversation: { provider: scriptedProvider([]), model: "claude-test" }, pool }).jsonSchema as {
+            const schema = createGeneratePlanTool({ conversation: { provider: scriptedProvider([]), model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS })
+                .jsonSchema as {
                 properties: Record<string, unknown>;
                 required?: string[];
             };
@@ -433,7 +440,7 @@ describe("generatePlan loop-driving tool", () => {
     describe("outcome records", () => {
         function loggedToolFor(provider: ScriptedProvider): { tool: Tool; logger: CapturingLogger } {
             const logger = createCapturingLogger();
-            return { tool: createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, logger }), logger };
+            return { tool: createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, logger, bioKeys: TEST_BIO_KEYS }), logger };
         }
 
         /** The one per-invocation outcome record, failing loudly if there is not exactly one. */
@@ -501,7 +508,12 @@ describe("generatePlan loop-driving tool", () => {
             const cancelled = createCapturingLogger();
             const aborted = new AbortController();
             aborted.abort();
-            await createGeneratePlanTool({ conversation: { provider: scriptedProvider([]), model: "claude-test" }, pool, logger: cancelled }).execute(INPUT, {
+            await createGeneratePlanTool({
+                conversation: { provider: scriptedProvider([]), model: "claude-test" },
+                pool,
+                logger: cancelled,
+                bioKeys: TEST_BIO_KEYS,
+            }).execute(INPUT, {
                 ...toolContext(),
                 signal: aborted.signal,
             });
