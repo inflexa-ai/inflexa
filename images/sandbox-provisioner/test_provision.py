@@ -1069,6 +1069,64 @@ class AcquireRunTests(StoreTestCase):
         self.assertEqual(sorted(p.name for p in provision.FARMS.iterdir()), [])
         self.assertEqual(sorted(p.name for p in provision.STORE.glob(".staging*")), [])
 
+    def test_the_resolve_rides_the_pool_pins_as_constraints(self):
+        """An add reuses a held pin whenever its ranges permit it. The
+        compile call must carry a constraints file with the shelf-head
+        pins, or a blind resolve mints a needless second pin."""
+        graph = {"version": 1,
+                 "nodes": {"jinja2-3.0.3-aaaa": {"name": "jinja2",
+                                                 "version": "3.0.3",
+                                                 "track": "python"}},
+                 "by_name": {"python": {"jinja2": ["jinja2-3.0.3-aaaa"]}}}
+        (provision.LIBS / "deps.json").write_text(json.dumps(graph))
+        self.compile_by_input = {"foo": FOO_1}
+        self.install_tree = dict(FOO_1_TREE)
+
+        code, report = self._acquire(["python:foo"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(report["outcomes"][0]["outcome"], "acquired")
+        compiles = [argv for argv in self.calls
+                    if argv[0] == "uv" and "compile" in argv]
+        self.assertTrue(compiles)
+        argv = compiles[0]
+        self.assertIn("--constraint", argv)
+        constraints = Path(argv[argv.index("--constraint") + 1]).read_text()
+        self.assertIn("jinja2==3.0.3", constraints)
+
+    def test_a_conflicting_constraint_set_drops_and_the_resolve_runs_fresh(self):
+        """A true conflict must not refuse the add. The constrained resolve
+        fails, the constraints drop, and the pin lands — the committed-lock
+        pattern of the catalog build."""
+        graph = {"version": 1,
+                 "nodes": {"jinja2-3.0.3-aaaa": {"name": "jinja2",
+                                                 "version": "3.0.3",
+                                                 "track": "python"}},
+                 "by_name": {"python": {"jinja2": ["jinja2-3.0.3-aaaa"]}}}
+        (provision.LIBS / "deps.json").write_text(json.dumps(graph))
+        self.compile_by_input = {"foo": FOO_1}
+        self.install_tree = dict(FOO_1_TREE)
+        inner = provision.subprocess.run
+
+        def constrained_fails(cmd, *args, **kwargs):
+            argv = list(cmd)
+            if argv[0] == "uv" and "compile" in argv and "--constraint" in argv:
+                self.calls.append(argv)
+                return SimpleNamespace(returncode=1, stdout="",
+                                       stderr="jinja2 versions are in conflict")
+            return inner(cmd, *args, **kwargs)
+        provision.subprocess.run = constrained_fails
+
+        code, report = self._acquire(["python:foo"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(report["outcomes"][0]["outcome"], "acquired")
+        compiles = [argv for argv in self.calls
+                    if argv[0] == "uv" and "compile" in argv]
+        self.assertEqual(len(compiles), 2)
+        self.assertIn("--constraint", compiles[0])
+        self.assertNotIn("--constraint", compiles[1])
+
     def test_one_bad_spec_drops_out_and_the_rest_still_lands(self):
         self.compile_by_input = {"foo": FOO_1}
         self.compile_failures = {"nosuch": "error: no version of nosuch"}

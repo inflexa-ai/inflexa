@@ -974,17 +974,57 @@ def r_repos_hold(names: list[str]) -> dict[str, bool]:
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+def _pool_constraints() -> Path | None:
+    """The shelf-head pins of the Python track, as a uv constraints file.
+
+    A blind resolve can mint a second pin of a dependency the pool already
+    holds, and two pins of one name refuse at farm composition. The head
+    pins ride as constraints, thus the resolve reuses a held pin whenever
+    the ranges permit it. The caller drops the constraints on a conflict,
+    so a true conflict still lands its pin. A missing or unreadable graph
+    gives no constraints, because a fresh store has nothing to converge on.
+    """
+    deps_path = LIBS / "deps.json"
+    if not deps_path.is_file():
+        return None
+    try:
+        graph = json.loads(deps_path.read_text())
+    except ValueError:
+        return None
+    nodes = graph.get("nodes", {})
+    lines: list[str] = []
+    for name, dirs in graph.get("by_name", {}).get("python", {}).items():
+        head = nodes.get(dirs[0]) if dirs else None
+        version = (head or {}).get("version")
+        if version:
+            lines.append(f"{name}=={version}")
+    if not lines:
+        return None
+    path = run_temp("pool-constraints.txt")
+    path.write_text("\n".join(sorted(lines)) + "\n")
+    return path
+
+
 def acquire_python_spec(spec: dict) -> dict:
     """Acquire one Python spec: its own closure into the pool.
 
     Per-spec resolution is correct for a pool: the pool holds many versions,
     and a farm resolves one at link time. Two specs whose closures share a
     distribution converge on one store directory by content address, thus the
-    shared dependency installs once.
+    shared dependency installs once. The resolve rides the pool pins as
+    constraints, and a conflict drops them — refer to `_pool_constraints`.
     """
     requirement = spec["name"] + (f"=={spec['version']}" if spec["version"] else "")
     try:
-        pins = resolve([requirement])
+        constraints = _pool_constraints()
+        if constraints is None:
+            pins = resolve([requirement])
+        else:
+            try:
+                pins = resolve([requirement], constraints)
+            except ResolveError:
+                log("the held pins conflict with the spec; resolving fresh")
+                pins = resolve([requirement])
         store_dirs: list[Path] = []
         installed: list[str] = []
         for pin in pins:
