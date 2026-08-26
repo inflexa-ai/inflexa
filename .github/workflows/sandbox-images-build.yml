@@ -28,6 +28,13 @@ name: Build Sandbox Images
 
 on:
   workflow_dispatch:
+  # TEMPORARY, remove before merge: a dispatch-only workflow that never
+  # reached the default branch is not registered, thus gh cannot dispatch
+  # it. The path filter fires one registration run when this file changes,
+  # and later branch pushes fire nothing.
+  push:
+    branches: [feat/local-package-store]
+    paths: [.github/workflows/sandbox-images-build.yml]
 
 concurrency:
   group: ${{ github.workflow }}
