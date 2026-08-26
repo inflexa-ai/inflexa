@@ -1231,6 +1231,25 @@ class ReclaimTests(StoreTestCase):
         self.assertTrue(a.exists())
         self.assertFalse(b.exists())
 
+    def test_reclaim_keeps_a_graph_advertised_directory_with_no_farm_link(self):
+        """A locally acquired package holds no farm link until a run links
+        it, and an edge of a surviving node must keep its target. Thus a
+        graph node protects a directory exactly as a farm link does, and
+        only the tier that nothing references leaves the pool."""
+        advertised = provision.STORE / "adver-2.0-bbbb"
+        orphan = provision.STORE / "orphan-3.0-cccc"
+        for d in (advertised, orphan):
+            (d / "mod").mkdir(parents=True)
+        graph = {"version": 1, "nodes": {advertised.name: {"name": "adver"}},
+                 "by_name": {"python": {"adver": [advertised.name]}}}
+        (provision.LIBS / "deps.json").write_text(json.dumps(graph))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.cmd_reclaim(SimpleNamespace()), 0)
+
+        self.assertTrue(advertised.is_dir())
+        self.assertFalse(orphan.exists())
+
     def test_remove_farm_removes_the_farm_and_never_the_pool(self):
         """No lease guards a removal: the host gates its own delete flow on
         live work, and that gate is the one guard."""
