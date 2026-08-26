@@ -107,8 +107,11 @@ jobs:
       # The egress allowlist of the catalog build: the pinned Python index and
       # its file host, the pak repositories, the GitHub hosts of the github
       # track, and git.bioconductor.org of the git track. An acquisition run
-      # of the host gets only the first two classes.
-      EGRESS_ALLOW: "pypi.org,files.pythonhosted.org,packagemanager.posit.co,cran.r-project.org,bioconductor.org,github.com,api.github.com,codeload.github.com,objects.githubusercontent.com,raw.githubusercontent.com,git.bioconductor.org"
+      # of the host gets only the first two classes. p3m.dev is the snapshot
+      # alias that the base image writes into the R `repos` option — the pak
+      # downloads of the github stage read that option, thus the alias must
+      # resolve and pin beside packagemanager.posit.co.
+      EGRESS_ALLOW: "pypi.org,files.pythonhosted.org,packagemanager.posit.co,p3m.dev,cran.r-project.org,bioconductor.org,github.com,api.github.com,codeload.github.com,objects.githubusercontent.com,raw.githubusercontent.com,git.bioconductor.org"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1

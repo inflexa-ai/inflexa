@@ -624,6 +624,75 @@ LOCK_NAME = "inflexa.lock"
 LOCK_SCHEMA = 1
 
 
+def _github_wanted_names(refs: list[str]) -> set[str]:
+    """The normalized repository tails of the github track.
+
+    A github manifest entry names a repository, and the installed package
+    names itself in its DESCRIPTION. The two agree only loosely — the case
+    and the punctuation differ (seurat-disk installs SeuratDisk). Thus the
+    comparison keeps letters and digits alone, in lower case.
+    """
+    out: set[str] = set()
+    for ref in refs:
+        tail = ref.split("/")[-1].split("@")[0]
+        out.add(re.sub(r"[^a-z0-9]", "", tail.lower()))
+    return out
+
+
+def carry_held_r_entries(old_lock: dict, stored: dict[str, list[tuple[str, Path]]],
+                         r_wanted: dict[str, list[str]],
+                         graph: dict) -> list[tuple[str, str, Path, bool]]:
+    """The held R entries that the new farm keeps after a failed install.
+
+    A build links only what staged in its own round, thus one bad round
+    would remove a good package from the published farm — the farm-level
+    twin of a moved edge. An entry carries over when the previous farm
+    advertised it, the pool still holds its directory, and the manifest
+    still wants it. A dependency carries over only when a kept requested
+    entry reaches it through the graph, thus a removed root takes its
+    private dependencies with it.
+    """
+    staged = {name.lower() for pkgs in stored.values() for name, _ in pkgs}
+    wanted = {
+        "cran": {n.lower() for n in r_wanted.get("cran") or []},
+        "bioconductor": {n.lower() for n in r_wanted.get("bioconductor") or []},
+        "github": _github_wanted_names(r_wanted.get("github") or []),
+    }
+    roots: list[dict] = []
+    deps: list[dict] = []
+    for entry in old_lock.get("packages", []):
+        track = entry.get("track")
+        if track not in R_SUBTREES:
+            continue
+        if entry["name"].lower() in staged:
+            continue
+        if not (STORE / entry["store_dir"]).is_dir():
+            continue
+        if entry.get("requested"):
+            name = entry["name"].lower()
+            key = re.sub(r"[^a-z0-9]", "", name) if track == "github" else name
+            if key not in wanted[track]:
+                continue
+            roots.append(entry)
+        else:
+            deps.append(entry)
+
+    nodes = graph.get("nodes", {})
+    reachable: set[str] = set()
+    frontier = [entry["store_dir"] for entry in roots]
+    while frontier:
+        key = frontier.pop()
+        if key in reachable:
+            continue
+        reachable.add(key)
+        frontier.extend(nodes.get(key, {}).get("edges", []))
+
+    kept = roots + [entry for entry in deps if entry["store_dir"] in reachable]
+    return [(entry["track"], entry["name"], STORE / entry["store_dir"],
+             bool(entry.get("requested")))
+            for entry in kept]
+
+
 def lock_package_entry(store_dir: Path, track: str, requested: bool) -> dict:
     """One `packages` entry of the farm lock, for one linked store directory."""
     if track == "python":
@@ -1330,6 +1399,14 @@ def cmd_build(args) -> int:
 
     manifest_path = Path(args.manifest)
     manifest = load_manifest(manifest_path)
+    r_names = manifest_r_names(manifest)
+    # Refuse before any track runs: an anonymous run works for the first
+    # calls and dies an hour later, thus the late failure wastes the bulk.
+    if r_names["github"] and not os.environ.get("GITHUB_PAT"):
+        raise SystemExit(
+            "[provision] the manifest names a github entry and GITHUB_PAT is not set. "
+            "An anonymous run caps at 60 GitHub API calls per hour and fails late with 403. "
+            "Set GITHUB_PAT, then run the build again.")
     entries = manifest_python_specs(manifest)
     committed = read_committed_lock(Path(args.lock) if args.lock else None)
 
@@ -1366,9 +1443,9 @@ def cmd_build(args) -> int:
 
         # The R tracks, through pak (gen-r-lock.R): CRAN + Bioconductor + the
         # catalog-only git track resolve as one lockfile, and GitHub installs
-        # incrementally on top.
+        # incrementally on top, also through pak — remotes cannot read the
+        # `RemoteType: bioc` metadata that the pak bulk writes.
         r_language: dict | None = None
-        r_names = manifest_r_names(manifest)
         if any(r_names.values()):
             stage_root = staging_dir("r")
             if stage_root.exists():
@@ -1380,12 +1457,14 @@ def cmd_build(args) -> int:
             for repo in r_names["github"]:
                 github_lib = stage_root / "r" / "github"
                 github_lib.mkdir(parents=True, exist_ok=True)
-                log(f"R github: installing {repo} (incremental, best-effort)")
+                log(f"R github: installing {repo} through pak (incremental, best-effort)")
+                # The bulk libraries ride in .libPaths, thus pak reuses a
+                # dependency that a range already satisfies and installs
+                # only what the repository truly adds.
                 rexpr = (
                     f".libPaths(c('{github_lib}', '{stage_root}/r/bioconductor', "
                     f"'{stage_root}/r/cran', .libPaths())); "
-                    f"remotes::install_github('{repo}', lib='{github_lib}', "
-                    f"dependencies=TRUE, upgrade='never')"
+                    f"pak::pkg_install('{repo}', lib='{github_lib}', upgrade=FALSE)"
                 )
                 if subprocess.run(["R", "-q", "-e", rexpr]).returncode != 0:
                     log(f"WARNING: github install of {repo} did not finish cleanly; keeping what installed")
@@ -1401,6 +1480,20 @@ def cmd_build(args) -> int:
                     store_dir, _is_new = store_r_package(pkg_dir)
                     stored[sub].append((name, store_dir))
                     packages.append(lock_package_entry(store_dir, sub, name in requested_r))
+
+            old_lock_data: dict = {}
+            if (farm / "inflexa.lock").is_file():
+                with contextlib.suppress(OSError, ValueError):
+                    old_lock_data = json.loads((farm / "inflexa.lock").read_text())
+            graph_data: dict = {}
+            if (LIBS / "deps.json").is_file():
+                with contextlib.suppress(OSError, ValueError):
+                    graph_data = json.loads((LIBS / "deps.json").read_text())
+            for sub, name, store_dir, requested in carry_held_r_entries(
+                    old_lock_data, stored, r_names, graph_data):
+                stored[sub].append((name, store_dir))
+                packages.append(lock_package_entry(store_dir, sub, requested))
+                log(f"kept the held {sub}/{name} from the pool; the install failed this round")
             build_r_track(staging, stored)
 
             pak_lock: dict = {}
