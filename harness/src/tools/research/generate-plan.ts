@@ -66,16 +66,17 @@ import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, ty
 const PLANNER_AGENT_ID = "planner";
 
 /**
- * Budget for the planner's internal loop: a bounded research phase, one
- * draft/submit attempt, correction retries, and headroom.
+ * Budget for the planner's internal loop: the research phase, one draft/submit
+ * attempt, correction retries, and headroom.
  *
- * The planner holds search tools, thus a plan against an unfamiliar assay or an
- * unfamiliar method costs some lookups before the draft. A well-grounded plan
+ * The number is deliberately far above what a plan costs. A well-grounded plan
  * still costs two or three calls, because the prompt gates the research phase on
- * what the seed does not already answer. The wall-clock guard, not this number,
- * is what bounds the worst case.
+ * what the seed does not already answer. What the ceiling must never do is stop
+ * a planner that is searching correctly. A capped run takes the forced wrap-up
+ * path and submits the plan that it had, not the plan that it was building.
+ * Thus the wall-clock guard, not this number, is what bounds the worst case.
  */
-const PLANNER_MAX_ITERATIONS = 40;
+const PLANNER_MAX_ITERATIONS = 200;
 
 /** Wall-clock guard for a single plan-generation invocation. */
 const PLAN_TIMEOUT_MS = 600_000;
@@ -97,7 +98,7 @@ const MAX_LOGGED_ISSUE_CHARS = 240;
 const MAX_LOGGED_REJECTIONS = 6;
 /** Excerpt of the planner's last words — the one artifact that explains a run ending on prose. */
 const MAX_LOGGED_PROSE_CHARS = 800;
-/** Tool-call trace length. The planner's whole budget is ~43 turns, so this rarely truncates. */
+/** Tool-call trace length. A long research phase passes it, and `toolCallsTruncated` marks the record when it does. */
 const MAX_LOGGED_TOOL_CALLS = 48;
 
 /** Trim to `max`, marking the cut so a truncated value never reads as a complete one. */
