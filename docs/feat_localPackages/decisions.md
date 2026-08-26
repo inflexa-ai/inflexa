@@ -403,3 +403,54 @@ pattern of the catalog build. A second pin appears only when the ranges
 force it. The uv-add flight was rejected as needless. With the two guards
 no add sequence can produce a broken state. The collision refusal remains
 only for the plan that no resolver can satisfy.
+
+## The catalog-build postmortem (the github track and the OOM)
+
+Two local rebuilds on 2026-08-26 exposed that no catalog build was ever
+clean. The record of 24 August was wrong: that build also failed nine
+github installs, and the pool held only 5 of the 15 wanted github
+packages. Five faults stacked, and each hid behind a best-effort warning.
+The user set the rule: a silent degradation of the farm is a defect.
+
+### 31. The egress resolution pins into /etc/hosts
+
+The entrypoint froze the firewall rules from one resolution, but a later
+connect resolved again. GitHub rotates addresses under a 60-second TTL,
+thus a long build lost the coin flip per connect. The entrypoint now
+writes each resolved address into `/etc/hosts` before the rules freeze.
+One address set serves the rules and every connect, thus rotation cannot
+orphan a permitted host. The fail-loud comment was replaced, not obeyed —
+it described a behavior that no one wanted.
+
+### 32. A github build refuses without the token
+
+The token never reached the container, because an unexported shell
+variable fed `-e GITHUB_PAT`. Every build ran anonymous at 60 API calls
+per hour, and round two died on 403 answers. The build now refuses to
+start when the manifest names a github entry and `GITHUB_PAT` is absent.
+The refusal is early and loud, before an hour of bulk work.
+
+### 33. The github track installs through pak
+
+`remotes` cannot convert a pak-installed dependency whose DESCRIPTION
+says `RemoteType: bioc`, and xCell2 died on it. The bulk installs through
+pak, thus the github stage must read what pak wrote. Each repository now
+installs through `pak::pkg_install`, best-effort per repository. A probe
+proved that pak reuses a dependency that `.libPaths()` already satisfies.
+
+### 34. A failed install keeps the held package
+
+Each build linked only what staged in that round, thus one bad round
+removed good packages from the published farm — the farm-level twin of
+the moved-edge disease. The farm now keeps the held store directory of a
+package that the previous farm advertised, when the pool still holds it.
+A dependency carries over only through graph reachability, and a removed
+manifest entry never carries over.
+
+### 35. The build machine needs a memory floor
+
+The 5722 MiB podman machine cannot hold three parallel R source builds.
+The OOM killer took the EPICanno lazyload twice and the cytolib compiler
+once, and the cytolib fall removed 33 dependents. The local machine rises
+to 12 GiB. The CI builders size their own memory, and `r_ncpus` remains
+the throttle of last resort.
