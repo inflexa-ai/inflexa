@@ -23,6 +23,10 @@ Write a markdown summary that covers:
 - limitations of the analysis
 
 Use markdown headings and bullets freely — there is no fixed schema.
+
+A later agent reads this file, not a person, and no card carries its content.
+Thus write each number and each caveat in full. Lead each section with its
+result, but never drop a fact to make the document shorter.
 Report only numbers that exist in a persisted artifact. Do not fabricate
 results and do not report a number that appears only in command stdout.
 
