@@ -12,7 +12,15 @@ import { listPendingStoreAdds } from "../../db/primary_query.ts";
 import { claimPendingStoreAdds, claimStoreFlight, deleteStoreFlight, settleStoreFlightFailure } from "../../db/primary_mutation.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { CaptureResult } from "../../lib/container.ts";
-import { classifyPoolMiss, describeRecordedFlightFailure, enqueueStoreAdd, flushPendingStoreAdds, readStoreFlights, storeFlightKey } from "./store_flight.ts";
+import {
+    classifyPoolMiss,
+    commitStagedNodes,
+    describeRecordedFlightFailure,
+    enqueueStoreAdd,
+    flushPendingStoreAdds,
+    readStoreFlights,
+    storeFlightKey,
+} from "./store_flight.ts";
 import { flushAndPrint } from "./store.ts";
 import type { LoadCheckRunner, ProvisionerRunner } from "./provisioner.ts";
 
@@ -316,6 +324,37 @@ describe("flushPendingStoreAdds", () => {
             holder.kill();
             await holder.exited;
         }
+    });
+});
+
+describe("the graph commit", () => {
+    test("a held node keeps its published edges, and a staged rewrite of it drops", async () => {
+        const root = tempStore();
+        // The fixture publishes beta with an edge to alpha 1.2.0. A later
+        // batch re-stages beta with a MOVED edge — the shape every add
+        // produces, because an add stages its whole closure, the reused
+        // members too. The first resolution must stand, or a farm composed
+        // under the old edge refuses every later extension.
+        const staged = {
+            "beta-0.4.1-000000000000bbbb": { track: "python", name: "beta", version: "0.4.1", order: "0b", edges: ["alpha-2.0.0-00000000000a2222"] },
+            "newpkg-1.0-000000000new0001": { track: "python", name: "newpkg", version: "1.0", order: "0b", edges: [] },
+        } as Parameters<typeof commitStagedNodes>[1];
+
+        const outcome = (await commitStagedNodes(root, staged))._unsafeUnwrap();
+
+        // Both count as committed: the caller still links the subscriber
+        // farms, and "already advertised" is a success, not a refusal.
+        expect(outcome.committed).toContain("beta-0.4.1-000000000000bbbb");
+        expect(outcome.committed).toContain("newpkg-1.0-000000000new0001");
+        expect(outcome.refused).toEqual([]);
+        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as {
+            nodes: Record<string, { edges: string[] }>;
+            by_name: { python: Record<string, string[]> };
+        };
+        expect(graph.nodes["beta-0.4.1-000000000000bbbb"]?.edges).toEqual(["alpha-1.2.0-000000000000aaaa"]);
+        expect(graph.nodes["newpkg-1.0-000000000new0001"]).toBeDefined();
+        // The shelf gains no duplicate entry for the kept node.
+        expect(graph.by_name.python["beta"]).toEqual(["beta-0.4.1-000000000000bbbb"]);
     });
 });
 
