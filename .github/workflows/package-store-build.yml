@@ -570,7 +570,9 @@ jobs:
   # One job for both legs, thus the two locks never race a push.
   commit-locks:
     needs: build-store
-    if: needs.build-store.result == 'success'
+    # A pull_request run rides the read-only merge ref, and a push there
+    # fails. The locks still upload as artifacts, thus nothing is lost.
+    if: needs.build-store.result == 'success' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
