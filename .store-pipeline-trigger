@@ -1,2 +1,0 @@
-The touch counter of the store pipeline. A push that changes this file starts the pipeline. Refer to store-pipeline.yml.
-1
