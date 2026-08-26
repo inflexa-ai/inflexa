@@ -352,8 +352,12 @@ r:
         # Bioc 3.23), but Azimuth's NAMESPACE still imports it
         # (satijalab/azimuth#291, unfixed upstream).
         - stuart-lab/signac@1.16.0
-        - satijalab/azimuth
+        # The two seurat satellites install BEFORE azimuth: azimuth names them
+        # in its Remotes, pak does not chase a Remotes entry, and pak skips a
+        # dependency that .libPaths already satisfies.
         - mojaveazure/seurat-disk
+        - satijalab/seurat-data
+        - satijalab/azimuth
         - carmonalab/scGate
         - carmonalab/STACAS
         - carmonalab/ProjecTILs
