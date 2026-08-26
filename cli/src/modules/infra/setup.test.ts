@@ -2418,7 +2418,10 @@ describe("setup() — batch orchestration", () => {
                     // option, which is each one's documented default.
                     return message.includes(CONTINUE_QUESTION) ? continueChoice : options[0]!.value;
                 }),
-                spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () => ok({ type: "declined" as const })),
+                spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 })),
+                spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(async () => ok({ type: "started" as const, pid: 4243 })),
+                // The transfers consent is the one confirm on this path; a decline keeps the checkpoint flow itself under test.
+                spyOn(cliPrompts, "confirm").mockImplementation(async () => false),
                 spyOn(compose, "composeAvailable").mockImplementation(async () => true),
                 spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)),
             );
