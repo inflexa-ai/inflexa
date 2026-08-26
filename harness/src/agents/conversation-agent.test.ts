@@ -50,7 +50,7 @@ describe("createConversationAgent", () => {
         const agent = buildAgent();
         expect(agent.id).toBe(CONVERSATION_AGENT_ID);
         expect(agent.model).toBe("anthropic/claude-opus-4-7");
-        expect(agent.maxIterations).toBe(50);
+        expect(agent.maxIterations).toBe(200);
     });
 
     // Provisioning is decided in conversation: an embedder may give this agent a way to
@@ -105,7 +105,6 @@ describe("createConversationAgent", () => {
             "resolve_citation",
             "comptox",
             "generate_plan",
-            "literature_reviewer",
             "generate_analogy_report",
             "workspace_search",
             "read_file",

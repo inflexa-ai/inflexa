@@ -58,6 +58,19 @@ export interface ChatRequest {
 export type PromptCachePolicy = { readonly ttl: "5m" | "1h" } | "off";
 
 /**
+ * How deep a model reasons, in harness-neutral names.
+ *
+ * `{ effort }` asks the provider for that reasoning depth, and `"off"` sends no
+ * reasoning directive at all. The five values are the ladder that both vendor
+ * families accept. A model with no reasoning support ignores the directive
+ * rather than fails on it, thus the policy is a no-op for that model. Refer to
+ * `./reasoning.ts`, the single place where the harness translates this into
+ * vendor wire options.
+ */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningPolicy = { readonly effort: ReasoningEffort } | "off";
+
+/**
  * Token accounting for one chat call, in harness-neutral names.
  *
  * `inputTokens` is the *total* billed prefix — cached and uncached alike — so a

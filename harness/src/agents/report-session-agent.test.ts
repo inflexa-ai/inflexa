@@ -65,7 +65,7 @@ describe("createReportSessionAgent", () => {
         expect(agent.model).toBe("anthropic/claude-opus-4-8");
         // A full session drives more small tool calls than a conversation turn,
         // thus the cap matches the report runner (REPORT_AGENT_MAX_STEPS).
-        expect(agent.maxIterations).toBe(75);
+        expect(agent.maxIterations).toBe(200);
     });
 
     test("holds the analysis read surface", () => {

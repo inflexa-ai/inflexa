@@ -25,6 +25,15 @@ import type { AgentDefinition } from "./types.js";
 
 const ANTHROPIC_5M = { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } };
 
+/** The reasoning half of the merged bag — the default policy of `run-agent`. */
+const REASONING_XHIGH = { anthropic: { effort: "xhigh", thinking: { type: "adaptive" } }, openai: { reasoningEffort: "xhigh" } };
+
+/** The whole bag the loop attaches when both defaults are in force. */
+const MERGED_5M = {
+    anthropic: { ...ANTHROPIC_5M.anthropic, ...REASONING_XHIGH.anthropic },
+    openai: REASONING_XHIGH.openai,
+};
+
 const echoTool = defineTool({
     id: "echo",
     description: "A no-op tool.",
@@ -86,7 +95,7 @@ describe("runAgent prompt-cache directive", () => {
         // 3 iterations + the forced tool-less wrap-up.
         expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
-            expect(call.providerOptions).toEqual(ANTHROPIC_5M);
+            expect(call.providerOptions).toEqual(MERGED_5M);
         }
 
         // The wrap-up is the call that empties the tool set — it must still carry
@@ -95,7 +104,7 @@ describe("runAgent prompt-cache directive", () => {
         const wrapUp = chat.calls.at(-1)!;
         expect(Object.keys(wrapUp.tools)).toHaveLength(0);
         expect(wrapUp.toolChoice).toBe("none");
-        expect(wrapUp.providerOptions).toEqual(ANTHROPIC_5M);
+        expect(wrapUp.providerOptions).toEqual(MERGED_5M);
     });
 
     it("sends the same directive object on every call, so the prefix stays byte-identical", async () => {
@@ -115,7 +124,7 @@ describe("runAgent prompt-cache directive", () => {
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: { ttl: "1h" } }));
 
         for (const call of chat.calls) {
-            expect(call.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } } });
+            expect(call.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
         }
     });
 
@@ -125,8 +134,11 @@ describe("runAgent prompt-cache directive", () => {
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
 
         expect(chat.calls).toHaveLength(3);
+        // The bag is not empty — the reasoning policy still writes its own keys.
+        // What caching off means is that no cache directive rides in it.
         for (const call of chat.calls) {
-            expect(call.providerOptions).toBeUndefined();
+            expect(call.providerOptions?.["anthropic"]?.["cacheControl"]).toBeUndefined();
+            expect(call.providerOptions).toEqual(REASONING_XHIGH);
         }
     });
 });

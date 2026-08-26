@@ -255,6 +255,8 @@ export type {
     ChatUsage,
     ModelMessage,
     PromptCachePolicy,
+    ReasoningEffort,
+    ReasoningPolicy,
 } from "./providers/types.js";
 // Prompt caching. `PromptCachePolicy` is the harness's vendor-neutral cache
 // directive; a composition root sets it per run via `RunAgentOptions.promptCache`
@@ -264,6 +266,13 @@ export type {
 // `"off"`; the `cortex.harness.agent.cache_*_tokens` metrics show which case a
 // deployment is actually in.
 export { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "./providers/prompt-cache.js";
+// Reasoning depth. `ReasoningPolicy` is the vendor-neutral directive for how
+// deep a model reasons; a composition root sets it per run through
+// `RunAgentOptions.reasoning`. It defaults to `DEFAULT_REASONING` — adaptive
+// thinking at the `xhigh` effort — because an agent loop drives tools over many
+// iterations, and a shallow turn there wastes more calls than the deeper turn
+// costs in tokens. A host on a model with no reasoning support passes `"off"`.
+export { DEFAULT_REASONING, reasoningProviderOptions } from "./providers/reasoning.js";
 // Provider error channel. `ProviderError` is the value `chat`/`embed` fail
 // with; `toProviderError` is its sole constructor. Exposed so an embedder
 // realizing its own `ChatProvider`/`EmbeddingProvider` fails with the exact
