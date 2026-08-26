@@ -925,7 +925,13 @@ function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
         // collection of the reference store, or one package name that a step is
         // about to import.
         createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
-        createListAvailablePackagesTool(deps.packagesFile === undefined ? {} : { packagesFile: deps.packagesFile }),
+        // The planner is a conversation surface, thus the pool-scope reader binds
+        // when the embedder gives one, and the answer names what the store HOLDS.
+        createListAvailablePackagesTool({
+            ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
+            ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
+            ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+        }),
     ];
 }
 
