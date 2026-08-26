@@ -639,6 +639,20 @@ def _github_wanted_names(refs: list[str]) -> set[str]:
     return out
 
 
+def r_entry_requested(name: str, r_names: dict[str, list[str]]) -> bool:
+    """Whether a farm-lock entry records a direct manifest ask.
+
+    The bulk tracks name packages, and the github track names repositories.
+    A repository tail and the DESCRIPTION name of its package agree only
+    loosely, thus the github comparison normalizes both sides.
+    """
+    for key in ("cran", "bioconductor", "git"):
+        if name in (r_names.get(key) or []):
+            return True
+    tail = re.sub(r"[^a-z0-9]", "", name.lower())
+    return tail in _github_wanted_names(r_names.get("github") or [])
+
+
 def carry_held_r_entries(old_lock: dict, stored: dict[str, list[tuple[str, Path]]],
                          r_wanted: dict[str, list[str]],
                          graph: dict) -> list[tuple[str, str, Path, bool]]:
@@ -668,12 +682,15 @@ def carry_held_r_entries(old_lock: dict, stored: dict[str, list[tuple[str, Path]
             continue
         if not (STORE / entry["store_dir"]).is_dir():
             continue
-        if entry.get("requested"):
-            name = entry["name"].lower()
-            key = re.sub(r"[^a-z0-9]", "", name) if track == "github" else name
-            if key not in wanted[track]:
-                continue
+        name = entry["name"].lower()
+        key = re.sub(r"[^a-z0-9]", "", name) if track == "github" else name
+        # A lock from before the requested-flag repair marks every github
+        # entry as a dependency, thus the manifest match promotes a github
+        # entry — the flag alone does not decide.
+        if key in wanted[track] and (entry.get("requested") or track == "github"):
             roots.append(entry)
+        elif entry.get("requested"):
+            continue
         else:
             deps.append(entry)
 
@@ -687,10 +704,12 @@ def carry_held_r_entries(old_lock: dict, stored: dict[str, list[tuple[str, Path]
         reachable.add(key)
         frontier.extend(nodes.get(key, {}).get("edges", []))
 
-    kept = roots + [entry for entry in deps if entry["store_dir"] in reachable]
-    return [(entry["track"], entry["name"], STORE / entry["store_dir"],
-             bool(entry.get("requested")))
-            for entry in kept]
+    # A root is a manifest ask by construction, thus the flag of a stale lock
+    # does not ride into the new entry.
+    kept = [(entry, True) for entry in roots]
+    kept += [(entry, False) for entry in deps if entry["store_dir"] in reachable]
+    return [(entry["track"], entry["name"], STORE / entry["store_dir"], requested)
+            for entry, requested in kept]
 
 
 def lock_package_entry(store_dir: Path, track: str, requested: bool) -> dict:
@@ -1467,9 +1486,12 @@ def cmd_build(args) -> int:
                     f"pak::pkg_install('{repo}', lib='{github_lib}', upgrade=FALSE)"
                 )
                 if subprocess.run(["R", "-q", "-e", rexpr]).returncode != 0:
-                    log(f"WARNING: github install of {repo} did not finish cleanly; keeping what installed")
+                    # A pinned CDN edge can sour mid-run. The second attempt
+                    # reuses the pak cache, thus a transient heals cheaply.
+                    log(f"github install of {repo} failed; one more attempt")
+                    if subprocess.run(["R", "-q", "-e", rexpr]).returncode != 0:
+                        log(f"WARNING: github install of {repo} did not finish cleanly; keeping what installed")
 
-            requested_r = {name for names in r_names.values() for name in names}
             stored: dict[str, list[tuple[str, Path]]] = {sub: [] for sub in R_SUBTREES}
             for sub in R_SUBTREES:
                 libdir = stage_root / "r" / sub
@@ -1479,7 +1501,7 @@ def cmd_build(args) -> int:
                     name, _version = read_r_pkg(pkg_dir)
                     store_dir, _is_new = store_r_package(pkg_dir)
                     stored[sub].append((name, store_dir))
-                    packages.append(lock_package_entry(store_dir, sub, name in requested_r))
+                    packages.append(lock_package_entry(store_dir, sub, r_entry_requested(name, r_names)))
 
             old_lock_data: dict = {}
             if (farm / "inflexa.lock").is_file():
