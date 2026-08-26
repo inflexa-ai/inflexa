@@ -132,6 +132,13 @@ export interface SandboxStepInput {
  */
 export const DEFAULT_STEP_TIMEOUT_SECONDS = 3600;
 
+/**
+ * Deterministic `blocked_reason` for a loop that spent every iteration and
+ * persisted no output files (see the harness-sandbox-agents spec). Fixed prose,
+ * never model output — the summarizer does not run on this path.
+ */
+export const CAPPED_OUT_EMPTY_REASON = "The step hit its iteration cap with no output files persisted.";
+
 export type SandboxStepStatus = "complete" | "failed" | "canceled" | "blocked";
 
 /**
@@ -738,12 +745,35 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         });
     }
 
+    // Manifest walk, hoisted above the blocked branch so the capped-out
+    // predicate can read it. The call is inline (not `DBOS.runStep`-wrapped),
+    // so the hoist shifts no function id (see the harness-durable-runtime spec).
+    const manifest = await safeRunValue(
+        logger,
+        () =>
+            walkStepArtifacts({
+                writePrefix,
+                stepId: input.stepId,
+                runId: input.runId,
+            }),
+        "post-step.walk",
+        [] as readonly ArtifactManifestEntry[],
+    );
+
     // Blocker (see the harness-sandbox-agents spec): the agent declared it cannot fulfil the step. A
     // blocked step has no deliverables — skip the artifact post-step pipeline,
     // mark `blocked` (carrying the reason), emit the blocked part, and return a
     // terminal-failure status so the parent's fail-fast cascade fires.
+    //
+    // The capped-out empty case routes into the same branch: a loop that spent
+    // every iteration and persisted nothing has no deliverables, and a green
+    // status would attest an empty step. A blocker outcome keeps its own
+    // reason. A capped-out step WITH artifacts stays on the completed path,
+    // because partial output is real output.
     const blockerOutcome = blockerHolder.outcome;
-    if (blockerOutcome) {
+    const cappedOutEmpty = hitMaxSteps && manifest.length === 0;
+    if (blockerOutcome || cappedOutEmpty) {
+        const blockedReason = blockerOutcome?.reason ?? CAPPED_OUT_EMPTY_REASON;
         await tryTeardown(logger, deps, sandbox);
         const durationMs = (await DBOS.now()) - startedAt;
         await DBOS.runStep(
@@ -752,8 +782,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                     await updateStepExecution(deps.pool, input.runId, input.stepId, {
                         status: "blocked",
                         durationMs,
-                        error: blockerOutcome.reason,
-                        blockedReason: blockerOutcome.reason,
+                        error: blockedReason,
+                        blockedReason,
                         attempts: 1,
                         lastErrorClass: "blocked",
                         finishReason,
@@ -769,22 +799,22 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             runId: input.runId,
             stepId: input.stepId,
             agentId: input.agentId,
-            reason: blockerOutcome.reason,
+            reason: blockedReason,
         });
         await emitActivity("failed", "Step blocked");
         return {
             status: "blocked",
             durationMs,
             finishReason,
-            error: blockerOutcome.reason,
+            error: blockedReason,
             ...(stepUsage ? { usage: stepUsage } : {}),
         };
     }
 
-    // (4-8) post-step — the body is the explicit composition: walk the artifact
-    // tree once, then thread each stage's typed output into the next. Helpers
-    // run inline (not `DBOS.runStep`-wrapped), so a replay re-executes this
-    // section. Each helper is best-effort (`safeRun*` logs + degrades) so a
+    // (4-8) post-step — the body is the explicit composition: the manifest from
+    // the single walk above threads each stage's typed output into the next.
+    // Helpers run inline (not `DBOS.runStep`-wrapped), so a replay re-executes
+    // this section. Each helper is best-effort (`safeRun*` logs + degrades) so a
     // single failure never fails the step.
     const postCtx: PostStepContext = {
         input,
@@ -796,17 +826,6 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     };
 
     await emitActivity("generating-metadata", "Describing output files");
-    const manifest = await safeRunValue(
-        logger,
-        () =>
-            walkStepArtifacts({
-                writePrefix,
-                stepId: input.stepId,
-                runId: input.runId,
-            }),
-        "post-step.walk",
-        [] as readonly ArtifactManifestEntry[],
-    );
     // The two post-step LLM producers are wrapped in `DBOS.runStep` so their
     // outputs are checkpointed (see the harness-durable-runtime spec): the conditional terminal emits they
     // gate (`data-step-summary`, file-tree) stay replay-stable and the billed
