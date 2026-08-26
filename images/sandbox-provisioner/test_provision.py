@@ -1736,6 +1736,49 @@ class BuildGithubPakTests(StoreTestCase):
         self.assertIn("pak::pkg_install('owner/widget'", expr)
         self.assertNotIn("remotes::install_github", expr)
 
+    def test_a_failed_github_install_runs_a_second_attempt(self):
+        # A pinned CDN edge can sour mid-run, thus one retry heals a transient
+        # download fault from the pak cache.
+        recorded: list[list[str]] = []
+
+        def record(cmd, *args, **kwargs):
+            argv = list(cmd)
+            recorded.append(argv)
+            rc = 1 if argv[:1] == ["R"] else 0
+            return SimpleNamespace(returncode=rc, stdout="4.6.0", stderr="")
+
+        args = SimpleNamespace(manifest=str(self.root / "m.yaml"),
+                               lock=None, farm="catalog")
+        manifest = {"r": {"github": ["owner/widget"]}}
+        with unittest.mock.patch.object(provision, "load_manifest",
+                                        return_value=manifest), \
+                unittest.mock.patch.object(provision.subprocess, "run", record), \
+                unittest.mock.patch.dict(os.environ, {"GITHUB_PAT": "t"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.cmd_build(args), 0)
+
+        installs = [argv for argv in recorded
+                    if argv[:1] == ["R"] and any("owner/widget" in a for a in argv)]
+        self.assertEqual(len(installs), 2)
+
+
+class REntryRequestedTests(unittest.TestCase):
+    """The requested flag of a farm-lock entry, per track vocabulary."""
+
+    R_NAMES = {"cran": ["ggplot2"], "bioconductor": ["limma"], "git": [],
+               "github": ["mojaveazure/seurat-disk", "kharchenkolab/numbat"]}
+
+    def test_a_github_package_matches_its_repo_tail(self):
+        self.assertTrue(provision.r_entry_requested("SeuratDisk", self.R_NAMES))
+        self.assertTrue(provision.r_entry_requested("numbat", self.R_NAMES))
+
+    def test_a_bulk_name_matches_exactly(self):
+        self.assertTrue(provision.r_entry_requested("ggplot2", self.R_NAMES))
+        self.assertTrue(provision.r_entry_requested("limma", self.R_NAMES))
+
+    def test_a_transitive_dependency_is_not_requested(self):
+        self.assertFalse(provision.r_entry_requested("GenomicRanges", self.R_NAMES))
+
 
 class CarryHeldREntriesTests(StoreTestCase):
     """The pool fallback: a failed install keeps the held farm entry."""
@@ -1809,6 +1852,18 @@ class CarryHeldREntriesTests(StoreTestCase):
         kept = provision.carry_held_r_entries(old, stored, wanted, {"nodes": {}})
 
         self.assertEqual(kept, [])
+
+    def test_a_stale_false_flag_still_carries_a_wanted_github_entry(self):
+        # Locks from before the requested-flag repair mark every github entry
+        # as a dependency. The manifest match promotes such an entry, thus the
+        # fallback works across the transition.
+        held = self._held("seuratdisk-0.0.9-00000000000000a1", "SeuratDisk")
+        old = {"packages": [self._entry("SeuratDisk", "github", held.name, False)]}
+        wanted = {**self.NO_WANT, "github": ["mojaveazure/seurat-disk"]}
+
+        kept = provision.carry_held_r_entries(old, dict(self.NO_R), wanted, {"nodes": {}})
+
+        self.assertEqual(kept, [("github", "SeuratDisk", held, True)])
 
     def test_a_reclaimed_store_directory_does_not_carry(self):
         old = {"packages": [self._entry("gone", "cran", "gone-1.0-0000000000000000", True)]}
