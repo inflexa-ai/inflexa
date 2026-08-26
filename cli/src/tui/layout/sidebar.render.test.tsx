@@ -110,8 +110,8 @@ describe("Sidebar input count follows the bus", () => {
         writeFileSync(join(dirA, "three.txt"), "x");
         writeFileSync(join(dirB, "two.txt"), "x");
         // These analyses need specific inputs to drive the input-event assertions below.
-        const a = createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] })._unsafeUnwrap();
-        const b = createAnalysis({ cwd: dirB, name: str256("bravo")._unsafeUnwrap(), inputPaths: [join(dirB, "two.txt")] })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
+        const b = (await createAnalysis({ cwd: dirB, name: str256("bravo")._unsafeUnwrap(), inputPaths: [join(dirB, "two.txt")] }))._unsafeUnwrap();
 
         const setup = await testRender(
             () => (
@@ -738,7 +738,7 @@ describe("Sidebar MODELS connection line", () => {
 describe("Sidebar responsive ANALYSIS badge + path", () => {
     test("narrow: the badge + path own their line; the meta line carries no badge", async () => {
         writeFileSync(join(dirA, "one.txt"), "x");
-        const a = createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
         const anchor = getAnchor(a.anchorId)._unsafeUnwrap();
         // The head of the resolved path is short enough to land on the first wrapped rail line.
         const pathHead = anchor!.cachedPath.slice(0, 20);
@@ -751,7 +751,7 @@ describe("Sidebar responsive ANALYSIS badge + path", () => {
 
     test("wide: the path line disappears and the badge joins the meta line", async () => {
         writeFileSync(join(dirA, "one.txt"), "x");
-        const a = createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
         const anchor = getAnchor(a.anchorId)._unsafeUnwrap();
         const pathHead = anchor!.cachedPath.slice(0, 20);
 
@@ -768,7 +768,7 @@ describe("Sidebar responsive ANALYSIS badge + path", () => {
 describe("Sidebar Section header merge vs stacked fallback", () => {
     test("a short ASCII value shares its section's label row; a middot-bearing handle merges too", async () => {
         writeFileSync(join(dirA, "one.txt"), "x");
-        const a = createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
         const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 44, height: 24 });
         expect(lineContaining(frame, "ANALYSIS")).toContain("alpha"); // pure-ASCII name is cell-accurate → merges up
         // The SESSION handle is `S·nosu` — its `·` is GLYPHS.middot, a single-cell registry glyph the fit
@@ -779,7 +779,7 @@ describe("Sidebar Section header merge vs stacked fallback", () => {
     test("a value too long to fit stacks below the label, rendered in full (never truncated)", async () => {
         writeFileSync(join(dirA, "one.txt"), "x");
         const longName = "long-analysis-name-that-will-not-fit";
-        const a = createAnalysis({ cwd: dirA, name: str256(longName)._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dirA, name: str256(longName)._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
         const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 44, height: 24 });
         expect(lineContaining(frame, "ANALYSIS")).not.toContain(longName); // label row holds only the label
         expect(frame).toContain(longName); // the name renders in full on its own line
@@ -791,7 +791,7 @@ describe("Sidebar Section header merge vs stacked fallback", () => {
         // two CJK glyphs are two cells each, so that fit is measured wrong. The conservative guard stacks
         // any non-ASCII value instead. The ASCII `proj` tail is the reliable capture probe (wide-glyph
         // capture is not); the workspace has no linked project, so `proj` appears only in the name.
-        const a = createAnalysis({ cwd: dirA, name: str256("分析proj")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dirA, name: str256("分析proj")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] }))._unsafeUnwrap();
         const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 44, height: 24 });
         expect(lineContaining(frame, "ANALYSIS")).not.toContain("proj"); // did not merge onto the label row
         expect(frame).toContain("proj"); // stacked on its own full line below the label
@@ -1037,9 +1037,9 @@ describe("Sidebar USAGE section", () => {
     }
 
     /** A real analysis (so the rail's anchor/input reads resolve) whose id the ledger rows are scoped to. */
-    function analysisIn(dir: string, name: string) {
+    async function analysisIn(dir: string, name: string) {
         writeFileSync(join(dir, "one.txt"), "x");
-        return createAnalysis({ cwd: dir, name: str256(name)._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] })._unsafeUnwrap();
+        return (await createAnalysis({ cwd: dir, name: str256(name)._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] }))._unsafeUnwrap();
     }
 
     /** One chat-shaped ledger row for `analysisId`; the reported figures are the interesting part. */
@@ -1145,7 +1145,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("the session figure includes the run it launched, and excludes the profile that carries no thread", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         // The real ledger's three shapes: a chat turn, the run that turn launched (carrying the SAME
         // thread), and the data profile (carrying a run id and no thread at all).
         upsertLlmUsage(usageEntry(a.id, { recordKey: "chat", usage: { inputTokens: 11_100, outputTokens: 2_900 } }))._unsafeUnwrap();
@@ -1169,7 +1169,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("the cache counts render beneath the input arm they are part of, never on its line", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         upsertLlmUsage(
             usageEntry(a.id, { usage: { inputTokens: 12_400, outputTokens: 3_100, cacheCreationInputTokens: 2_000, cacheReadInputTokens: 9_000 } }),
         )._unsafeUnwrap();
@@ -1204,7 +1204,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("the figures render before the runtime is ready — the ledger is local and needs no boot", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         upsertLlmUsage(usageEntry(a.id, { usage: { inputTokens: 12_400, outputTokens: 3_100, cacheReadInputTokens: 9_000 } }))._unsafeUnwrap();
 
         const frame = await renderFrame(
@@ -1227,7 +1227,7 @@ describe("Sidebar USAGE section", () => {
         // provable on the resolved span fg. github-light is the sharpest case: its pure-#ffffff bg makes
         // an unresolved foreground invisible rather than merely off-palette.
         setTheme("github-light");
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         const setup = await testRender(
             usageNode(a, dirA, () => 0),
             { width: 44, height: 40 },
@@ -1250,7 +1250,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("an analysis with no bound session says so rather than widening to the analysis total", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
         // No thread is resolvable before boot, and the section reports a SESSION — reporting the
         // analysis's total under this label would answer a different question in the same words.
@@ -1271,7 +1271,7 @@ describe("Sidebar USAGE section", () => {
 
     test("reported arms paint the section foreground, so data and absence never read alike", async () => {
         setTheme("github-light");
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         upsertLlmUsage(usageEntry(a.id, { usage: { inputTokens: 12_400, outputTokens: 3_100, cacheReadInputTokens: 9_000 } }))._unsafeUnwrap();
         const setup = await testRender(
             usageNode(a, dirA, () => 0),
@@ -1295,7 +1295,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("a failed ledger read degrades to 'unavailable' and every other section still renders", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         // Drop the table out from under the read: a genuine query failure, not a stubbed one, so the
         // Result branch the section takes is the one production would take.
         db()._unsafeUnwrap().run("DROP TABLE llm_usage");
@@ -1314,7 +1314,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("a completed turn advances the figures with no timer elapsing", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         const setup = await testRender(
             usageNode(a, dirA, () => 0),
             { width: 44, height: 40 },
@@ -1336,7 +1336,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("a turn that ends in error still advances the figures — it spent what it spent", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         const setup = await testRender(
             usageNode(a, dirA, () => 0),
             { width: 44, height: 40 },
@@ -1358,7 +1358,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("the figures keep advancing once the message count has frozen at the store's cap", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         // MESSAGE_CAP (200) reached: past it the store's push-and-shift leaves the length unchanged, so
         // a memo keyed on the count never fires again. This is the defect the trigger change exists to
         // remove — the count is a CONSTANT here for the whole test and the figures still move twice.
@@ -1383,7 +1383,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("an idle rail issues no usage read — nothing repaints without one of the three triggers", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         const setup = await testRender(
             usageNode(a, dirA, () => 0),
             { width: 44, height: 40 },
@@ -1415,7 +1415,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("the live store's refresh advances the figures — the section rides the poll it already arms", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         const setup = await testRender(
             usageNode(a, dirA, () => 0),
             { width: 44, height: 40 },
@@ -1438,8 +1438,8 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("a background run's observation advances the figures; a foreign analysis's does not", async () => {
-        const a = analysisIn(dirA, "alpha");
-        const b = analysisIn(dirB, "bravo");
+        const a = await analysisIn(dirA, "alpha");
+        const b = await analysisIn(dirB, "bravo");
         const setup = await testRender(
             usageNode(a, dirA, () => 0),
             { width: 44, height: 40 },
@@ -1472,7 +1472,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("clicking the section activates it, with the runtime cold", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
         // `idle`, never `ready`: the whole point of the USAGE section is that it answers from the CLI's
         // own SQLite with the durable engine, its Postgres, and the model proxy all cold. Booting one
@@ -1506,7 +1506,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("the section survives the short-terminal sweep — it scrolls out of view, never breaks the rail", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         // Every quantity reported, so the section is at its TALLEST (two arms + three nested parts) —
         // the shape most likely to push the rail past a short terminal. Size-dependent layout defects
         // hide at any single height (CLAUDE.md → Layout).
@@ -1526,7 +1526,7 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("every row fits the rail's usable width — no figure or nested part wraps", async () => {
-        const a = analysisIn(dirA, "alpha");
+        const a = await analysisIn(dirA, "alpha");
         upsertLlmUsage(
             usageEntry(a.id, {
                 usage: {

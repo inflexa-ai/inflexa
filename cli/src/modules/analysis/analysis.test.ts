@@ -5,6 +5,7 @@ import { join, sep } from "node:path";
 
 import { makeBaseSlug, matchOutputPrefix, detectSourceAnalysis, createAnalysis, applyInputsDiff, renameAnalysisAndMoveWorkspace } from "./analysis.ts";
 import { archivedOutputSubdir, defaultOutputSubdir, disposeWorkspace, invalidateWorkspaceRoot, resolveOutputDir } from "./output.ts";
+import { env } from "../../lib/env.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { deleteAnalysis, insertAnchor, insertAnalysis } from "../../db/primary_mutation.ts";
 import { findAnalysesByRef, listAnalyses, listAnalysisInputs } from "../../db/primary_query.ts";
@@ -104,22 +105,64 @@ describe("createAnalysis inputs", () => {
     // The load-bearing regression: opening `inflexa` in a huge tree (e.g. $HOME) once enrolled the
     // whole cwd as an input, which the open-time parity check then data-profiled in full. Inputs are
     // user-driven — no paths in, no inputs out.
-    test("with no inputPaths, the analysis starts with zero inputs (never defaults to cwd)", () => {
-        const a = createAnalysis({ cwd: dir, name: str256("no-inputs")._unsafeUnwrap() })._unsafeUnwrap();
+    test("with no inputPaths, the analysis starts with zero inputs (never defaults to cwd)", async () => {
+        const a = (await createAnalysis({ cwd: dir, name: str256("no-inputs")._unsafeUnwrap() }))._unsafeUnwrap();
         expect(listAnalysisInputs(a.id)._unsafeUnwrap()).toHaveLength(0);
     });
 
-    test("with an empty inputPaths array, the analysis still starts with zero inputs", () => {
-        const a = createAnalysis({ cwd: dir, name: str256("empty-inputs")._unsafeUnwrap(), inputPaths: [] })._unsafeUnwrap();
+    test("with an empty inputPaths array, the analysis still starts with zero inputs", async () => {
+        const a = (await createAnalysis({ cwd: dir, name: str256("empty-inputs")._unsafeUnwrap(), inputPaths: [] }))._unsafeUnwrap();
         expect(listAnalysisInputs(a.id)._unsafeUnwrap()).toHaveLength(0);
     });
 
-    test("explicit inputPaths are still enrolled", () => {
+    test("explicit inputPaths are still enrolled", async () => {
         writeFileSync(join(dir, "one.txt"), "x");
-        const a = createAnalysis({ cwd: dir, name: str256("one-input")._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dir, name: str256("one-input")._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] }))._unsafeUnwrap();
         const inputs = listAnalysisInputs(a.id)._unsafeUnwrap();
         expect(inputs).toHaveLength(1);
         expect(inputs[0]?.path).toContain("one.txt");
+    });
+});
+
+describe("createAnalysis makes the empty farm", () => {
+    let dir = "";
+
+    beforeEach(() => {
+        freshDb();
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-farm-birth-")));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+        // The farms this block made, and the file that blocked one, live under the
+        // sandboxed store root. Clear the root whole, so the next test starts clean.
+        rmSync(env.packageStoreDir, { recursive: true, force: true });
+    });
+
+    test("the farm exists with an empty lock when the creation returns", async () => {
+        const a = (await createAnalysis({ cwd: dir, name: str256("farm-at-birth")._unsafeUnwrap() }))._unsafeUnwrap();
+
+        const lockPath = join(env.packageStoreDir, "farms", a.id, "inflexa.lock");
+        expect(existsSync(lockPath)).toBe(true);
+        const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { schema: number; arch: string; packages: unknown[] };
+        expect(lock.schema).toBe(1);
+        expect(lock.packages).toEqual([]);
+    });
+
+    test("a farm-make failure stops the creation, and the message names the farm path, the cause, and the retry", async () => {
+        // A FILE at `farms` makes every farm path unwritable: mkdir refuses with ENOTDIR.
+        mkdirSync(env.packageStoreDir, { recursive: true });
+        writeFileSync(join(env.packageStoreDir, "farms"), "in the way\n");
+
+        const result = await createAnalysis({ cwd: dir, name: str256("farm-blocked")._unsafeUnwrap() });
+
+        const error = result._unsafeUnwrapErr();
+        expect(error.type).toBe("workspace_unavailable");
+        const message = error.type === "workspace_unavailable" ? error.message : "";
+        expect(message).toContain(join(env.packageStoreDir, "farms"));
+        expect(message).toContain("again");
+        // The creation stopped whole: no analysis row landed.
+        expect(listAnalyses()._unsafeUnwrap()).toEqual([]);
     });
 });
 
@@ -137,9 +180,9 @@ describe("createAnalysis workspace precondition", () => {
         rmSync(dir, { recursive: true, force: true });
     });
 
-    test("a non-writable cwd fails with workspace_unavailable BEFORE any row or marker write", () => {
+    test("a non-writable cwd fails with workspace_unavailable BEFORE any row or marker write", async () => {
         chmodSync(dir, 0o555);
-        expect(createAnalysis({ cwd: dir, name: str256("blocked")._unsafeUnwrap() })._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        expect((await createAnalysis({ cwd: dir, name: str256("blocked")._unsafeUnwrap() }))._unsafeUnwrapErr().type).toBe("workspace_unavailable");
         // The precondition runs first — no analysis row landed and no .inflexa marker was minted.
         expect(listAnalyses()._unsafeUnwrap()).toEqual([]);
         expect(existsSync(join(dir, ".inflexa"))).toBe(false);
@@ -159,9 +202,9 @@ describe("applyInputsDiff", () => {
         rmSync(dir, { recursive: true, force: true });
     });
 
-    test("a failed add batch skips the removals — the diff lands as a unit or not at all", () => {
+    test("a failed add batch skips the removals — the diff lands as a unit or not at all", async () => {
         writeFileSync(join(dir, "keep.txt"), "x");
-        const a = createAnalysis({ cwd: dir, name: str256("diff-a")._unsafeUnwrap(), inputPaths: [join(dir, "keep.txt")] })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dir, name: str256("diff-a")._unsafeUnwrap(), inputPaths: [join(dir, "keep.txt")] }))._unsafeUnwrap();
         const existing = listAnalysisInputs(a.id)._unsafeUnwrap();
         expect(existing).toHaveLength(1);
 
@@ -172,10 +215,10 @@ describe("applyInputsDiff", () => {
         expect(listAnalysisInputs(a.id)._unsafeUnwrap()).toHaveLength(1);
     });
 
-    test("adds then removals apply when the add batch succeeds", () => {
+    test("adds then removals apply when the add batch succeeds", async () => {
         writeFileSync(join(dir, "old.txt"), "x");
         writeFileSync(join(dir, "new.txt"), "x");
-        const a = createAnalysis({ cwd: dir, name: str256("diff-b")._unsafeUnwrap(), inputPaths: [join(dir, "old.txt")] })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dir, name: str256("diff-b")._unsafeUnwrap(), inputPaths: [join(dir, "old.txt")] }))._unsafeUnwrap();
         const existing = listAnalysisInputs(a.id)._unsafeUnwrap();
 
         const failures = applyInputsDiff(a.id, [join(dir, "new.txt")], existing, dir);
@@ -199,8 +242,8 @@ describe("renameAnalysisAndMoveWorkspace", () => {
         rmSync(dir, { recursive: true, force: true });
     });
 
-    test("moves an existing workspace tree — with its contents — to the new slug", () => {
-        const a = createAnalysis({ cwd: dir, name: str256("Old Name")._unsafeUnwrap() })._unsafeUnwrap();
+    test("moves an existing workspace tree — with its contents — to the new slug", async () => {
+        const a = (await createAnalysis({ cwd: dir, name: str256("Old Name")._unsafeUnwrap() }))._unsafeUnwrap();
         const oldRoot = join(dir, ".inflexa", "analyses", a.slug);
         mkdirSync(join(oldRoot, "runs"), { recursive: true });
         writeFileSync(join(oldRoot, "runs", "log.txt"), "kept");
@@ -215,9 +258,9 @@ describe("renameAnalysisAndMoveWorkspace", () => {
         expect(findAnalysesByRef("new-name")._unsafeUnwrap()[0]?.id).toBe(a.id);
     });
 
-    test("a missing workspace tree is the normal desync, not an error — the row still renames", () => {
+    test("a missing workspace tree is the normal desync, not an error — the row still renames", async () => {
         // Workspace creation is deferred to first use, so a never-opened analysis has no tree.
-        const a = createAnalysis({ cwd: dir, name: str256("Loner")._unsafeUnwrap() })._unsafeUnwrap();
+        const a = (await createAnalysis({ cwd: dir, name: str256("Loner")._unsafeUnwrap() }))._unsafeUnwrap();
 
         const outcome = renameAnalysisAndMoveWorkspace(a, str256("Loner Renamed")._unsafeUnwrap())._unsafeUnwrap();
         expect(outcome.workspaceMoved).toBe(false);
@@ -229,8 +272,8 @@ describe("renameAnalysisAndMoveWorkspace", () => {
     });
 
     // The analysis must not collide with its own slug: a same-name rename is a no-op on disk.
-    test("renaming to the current name keeps the slug and does not move the tree", () => {
-        const a = createAnalysis({ cwd: dir, name: str256("My Analysis")._unsafeUnwrap() })._unsafeUnwrap();
+    test("renaming to the current name keeps the slug and does not move the tree", async () => {
+        const a = (await createAnalysis({ cwd: dir, name: str256("My Analysis")._unsafeUnwrap() }))._unsafeUnwrap();
         expect(a.slug).toBe("my-analysis");
         const root = join(dir, ".inflexa", "analyses", "my-analysis");
         mkdirSync(join(root, "runs"), { recursive: true });
@@ -246,8 +289,8 @@ describe("renameAnalysisAndMoveWorkspace", () => {
     });
 
     // Same slug, different display name — e.g. re-casing. The row's name changes, the tree stays put.
-    test("renaming to a name that slugifies identically keeps the slug and updates the name", () => {
-        const a = createAnalysis({ cwd: dir, name: str256("My Analysis")._unsafeUnwrap() })._unsafeUnwrap();
+    test("renaming to a name that slugifies identically keeps the slug and updates the name", async () => {
+        const a = (await createAnalysis({ cwd: dir, name: str256("My Analysis")._unsafeUnwrap() }))._unsafeUnwrap();
 
         const outcome = renameAnalysisAndMoveWorkspace(a, str256("my   analysis")._unsafeUnwrap())._unsafeUnwrap();
 
@@ -257,9 +300,9 @@ describe("renameAnalysisAndMoveWorkspace", () => {
         expect(existsSync(join(dir, ".inflexa", "analyses", "my-analysis-2"))).toBe(false);
     });
 
-    test("a genuinely new name still collides against SIBLINGS, suffixing past a taken slug", () => {
-        createAnalysis({ cwd: dir, name: str256("Taken")._unsafeUnwrap() })._unsafeUnwrap();
-        const b = createAnalysis({ cwd: dir, name: str256("Other")._unsafeUnwrap() })._unsafeUnwrap();
+    test("a genuinely new name still collides against SIBLINGS, suffixing past a taken slug", async () => {
+        (await createAnalysis({ cwd: dir, name: str256("Taken")._unsafeUnwrap() }))._unsafeUnwrap();
+        const b = (await createAnalysis({ cwd: dir, name: str256("Other")._unsafeUnwrap() }))._unsafeUnwrap();
 
         const outcome = renameAnalysisAndMoveWorkspace(b, str256("Taken")._unsafeUnwrap())._unsafeUnwrap();
         expect(outcome.analysis.slug).toBe("taken-2");
@@ -279,8 +322,8 @@ describe("delete → recreate does not inherit the previous analysis's artifacts
         rmSync(dir, { recursive: true, force: true });
     });
 
-    test("a new analysis of the same name resolves onto a clean tree once the old one is disposed", () => {
-        const first = createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() })._unsafeUnwrap();
+    test("a new analysis of the same name resolves onto a clean tree once the old one is disposed", async () => {
+        const first = (await createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() }))._unsafeUnwrap();
         const firstRoot = resolveOutputDir(first)._unsafeUnwrap();
         mkdirSync(join(firstRoot, "runs", "run-1"), { recursive: true });
         writeFileSync(join(firstRoot, "runs", "run-1", "result.csv"), "old,data");
@@ -289,7 +332,7 @@ describe("delete → recreate does not inherit the previous analysis's artifacts
         disposeWorkspace(first, "archive")._unsafeUnwrap();
         deleteAnalysis(first.id)._unsafeUnwrap();
 
-        const second = createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() })._unsafeUnwrap();
+        const second = (await createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() }))._unsafeUnwrap();
         const secondRoot = resolveOutputDir(second)._unsafeUnwrap();
 
         // The slug is reused — that is fine, because the bytes are no longer under it.

@@ -23,7 +23,7 @@ let anchorDir = "";
 let outsideDir = "";
 let analysis: Analysis;
 
-beforeEach(() => {
+beforeEach(async () => {
     freshDb();
     // realpath so the anchor markers the analysis mints match macOS's canonical /private/var.
     anchorDir = realpathSync(mkdtempSync(join(tmpdir(), "rm-inputs-")));
@@ -32,11 +32,13 @@ beforeEach(() => {
     mkdirSync(join(anchorDir, "data"));
     writeFileSync(join(anchorDir, "data", "inner.txt"), "x");
     writeFileSync(join(outsideDir, "matrix.mtx"), "x");
-    analysis = createAnalysis({
-        cwd: anchorDir,
-        name: str256("rna-seq")._unsafeUnwrap(),
-        inputPaths: [join(anchorDir, "counts.tsv"), join(anchorDir, "data"), join(outsideDir, "matrix.mtx")],
-    })._unsafeUnwrap();
+    analysis = (
+        await createAnalysis({
+            cwd: anchorDir,
+            name: str256("rna-seq")._unsafeUnwrap(),
+            inputPaths: [join(anchorDir, "counts.tsv"), join(anchorDir, "data"), join(outsideDir, "matrix.mtx")],
+        })
+    )._unsafeUnwrap();
 });
 
 afterEach(() => {

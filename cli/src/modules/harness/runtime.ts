@@ -946,9 +946,10 @@ async function bootHarnessRuntimeOnce(
             // at `/mnt/libs`, and it re-checks the store at every sandbox creation.
             libStorePath: env.packageStoreDir,
             // The farm-source seam: the harness learns the farm of a sandbox only
-            // through this call, at every `createSandbox`. The resolver heals a missing
-            // farm as an empty one, thus a store that arrived after the analysis still
-            // serves its next sandbox with no restart.
+            // through this call, at every `createSandbox`. A missing farm is the
+            // pre-release discriminator, and the resolver is the heal backstop: it
+            // composes the FULL farm from the catalog closure, thus a pre-release
+            // analysis keeps the everything-available reach of the old images.
             farmSource: { kind: "per-analysis", resolve: (id) => resolveAnalysisFarm(env.packageStoreDir, id) },
             // The published image owns the interpreters, conda, and Node. The declared
             // value keys the resolver env and the orient-core prompt text of the harness.
@@ -1100,6 +1101,12 @@ async function bootHarnessRuntimeOnce(
                 refStorePath: env.refsDir,
                 ...(farmLockFile ? { farmLockFile } : {}),
                 ...(imagePackages ? { imagePackagesFile: imagePackages } : {}),
+                // The same farm-extension realization as the step agents (the
+                // composition bundle above): the profiler meets the farm at its
+                // emptiest, and `link_packages` is how it reads an input whose
+                // reader the farm does not hold yet. The link runs without an
+                // ask — the analysis consent covered the store at setup.
+                extendAnalysisFarm: (id, requests) => linkPackagesIntoFarm(env.packageStoreDir, id, requests),
             },
         };
         // The conversation agent's dep surface minus the three fields

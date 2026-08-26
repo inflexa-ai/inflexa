@@ -716,12 +716,16 @@ function NewAnalysisInputsDialog(props: { name: Str256 }): JSX.Element {
                 // A deliberate action, so minting the anchor marker here is allowed (no-litter policy).
                 // The picker's selection rides in as `inputPaths` so the new analysis is seeded with
                 // exactly the files the user chose — `createAnalysis` enrolls nothing on its own.
-                createAnalysis({ cwd: ws.workingDir, name: props.name, inputPaths: paths }).match(
-                    (a) => {
-                        void openAnalysis(ws, a);
-                        notify({ kind: "info", text: `Created analysis "${a.name}"` });
-                    },
-                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                // Awaited off the handler: the creation makes the farm, and a farm
+                // failure surfaces its own message here.
+                void createAnalysis({ cwd: ws.workingDir, name: props.name, inputPaths: paths }).then((result) =>
+                    result.match(
+                        (a) => {
+                            void openAnalysis(ws, a);
+                            notify({ kind: "info", text: `Created analysis "${a.name}"` });
+                        },
+                        (e) => notify({ kind: "error", text: e.type === "workspace_unavailable" ? e.message : `Failed: ${e.type}` }),
+                    ),
                 );
             }}
             onCancel={() => ws.closeDialog()}

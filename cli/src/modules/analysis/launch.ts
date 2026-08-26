@@ -72,7 +72,7 @@ async function promptName(): Promise<Str256> {
 // the anchor marker here is allowed (no-litter policy).
 async function startNewTarget(cwd: string): Promise<ChatTarget> {
     const name = await promptName();
-    const analysis = createAnalysis({ cwd, name }).match((a) => a, dieOn("Failed to start analysis"));
+    const analysis = (await createAnalysis({ cwd, name })).match((a) => a, dieOn("Failed to start analysis"));
     return resolveChatTarget(analysis);
 }
 
@@ -107,7 +107,7 @@ export async function resolveNewTarget(opts: { name?: string; paths: string[]; p
                   (e) => fail(e === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer."),
               );
 
-    const analysis = createAnalysis({ cwd: process.cwd(), name, inputPaths: opts.paths, projectId }).match(
+    const analysis = (await createAnalysis({ cwd: process.cwd(), name, inputPaths: opts.paths, projectId })).match(
         (a) => a,
         (e) => (e.type === "workspace_unavailable" ? fail(e.message) : fail("Failed to create analysis", e.cause)),
     );

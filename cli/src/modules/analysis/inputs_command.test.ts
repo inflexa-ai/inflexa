@@ -21,11 +21,11 @@ describe("inputs command actions", () => {
     let logs: string[] = [];
     const origLog = console.log;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         freshDb();
         origCwd = process.cwd();
         dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-cmd-")));
-        analysisId = createAnalysis({ cwd: dir, name: str256("cmd")._unsafeUnwrap() })._unsafeUnwrap().id;
+        analysisId = (await createAnalysis({ cwd: dir, name: str256("cmd")._unsafeUnwrap() }))._unsafeUnwrap().id;
         process.chdir(dir);
         logs = [];
         console.log = (...args: unknown[]): void => void logs.push(args.join(" "));
