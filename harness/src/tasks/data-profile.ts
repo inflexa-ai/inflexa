@@ -25,6 +25,7 @@ import type { Pool } from "pg";
 
 import { forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
+import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import type { StagedInput } from "../execution/staged-input.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
@@ -139,6 +140,13 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
      * the pod then carries the harness's own labels only.
      */
     readonly resolvePodLabels?: (session: RunSession) => Promise<Record<string, string>>;
+    /**
+     * The farm-extension seam of the embedder. Bound, it rides into the
+     * profiler agent deps, and the substrate attaches `link_packages`. Thus
+     * the profiler links a reader by need before the first plan exists.
+     * Unbound keeps the current shape: no link tool, and no error.
+     */
+    readonly extendAnalysisFarm?: ExtendAnalysisFarm;
 }
 
 /**
@@ -398,6 +406,29 @@ function logProfileMonitoring(
  * Register the data-profile workflow with DBOS. Returns the registered
  * callable so `triggerDataProfile` can dispatch via `DBOS.startWorkflow`.
  */
+/**
+ * Project the workflow deps onto the profiler agent bag. The farm-extension
+ * seam rides only when the embedder bound one, and the substrate then gates
+ * `link_packages` on its presence (the data-profile-init spec).
+ */
+export function profilerSandboxAgentDeps(deps: DataProfileDeps, step: SandboxAgentDeps["step"]): SandboxAgentDeps {
+    return {
+        provider: deps.provider,
+        pool: deps.pool,
+        sandboxClient: deps.sandboxClient,
+        workspaceFs: deps.workspaceFs,
+        embedding: deps.embedding,
+        model: deps.model,
+        skillsDir: deps.skillsDir,
+        ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
+        ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
+        ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
+        ...(deps.extendAnalysisFarm ? { extendAnalysisFarm: deps.extendAnalysisFarm } : {}),
+        bioKeys: deps.bioKeys,
+        step,
+    };
+}
+
 export function registerDataProfileWorkflow(deps: DataProfileDeps): (input: DataProfileWorkflowInput) => Promise<void> {
     return DBOS.registerWorkflow((input: DataProfileWorkflowInput) => runDataProfileBody(input, deps), { name: "data-profile" });
 }
@@ -630,33 +661,20 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                       ]),
             ].join("\n");
 
-            const sandboxAgentDeps: SandboxAgentDeps = {
-                provider: deps.provider,
-                pool: deps.pool,
-                sandboxClient: deps.sandboxClient,
-                workspaceFs: deps.workspaceFs,
-                embedding: deps.embedding,
-                model: deps.model,
-                skillsDir: deps.skillsDir,
-                ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
-                ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
-                ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
-                bioKeys: deps.bioKeys,
-                step: {
-                    sandbox,
-                    workspaceRoot,
-                    analysisId,
-                    runId: DATA_PROFILE_RUN_LITERAL,
-                    stepId: DATA_PROFILE_STEP_LITERAL,
-                    workflowId,
-                    // The profiler writes Python scripts and intermediate artifacts under
-                    // the synthetic step path; the post-agent `rm -rf runs/data-profile/`
-                    // cleanup wipes them.
-                    allowedWritePrefix: profileWritePrefix,
-                    nextFunctionId,
-                    deadlineMs: () => deadlineAbs,
-                },
-            };
+            const sandboxAgentDeps: SandboxAgentDeps = profilerSandboxAgentDeps(deps, {
+                sandbox,
+                workspaceRoot,
+                analysisId,
+                runId: DATA_PROFILE_RUN_LITERAL,
+                stepId: DATA_PROFILE_STEP_LITERAL,
+                workflowId,
+                // The profiler writes Python scripts and intermediate artifacts under
+                // the synthetic step path; the post-agent `rm -rf runs/data-profile/`
+                // cleanup wipes them.
+                allowedWritePrefix: profileWritePrefix,
+                nextFunctionId,
+                deadlineMs: () => deadlineAbs,
+            });
 
             let accepted: { submission: ProfileSubmission; resolution: ProfileResolution } | null = null;
             let rounds = 0;
