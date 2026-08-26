@@ -182,9 +182,16 @@ describe("list_available_packages — reading the inventory", () => {
     });
 
     it("a bound pool reader wins over the farm lock, and the listing renders name==version", async () => {
-        const readPoolInventory = async () => [
-            { title: "Python (pip)", packages: [{ name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000", hash: "b".repeat(64) }] },
-        ];
+        const readPoolInventory = async () =>
+            ({
+                kind: "sections",
+                sections: [
+                    {
+                        title: "Python (pip)",
+                        packages: [{ name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000", hash: "b".repeat(64) }],
+                    },
+                ],
+            }) as const;
         // No farmLockFile: with a pool reader, the lock must not even be tried.
         const tool = createListAvailablePackagesTool({ readPoolInventory });
 
@@ -198,13 +205,18 @@ describe("list_available_packages — reading the inventory", () => {
         expect(checked.checked[0]).toMatchObject({ present: true, name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000" });
     });
 
-    it("an unreadable pool reads as UNKNOWN, never as empty", async () => {
-        const tool = createListAvailablePackagesTool({ readPoolInventory: async () => null });
+    it("an unreadable pool reads as UNKNOWN with its reason, never as empty", async () => {
+        const tool = createListAvailablePackagesTool({
+            readPoolInventory: async () => ({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" }) as const,
+        });
 
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap() as { available: false; content: string };
 
         expect(result.available).toBe(false);
         expect(result.content).toContain("UNKNOWN");
+        // The reason rides in the note: a structural fault must not read as a
+        // transient flake, and only the cause tells the two apart.
+        expect(result.content).toContain("the dependency graph names 1 edge(s)");
     });
 
     it("still reports the farm inventory when no image fragment is readable", async () => {

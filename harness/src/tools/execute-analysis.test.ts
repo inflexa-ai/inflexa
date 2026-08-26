@@ -595,6 +595,34 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
     });
 
+    it("an unavailable link pass refuses with the one store reason, never as per-package absence", async () => {
+        setEnv();
+        const { pool, queries } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
+        });
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            // The realization reports a store it cannot read the same way for
+            // every request; the refusal must carry the reason once and must
+            // not name any package as missing.
+            extendAnalysisFarm: async (_analysisId, requests) =>
+                requests.map((r) => ({ kind: "unavailable" as const, name: r.name, reason: "the dependency graph names 1 edge(s) that it does not hold" })),
+            executeAnalysisWorkflow: async () => {
+                throw new Error("should not be called");
+            },
+        });
+
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/the store cannot answer/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/dependency graph names 1 edge/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.not.toThrow(/does not hold: scanpy/);
+        expect(launches).toHaveLength(0);
+        expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
+    });
+
     it("a plan with no packages calls the seam not at all", async () => {
         setEnv();
         const { pool } = fakePool({

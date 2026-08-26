@@ -87,13 +87,22 @@ export interface PackageRequest {
  *   launch refusal renders it beside the name.
  * - `collision` — the request resolves to two store directories: two
  *   versions of one distribution, or one name that both tracks hold. The
- *   outcome is terminal for the request.
+ *   outcome is terminal for the request. `detail`, when the realization
+ *   gives one, names the two pins and the packages that need each side —
+ *   without it, a caller must guess which package pulls each pin, and a
+ *   wrong guess sends it into store surgery.
+ * - `unavailable` — the link pass itself could not answer: an unreadable
+ *   dependency graph, a locked farm. The reason says why. It says NOTHING
+ *   about the presence of the package, and it must never render as an
+ *   absence — a false absence sends a caller chasing packages the pool
+ *   holds.
  */
 export type PackageRequestOutcome =
     | { readonly kind: "linked"; readonly name: string; readonly version: string }
     | { readonly kind: "present"; readonly name: string; readonly version: string }
     | { readonly kind: "absent"; readonly name: string; readonly acquisitionPossible: boolean; readonly detail?: string }
-    | { readonly kind: "collision"; readonly name: string; readonly storeDirs: readonly [string, string] };
+    | { readonly kind: "collision"; readonly name: string; readonly storeDirs: readonly [string, string]; readonly detail?: string }
+    | { readonly kind: "unavailable"; readonly name: string; readonly reason: string };
 
 /**
  * The farm-extension seam. The realization of the embedder links host-staged

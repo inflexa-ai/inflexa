@@ -28,7 +28,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventorySection } from "../../config/environment-stores.js";
+import type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "../../config/environment-stores.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
@@ -339,11 +339,16 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
                 .then(parsePackagesFile)
                 .catch((): Section[] => []);
             // An unreadable inventory is an expected environment state — model it as an
-            // `available: false` data variant telling the caller the set is UNKNOWN.
+            // `available: false` data variant telling the caller the set is UNKNOWN,
+            // WITH the reason: without it, a structural fault (a damaged dependency
+            // graph) reads as a transient flake, and the caller retries for ever.
             if (readPoolInventory) {
-                const pool = await readPoolInventory().catch((): null => null);
-                if (pool === null) return ok({ available: false, content: POOL_UNAVAILABLE_NOTE });
-                return ok(queryPackages([...pool, ...fragmentSections], input));
+                const pool = await readPoolInventory().catch((cause): PoolInventoryRead => ({
+                    kind: "unavailable",
+                    reason: cause instanceof Error ? cause.message : String(cause),
+                }));
+                if (pool.kind === "unavailable") return ok({ available: false, content: `${POOL_UNAVAILABLE_NOTE} The reason: ${pool.reason}.` });
+                return ok(queryPackages([...pool.sections, ...fragmentSections], input));
             }
             let lock: FarmLock | null = null;
             for (const candidate of lockCandidates) {

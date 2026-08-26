@@ -36,7 +36,8 @@ export function createLinkPackagesTool(deps: LinkPackagesDeps) {
             "One outcome comes back per request: `linked` (the pool held it, and it is importable now), " +
             "`present` (the farm held it already), " +
             "`absent` (the pool does not hold it — a real answer, and `acquisitionPossible` states whether the host can acquire that ecosystem; report the package as missing, do not retry), " +
-            "or `collision` (the request resolves to two store directories — terminal for that package; report it and continue without it).",
+            "`collision` (the request resolves to two store directories — terminal for that package; the `detail` names the two pins and the packages that need each; report it and continue without it), " +
+            "or `unavailable` (the link pass itself could not answer — the `reason` says why; it says nothing about the package's presence, so report the reason and do not re-request packages).",
         inputSchema: z.object({
             packages: z
                 .array(
