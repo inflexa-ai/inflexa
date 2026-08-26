@@ -35,6 +35,14 @@ on:
         description: "Cap on parallel R source compiles (empty = auto/detectCores). Set for example 4 if the R build runs out of memory."
         required: false
         default: ""
+  # TEMPORARY, remove before merge: a dispatch-only workflow that never
+  # reached the default branch is not registered, thus gh cannot dispatch
+  # it. The path filter fires one registration run when this file changes,
+  # and later branch pushes fire nothing. On a push, `inputs` is empty and
+  # R_NCPUS resolves to auto.
+  push:
+    branches: [feat/local-package-store]
+    paths: [.github/workflows/package-store-build.yml]
 
 concurrency:
   group: ${{ github.workflow }}

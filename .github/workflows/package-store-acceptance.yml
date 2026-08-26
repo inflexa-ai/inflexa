@@ -39,6 +39,12 @@ on:
         description: "Published store version to mount, e.g. 20260721-14213e2. Empty = the current latest-<arch> pointer."
         required: false
         type: string
+  # TEMPORARY, remove before merge: the registration device of the two build
+  # workflows. The existing job condition skips a push-fired run, thus the
+  # registration costs no builder time and validates nothing prematurely.
+  push:
+    branches: [feat/local-package-store]
+    paths: [.github/workflows/package-store-acceptance.yml]
 
 concurrency:
   group: ${{ github.workflow }}
