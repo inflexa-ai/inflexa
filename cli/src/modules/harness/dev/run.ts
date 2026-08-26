@@ -418,14 +418,21 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
                 return split < 0 ? { name: entry.trim() } : { name: entry.slice(0, split).trim(), version: entry.slice(split + 2).trim() };
             }),
         );
+        // An `unavailable` outcome preempts the per-package lists: the pass
+        // could not answer at all, and one reason covers the batch.
+        const unavailable = outcomes.find((o) => o.kind === "unavailable");
+        if (unavailable !== undefined) {
+            s.error("The packages of this plan cannot link");
+            fail(`The store cannot answer: ${unavailable.reason}.`);
+        }
         const missing = outcomes.filter((o) => o.kind === "absent").map((o) => o.name);
-        const collided = outcomes.filter((o) => o.kind === "collision").map((o) => o.name);
+        const collided = outcomes.filter((o) => o.kind === "collision").map((o) => (o.detail === undefined ? o.name : `${o.name} — ${o.detail}`));
         if (missing.length > 0 || collided.length > 0) {
             s.error("The packages of this plan cannot link");
             const remedy = missing.map((name) => `  inflexa store add ${name}`).join("\n");
             const lines = [
                 missing.length > 0 ? `The pool does not hold: ${missing.join(", ")}. Add each one first:\n${remedy}` : null,
-                collided.length > 0 ? `A collision refused: ${collided.join(", ")} — name the ecosystem or the version.` : null,
+                collided.length > 0 ? `A collision refused: ${collided.join(", ")} — drop or re-pin the dependent that pulls the extra version.` : null,
             ].filter((line): line is string => line !== null);
             fail(lines.join("\n"));
         }

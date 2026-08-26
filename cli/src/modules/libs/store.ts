@@ -13,8 +13,8 @@
  * and `--analysis`. An approved add ENQUEUES into the pending set, and the
  * flush runs one one-shot provisioner `acquire` for the whole batch — refer to
  * `store_flight.ts` for the two-phase flight. A direct terminal add flushes at
- * once, and the agent route enqueues and returns, because the batch of a turn
- * must not split.
+ * once. The agent route enqueues and returns, and the chat flushes the set at
+ * the turn end or after the 10-second gate, whichever comes first.
  *
  * `inflexa store link` is the other half, and it is a command of its own. It
  * links what the pool already holds into the farm of one analysis, thus it
@@ -33,6 +33,7 @@ import { join } from "node:path";
 
 import { isCancel, select as clackSelect } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
+import { z } from "zod";
 
 import { readFarmLock } from "@inflexa-ai/harness";
 
@@ -41,7 +42,7 @@ import { acquireInstanceLock, liveInstanceLockHolds, releaseInstanceLock, PACKAG
 import type { IdOrName } from "../../lib/types.ts";
 import { listAnalyses, listPendingStoreAdds } from "../../db/primary_query.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import { findAnalysis } from "../analysis/analysis.ts";
+import { findAnalysis, listAnalysesForAnchorAt } from "../analysis/analysis.ts";
 import {
     describeFarmCompositionError,
     extendFarm,
@@ -209,9 +210,10 @@ export type StoreInspection = {
     /** Bytes the deduplicated store content occupies (`store/` only — the farms are symlinks). */
     readonly storeBytes: number;
     /**
-     * Bytes held by store content that no farm references — the space `inflexa store reclaim` would
-     * recover. An update adds only the content whose hash changed and it removes nothing, thus an old
-     * version stays on disk until a reclaim runs.
+     * Bytes held by store content that no farm links and the graph does not advertise — the space
+     * `inflexa store reclaim` would recover. An update adds only the content whose hash changed and it
+     * removes nothing, but it replaces the graph whole, thus an old version loses its node and counts
+     * here until a reclaim runs.
      */
     readonly reclaimableBytes: number;
     /** The state of the catalog transfer. It describes the process, and it decides nothing about usability. */
@@ -305,6 +307,26 @@ async function inspectStoreDownload(storeRoot: string): Promise<StoreDownloadIns
 }
 
 // --- host reads ---------------------------------------------------------------
+
+/**
+ * The store directories the dependency graph advertises, read LENIENTLY. The
+ * reclaim rule must hold even over a graph the strict reader refuses (a
+ * dangling edge), because "advertised" is a node-set question, and the node
+ * set of a damaged graph still answers it. `null` means the file exists and
+ * does not parse — the advertised set is then unknown, and a caller must
+ * reclaim NOTHING rather than everything. An absent file advertises nothing,
+ * because a store with no graph holds only leftovers.
+ */
+async function advertisedStoreDirs(storeRoot: string): Promise<ReadonlySet<string> | null> {
+    const path = join(storeRoot, "deps.json");
+    if (!existsSync(path)) return new Set();
+    try {
+        const parsed = JSON.parseWith(await readFile(path, "utf8"), z.object({ nodes: z.record(z.string(), z.unknown()).default({}) }).passthrough());
+        return parsed === null ? null : new Set(Object.keys(parsed.nodes));
+    } catch {
+        return null;
+    }
+}
 
 /** Store directory names any farm currently links to. Mirrors the provisioner's reclaim referenced-set scan. */
 async function referencedStoreDirs(storeRoot: string): Promise<Set<string>> {
@@ -443,17 +465,21 @@ async function dirBytes(dir: string): Promise<number> {
 }
 
 /**
- * Bytes held by store directories no farm references — the space `inflexa
- * store reclaim` would recover. It reuses the referenced-set scan the reclaim
- * uses ({@link referencedStoreDirs}), so the readout and the removal agree.
+ * Bytes held by store directories that no farm links AND the graph does not
+ * advertise — the space `inflexa store reclaim` would recover. It reuses the
+ * two set scans the reclaim uses ({@link referencedStoreDirs},
+ * {@link advertisedStoreDirs}), so the readout and the removal agree. An
+ * unparsable graph reads as zero, because the removal then removes nothing.
  */
 async function reclaimableStoreBytes(storeRoot: string): Promise<number> {
     const storeDir = join(storeRoot, "store");
     if (!existsSync(storeDir)) return 0;
+    const advertised = await advertisedStoreDirs(storeRoot);
+    if (advertised === null) return 0;
     const referenced = await referencedStoreDirs(storeRoot);
     let total = 0;
     for (const entry of await readdir(storeDir, { withFileTypes: true })) {
-        if (!entry.isDirectory() || entry.name.startsWith(".") || referenced.has(entry.name)) continue;
+        if (!entry.isDirectory() || entry.name.startsWith(".") || referenced.has(entry.name) || advertised.has(entry.name)) continue;
         total += await dirBytes(join(storeDir, entry.name));
     }
     return total;
@@ -462,21 +488,28 @@ async function reclaimableStoreBytes(storeRoot: string): Promise<number> {
 // --- The reclamation -----------------------------------------------------------
 
 /**
- * The store directories no farm references — the set reclamation would remove.
- * Computed on the host so a command can report it before removing anything.
- * This mirrors the provisioner's own referenced-set scan, so the preview and
- * the removal agree unless a concurrent run changes the store between them.
+ * The store directories that no farm links AND the graph does not advertise —
+ * the set reclamation would remove. Computed on the host so a command can
+ * report it before removing anything. This mirrors the provisioner's own
+ * referenced-set scan, so the preview and the removal agree unless a
+ * concurrent run changes the store between them. A graph-advertised directory
+ * is pool inventory, not waste: a locally acquired package holds no farm link
+ * until a run links it, and an edge of a surviving node must never dangle.
  */
 export async function reclaimPreview(storeRoot: string): Promise<Result<readonly string[], StoreActionError>> {
     try {
         const storeDir = join(storeRoot, "store");
         if (!existsSync(storeDir)) return ok([]);
+        // An unparsable graph makes the advertised set unknown, thus the
+        // preview is empty: a removal over an unknown set deletes inventory.
+        const advertised = await advertisedStoreDirs(storeRoot);
+        if (advertised === null) return ok([]);
         const referenced = await referencedStoreDirs(storeRoot);
         const entries = await readdir(storeDir, { withFileTypes: true });
         const unreferenced = entries
             .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
             .map((entry) => entry.name)
-            .filter((name) => !referenced.has(name))
+            .filter((name) => !referenced.has(name) && !advertised.has(name))
             .sort((a, b) => a.localeCompare(b));
         return ok(unreferenced);
     } catch (cause) {
@@ -485,8 +518,9 @@ export async function reclaimPreview(storeRoot: string): Promise<Result<readonly
 }
 
 /**
- * Remove store content no farm references, EXCLUSIVELY against the acquisition
- * flights and against the farm compositions.
+ * Remove store content that no farm links and the graph does not advertise,
+ * EXCLUSIVELY against the acquisition flights and against the farm
+ * compositions.
  *
  * The exclusivity has two halves, and both are necessary. The reclaim lock
  * blocks a NEW flight and a NEW composition for the whole run, because a flight
@@ -825,9 +859,9 @@ export async function flushAndPrint(storeRoot: string, deps: { readonly flush?: 
  * `inflexa store add` — acquire ONE package into the content-addressed pool.
  *
  * The add ENQUEUES into the pending set. The agent route (`--queued`) returns
- * at once, because the batch of one turn must not split per approval — the
- * chat flushes when the asks of the turn settle. A direct terminal add flushes
- * at once, in-process, and streams the provisioner output.
+ * at once, thus the ask tool answers fast — the chat flushes the set at the
+ * turn end or after the 10-second gate. A direct terminal add flushes at
+ * once, in-process, and streams the provisioner output.
  */
 export async function runStoreAdd(pkg: string | undefined, options: StoreAddOptions): Promise<void> {
     const storeRoot = env.packageStoreDir;
@@ -868,7 +902,7 @@ export async function runStoreAdd(pkg: string | undefined, options: StoreAddOpti
     }
 
     if (options.queued === true) {
-        console.log(`Queued ${describeStoreFlightSpec(enqueued.value)} for acquisition. The flight starts when the asks of this turn settle.`);
+        console.log(`Queued ${describeStoreFlightSpec(enqueued.value)} for acquisition. The flight starts at the turn end, or after at most 10 seconds.`);
         console.log("Run `inflexa store ls` to see the queue and the flights.");
         return;
     }
@@ -886,8 +920,36 @@ export async function runStoreAdd(pkg: string | undefined, options: StoreAddOpti
 }
 
 /**
+ * The analysis whose farm a link call targets: the `--analysis` flag when
+ * given, and the analysis the working directory anchors otherwise. The
+ * `run_inflexa` tool runs its subprocess INSIDE the analysis folder, thus the
+ * marker there names the analysis and the flag is the exception, not the
+ * rule. A folder that anchors none or several analyses refuses with the flag,
+ * because a silent pick would link into a farm the caller did not name.
+ */
+function resolveLinkTarget(ref: IdOrName | null): Result<Analysis, { readonly message: string }> {
+    if (ref !== null) return resolveFarmAnalysis(ref);
+    const anchored = listAnalysesForAnchorAt(process.cwd()).unwrapOr([]);
+    const [one, second] = anchored;
+    if (one !== undefined && second === undefined) return ok(one);
+    if (one === undefined) {
+        return err({
+            message:
+                "`inflexa store link` needs the analysis whose farm gains the links, and this folder anchors none. " +
+                "Pass `--analysis <id|name>`, and run `inflexa ls` to see the analyses this machine holds.",
+        });
+    }
+    return err({
+        message:
+            `This folder anchors ${anchored.length} analyses (${anchored.map((entry) => entry.name).join(", ")}). ` +
+            "Pass `--analysis <id|name>` to name the one whose farm gains the links.",
+    });
+}
+
+/**
  * `inflexa store link` — link packages the pool already holds into the farm of
- * one analysis.
+ * one analysis. Without `--analysis`, the analysis of the working directory is
+ * the target — refer to {@link resolveLinkTarget}.
  *
  * It ACQUIRES nothing. It starts no container, it opens no network connection:
  * it reads the dependency graph, it resolves each requirement against the
@@ -901,14 +963,7 @@ export async function runStoreAdd(pkg: string | undefined, options: StoreAddOpti
  */
 export async function runStoreLink(packages: string[], options: { readonly analysis: IdOrName | null; readonly lang: StoreEcosystem | null }): Promise<void> {
     const storeRoot = env.packageStoreDir;
-    if (options.analysis === null) {
-        reportError({
-            message:
-                "`inflexa store link` needs the analysis whose farm gains the links. Pass `--analysis <id|name>`, and run `inflexa ls` to see the analyses this machine holds.",
-        });
-        return;
-    }
-    const target = resolveFarmAnalysis(options.analysis);
+    const target = resolveLinkTarget(options.analysis);
     if (target.isErr()) {
         reportError(target.error);
         return;
@@ -1076,9 +1131,9 @@ export async function runStoreLs(): Promise<void> {
 }
 
 /**
- * `inflexa store reclaim` — report, then remove, store content no farm
- * references. The report comes from `onPreview`, thus it lands INSIDE the
- * exclusivity window that `reclaimStore` holds.
+ * `inflexa store reclaim` — report, then remove, store content that no farm
+ * links and the graph does not advertise. The report comes from `onPreview`,
+ * thus it lands INSIDE the exclusivity window that `reclaimStore` holds.
  */
 export async function runStoreReclaim(): Promise<void> {
     const result = await reclaimStore(
@@ -1178,11 +1233,12 @@ function printInspection(inspection: StoreInspection): void {
     printFailedFlights(inspection.failed);
     printPending(inspection.pending);
     console.log(`  Disk     ${formatBytes(inspection.storeBytes)}`);
-    // An update keeps each old version, thus a reclaimable total shows the disk that
-    // `inflexa store reclaim` frees. A zero total is the common state, and printing
-    // it would be noise, so the line stays silent then.
+    // The total counts only the debris tier: no farm link AND no graph node.
+    // A graph-advertised package with no farm link yet is inventory, and the
+    // hint must never point a reader at removing it. A zero total is the
+    // common state, and printing it would be noise, so the line stays silent.
     if (inspection.reclaimableBytes > 0) {
-        console.log(`  Reclaim  ${formatBytes(inspection.reclaimableBytes)} unreferenced — run \`inflexa store reclaim\` to recover it`);
+        console.log(`  Reclaim  ${formatBytes(inspection.reclaimableBytes)} of debris — run \`inflexa store reclaim\` to recover it`);
     }
     printDownload(inspection.download);
 }

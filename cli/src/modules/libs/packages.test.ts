@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -28,9 +28,10 @@ describe("readPoolInventorySections", () => {
     test("every advertised distribution lists at its newest pin, with its store directory", async () => {
         const root = tempStore();
 
-        const sections = await readPoolInventorySections(root);
+        const read = await readPoolInventorySections(root);
 
-        if (sections === null) throw new Error("expected sections from a readable graph");
+        if (read.kind !== "sections") throw new Error("expected sections from a readable graph");
+        const sections = read.sections;
         expect(sections.map((s) => s.title)).toEqual(["Python (pip)", "R"]);
         const python = sections[0]!;
         const alpha = python.packages.find((p) => p.name === "alpha");
@@ -47,16 +48,34 @@ describe("readPoolInventorySections", () => {
         mkdirSync(dir, { recursive: true });
         writeFileSync(join(dir, ".inflexa-hash"), `${"c".repeat(64)}\n`);
 
-        const sections = await readPoolInventorySections(root);
+        const read = await readPoolInventorySections(root);
 
-        const beta = sections?.[0]?.packages.find((p) => p.name === "beta");
+        const beta = read.kind === "sections" ? read.sections[0]?.packages.find((p) => p.name === "beta") : undefined;
         expect(beta?.hash).toBe("c".repeat(64));
     });
 
-    test("an unreadable graph reads as null, never as an empty pool", async () => {
+    test("an unreadable graph reads as unavailable with its reason, never as an empty pool", async () => {
         const root = mkdtempSync(join(tmpdir(), "inflexa-pool-"));
         created.push(root);
 
-        expect(await readPoolInventorySections(root)).toBeNull();
+        const read = await readPoolInventorySections(root);
+
+        expect(read.kind).toBe("unavailable");
+        if (read.kind === "unavailable") expect(read.reason).toContain("dependency graph");
+    });
+
+    test("a dangling edge reads as unavailable, and the reason names the edge", async () => {
+        const root = tempStore();
+        // Cut one edge target out of the graph: the strict reader must refuse,
+        // and the reason must carry the from/to pair the repair needs.
+        const graphPath = join(root, "deps.json");
+        const graph = JSON.parse(readFileSync(graphPath, "utf8")) as { nodes: Record<string, unknown> };
+        delete graph.nodes["alpha-1.2.0-000000000000aaaa"];
+        writeFileSync(graphPath, JSON.stringify(graph));
+
+        const read = await readPoolInventorySections(root);
+
+        expect(read.kind).toBe("unavailable");
+        if (read.kind === "unavailable") expect(read.reason).toContain("beta-0.4.1-000000000000bbbb to alpha-1.2.0-000000000000aaaa");
     });
 });

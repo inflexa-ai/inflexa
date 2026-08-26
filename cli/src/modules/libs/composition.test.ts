@@ -8,7 +8,16 @@ import { randomUUIDv7 } from "bun";
 import { env } from "../../lib/env.ts";
 import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { closureOf, extendFarm, makeEmptyFarm, readDepsGraph, removeAnalysisFarm, resolveAnalysisFarm, resolvePackageRequest } from "./composition.ts";
+import {
+    closureOf,
+    extendFarm,
+    linkPackagesIntoFarm,
+    makeEmptyFarm,
+    readDepsGraph,
+    removeAnalysisFarm,
+    resolveAnalysisFarm,
+    resolvePackageRequest,
+} from "./composition.ts";
 
 // The golden fixture pool, checked in beside this file. It is the ONE input that
 // both builders compose, thus a change to it changes both sides of the parity test.
@@ -701,8 +710,26 @@ describe("a version collision", () => {
 
         const failed = (await extendFarm({ storeRoot: root, analysisId, roots: [ALPHA_2] }))._unsafeUnwrapErr();
 
-        expect(failed).toEqual({ type: "version_collision", name: "alpha", existing: ALPHA, incoming: ALPHA_2 });
+        // Both pins are requested roots here, thus each `neededBy` is empty.
+        expect(failed).toEqual({ type: "version_collision", name: "alpha", existing: ALPHA, incoming: ALPHA_2, existingNeededBy: [], incomingNeededBy: [] });
         expect(treeOf(join(root, "farms", analysisId))).toEqual(before);
+    });
+
+    test("the refusal names the closure member that pulls a pin, because the dependent is the remedy surface", async () => {
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+
+        // BETA edges to alpha 1.2.0, and the caller requests alpha 2.0.0
+        // beside it: the collision must say WHICH package pulls the old pin,
+        // or the reader has to guess — and a guess turns into store surgery.
+        const failed = (await extendFarm({ storeRoot: root, analysisId, roots: [BETA, ALPHA_2] }))._unsafeUnwrapErr();
+
+        expect(failed).toMatchObject({
+            type: "version_collision",
+            name: "alpha",
+            existingNeededBy: ["beta==0.4.1"],
+            incomingNeededBy: [],
+        });
     });
 
     test("a shared namespace directory is not a collision, because no side owns the import name", async () => {
@@ -741,6 +768,47 @@ describe("a version collision", () => {
 
         expect(composed.isOk()).toBe(true);
         expect(treeOf(join(root, "farms", analysisId)).get("python/site-packages/tests")).toBe("dir");
+    });
+});
+
+// --- The farm-extension seam ------------------------------------------------------
+
+describe("linkPackagesIntoFarm", () => {
+    test("an unreadable graph answers `unavailable` with the one graph reason, never a per-package absence", async () => {
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+        // Cut one edge target out of the graph: the strict reader refuses the
+        // whole pool, and the seam must say THAT — a per-package "absent"
+        // here would send the caller after packages the pool holds.
+        const graphPath = join(root, "deps.json");
+        const graph = JSON.parse(readFileSync(graphPath, "utf8")) as { nodes: Record<string, unknown> };
+        delete graph.nodes[ALPHA];
+        writeFileSync(graphPath, JSON.stringify(graph));
+
+        const outcomes = await linkPackagesIntoFarm(root, analysisId, [{ name: "polars" }, { name: "numpy" }]);
+
+        expect(outcomes.map((outcome) => outcome.kind)).toEqual(["unavailable", "unavailable"]);
+        for (const outcome of outcomes) {
+            if (outcome.kind === "unavailable") expect(outcome.reason).toContain("edge(s) that it does not hold");
+        }
+    });
+
+    test("a collision outcome carries the two pins and the dependents in its detail", async () => {
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+
+        // BETA pulls alpha 1.2.0 through its edge while the caller requests
+        // alpha 2.0.0: the batch refuses whole, and the detail names the
+        // dependent, because the remedy is to drop or re-pin the dependent.
+        const outcomes = await linkPackagesIntoFarm(root, analysisId, [{ name: "beta" }, { name: "alpha", version: "2.0.0" }]);
+
+        expect(outcomes.map((outcome) => outcome.kind)).toEqual(["collision", "collision"]);
+        const [first] = outcomes;
+        if (first?.kind === "collision") {
+            expect(first.storeDirs).toEqual([ALPHA, ALPHA_2]);
+            expect(first.detail).toContain("needed by beta==0.4.1");
+            expect(first.detail).toContain("a requested package");
+        }
     });
 });
 

@@ -114,6 +114,9 @@ describe("collectStoreDebris", () => {
 
     test("a failed flight row does not block the reclamation", async () => {
         const root = tempStore();
+        // A debris directory justifies the run: the fixture's advertised
+        // directories are inventory now, and the reclaim must not touch them.
+        mkdirSync(join(root, "store", DEBRIS_DIR), { recursive: true });
         claimStoreFlight({ id: "any::gone::", ecosystem: null, name: "gone", specifier: "", holderPid: process.pid })._unsafeUnwrap();
         settleStoreFlightFailure({ id: "any::gone::", message: "resolve: the index timed out" })._unsafeUnwrap();
         const invocations: (readonly string[])[] = [];
@@ -122,9 +125,21 @@ describe("collectStoreDebris", () => {
         // refuses instead of removing, and the assertion below catches it.
         const outcome = (await reclaimStore({ storeRoot: root }, { run: countingRunner(invocations), flightWaitMs: 50, flightPollMs: 5 }))._unsafeUnwrap();
 
-        // The fixture has no farm, thus every advertised directory is a candidate.
-        expect(outcome.reclaimed.length).toBeGreaterThan(0);
+        expect(outcome.reclaimed).toEqual([DEBRIS_DIR]);
         expect(invocations).toEqual([["reclaim"]]);
+    });
+
+    test("a graph-advertised directory with no farm link is not a reclaim candidate", async () => {
+        const root = tempStore();
+        const invocations: (readonly string[])[] = [];
+
+        const outcome = (await reclaimStore({ storeRoot: root }, { run: countingRunner(invocations), flightWaitMs: 50, flightPollMs: 5 }))._unsafeUnwrap();
+
+        // The fixture holds no farm, thus every store directory carries only
+        // its graph node — inventory, not waste. The preview is empty, and
+        // the run starts no container over an empty candidate set.
+        expect(outcome.reclaimed).toEqual([]);
+        expect(invocations).toEqual([]);
     });
 
     test("a live flight row still refuses the reclamation", async () => {

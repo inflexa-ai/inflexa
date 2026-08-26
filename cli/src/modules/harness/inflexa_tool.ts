@@ -452,7 +452,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             "THE PACKAGE FLOW, after a plan is made: write the plan's package list to the user, mark each package the pool does not hold " +
             "(`list_available_packages` answers that), and then ask for each missing one with its own gated " +
             '["store", "add", "<name>"] call — one package per call, `--version <v>` when the plan pins one, `--lang python|r` when the name is ambiguous. ' +
-            "Each approved add ENQUEUES; the acquisitions run as one batch when this turn settles, so do not wait for bytes between asks. " +
+            "Each approved add ENQUEUES; the acquisition batch starts within 10 seconds, or at the turn end if that comes first, so do not wait for bytes between asks. " +
             "Never tell the user that packages install before a run — no mechanism orders the two. " +
             "A launch whose plan needs a package the pool lacks refuses on its own, naming each missing package with what to do about it. " +
             "Invite a swap: the user can name a different package in place of a proposed one, and then you revise the plan toward it and do not ask for the replaced one again. " +
