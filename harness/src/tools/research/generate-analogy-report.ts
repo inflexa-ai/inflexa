@@ -217,8 +217,8 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             "stuck', 'brainstorm ideas', 'are there precedents outside biology'. The " +
             "trigger is exploratory INTENT, not the words 'analogy' or 'cross-domain' " +
             "— users rarely name it, so infer it and reach for the tool proactively.\n" +
-            "NOT for: in-domain literature review (use `literature_reviewer` or " +
-            "`pubmed`), single-gene factual lookup (use `search_gene`), or " +
+            "NOT for: in-domain literature review (use `pubmed` and the other " +
+            "bio-lookup tools), single-gene factual lookup (use `search_gene`), or " +
             "execution-mode turns where the user just wants the next step done. It " +
             "drives a multi-step research sub-agent over live literature search, so " +
             "it is slow — never spend it on a fact you could look up.\n" +

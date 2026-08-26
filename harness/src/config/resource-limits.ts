@@ -47,7 +47,7 @@ export type ResourcePolicy = z.infer<typeof ResourcePolicySchema>;
 /** Default LLM-turn budget for a sandbox agent step. Covers simple,
  *  standard, and complex analyses — extra headroom on simple steps is
  *  cheaper than truncating complex ones. */
-export const DEFAULT_SANDBOX_MAX_STEPS = 75;
+export const DEFAULT_SANDBOX_MAX_STEPS = 200;
 
 // ── Error ───────────────────────────────────────────────────────────
 

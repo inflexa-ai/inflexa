@@ -65,7 +65,7 @@ export const REPORT_SESSION_AGENT_ID = "report-session" as const;
  * look, record — drives more small tool calls than a conversation turn, thus it
  * gets the headroom of the report runner (REPORT_AGENT_MAX_STEPS).
  */
-const REPORT_SESSION_MAX_ITERATIONS = 75;
+const REPORT_SESSION_MAX_ITERATIONS = 200;
 
 /**
  * The shared dependencies of the report agent. The gateway binds the per-session

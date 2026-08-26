@@ -24,8 +24,9 @@ import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-m
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
+import { DEFAULT_REASONING, mergeProviderOptions, reasoningProviderOptions } from "../providers/reasoning.js";
 import { resultStep } from "./run-step.js";
-import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities } from "../providers/types.js";
+import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import { isToolError, readToolResultImages, type Tool, type ToolContext, type ToolResultImage } from "../tools/define-tool.js";
 import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
@@ -113,6 +114,18 @@ export interface RunAgentOptions {
      * cache-write premium for a cache nothing ever reads back.
      */
     readonly promptCache?: PromptCachePolicy;
+    /**
+     * Reasoning policy for every LLM call this run makes. Defaults to
+     * `DEFAULT_REASONING` (adaptive thinking at `xhigh`) — an agent loop drives
+     * tools over many iterations, and a shallow turn there costs more in wasted
+     * calls than the deeper turn costs in tokens.
+     *
+     * The policy lives here, on the run, rather than on the provider, for the
+     * same reason that the cache policy does: a one-shot LLM call elsewhere has
+     * its own depth needs and must not inherit the depth of a loop. A host on a
+     * model with no reasoning support passes `"off"`.
+     */
+    readonly reasoning?: ReasoningPolicy;
     /**
      * Diagnostic sink for the run's own lifecycle. Optional because `runAgent` is
      * called from tools, workflow bodies, and test rigs alike — silence is the
@@ -221,7 +234,10 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // Resolved once, not per iteration: an identical options object across every
     // call is itself part of the cache contract — the request prefix has to be
     // byte-identical to be read back.
-    const providerOptions = promptCacheProviderOptions(opts.promptCache ?? DEFAULT_PROMPT_CACHE);
+    const providerOptions = mergeProviderOptions(
+        promptCacheProviderOptions(opts.promptCache ?? DEFAULT_PROMPT_CACHE),
+        reasoningProviderOptions(opts.reasoning ?? DEFAULT_REASONING),
+    );
     const usage: AgentRunUsage = {};
 
     // Exactly one record per completed run — never one per iteration. That bound is

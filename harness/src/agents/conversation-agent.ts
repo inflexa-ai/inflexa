@@ -54,13 +54,7 @@ import {
 import { createNcbiTools, createChemDbTools, type BioToolKeys } from "../tools/bio/keys.js";
 
 // Dependency-bearing tool factories.
-import {
-    createGeneratePlanTool,
-    createLiteratureReviewerTool,
-    createInspectRunTool,
-    createInspectDataProfileTool,
-    createGenerateAnalogyReportTool,
-} from "../tools/research/index.js";
+import { createGeneratePlanTool, createInspectRunTool, createInspectDataProfileTool, createGenerateAnalogyReportTool } from "../tools/research/index.js";
 import {
     createFileStatTool,
     createGrepTool,
@@ -88,7 +82,7 @@ import { createResolveCitationTool } from "../tools/research/resolve-citation.js
 export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
 
 /** Runaway guard — heavy tool-driving turns need generous headroom. */
-const CONVERSATION_MAX_ITERATIONS = 50;
+const CONVERSATION_MAX_ITERATIONS = 200;
 
 /**
  * The shared dependencies the composition root explodes apart. The environment
@@ -280,8 +274,6 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         showUserTool,
         createShowPlanTool(pool),
         showFileTool,
-        // Batch literature/biology research (sub-agent as a loop-driving tool).
-        createLiteratureReviewerTool({ provider, model, bioKeys, citationResolver, usageRecorder }),
         // Cross-domain analogy generation (sub-agent as a loop-driving tool).
         createGenerateAnalogyReportTool({ provider, model, bioKeys, usageRecorder }),
         // Workspace semantic search + raw read/grep over the read seam.
