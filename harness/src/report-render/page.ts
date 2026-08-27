@@ -19,8 +19,11 @@ import {
     GRID_TOOLTIP_DELAY_MS,
     GRID_VISIBLE_ROWS,
 } from "./design.js";
+import { REPORT_PROVENANCE_GLOBAL } from "./provenance-data.js";
 import { scriptJson } from "./script-json.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
+import { LINEAGE_BLOCK_ATTRIBUTE, LINEAGE_CONTROL_CLASS, LINEAGE_KEY_ATTRIBUTE, LINEAGE_KEYS_ATTRIBUTE } from "./views/lineage.js";
+import { CHAIN_HASH_CHARS } from "./views/references-view.js";
 import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS, GRID_ROWS_WORD } from "./views/values.js";
 
 /**
@@ -901,4 +904,277 @@ export const GRID_BOOTSTRAP = `(function () {
       console.error("grid boot failed for " + id + ": " + (cause && cause.message ? cause.message : cause));
     }
   }
+})();`;
+
+/**
+ * The name of the lineage library on the page, and the one call that the popover makes.
+ *
+ * The page and the library meet at this one name and nowhere else. The renderer imports no API of the
+ * library, thus the two ship apart and a change of the walk costs no change here.
+ *
+ * The call is:
+ *
+ *     window.__REPORT_LINEAGE_LIB.backwardChain(documentText, pin)
+ *
+ * `documentText` is the document that the provenance carrier registered, as opaque text. `pin` is the
+ * `{ path, hash }` pair that a grounded block stamps. The answer is
+ * `{ hops: [{ kind, label, path, hash }], truncated }`, in the order that the walk visits the hops. `path`
+ * and `hash` are optional on a hop, because a hop can name an operation and no file. The answer is `null`
+ * where the document holds no node for the pin.
+ *
+ * Each absence is a normal condition. A page where nothing registers the name still opens the popover, and
+ * the popover then shows the pin as the last hop under an explicit note.
+ */
+export const LINEAGE_LIB_GLOBAL = "__REPORT_LINEAGE_LIB";
+
+/** The one call of the library. The page names the member here, thus the script and this contract agree. */
+const LINEAGE_LIB_CALL = "backwardChain";
+
+/** The heading of the popover. It names what the panel holds, above the hops. */
+const LINEAGE_TITLE_TEXT = "Lineage";
+
+/** The note of a page that carries no lineage library. The chain then stops at the pin of the block. */
+export const LINEAGE_NO_LIBRARY_NOTE = "The lineage library is not on this page. Thus the chain stops at this pin.";
+
+/** The note of a library call that gave no answer. The pin stays the last hop that the page knows. */
+export const LINEAGE_NO_ANSWER_NOTE = "The lineage library gave no answer for this pin. Thus the chain stops here.";
+
+/** The note of a pin that the document holds no node for. */
+export const LINEAGE_NO_NODE_NOTE = "The document holds no node for this pin. Thus the chain stops here.";
+
+/** The note of a chain that the library cut at its own depth bound. */
+export const LINEAGE_TRUNCATED_NOTE = "The library cut this chain at its depth bound. Thus the chain continues past the last hop.";
+
+/** The kind tag of the pin hop that the page names on its own, without the library. */
+const LINEAGE_ARTIFACT_KIND = "Artifact";
+
+/** The kind tag of the one hop of an external record. */
+const LINEAGE_RECORD_KIND = "Citation";
+
+/**
+ * The classes of the popover. The script emits each one, and the design sheet holds the matching rule.
+ *
+ * The hop reuses the appendix vocabulary for the kind tag, the path, the detail, and the hash head. Thus
+ * one reference reads alike in the appendix and in the popover, and the sheet styles both from one rule.
+ */
+const LINEAGE_PANEL_CLASS = "report-lineage-popover";
+const LINEAGE_PANEL_TITLE_CLASS = "report-lineage-title";
+const LINEAGE_HOPS_CLASS = "report-lineage-hops";
+const LINEAGE_HOP_CLASS = "report-lineage-hop";
+const LINEAGE_NOTE_CLASS = "report-lineage-note";
+
+/** The space between the control and the panel, and between the panel and the edge of the viewport, in pixels. */
+const LINEAGE_PANEL_GAP_PX = 8;
+
+/**
+ * The page-side script of the lineage popover.
+ *
+ * A grounded block stamps its block id and its keys. A control beside a marker names the place of its key
+ * in that stamp. Thus the script reads the markup for everything that it shows, and it holds no copy of the
+ * document model.
+ *
+ * One delegated listener serves the whole page. It opens the panel of the clicked control, it closes the
+ * open panel when a second control opens its own, and it closes on a click outside the panel and on the
+ * `Escape` key. As a result at most one panel stands at one time, and the page needs no listener for each
+ * control.
+ *
+ * The panel is a child of the body, positioned against the document. A card clips its own overflow, thus a
+ * panel inside a card would show as a strip. The position reads the box of the control at click time, and
+ * it holds the panel inside the viewport on both sides. A resize invalidates that measure, thus a resize
+ * closes the panel.
+ *
+ * The script builds each node and it writes each string as text. Thus a hostile path, a hostile label, and
+ * a hostile hop of the document reach the panel as text and never as markup.
+ *
+ * The page makes no request. The document rides the page already, and the library reads it in memory.
+ */
+export const LINEAGE_POPOVER = `(function () {
+  var openPanel = null;
+  var openControl = null;
+  function elementOf(node) {
+    while (node && node.nodeType !== 1) {
+      node = node.parentNode;
+    }
+    return node;
+  }
+  function controlOf(node) {
+    var element = elementOf(node);
+    while (element) {
+      if (element.classList && element.classList.contains("${LINEAGE_CONTROL_CLASS}")) {
+        return element;
+      }
+      element = element.parentElement;
+    }
+    return null;
+  }
+  function stampOf(control) {
+    var element = control.parentElement;
+    while (element) {
+      if (element.hasAttribute("${LINEAGE_BLOCK_ATTRIBUTE}")) {
+        return element;
+      }
+      element = element.parentElement;
+    }
+    return null;
+  }
+  function keyOf(control) {
+    var stamp = stampOf(control);
+    if (!stamp) {
+      return null;
+    }
+    var keys;
+    try {
+      keys = JSON.parse(stamp.getAttribute("${LINEAGE_KEYS_ATTRIBUTE}") || "[]");
+    } catch (cause) {
+      return null;
+    }
+    var place = parseInt(control.getAttribute("${LINEAGE_KEY_ATTRIBUTE}") || "", 10);
+    if (!isFinite(place) || place < 0 || place >= keys.length) {
+      return null;
+    }
+    return keys[place];
+  }
+  function walk(key) {
+    var library = window.${LINEAGE_LIB_GLOBAL};
+    var carrier = window.${REPORT_PROVENANCE_GLOBAL};
+    if (!library || typeof library.${LINEAGE_LIB_CALL} !== "function" || !carrier || typeof carrier.document !== "string") {
+      return { hops: [], note: ${JSON.stringify(LINEAGE_NO_LIBRARY_NOTE)} };
+    }
+    var chain = null;
+    try {
+      chain = library.${LINEAGE_LIB_CALL}(carrier.document, { path: key.path, hash: key.hash });
+    } catch (cause) {
+      // A document that the library refuses is exactly the fault that a look must diagnose, thus it must
+      // never leave the reader with a control that does nothing.
+      return { hops: [], note: ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)} };
+    }
+    if (!chain || !chain.hops || chain.hops.length === 0) {
+      return { hops: [], note: ${JSON.stringify(LINEAGE_NO_NODE_NOTE)} };
+    }
+    return { hops: chain.hops, note: chain.truncated === true ? ${JSON.stringify(LINEAGE_TRUNCATED_NOTE)} : "" };
+  }
+  function part(tag, className, text) {
+    var node = document.createElement(tag);
+    node.className = className;
+    node.textContent = text;
+    return node;
+  }
+  function hashHead(hash) {
+    return hash.slice(hash.lastIndexOf(":") + 1).slice(0, ${CHAIN_HASH_CHARS});
+  }
+  function detail(item, tag, className, text) {
+    item.appendChild(document.createTextNode(" "));
+    item.appendChild(part(tag, className, text));
+  }
+  function hopItem(hop) {
+    var item = document.createElement("li");
+    item.className = "${LINEAGE_HOP_CLASS}";
+    item.appendChild(part("span", "report-ref-kind", String(hop.kind === undefined ? "" : hop.kind)));
+    if (hop.label) {
+      detail(item, "span", "report-ref-detail", String(hop.label));
+    }
+    if (hop.path) {
+      detail(item, "code", "report-ref-path", String(hop.path));
+    }
+    if (hop.hash) {
+      detail(item, "code", "report-ref-hash", hashHead(String(hop.hash)));
+    }
+    return item;
+  }
+  function recordName(key) {
+    return String(key.idKind) + ":" + String(key.id);
+  }
+  function panelOf(key) {
+    var pinned = typeof key.path === "string";
+    var walked = pinned ? walk(key) : { hops: [], note: "" };
+    var hops = walked.hops.slice();
+    if (!pinned) {
+      hops.push({ kind: "${LINEAGE_RECORD_KIND}", label: recordName(key) });
+    } else if (hops.length === 0) {
+      // The pin is the last hop that the page knows on its own. A walk that gave nothing still names it,
+      // thus the reader sees what the block binds and reads the note against it.
+      hops.push({ kind: "${LINEAGE_ARTIFACT_KIND}", path: key.path, hash: key.hash });
+    }
+    var panel = document.createElement("div");
+    panel.className = "${LINEAGE_PANEL_CLASS}";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-label", pinned ? String(key.path) : recordName(key));
+    panel.appendChild(part("div", "${LINEAGE_PANEL_TITLE_CLASS}", ${JSON.stringify(LINEAGE_TITLE_TEXT)}));
+    var list = document.createElement("ol");
+    list.className = "${LINEAGE_HOPS_CLASS}";
+    for (var i = 0; i < hops.length; i++) {
+      list.appendChild(hopItem(hops[i]));
+    }
+    panel.appendChild(list);
+    if (walked.note) {
+      panel.appendChild(part("div", "${LINEAGE_NOTE_CLASS}", walked.note));
+    }
+    return panel;
+  }
+  function place(panel, control) {
+    var box = control.getBoundingClientRect();
+    var width = document.documentElement.clientWidth;
+    var left = box.left;
+    var last = width - panel.offsetWidth - ${LINEAGE_PANEL_GAP_PX};
+    if (left > last) {
+      left = last;
+    }
+    if (left < ${LINEAGE_PANEL_GAP_PX}) {
+      left = ${LINEAGE_PANEL_GAP_PX};
+    }
+    panel.style.left = left + window.pageXOffset + "px";
+    panel.style.top = box.bottom + window.pageYOffset + ${LINEAGE_PANEL_GAP_PX} + "px";
+  }
+  function close() {
+    if (openPanel && openPanel.parentNode) {
+      openPanel.parentNode.removeChild(openPanel);
+    }
+    if (openControl) {
+      openControl.setAttribute("aria-expanded", "false");
+    }
+    openPanel = null;
+    openControl = null;
+  }
+  function openFor(control) {
+    var key = keyOf(control);
+    if (!key) {
+      return;
+    }
+    var panel = panelOf(key);
+    document.body.appendChild(panel);
+    place(panel, control);
+    control.setAttribute("aria-expanded", "true");
+    openPanel = panel;
+    openControl = control;
+  }
+  function insidePanel(node) {
+    var element = elementOf(node);
+    while (element) {
+      if (element === openPanel) {
+        return true;
+      }
+      element = element.parentElement;
+    }
+    return false;
+  }
+  document.addEventListener("click", function (event) {
+    var control = controlOf(event.target);
+    if (control) {
+      var same = control === openControl;
+      close();
+      if (!same) {
+        openFor(control);
+      }
+      return;
+    }
+    if (!insidePanel(event.target)) {
+      close();
+    }
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      close();
+    }
+  });
+  window.addEventListener("resize", close);
 })();`;

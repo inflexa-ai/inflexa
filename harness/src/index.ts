@@ -110,6 +110,19 @@ export { UnavailableSessionPagePublisher } from "./tools/report-session/session-
 export type { MakeSessionPagePublisher, SessionPagePublisher, SessionPageMintResult } from "./tools/report-session/session-page-publisher.js";
 export type { ResolvePageUrl, SessionPageAccess } from "./tools/report-session/index.js";
 
+// Seam: the observation of one report session. The embedder records the acts of the session
+// in the document of the analysis that it owns, thus the seam and its vocabulary belong on the
+// front door: an embedder cannot type its realization without them. `DerivationSource` rides
+// beside the event union, because the derivation event carries the chain of the derived table.
+export type { EmitReportObservation, ReportObservationEvent } from "./tools/report-observation.js";
+export type { DerivationSource } from "./state/report-session-state.js";
+
+// Seam: the provenance source of a report session. The embedder owns the signed document of the
+// analysis, thus it gives the bytes and the harness carries a frozen copy into the page. The seam
+// belongs on the front door for the same reason as the observation seam: an embedder cannot type its
+// realization without it. Absence is a normal result of the seam.
+export type { ProvenanceExport, ReadReportProvenance } from "./tools/report-provenance.js";
+
 // Run launching.
 export { createDbosRunLauncher } from "./execution/dbos-run-launcher.js";
 export type { RunLauncher, LaunchOptions } from "./execution/run-launcher.js";

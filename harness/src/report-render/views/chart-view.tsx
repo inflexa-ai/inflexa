@@ -14,6 +14,7 @@ import { raw } from "hono/html";
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import type { EchartOption } from "../chart.js";
 import type { ReferenceLedger } from "../references.js";
+import { lineagePlace, lineageStamp } from "./lineage.js";
 import { Marker } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
 
@@ -23,8 +24,11 @@ import { scriptJson } from "../script-json.js";
  * The whole-table binding joins the reference ladder, thus the title line carries the marker and the
  * appendix names the artifact that the chart plots. A chart with no title still shows its marker on the
  * same line.
+ *
+ * `lineage` states that the page carries a provenance document. The card then stamps its keys, and the
+ * marker carries the control that opens the chain.
  */
-export function renderChart(block: ChartBlock, ledger: ReferenceLedger, option: EchartOption): string {
+export function renderChart(block: ChartBlock, ledger: ReferenceLedger, option: EchartOption, lineage = false): string {
     const n = ledger.mark(block.binding);
     const containerId = chartContainerId(block.id);
     // The JSON goes to the page through `raw()`, thus `scriptJson` is the sole guard of this sink. It
@@ -32,10 +36,10 @@ export function renderChart(block: ChartBlock, ledger: ReferenceLedger, option: 
     // element early. The JSON parser reads `\u003c` as `<`, thus the option value stays exact.
     const json = scriptJson(option);
     return String(
-        <div class="report-chart">
+        <div class="report-chart" {...lineageStamp(lineage, block.id, [block.binding])}>
             <div class="report-chart-title">
                 {block.title}
-                <Marker n={n} />
+                <Marker n={n} lineage={lineagePlace(lineage, block.binding)} />
             </div>
             <div class="report-chart-card corner-accents">
                 <div id={containerId} data-echarts-id={block.id} class="chart-container"></div>

@@ -7,6 +7,9 @@
  * top-level sections show the band alternation, and the reference band holds an artifact reference beside
  * a citation that two claims share.
  *
+ * The fixture also carries a provenance export. Thus the fixture page stamps each grounded block and shows
+ * the lineage control, and a person examines that control beside the markers.
+ *
  * Each value is a literal, and the figure source is an inline data URI. Thus the page is a pure function of
  * this module, and the fixture reads no file.
  *
@@ -17,6 +20,7 @@
 
 import type { CitationReference, ArtifactTableReference, ArtifactValueReference } from "../contracts/report-reference.js";
 import type { ReportDocument } from "../contracts/report-blocks.js";
+import type { ProvenanceExport } from "./provenance-data.js";
 import type { RenderValues } from "./types.js";
 
 /** The artifact that carries the per-sample coverage. One claim cites the median depth cell of it. */
@@ -304,4 +308,27 @@ export const FIXTURE_VALUES: RenderValues = {
         ],
     },
     "figure-volcano": { type: "figure", src: VOLCANO_SOURCE },
+};
+
+/**
+ * The provenance of the fixture: one document, and the attestation over it.
+ *
+ * The renderer moves the two texts into script assets and it parses no byte of them. Thus the fixture holds
+ * plain literals, and the page still stamps each grounded block and shows the lineage control that a person
+ * examines.
+ *
+ * The document names the artifacts of the fixture, thus a reader of the page compares it against the pins
+ * of the blocks above.
+ */
+export const FIXTURE_PROVENANCE: ProvenanceExport = {
+    document: JSON.stringify({
+        entity: {
+            "e:coverage": { "prov:type": "file", path: COVERAGE_PATH, hash: "sha256:9b1d4c7af0e2" },
+            "e:summary": { "prov:type": "file", path: SUMMARY_PATH, hash: "sha256:1c8e5a0b6f42" },
+            "e:results": { "prov:type": "file", path: RESULTS_PATH, hash: "sha256:4e7c02b8d135" },
+        },
+        activity: { "a:deseq2": { "prov:type": "step", label: "DESeq2 differential expression" } },
+        wasGeneratedBy: { "g:results": { "prov:entity": "e:results", "prov:activity": "a:deseq2" } },
+    }),
+    attestation: JSON.stringify({ alg: "ed25519", signature: "Zml4dHVyZS1zaWduYXR1cmU" }),
 };

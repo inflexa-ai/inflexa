@@ -21,8 +21,11 @@ import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { DEPS_DIR, derivationScriptName, PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
+import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
+import type { ReportObservationEvent } from "../report-observation.js";
+import type { ReadReportProvenance } from "../report-provenance.js";
 import { createPreviewReportTool, type PreviewReportResult } from "./preview-report.js";
 import { UnavailableSessionPagePublisher, type SessionPagePublisher } from "./session-page-publisher.js";
 
@@ -1000,5 +1003,229 @@ describe("the hosted view", () => {
         expect(result.outcome).toBe("rendered");
         // An unbound publisher changes nothing: the arm carries the path alone, the same as before the seam.
         expect("access" in result).toBe(false);
+    });
+});
+
+describe("the report observation", () => {
+    it("gives one preview event with the page and the hash of the draft that it shows", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        const draft = metricDoc();
+        gateway.seed("t1", { document: draft, snapshot: metricSnapshot });
+        const events: ReportObservationEvent[] = [];
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            emitReportObservation: (event) => events.push(event),
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        // The hash of the event equals the hash that the stamp wrote, thus the event and the session state
+        // name one draft.
+        expect(events).toEqual([
+            {
+                type: "preview",
+                analysisId: DEFAULT_ANALYSIS_ID,
+                threadId: "t1",
+                pagePath: join(root, "report-sessions", "t1", "index.html"),
+                documentHash: computeDraftHash(draft),
+            },
+        ]);
+        expect(gateway.renderedHash("t1")).toBe(computeDraftHash(draft));
+    });
+
+    it("emits nothing when the draft gives a gap list, and no page lands", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: { title: "", sections: [] }, snapshot: { artifacts: {} } });
+        const events: ReportObservationEvent[] = [];
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            emitReportObservation: (event) => events.push(event),
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("gaps");
+        expect(events).toEqual([]);
+    });
+
+    it("logs a throw of the seam, and the page stays on disk", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const logger = createCapturingLogger();
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            emitReportObservation: () => {
+                throw new Error("the recorder is down");
+            },
+            logger,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        // The page landed before the emit, thus a defect of the host costs the event alone.
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            expect(existsSync(result.pagePath)).toBe(true);
+        }
+        const record = logger.records.find((held) => held.msg.includes("the report observation seam threw"));
+        expect(record?.level).toBe("error");
+        expect(record?.fields).toMatchObject({ analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", event: "preview", err: "the recorder is down" });
+    });
+
+    it("renders the same way when the composition binds no seam", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        const draft = metricDoc();
+        gateway.seed("t1", { document: draft, snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        expect(gateway.renderedHash("t1")).toBe(computeDraftHash(draft));
+    });
+});
+
+describe("the provenance export", () => {
+    const DOCUMENT = '{"entity":{"e1":{"prov:type":"file"}}}';
+    const ATTESTATION = '{"signature":"AAAA"}';
+
+    /** The assets directory of the seeded thread. */
+    function assetsDirOf(root: string): string {
+        return join(root, "report-sessions", "t1", "assets");
+    }
+
+    /** Each staged provenance asset, in name order. */
+    async function stagedProvenance(root: string): Promise<string[]> {
+        return (await readdir(assetsDirOf(root))).filter((name) => name.startsWith("prov-")).sort();
+    }
+
+    /** A tool over a seeded metric draft, with the given provenance source. */
+    function toolOver(root: string, readReportProvenance?: ReadReportProvenance): ReturnType<typeof createPreviewReportTool> {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        return createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            ...(readReportProvenance ? { readReportProvenance } : {}),
+        });
+    }
+
+    it("stages the document and the attestation beside the page, and the page loads both", async () => {
+        const root = await makeRoot();
+        const asked: string[] = [];
+        const tool = toolOver(root, (analysisId) => {
+            asked.push(analysisId);
+            return { document: DOCUMENT, attestation: ATTESTATION };
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        // The source binds one analysis, thus the tool asks for the analysis of the call.
+        expect(asked).toEqual([DEFAULT_ANALYSIS_ID]);
+        const staged = await stagedProvenance(root);
+        expect(staged.length).toBe(2);
+        const page = await readFile(join(root, "report-sessions", "t1", "index.html"), "utf8");
+        for (const name of staged) {
+            expect(await readFile(join(assetsDirOf(root), name), "utf8")).toContain(name.endsWith(".sig.data.js") ? "signature" : "prov:type");
+            expect(page).toContain(`assets/${name}`);
+        }
+        assertNoLegacyDirs(root);
+    });
+
+    it("takes the document of an async source", async () => {
+        const root = await makeRoot();
+        const tool = toolOver(root, () => Promise.resolve({ document: DOCUMENT }));
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        // A source can read a file or ask a service, thus the tool awaits the result of the call.
+        expect(await stagedProvenance(root)).toHaveLength(1);
+    });
+
+    it("stages no provenance asset when the source gives absence", async () => {
+        const root = await makeRoot();
+        const tool = toolOver(root, () => undefined);
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        // Absence is a normal result: the page lands, and it carries no provenance.
+        expect(result.outcome).toBe("rendered");
+        expect(await stagedProvenance(root)).toEqual([]);
+        expect(await readFile(join(root, "report-sessions", "t1", "index.html"), "utf8")).not.toContain("prov-");
+    });
+
+    it("stages no provenance asset when the composition binds no source", async () => {
+        const root = await makeRoot();
+        const tool = toolOver(root);
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        expect(await stagedProvenance(root)).toEqual([]);
+    });
+
+    it("stages the new document under a new name, and the sweep removes the old one", async () => {
+        const root = await makeRoot();
+        let document = DOCUMENT;
+        const tool = toolOver(root, () => ({ document }));
+
+        const first = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        expect(first.outcome).toBe("rendered");
+        const afterFirst = await stagedProvenance(root);
+        expect(afterFirst).toHaveLength(1);
+
+        document = '{"entity":{"e2":{"prov:type":"file"}}}';
+        const second = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(second.outcome).toBe("rendered");
+        // The name carries the hash of the bytes, thus the changed document lands beside no stale copy of
+        // itself and the stage stays the closure of the page.
+        const afterSecond = await stagedProvenance(root);
+        expect(afterSecond).toHaveLength(1);
+        expect(afterSecond[0]).not.toBe(afterFirst[0]);
+        expect(await readFile(join(root, "report-sessions", "t1", "index.html"), "utf8")).toContain(`assets/${afterSecond[0]}`);
+    });
+
+    it("logs a throw of the source, and the page lands with no provenance asset", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const logger = createCapturingLogger();
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            readReportProvenance: () => {
+                throw new Error("the document store is down");
+            },
+            logger,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        // The provenance is an addition to the report, thus a defect of the host costs the addition alone.
+        expect(result.outcome).toBe("rendered");
+        expect(await stagedProvenance(root)).toEqual([]);
+        const record = logger.records.find((held) => held.msg.includes("the report provenance source threw"));
+        expect(record?.level).toBe("error");
+        expect(record?.fields).toMatchObject({ analysisId: DEFAULT_ANALYSIS_ID, err: "the document store is down" });
     });
 });

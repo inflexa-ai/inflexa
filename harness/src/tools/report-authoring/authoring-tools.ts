@@ -22,7 +22,10 @@ import { basename } from "node:path";
 import { z } from "zod";
 
 import type { Scope } from "../../auth/types.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
+import { bindReportObservation, type EmitReportObservation, type ReportObservationEvent } from "../report-observation.js";
 import { isSafeId } from "../../workspace/paths.js";
 import {
     addBlock,
@@ -544,13 +547,29 @@ function containerIn(document: DraftDocument, parentId: string | undefined): Cha
 const AUTHORING_EXECUTION_MODE = "inline" as const;
 
 /**
+ * The optional deps of the authoring surface. The gateway is the one mandatory part, thus it stays a
+ * parameter of its own and this bag holds what a composition can leave out.
+ */
+export interface ReportAuthoringToolDeps {
+    /** The report observation seam; an unbound seam emits nothing and each tool acts the same. */
+    readonly emitReportObservation?: EmitReportObservation;
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
+}
+
+/**
  * Make the eight authoring tools over a session-state gateway.
  *
  * Each tool reads the thread id from the scope of the call, and it loads the state of that thread through
  * the gateway. Thus one factory serves every thread, and two threads never share one draft. A mutation
  * persists the new document before it reports `applied: true`, thus a reported landing is never lost.
+ *
+ * A landed mutation emits one observation. The emit sits after the persist, thus a refused operation and a
+ * failed persist each emit nothing.
  */
-export function createReportAuthoringTools(gateway: ReportSessionStateGateway): ReportAuthoringTools {
+export function createReportAuthoringTools(gateway: ReportSessionStateGateway, deps: ReportAuthoringToolDeps = {}): ReportAuthoringTools {
+    const observe = bindReportObservation(deps.emitReportObservation, (deps.logger ?? createNoopLogger()).named("report-authoring"));
+
     /**
      * Resolve the thread of the call, and load its state.
      *
@@ -570,6 +589,10 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
      *
      * The persist is a compare-and-swap against the token that the load read. A concurrent turn that landed
      * first turns the persist into a conflict, and the tool refuses with `stale-state`.
+     *
+     * `event` is the observation of the operation, and it emits after the persist landed. Thus one site owns
+     * the rule, and a refusal, a conflict, and a persist fault each emit nothing. A caller that cannot name
+     * the block of its own operation gives no event.
      */
     const land = async (
         threadId: string,
@@ -577,6 +600,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
         previous: DraftDocument,
         result: Result<DraftDocument, DraftRefusal>,
         holders: (previous: DraftDocument, next: DraftDocument) => (string | undefined)[],
+        event?: ReportObservationEvent,
     ): Promise<MutationResult> => {
         if (result.isErr()) {
             return { applied: false, refusal: result.error };
@@ -591,6 +615,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
         }
         if (persisted.outcome === "failed") {
             return { applied: false, refusal: { reason: "state-unavailable", detail: persisted.detail } };
+        }
+        if (event !== undefined) {
+            observe(event);
         }
         // A move inside one container names the same holder two times.
         const unique = [...new Set(holders(previous, next))];
@@ -623,7 +650,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state, token } = opened.value;
+            const { threadId, analysisId, state, token } = opened.value;
             const destination = toDestination(input);
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
@@ -637,6 +664,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
                     state.document,
                     addBlock(state.document, { block, destination: destination.value }, state.snapshot),
                     (_previous, next) => [addedId === undefined ? undefined : holderIdOf(next, addedId)],
+                    // The grammar requires an id on the payload, thus a landed add always names one. A
+                    // payload with no id reaches the core, which refuses it, and no event is due.
+                    addedId === undefined ? undefined : { type: "add-block", analysisId, threadId, blockId: addedId },
                 ),
             );
         },
@@ -656,15 +686,20 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state, token } = opened.value;
+            const { threadId, analysisId, state, token } = opened.value;
             const operation = toChangeOperation(input);
             if (operation.isErr()) {
                 return ok(refuse(operation.error));
             }
             return ok(
-                await land(threadId, token, state.document, changeBlock(state.document, operation.value, state.snapshot), (_previous, next) => [
-                    holderIdOf(next, input.targetId),
-                ]),
+                await land(
+                    threadId,
+                    token,
+                    state.document,
+                    changeBlock(state.document, operation.value, state.snapshot),
+                    (_previous, next) => [holderIdOf(next, input.targetId)],
+                    { type: "change-block", analysisId, threadId, blockId: input.targetId },
+                ),
             );
         },
     });
@@ -680,11 +715,16 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state, token } = opened.value;
+            const { threadId, analysisId, state, token } = opened.value;
             return ok(
-                await land(threadId, token, state.document, removeBlock(state.document, { targetId: input.targetId }, state.snapshot), (previous) => [
-                    holderIdOf(previous, input.targetId),
-                ]),
+                await land(
+                    threadId,
+                    token,
+                    state.document,
+                    removeBlock(state.document, { targetId: input.targetId }, state.snapshot),
+                    (previous) => [holderIdOf(previous, input.targetId)],
+                    { type: "remove-block", analysisId, threadId, blockId: input.targetId },
+                ),
             );
         },
     });
@@ -702,7 +742,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state, token } = opened.value;
+            const { threadId, analysisId, state, token } = opened.value;
             const destination = toDestination(input);
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
@@ -714,6 +754,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
                     state.document,
                     moveBlock(state.document, { targetId: input.targetId, destination: destination.value }, state.snapshot),
                     (previous, next) => [holderIdOf(previous, input.targetId), holderIdOf(next, input.targetId)],
+                    { type: "move-block", analysisId, threadId, blockId: input.targetId },
                 ),
             );
         },
@@ -733,8 +774,15 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state, token } = opened.value;
-            return ok(await land(threadId, token, state.document, ok(setTitle(state.document, input.title)), () => []));
+            const { threadId, analysisId, state, token } = opened.value;
+            return ok(
+                await land(threadId, token, state.document, ok(setTitle(state.document, input.title)), () => [], {
+                    type: "set-title",
+                    analysisId,
+                    threadId,
+                    title: input.title,
+                }),
+            );
         },
     });
 

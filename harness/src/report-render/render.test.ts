@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { load } from "cheerio";
 
-import type { Block, ChartBlock, CitationBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
+import type { Block, ChartBlock, CitationBlock, FigureBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
 import { AG_GRID_ASSET, ASSETS_DIR, DEPS_DIR, ECHARTS_ASSET, PAGE_ASSETS, tableSidecarName } from "./assets.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption } from "./chart.js";
 import {
@@ -15,12 +15,25 @@ import {
     GRID_THEME_PARAMS,
     GRID_VISIBLE_ROWS,
 } from "./design.js";
-import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
-import { CHART_BOOTSTRAP, GRID_BOOTSTRAP, SECTION_SPY, TABLE_DATA_DECODER } from "./page.js";
+import { FIXTURE_DOCUMENT, FIXTURE_PROVENANCE, FIXTURE_VALUES } from "./fixture.js";
+import {
+    CHART_BOOTSTRAP,
+    GRID_BOOTSTRAP,
+    LINEAGE_LIB_GLOBAL,
+    LINEAGE_NO_ANSWER_NOTE,
+    LINEAGE_NO_LIBRARY_NOTE,
+    LINEAGE_NO_NODE_NOTE,
+    LINEAGE_POPOVER,
+    LINEAGE_TRUNCATED_NOTE,
+    SECTION_SPY,
+    TABLE_DATA_DECODER,
+} from "./page.js";
 import { formatTableCell } from "./number-format.js";
+import { REPORT_PROVENANCE_GLOBAL } from "./provenance-data.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
+import { LINEAGE_BLOCK_ATTRIBUTE, LINEAGE_CONTROL_CLASS, LINEAGE_KEY_ATTRIBUTE, LINEAGE_KEYS_ATTRIBUTE } from "./views/lineage.js";
 import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS } from "./views/values.js";
 
 /**
@@ -384,6 +397,368 @@ describe("the table data assets", () => {
         expect(rendered.html).not.toContain(GRID_BOOTSTRAP);
         expect(rendered.html).not.toContain(".data.js");
         expect(rendered.html).toBe(renderReportPage(document, {})._unsafeUnwrap().html);
+    });
+});
+
+describe("the provenance data assets", () => {
+    const DOCUMENT = '{"entity":{"e1":{"prov:type":"file"}}}';
+    const ATTESTATION = '{"signature":"AAAA"}';
+
+    /** One document of one table block, thus the page carries a table payload beside the provenance. */
+    function pageDocument(): ReportDocument {
+        return {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [{ kind: "table", id: "tbl", binding: { kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:aaa" } }],
+                },
+            ],
+        };
+    }
+
+    /** The value of the one table block. */
+    const pageValues: RenderValues = { tbl: { type: "table", columns: ["gene"], rows: [{ gene: "TP53" }] } };
+
+    /** The provenance assets of a render, in load order. The table payload keeps its own prefix. */
+    function provenanceAssets(assets: readonly { name: string; bytes: string }[]): { name: string; bytes: string }[] {
+        return assets.filter((asset) => asset.name.startsWith("prov-"));
+    }
+
+    /**
+     * Run the provenance assets as the page runs them, and give back the registered global.
+     *
+     * An asset is browser source text, thus a read of the source string would test the serialization and not
+     * the value that a reader takes.
+     */
+    function registeredProvenance(assets: readonly { name: string; bytes: string }[]): { document?: string; attestation?: string } {
+        const window: Record<string, unknown> = {};
+        for (const asset of provenanceAssets(assets)) {
+            new Function("window", asset.bytes)(window);
+        }
+        return (window[REPORT_PROVENANCE_GLOBAL] ?? {}) as { document?: string; attestation?: string };
+    }
+
+    it("registers the document and the attestation under one global, byte for byte", () => {
+        const rendered = renderReportPage(pageDocument(), pageValues, undefined, undefined, {
+            document: DOCUMENT,
+            attestation: ATTESTATION,
+        })._unsafeUnwrap();
+
+        expect(provenanceAssets(rendered.dataAssets).length).toBe(2);
+        // The renderer moves the text and never parses it, thus the reader takes the bytes that the source
+        // gave.
+        expect(registeredProvenance(rendered.dataAssets)).toEqual({ document: DOCUMENT, attestation: ATTESTATION });
+    });
+
+    it("names each asset by the hash of its own bytes, and two renders give one name", () => {
+        const first = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: DOCUMENT, attestation: ATTESTATION })._unsafeUnwrap();
+        const second = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: DOCUMENT, attestation: ATTESTATION })._unsafeUnwrap();
+
+        const [documentAsset, attestationAsset] = provenanceAssets(first.dataAssets);
+        expect(documentAsset.name).toMatch(/^prov-[0-9a-f]{12}\.data\.js$/);
+        expect(attestationAsset.name).toMatch(/^prov-[0-9a-f]{12}\.sig\.data\.js$/);
+        expect(second.dataAssets).toEqual(first.dataAssets);
+        expect(second.html).toBe(first.html);
+    });
+
+    it("gives a new name for a changed document, and keeps the attestation name", () => {
+        const first = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: DOCUMENT, attestation: ATTESTATION })._unsafeUnwrap();
+        const changed = renderReportPage(pageDocument(), pageValues, undefined, undefined, {
+            document: '{"entity":{"e2":{"prov:type":"file"}}}',
+            attestation: ATTESTATION,
+        })._unsafeUnwrap();
+
+        // The name carries the hash of the bytes, thus a changed document lands under a new name and the
+        // sweep of the stage removes the name that the page does not reference any more.
+        expect(provenanceAssets(changed.dataAssets)[0].name).not.toBe(provenanceAssets(first.dataAssets)[0].name);
+        expect(provenanceAssets(changed.dataAssets)[1].name).toBe(provenanceAssets(first.dataAssets)[1].name);
+    });
+
+    it("references each asset from a classic script tag, before the table assets and every bootstrap", () => {
+        const rendered = renderReportPage(pageDocument(), pageValues, undefined, undefined, {
+            document: DOCUMENT,
+            attestation: ATTESTATION,
+        })._unsafeUnwrap();
+        const [documentAsset, attestationAsset] = provenanceAssets(rendered.dataAssets);
+        const tableAsset = rendered.dataAssets.find((asset) => asset.name.startsWith("t-"));
+
+        // A `fetch` is refused on a `file://` page, thus the document reaches the reader through a script tag
+        // and never through a request.
+        expect(rendered.html).toContain(`<script src="${ASSETS_DIR}/${documentAsset.name}"></script>`);
+        expect(rendered.html).toContain(`<script src="${ASSETS_DIR}/${attestationAsset.name}"></script>`);
+        expect(tableAsset).toBeDefined();
+        const documentAt = rendered.html.indexOf(documentAsset.name);
+        expect(documentAt).toBeLessThan(rendered.html.indexOf(attestationAsset.name));
+        expect(rendered.html.indexOf(attestationAsset.name)).toBeLessThan(rendered.html.indexOf(tableAsset!.name));
+        expect(documentAt).toBeLessThan(rendered.html.indexOf(TABLE_DATA_DECODER));
+        expect(documentAt).toBeLessThan(rendered.html.indexOf(CHART_BOOTSTRAP));
+        expect(documentAt).toBeLessThan(rendered.html.indexOf(SECTION_SPY));
+    });
+
+    it("carries the document alone when the export holds no attestation", () => {
+        const rendered = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: DOCUMENT })._unsafeUnwrap();
+
+        // An unsigned document still rides the page, thus the reader finds the document and no attestation.
+        expect(provenanceAssets(rendered.dataAssets).length).toBe(1);
+        expect(rendered.html).not.toContain(".sig.data.js");
+        expect(registeredProvenance(rendered.dataAssets)).toEqual({ document: DOCUMENT });
+    });
+
+    it("keeps a document that names the script element as data", () => {
+        const hostile = '{"note":"</script><img src=x>"}';
+        const rendered = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: hostile })._unsafeUnwrap();
+
+        // The text rides as a JSON string, thus a `</script` sequence inside it cannot close the element.
+        expect(provenanceAssets(rendered.dataAssets)[0].bytes).not.toContain("</script");
+        expect(registeredProvenance(rendered.dataAssets).document).toBe(hostile);
+    });
+
+    it("stages no provenance asset for a render that takes none, and that page is what it was", () => {
+        const rendered = renderReportPage(pageDocument(), pageValues)._unsafeUnwrap();
+
+        expect(provenanceAssets(rendered.dataAssets)).toEqual([]);
+        expect(rendered.html).not.toContain(`window.${REPORT_PROVENANCE_GLOBAL}`);
+        expect(rendered.html).not.toContain("prov-");
+        // A page whose only payload is the table renders byte for byte as it did before the seam.
+        expect(rendered.html).toBe(renderReportPage(pageDocument(), pageValues, undefined, undefined, undefined)._unsafeUnwrap().html);
+    });
+});
+
+describe("the lineage stamp and the popover control", () => {
+    /** The provenance of a lineage render. The renderer parses no byte of it, thus one literal serves. */
+    const PROVENANCE = { document: '{"entity":{}}' };
+
+    /** The whole-table pin that the claim, the table, and the chart all bind. */
+    const tablePin: TableBlock["binding"] = { kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:aaa" };
+
+    /** The whole-file pin of the figure. */
+    const filePin: FigureBlock["binding"] = { kind: "artifact-file", path: "runs/r1/volcano.svg", hash: "sha256:bbb" };
+
+    /** A derivation over two cells. It computes a value, thus it names no file of its own. */
+    const ratio: MetricBlock["value"] = {
+        kind: "derivation",
+        op: "ratio",
+        inputs: [
+            { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } },
+            { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 1 } },
+        ],
+    };
+
+    /** One document that holds every grounded kind, plus a metric over the derivation. */
+    function groundedDocument(): ReportDocument {
+        return {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [
+                        { kind: "claim", id: "clm", content: { prose: "The depth is enough." }, bindings: [tablePin, citation] },
+                        { kind: "metric", id: "met", label: "Genes tested", value: scalarRef },
+                        { kind: "metric", id: "drv", label: "Ratio", value: ratio },
+                        { kind: "table", id: "tbl", title: "Genes", binding: tablePin },
+                        { kind: "chart", id: "cht", title: "Scores", binding: tablePin, chartType: "bar", encoding: { x: "gene", y: "score" } },
+                        { kind: "figure", id: "fig", binding: filePin, caption: "Volcano" },
+                        { kind: "citation", id: "cit", binding: citation },
+                    ],
+                },
+            ],
+        };
+    }
+
+    /** The value of each block of the grounded document. */
+    const groundedValues: RenderValues = {
+        met: { type: "scalar", value: 18432 },
+        drv: { type: "scalar", value: 1.5 },
+        tbl: { type: "table", columns: ["gene", "score"], rows: [{ gene: "TP53", score: 2 }] },
+        cht: { type: "table", columns: ["gene", "score"], rows: [{ gene: "TP53", score: 2 }] },
+        fig: { type: "figure", src: "plot.svg" },
+    };
+
+    /** The page of the grounded document, with a provenance document or without one. */
+    function groundedPage(provenance?: { document: string }): string {
+        return renderReportPage(groundedDocument(), groundedValues, undefined, undefined, provenance)._unsafeUnwrap().html;
+    }
+
+    /** The keys that one block stamped, read back from the container of the block. */
+    function keysOf(html: string, blockId: string): unknown[] {
+        const value = load(html)(`[${LINEAGE_BLOCK_ATTRIBUTE}="${blockId}"]`).attr(LINEAGE_KEYS_ATTRIBUTE);
+        return value === undefined ? [] : (JSON.parse(value) as unknown[]);
+    }
+
+    /** The place that each control of one block names, in document order. */
+    function placesOf(html: string, blockId: string): string[] {
+        const page = load(html);
+        return page(`[${LINEAGE_BLOCK_ATTRIBUTE}="${blockId}"] .${LINEAGE_CONTROL_CLASS}`)
+            .toArray()
+            .map((control) => page(control).attr(LINEAGE_KEY_ATTRIBUTE) ?? "");
+    }
+
+    it("stamps the block id and the pin of each grounded kind", () => {
+        const html = groundedPage(PROVENANCE);
+
+        // Every grounded kind carries the same stamp, thus one reader of the markup serves them all.
+        expect(keysOf(html, "met")).toEqual([{ path: "runs/r1/de.csv", hash: "sha256:aaa" }]);
+        expect(keysOf(html, "tbl")).toEqual([{ path: tablePin.path, hash: tablePin.hash }]);
+        expect(keysOf(html, "cht")).toEqual([{ path: tablePin.path, hash: tablePin.hash }]);
+        expect(keysOf(html, "fig")).toEqual([{ path: filePin.path, hash: filePin.hash }]);
+    });
+
+    it("keeps one key for each binding of a claim, in marker order", () => {
+        const html = groundedPage(PROVENANCE);
+
+        // The claim binds an artifact and a paper. The place of a control indexes the bindings, thus the two
+        // controls address the two keys in the order of the markers.
+        expect(keysOf(html, "clm")).toEqual([
+            { path: tablePin.path, hash: tablePin.hash },
+            { idKind: "pmid", id: "12345" },
+        ]);
+        expect(placesOf(html, "clm")).toEqual(["0", "1"]);
+    });
+
+    it("stamps the external record of a citation in place of a pin", () => {
+        // A paper is no artifact, thus no pin addresses it and the record identity answers instead.
+        expect(keysOf(groundedPage(PROVENANCE), "cit")).toEqual([{ idKind: "pmid", id: "12345" }]);
+    });
+
+    it("gives no key and no control to a binding that pins no file", () => {
+        const html = groundedPage(PROVENANCE);
+
+        // A derivation computes over two inputs, thus the document holds no node of its own bytes. The place
+        // stays in the list, thus the places of the other bindings of a block do not move.
+        expect(keysOf(html, "drv")).toEqual([null]);
+        expect(placesOf(html, "drv")).toEqual([]);
+    });
+
+    it("emits one control beside the marker of each stamped key", () => {
+        const page = load(groundedPage(PROVENANCE));
+
+        // The document binds eight references over seven blocks. Seven of them give a key, and the
+        // derivation gives none. The control sits inside the marker, thus one emission point serves each
+        // kind.
+        expect(page(`.report-marker > .${LINEAGE_CONTROL_CLASS}`).length).toBe(7);
+        expect(page(`button.${LINEAGE_CONTROL_CLASS}[aria-expanded="false"]`).length).toBe(7);
+    });
+
+    it("carries no stamp, no control, and no popover script without a document", () => {
+        const html = groundedPage();
+
+        // Absence of the document is a normal condition. The page then holds the markup that it holds
+        // without the lineage, thus nothing on it opens a panel.
+        expect(html).not.toContain("data-lineage");
+        expect(html).not.toContain("<button");
+        expect(html).not.toContain(LINEAGE_POPOVER);
+        expect(load(html)(`.${LINEAGE_CONTROL_CLASS}`).length).toBe(0);
+    });
+
+    it("rides the page as one script for a page that carries a document", () => {
+        expect(groundedPage(PROVENANCE)).toContain(LINEAGE_POPOVER);
+    });
+
+    it("keeps a hostile pin inside its attribute", () => {
+        const hostile: TableBlock["binding"] = { kind: "artifact-table", path: 'x" onclick="alert(1)', hash: "sha256:aaa" };
+        const document: ReportDocument = {
+            title: "T",
+            sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "table", id: "tbl", binding: hostile }] }],
+        };
+        const html = renderReportPage(
+            document,
+            { tbl: { type: "table", columns: ["gene"], rows: [{ gene: "TP53" }] } },
+            undefined,
+            undefined,
+            PROVENANCE,
+        )._unsafeUnwrap().html;
+
+        // The markup runtime escapes each attribute value, thus a hostile path reaches the page as text and
+        // it opens no event handler.
+        expect(html).not.toContain('onclick="alert(1)"');
+        expect(keysOf(html, "tbl")).toEqual([{ path: hostile.path, hash: hostile.hash }]);
+    });
+
+    it("names the lineage library through one global, and states each absence in its own form", () => {
+        // The page and the library meet at one name. Each absence is a normal condition, thus each one
+        // carries a note of its own and none of them reads as the other.
+        expect(LINEAGE_POPOVER).toContain(`window.${LINEAGE_LIB_GLOBAL}`);
+        expect(LINEAGE_POPOVER).toContain("backwardChain");
+        expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_NO_LIBRARY_NOTE));
+        expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_NO_ANSWER_NOTE));
+        expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_NO_NODE_NOTE));
+        expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_TRUNCATED_NOTE));
+    });
+
+    it("names the pin as the last hop where the walk gives nothing", () => {
+        // The page knows the pin on its own. Thus a reader of a chain that stops still reads what the block
+        // binds, and the note states why the chain stops there.
+        expect(LINEAGE_POPOVER).toContain('hops.push({ kind: "Artifact", path: key.path, hash: key.hash });');
+    });
+
+    it("shows the external record of a citation and walks nothing for it", () => {
+        // The walk resolves a node by a pin. A record names a paper, thus the pin branch alone calls the
+        // library and the record branch names the record.
+        expect(LINEAGE_POPOVER).toContain('var pinned = typeof key.path === "string";');
+        expect(LINEAGE_POPOVER).toContain('var walked = pinned ? walk(key) : { hops: [], note: "" };');
+        expect(LINEAGE_POPOVER).toContain('hops.push({ kind: "Citation", label: recordName(key) });');
+    });
+
+    it("opens one panel at a time, and closes on a click outside and on the Escape key", () => {
+        const handler = LINEAGE_POPOVER.slice(LINEAGE_POPOVER.indexOf('document.addEventListener("click"'));
+
+        // One delegated listener serves the whole page. It closes the open panel before it opens another,
+        // thus two panels never stand together.
+        expect(handler.indexOf("close();")).toBeLessThan(handler.indexOf("openFor(control);"));
+        expect(handler).toContain("if (!insidePanel(event.target)) {");
+        expect(LINEAGE_POPOVER).toContain('document.addEventListener("keydown"');
+        expect(LINEAGE_POPOVER).toContain('event.key === "Escape"');
+    });
+
+    it("asks for nothing over the network", () => {
+        // The document rides the page already, thus the panel reads it in memory and a `file://` page still
+        // opens every chain.
+        expect(LINEAGE_POPOVER).not.toContain("fetch(");
+        expect(LINEAGE_POPOVER).not.toContain("XMLHttpRequest");
+    });
+
+    it("parses as browser source", () => {
+        // The script rides the page as text. Thus a syntax fault would show in a browser alone, and the
+        // parse here catches it at build time.
+        expect(() => new Function(LINEAGE_POPOVER)).not.toThrow();
+    });
+
+    it("holds no popover rule that no emitter writes", () => {
+        const html = groundedPage(PROVENANCE);
+        const classes = [...new Set([...DESIGN_CSS.matchAll(/\.(report-lineage[a-z-]*)/g)].map((match) => match[1]))];
+
+        expect(classes.length).toBeGreaterThan(1);
+        for (const name of classes) {
+            // A rule with no emitter is dead. The view emits the control, and the page script emits each
+            // class of the panel.
+            expect(html.includes(`class="${name}"`) || LINEAGE_POPOVER.includes(`"${name}"`)).toBe(true);
+        }
+    });
+
+    it("hides the control and the panel in print, and drops the open motion under reduced motion", () => {
+        const printAt = DESIGN_CSS.indexOf("@media print");
+        const print = DESIGN_CSS.slice(printAt);
+        const reduced = DESIGN_CSS.slice(DESIGN_CSS.indexOf("@media (prefers-reduced-motion: reduce)"), printAt);
+
+        // Paper opens no panel, and the appendix carries the same references. Thus the print loses no
+        // evidence with the control gone.
+        expect(print).toContain(".report-lineage,");
+        expect(print).toContain(".report-lineage-popover");
+        expect(reduced).toContain(".report-lineage-popover");
+        expect(reduced).toContain("animation: none;");
+    });
+
+    it("shows the control on the design fixture, which carries a document", () => {
+        const page = load(renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, undefined, undefined, FIXTURE_PROVENANCE)._unsafeUnwrap().html);
+
+        // A person examines the fixture page after an edit of the design. A fixture with no control would
+        // keep the panel out of that look.
+        expect(page(`button.${LINEAGE_CONTROL_CLASS}`).length).toBeGreaterThan(0);
     });
 });
 
