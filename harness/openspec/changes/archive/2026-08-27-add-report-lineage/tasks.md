@@ -17,7 +17,7 @@
 ## 3. The renderer
 
 - [x] 3.1 Stamp the block id and the reference pin on each grounded kind
-- [ ] 3.2 Add the lineage library to the asset manifest, and stage it into `deps/`
+- [x] 3.2 Add the lineage library to the asset manifest, and stage it into `deps/`
 - [x] 3.3 Add the popover control, the boot script, and the one-open rule
 - [x] 3.4 Add the absence mark, the truncation mark, and the citation form
 - [x] 3.5 Add the popover CSS classes, each with an emitting view
@@ -31,5 +31,5 @@
 
 ## 5. Separate changes in other trees
 
-- [ ] 5.1 tsprov: make the lineage view library as a browser bundle package
+- [x] 5.1 tsprov: make the lineage view library as a browser bundle package
 - [ ] 5.2 cli: map the report events in the recorder, and bind the two seams

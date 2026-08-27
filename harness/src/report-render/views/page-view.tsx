@@ -19,7 +19,17 @@
 
 import { raw } from "hono/html";
 
-import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, GRID_ASSET_HEAD, GRID_BOOTSTRAP, LINEAGE_POPOVER, SECTION_SPY, TABLE_DATA_DECODER } from "../page.js";
+import {
+    ASSET_HEAD,
+    CHART_BOOTSTRAP,
+    FADE_IN_OBSERVER,
+    GRID_ASSET_HEAD,
+    GRID_BOOTSTRAP,
+    LINEAGE_ASSET_HEAD,
+    LINEAGE_POPOVER,
+    SECTION_SPY,
+    TABLE_DATA_DECODER,
+} from "../page.js";
 import { stagedSource } from "../assets.js";
 import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
 import type { DataAsset } from "../table-data.js";
@@ -104,9 +114,10 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
  * finds the document whichever script asks for it first. A page with no provenance carries no such tag, and
  * the rest of the skeleton is what it was.
  *
- * The provenance also gates the lineage popover. That script reads the global when a reader clicks a
- * control, thus its place in the order is free and it stands last. A page with no provenance carries no
- * stamp and no control, thus the script would find nothing to open.
+ * The provenance also gates the library reference and the lineage popover. The library stands in the head,
+ * beside the other two runtimes, and the popover script reads it when a reader clicks a control. Thus the
+ * place of the script in the order is free and it stands last. A page with no provenance carries no stamp
+ * and no control, thus neither the library nor the script would find anything to open.
  *
  * `grids` states that the content holds a grid mount. The grid runtime weighs about two megabytes, thus a
  * page whose only payload feeds a chart references neither the runtime nor the grid boot.
@@ -130,6 +141,7 @@ export function assemblePage(
                     <title>{title}</title>
                     {raw(ASSET_HEAD)}
                     {grids ? raw(GRID_ASSET_HEAD) : null}
+                    {provenanceAssets.length > 0 ? raw(LINEAGE_ASSET_HEAD) : null}
                     <style>{raw(DESIGN_CSS)}</style>
                 </head>
                 <body>

@@ -56,6 +56,7 @@
         "@dbos-inc/dbos-sdk": "^4.23.6",
         "@fontsource-variable/space-grotesk": "5.1.1",
         "@fontsource/ibm-plex-mono": "5.1.1",
+        "@inflexa-ai/tsprov": "0.6.0",
         "@kubernetes/client-node": "^1.4.0",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/core": "^2.9.0",

@@ -310,25 +310,36 @@ export const FIXTURE_VALUES: RenderValues = {
     "figure-volcano": { type: "figure", src: VOLCANO_SOURCE },
 };
 
+/** The raw input of the fixture chain. The command reads these bytes, and no block of the report pins them. */
+const COUNTS_PATH = "data/inputs/counts.csv";
+
 /**
  * The provenance of the fixture: one document, and the attestation over it.
  *
- * The renderer moves the two texts into script assets and it parses no byte of them. Thus the fixture holds
- * plain literals, and the page still stamps each grounded block and shows the lineage control that a person
- * examines.
+ * The renderer moves the two texts into script assets and it parses no byte of them. The page-side library
+ * parses the document, thus the fixture holds one real chain: the raw counts, the command that read them,
+ * and the result table that the table block, the chart block, and one claim all pin.
  *
- * The document names the artifacts of the fixture, thus a reader of the page compares it against the pins
- * of the blocks above.
+ * The chain is the smallest one that a walk can show. A pin of the report that this document holds no
+ * entity for opens the same panel under the absence note, thus one fixture page shows both forms.
+ *
+ * The attestation is opaque. Nothing on the page parses it, thus one literal serves.
  */
 export const FIXTURE_PROVENANCE: ProvenanceExport = {
     document: JSON.stringify({
+        prefix: { inflexa: "https://inflexa.ai/prov#" },
         entity: {
-            "e:coverage": { "prov:type": "file", path: COVERAGE_PATH, hash: "sha256:9b1d4c7af0e2" },
-            "e:summary": { "prov:type": "file", path: SUMMARY_PATH, hash: "sha256:1c8e5a0b6f42" },
-            "e:results": { "prov:type": "file", path: RESULTS_PATH, hash: "sha256:4e7c02b8d135" },
+            "inflexa:file-counts": { "inflexa:path": COUNTS_PATH, "inflexa:hash": "sha256:6d2a83f5c419", "inflexa:source": "data" },
+            "inflexa:file-results": {
+                "prov:type": "inflexa:File",
+                "inflexa:path": RESULTS_PATH,
+                "inflexa:hash": "sha256:4e7c02b8d135",
+                "inflexa:producer": "command",
+            },
         },
-        activity: { "a:deseq2": { "prov:type": "step", label: "DESeq2 differential expression" } },
-        wasGeneratedBy: { "g:results": { "prov:entity": "e:results", "prov:activity": "a:deseq2" } },
+        activity: { "inflexa:cmd-run-2f1c-de": { "prov:type": "inflexa:Command", "inflexa:command": "Rscript deseq2.R" } },
+        wasGeneratedBy: { "inflexa:gen-results": { "prov:entity": "inflexa:file-results", "prov:activity": "inflexa:cmd-run-2f1c-de" } },
+        used: { "inflexa:used-cmd-counts": { "prov:activity": "inflexa:cmd-run-2f1c-de", "prov:entity": "inflexa:file-counts" } },
     }),
     attestation: JSON.stringify({ alg: "ed25519", signature: "Zml4dHVyZS1zaWduYXR1cmU" }),
 };
