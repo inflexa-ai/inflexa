@@ -55,6 +55,18 @@ type KnowledgeReadOutput =
 
 const KNOWLEDGE_UNAVAILABLE: ToolError = { error: "the knowledge source failed to answer", retryable: true };
 
+/**
+ * Does a query carry a token the rule text can be matched on?
+ *
+ * A string of punctuation or of non-Latin characters tokenizes to nothing, and
+ * a filter with no tokens is no filter at all — it returns the whole corpus.
+ * That is the worst answer available, thus such a query is dropped here and the
+ * search runs on the supplied facts alone.
+ */
+function hasUsableToken(query: string): boolean {
+    return /[a-z0-9]/i.test(query);
+}
+
 export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
     const record = (ids: readonly string[]): void => deps.onRuleIds?.(ids);
 
@@ -63,13 +75,16 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
         description:
             "Search the knowledge plane for the method rules that constrain an analysis. " +
             "Describe the data (omics type, subtype, smallest group size) or give keywords, or both. " +
-            "Each match carries a rule id, a severity, and the rule statement — cite the id in a plan " +
+            "A keyword query is an AND over whole words, thus one term finds more than three. " +
+            "A rule that a supplied fact rules out is never returned, and a rule whose conditions " +
+            "test a fact you did not supply comes back marked `not_evaluable` — supply the fact to settle it. " +
+            "Each match carries a rule id, a severity, and the rule statement. Cite the id in a plan " +
             "step's `grounding` when the rule shaped the step. Returns a data variant when no " +
             "knowledge source is installed.",
         inputSchema: z.object({
-            query: z.string().optional().describe("Keywords over the rule titles and statements (e.g. 'cutpoint survival')."),
-            omicsType: z.string().optional().describe("The data's omics domain (e.g. 'transcriptomics')."),
-            omicsSubtype: z.string().optional().describe("The subtype (e.g. 'bulk-rna-seq')."),
+            query: z.string().optional().describe("Keywords over the rule titles and statements. Every keyword must appear, for example 'cutpoint'."),
+            omicsType: z.string().optional().describe("The data's omics domain, for example 'transcriptomics'."),
+            omicsSubtype: z.string().optional().describe("The subtype, for example 'bulk-rna-seq'."),
             minGroupN: z.number().int().positive().optional().describe("The smallest per-condition sample count, when known."),
             topK: z.number().int().min(1).max(MAX_TOP_K).optional().describe(`Max results. Defaults to ${DEFAULT_TOP_K}.`),
         }),
@@ -86,7 +101,7 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
                             ...(input.omicsSubtype !== undefined ? { omicsSubtype: input.omicsSubtype } : {}),
                             ...(input.minGroupN !== undefined ? { minGroupN: input.minGroupN } : {}),
                         },
-                        ...(input.query !== undefined ? { text: input.query } : {}),
+                        ...(input.query !== undefined && hasUsableToken(input.query) ? { text: input.query } : {}),
                         topK: input.topK ?? DEFAULT_TOP_K,
                     },
                     ctx.session,
@@ -118,11 +133,11 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
     const knowledgeRead = defineTool({
         id: "knowledge_read",
         description:
-            "Read one full knowledge rule by id (e.g. from knowledge_search or the knowledge brief): " +
+            "Read one full knowledge rule by id, from knowledge_search or from the knowledge brief: " +
             "the conditions, the full statement, the recommendation, and the cited sources with DOI or " +
             "PMID. Unknown ids and an absent knowledge source return data variants.",
         inputSchema: z.object({
-            id: z.string().min(1).describe("The rule id, e.g. 'INFLEXA-R-000101'."),
+            id: z.string().min(1).describe("The rule id, for example 'INFLEXA-R-000101'."),
         }),
         describeCall: ({ id }) => id,
         execute: async ({ id }, ctx): Promise<Result<KnowledgeReadOutput, ToolError>> => {

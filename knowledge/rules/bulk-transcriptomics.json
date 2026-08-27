@@ -2,7 +2,7 @@
     {
         "id": "INFLEXA-R-000101",
         "title": "No inferential differential expression without biological replication",
-        "applies": { "omicsType": ["transcriptomics"], "minGroupN": { "lt": 2 } },
+        "applies": { "omicsType": ["transcriptomics"], "omicsSubtype": ["bulk-rna-seq"], "minGroupN": { "lt": 2 } },
         "effect": {
             "severity": "reject",
             "statement": "With one sample in a group there is no within-group variance to estimate, and a 1 vs 1 test produces confident-looking p-values with no inferential basis. Do not run an inferential differential-expression test."

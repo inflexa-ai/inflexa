@@ -9,8 +9,8 @@ Method selection has no ground today. The planner never sees the skill packs, a 
 - Add a `KnowledgeBase` capability seam: an interface, a noop realization, and a local file-backed realization over cited rule records. `assembleCoreRuntime` resolves one realization with the same precedence as the eyes seam. `index.ts` exports the pair.
 - Define a machine-readable rule-record format: a stable identifier, applicability conditions, an effect, a severity, sources with DOI or PMID, and a version. Convert the statistics rules from the `bulk-transcriptomics` and `statistical-modeling` skill packs into records. The prose skills stay in place in this phase.
 - Add knowledge tools for the planner and the sandbox substrate. The tools find rules by data facts, and they read one full rule. Absence of a knowledge source is a normal condition, and the tools report it.
-- Add a `grounding` field to the plan step schema. The planner cites rule identifiers on each method choice.
-- Add a grounded gate to plan validation. The gate rejects a citation that the knowledge source did not return in the session. It compares each step with the applicable rule conditions, and a violation returns to the planner as a structured issue.
+- Add a `grounding` field to the plan step schema. The planner cites rule identifiers on each method choice, and the host stamps the corpus identity onto each citation at persist time.
+- Add a grounded gate to plan validation, with two arms of different force. The gate rejects a citation that the knowledge source did not return in this session, and that is the one blocking fault. Every applicable rule that the plan cites nowhere comes back as an advisory, and no advisory blocks a plan.
 - Add a host-side knowledge brief to the planner seed, beside the reference census and the package census. The brief carries the rules that apply to the profiled data.
 - Add a knowledge-consultation observation hook. The harness reports each consultation through an optional callback in the deps, in the pattern of the run-observation seam. A report carries the query, the corpus version, and the returned rule identifiers.
 

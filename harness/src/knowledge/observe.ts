@@ -2,9 +2,10 @@
  * The consultation observation of the knowledge seam. The composition wraps
  * the resolved source one time; each successful read then reports one event
  * to the host callback. The contract copies `UsageRecorder`: the callback is
- * fire-and-forget — it must not throw and must not block, and the harness
- * never awaits it. A throwing callback is contained here and logged, thus an
- * observation fault can never fail a consultation.
+ * fire-and-forget — it must not block, and the harness never awaits it. A
+ * callback that throws, and one that returns a promise which rejects, are both
+ * contained here and logged. Thus an observation fault can never fail a
+ * consultation, and it can never end the process.
  */
 
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -33,7 +34,20 @@ export function withKnowledgeObservation(kb: KnowledgeBase, deps: KnowledgeObser
     const logger = (deps.logger ?? createNoopLogger()).named("knowledge.observe");
     const report = (event: KnowledgeConsultation): void => {
         try {
-            deps.observe(event);
+            const returned: unknown = deps.observe(event);
+            // The declared return is `void`, but return-type bivariance lets an
+            // `async` callback satisfy it — and a consultation ledger that writes
+            // to a database is exactly that shape. A rejection from one escapes
+            // the synchronous catch below, and under the default Node setting an
+            // unhandled rejection ends the process. Thus a host sink that is
+            // briefly down would kill a plan generation in the middle. The
+            // harness still never awaits the callback: it only attaches a sink
+            // for the failure.
+            if (typeof (returned as { then?: unknown } | null | undefined)?.then === "function") {
+                void (returned as Promise<unknown>).catch((err: unknown) => {
+                    logger.warn("knowledge observation callback rejected — event dropped", logger.errorFields(err));
+                });
+            }
         } catch (err) {
             logger.warn("knowledge observation callback threw — event dropped", logger.errorFields(err));
         }

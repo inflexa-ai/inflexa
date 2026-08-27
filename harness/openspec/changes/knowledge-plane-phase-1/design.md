@@ -39,13 +39,25 @@ The corpus lives in a `knowledge/` directory at the repository root, beside `ski
 
 ### D3 — The gate lives in `fullyValidate`, and citations must come from the session
 
-`fullyValidate` gains a third stage after the structural checks. The stage reads two live collections that the brief and each `knowledge_search` call record into: the citation set, and the obligation map keyed by rule id, where `applies` overrides `not_evaluable`. The stage rejects a cited identifier outside the set, because an unretrieved citation is unreliable (the ALCE result). The stage then demands an acknowledgment of each `reject` rule whose recorded verdict is `applies`: a plan that cites the rule nowhere is rejected. The issue carries a new `code: "grounding"`, the rule id, and the rule statement. It flows through the existing rejection loop of `submit_plan`. A `warn` or `note` outcome goes back as advisory text, and it never blocks. The gate exists exactly when a source is resolved — a failed brief query narrows what is citable, and it never turns the gate off. The gate enforces the acknowledgment, not method compliance, because a Phase-1 step carries no typed method the gate could hold to a rule.
+`fullyValidate` gains a third stage after the structural checks, and the stage has two arms of different force.
+
+**Citation honesty blocks.** A cited identifier outside the invocation's returned set rejects the plan, with a new `code: "grounding"` issue through the existing rejection loop. An unretrieved citation is unreliable (the ALCE result), the test is mechanical, and it has no false positive.
+
+**Rule acknowledgment advises.** Every applicable rule the plan cites nowhere comes back as advisory content at every severity, and nothing blocks. The first design blocked on an uncited `reject` rule. Three review rounds each found that arm broken in a new way, and each fault traced to the same root: a Phase-1 step carries no typed method, thus the gate cannot tell whether a step obeys a rule. Blocking on the citation was a proxy for compliance. The proxy punished an honest plan, and it rested on a fact supply that Phase 1 does not build. The advisory carries the same rule text to the same reader, and it cannot deadlock a planner.
+
+The verdict map is live and latest-wins. An escalate-only map could never withdraw a verdict, because a rule that stops applying is dropped before it is returned. Thus one exploratory search with a wrong number blocked every later submit. The gate exists exactly when a source is resolved: a failed brief query narrows what is citable, and it never turns the gate off.
+
+Because the advisories are now the product of the second arm, they must survive the trip. They rank `reject` first, and the cap counts only the entries below `reject` severity. They also ride on the accepted outcome. The planner never reads an accepted `submit_plan` result, thus the conversation agent is the first reader that can act on them.
 
 When no knowledge source is resolved, the stage is inert, and the plan flows exactly as today. Reason: the OSS build with no corpus must keep its current behavior, and degradation must be structural, not conditional prose.
 
-### D4 — The `grounding` field is optional on persistence, present on planner output
+### D4 — The `grounding` field is optional on persistence, and the host stamps its corpus
 
-`AnalysisStepSchema` gains `grounding?: { rules: [{ id, note? }] }`. The persistence schema keeps it optional, thus a historical plan parses, in the established pattern of `resources` (`src/schemas/workflow-state.ts:34`). When a knowledge source is resolved and the brief returned applicable rules, the gate rejects a plan whose method-bearing steps cite nothing. When the source is absent, the field stays permitted and unenforced. Reason: the citation duty must bind exactly when citations are possible.
+`AnalysisStepSchema` gains `grounding?: [{ id, note?, corpus? }]` — a bare array, not a wrapper object. The persistence schema keeps it optional, thus a historical plan parses, in the established pattern of `resources` (`src/schemas/workflow-state.ts:34`).
+
+The host writes `corpus` at persist time and overwrites whatever reached it, thus the stamp is never model-authored. A rule id alone does not stay resolvable. The corpus moves on, an id is re-versioned or superseded, and a briefing then names text nobody read. Adding the stamp later would be a migration over stored plans, and adding it now is one additive field.
+
+When no source is resolved, the field stays permitted and unenforced, and the seed tells the planner to leave it empty.
 
 ### D5 — The brief is host-side and mandatory, the tools are narrow
 
@@ -63,10 +75,12 @@ The rules in `skills/bulk-transcriptomics/SKILL.md` (the DE method tree) and `sk
 
 ## Risks / Trade-offs
 
-- [A wrong `reject` rule blocks a valid plan] → Only `reject` blocks, and `warn` and `note` advise. The corpus review reads each record against its cited source before merge.
-- [The profile lacks the facts a condition tests] → `not_evaluable` reports a note and never blocks, thus the gate degrades to advice, not to error.
-- [The brief inflates the seed] → The block carries id, one-line statement, and severity only, under a byte cap. The renderer sorts `reject`-and-`applies` first and truncates at entry boundaries with a count, thus a blocking rule never falls past the cut. The full record stays behind `knowledge_read`.
-- [A broad reject rule forces a false citation] → Only a rule the gate can hold the plan to carries `reject`. The count-input rule (R-000105) is `warn` for this reason.
+- [A wrong rule misleads a plan] → No rule blocks, thus a wrong record costs an unwanted advisory rather than a refused plan. The corpus review reads each record against its cited source before merge.
+- [The advisories are read by nobody] → This is the real exposure of an advisory gate, and it is the reason the delivery is specified: ranked, `reject` exempt from the cap, and carried on the accepted outcome to the conversation agent.
+- [The facts a condition tests are not established] → `not_evaluable` reports an advisory that names the remedy, and never an error. The planner supplies a numeric fact through `knowledge_search`, and the profiler is never extended for the gate.
+- [The brief inflates the seed] → The block carries id, one-line statement, and severity only, under a byte cap. The renderer sorts `reject`-and-`applies` first and truncates at entry boundaries with a count, thus no entry is ever cut mid-sentence. The full record stays behind `knowledge_read`.
+- [A hostile corpus reads other files] → The containment is lexical AND symlink-following, through the same helper the workspace read seam uses. A corpus is still trusted content, thus the check is defense in depth, not a boundary.
+- [The CLI drops the source at the step-agent hop] → Both sides of that hop are optional, thus a dropped copy typechecks. The one-line forward lands in this change so the seam is whole the moment the CLI binds a source.
 - [The corpus has no distribution path outside the monorepo] → Deliberate for this change. The corpus is repository content, and the shipped-corpus suite skips when the directory is absent. The embedder wiring change carries the distribution, in the `skills/` pattern.
 - [The corpus drifts from the prose skills while both exist] → The corpus cites the same sources that the skills name. The later dedup change retires the prose copies. Until then the sandbox path is unchanged, thus no behavior regresses.
 - [Schema growth breaks historical plans] → The field is optional on the persistence schema, and the gate binds only on planner output.

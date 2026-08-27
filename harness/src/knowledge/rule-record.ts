@@ -5,10 +5,14 @@
  * that resolves to a locator. A record with no resolvable locator fails
  * validation — an uncited rule cannot ground a decision chain.
  *
- * The `applies` condition set is closed on purpose. Every key here is one the
- * grounded plan gate can evaluate against the persisted data profile; an open
- * vocabulary would admit conditions nothing can test, and a rule that cannot
- * be tested silently becomes prose.
+ * The `applies` condition set is closed on purpose. Every key here is one that
+ * the gate can evaluate. An open vocabulary would admit a condition nothing
+ * can test, and such a rule silently becomes prose.
+ *
+ * The set holds data facts only. A rule whose real condition is about the plan,
+ * such as "a step optimizes a cutpoint", states that condition in its own
+ * statement and leaves `applies` empty. Growing this vocabulary to hold a plan
+ * condition is the honest fix, and it belongs to a later change.
  */
 
 import { z } from "zod";
@@ -22,7 +26,7 @@ export const RULE_ID_PATTERN = /^INFLEXA-R-\d{6}$/;
 // two vocabularies cannot drift.
 const RuleSourceSchema = z
     .object({
-        /** Human-readable reference line, e.g. "Love MI et al. (2014) Genome Biology". */
+        /** Human-readable reference line, for example "Love MI et al. (2014) Genome Biology". */
         citation: z.string().min(1),
         doi: z
             .string()
@@ -57,18 +61,20 @@ const GroupSizePredicateSchema = z
  * condition.
  */
 export const RuleAppliesSchema = z.strictObject({
-    /** Any-of match against the profile's domain (e.g. "transcriptomics"). Case-insensitive. */
+    /** Any-of match against the profile domain, for example "transcriptomics". Case-insensitive. */
     omicsType: z.array(z.string().min(1)).nonempty().optional(),
-    /** Any-of match against the profile's subtype (e.g. "bulk-rna-seq"). Case-insensitive. */
+    /** Any-of match against the profile subtype, for example "bulk-rna-seq". Case-insensitive. */
     omicsSubtype: z.array(z.string().min(1)).nonempty().optional(),
     /** Predicate over the smallest per-condition sample count. */
     minGroupN: GroupSizePredicateSchema.optional(),
 });
 
 /**
- * `reject` blocks a plan that does not acknowledge the rule. `warn` and
- * `note` advise and never block. Only a rule whose violation the gate can
- * meaningfully hold a plan to carries `reject`.
+ * The weight a rule carries, from the strongest to the weakest. No severity
+ * blocks a plan: the gate advises on every applicable rule, and the one
+ * blocking fault is a citation the source never returned. `reject` names a
+ * rule whose violation makes a result unsound, thus its advisory is ranked
+ * first and the advisory cap never cuts it.
  */
 export const RuleSeveritySchema = z.enum(["reject", "warn", "note"]);
 

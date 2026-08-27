@@ -31,8 +31,8 @@ export const AnalysisStepSchema = z.object({
         .array(z.string())
         .describe("IDs of steps in this plan that must complete before this one runs. Empty when the step has no prerequisites. The graph must be acyclic."),
     // Optional on the persistence schema so historical plans (pre-grounding)
-    // still parse on the read side. The grounded gate in `submit_plan` enforces
-    // the citation duty only when a knowledge source returned rules.
+    // still parse on the read side. The gate in `submit_plan` rejects a citation
+    // the knowledge source did not return, and it advises on the rest.
     grounding: z
         .array(
             z.object({
@@ -41,15 +41,23 @@ export const AnalysisStepSchema = z.object({
                     .min(1)
                     .max(64)
                     .describe(
-                        "A knowledge-rule id that your knowledge context returned — the Knowledge Rules block of your seed, or a knowledge_search/knowledge_read result. Never cite an id from memory; an id the knowledge source did not return is rejected.",
+                        "A knowledge-rule id that your knowledge context returned — the Knowledge Rules block of your seed, or a knowledge_search/knowledge_read result. Never cite an id from memory. An id the knowledge source did not return is rejected.",
                     ),
                 note: z.string().optional().describe("One line: how the step obeys the rule."),
+                // The stamp that keeps a stored citation resolvable. A rule id
+                // alone is ambiguous once the corpus moves on: the same id can be
+                // re-versioned or superseded, and a briefing would then order an
+                // agent to obey text that no longer matches what the planner read.
+                // The host writes this at persist time and overwrites whatever
+                // reached it, thus the stamp is never model-authored.
+                corpus: z
+                    .object({ id: z.string(), version: z.string() })
+                    .optional()
+                    .describe("Host-stamped corpus identity. Do not fill this — the host overwrites it at persist time."),
             }),
         )
         .optional()
-        .describe(
-            "The knowledge rules this step is grounded in. Cite each returned rule that constrains the step's method — every applicable reject-severity rule must be cited somewhere in the plan.",
-        ),
+        .describe("The knowledge rules this step is grounded in. Cite each returned rule that shaped the step's method, with a one-line note."),
     status: z.enum(["pending", "running", "completed", "failed", "skipped"]).default("pending"),
     // Optional on the persistence schema so historical plans (pre-resources)
     // still parse on the read side. `PlanStepSchema` re-requires it for planner

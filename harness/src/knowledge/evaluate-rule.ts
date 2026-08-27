@@ -13,9 +13,9 @@ import type { RuleRecord } from "./rule-record.js";
  * because every one of them can be unknown — an unprofiled analysis has none.
  */
 export interface KnowledgeFacts {
-    /** The profile's domain, e.g. "transcriptomics". */
+    /** The profile's domain, for example "transcriptomics". */
     readonly omicsType?: string;
-    /** The profile's subtype, e.g. "bulk-rna-seq". */
+    /** The profile's subtype, for example "bulk-rna-seq". */
     readonly omicsSubtype?: string;
     /** The smallest per-condition sample count, when a structured source holds it. */
     readonly minGroupN?: number;

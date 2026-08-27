@@ -126,14 +126,18 @@ evidence, not a substitute for the profile you were handed.
 - When your seed carries a "Knowledge Rules" block, cite the id of each rule
   that shapes a step, in that step's \`grounding\` field, with a one-line note
   on how the step obeys it.
-- Every \`[reject]\` rule marked \`applies\` must be cited somewhere in the
-  plan. An uncited one rejects the plan with a \`grounding\` issue: cite it,
-  or revise the plan to obey it, then submit again.
-- Cite only ids that the block or a knowledge tool returned. Never cite a
-  rule id from memory — an unreturned id rejects the plan.
-- When the Data Context states the smallest group size, pass it to
-  \`knowledge_search\` as \`minGroupN\`. A size-conditioned rule evaluates only
-  through the facts you supply, and an \`applies\` verdict then binds the plan.
+- Cite only ids that the block or a knowledge tool returned in this session.
+  Never cite a rule id from memory. An unreturned id rejects the plan, and it
+  is the one grounding fault that does.
+- An applicable rule you do not cite comes back as an advisory, never as a
+  rejection. That advisory reaches the analyst, thus an uncited rule that
+  shaped a step is a gap in the record rather than a blocked plan.
+- A rule whose statement opens with a condition binds only when your plan
+  meets that condition. A rule marked \`unknown\` needs a fact that nobody
+  established: when the Data Context states the smallest group size, pass it
+  to \`knowledge_search\` as \`minGroupN\` to settle it.
+- When your seed says that no knowledge source is available, leave every
+  \`grounding\` empty. There is nothing to cite.
 - \`knowledge_read\` gives a rule's full statement and its cited sources when
   the one-line form is not enough. \`knowledge_search\` finds rules the block
   did not carry.

@@ -71,6 +71,28 @@ describe("knowledge_search", () => {
         expect(recorded[0]?.rule.effect.severity).toBe("reject");
     });
 
+    test("a query with no usable token never reaches the source as a filter", async () => {
+        // A punctuation or non-Latin query tokenizes to nothing, and a filter
+        // with no tokens returns the whole corpus — the worst answer available.
+        const seen: (string | undefined)[] = [];
+        const kb: KnowledgeBase = {
+            findRules: (query) => {
+                seen.push(query.text);
+                return okAsync({ corpus: CORPUS, matches: [] });
+            },
+            getRule: (id) => okAsync({ found: false as const, id }),
+            describeCorpus: () => CORPUS,
+        };
+        const [search] = createKnowledgeTools({ knowledge: kb });
+        const { ctx } = makeToolContext();
+
+        (await search!.execute({ query: "  " }, ctx))._unsafeUnwrap();
+        (await search!.execute({ query: "転写" }, ctx))._unsafeUnwrap();
+        (await search!.execute({ query: "cutpoint" }, ctx))._unsafeUnwrap();
+
+        expect(seen).toEqual([undefined, undefined, "cutpoint"]);
+    });
+
     test("no matches is a data outcome with the corpus identity", async () => {
         const [search] = createKnowledgeTools({ knowledge: fixtureKb([]) });
         const { ctx } = makeToolContext();

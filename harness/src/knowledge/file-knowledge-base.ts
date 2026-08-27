@@ -17,6 +17,7 @@ import { join, resolve, sep } from "node:path";
 import { errAsync, fromPromise, okAsync, type ResultAsync } from "neverthrow";
 
 import { createNoopLogger } from "../lib/console-logger.js";
+import { classifyWithinRoot } from "../lib/fs-helpers.js";
 import type { Logger } from "../lib/logger.js";
 import { evaluateRule, type KnowledgeFacts } from "./evaluate-rule.js";
 import type { CorpusIdentity, KnowledgeBase, KnowledgeError, RuleLookup, RuleMatch, RuleQuery, RuleQueryResult } from "./knowledge-base.js";
@@ -101,12 +102,33 @@ export function loadFileKnowledgeBase(deps: FileKnowledgeBaseDeps): ResultAsync<
         const rules = new Map<string, RuleRecord>();
 
         const corpusRoot = resolve(deps.dir);
+        // A root that already ends in the separator is the filesystem root, and
+        // concatenating a second separator would exclude every rule file.
+        const rootPrefix = corpusRoot.endsWith(sep) ? corpusRoot : corpusRoot + sep;
         for (const ruleFile of manifest.data.ruleFiles) {
-            // Confinement: a manifest is data, and a `../` entry must not read
-            // outside the corpus directory.
+            // Confinement in two stages, and both are necessary. A manifest is
+            // data, thus a `../` entry must not read outside the corpus. The
+            // lexical test catches that with no I/O, but path resolution does not
+            // follow a symlink — so a link planted inside the corpus would still
+            // read a file outside it, and its records would load as trusted rules
+            // whose text reaches the planner seed. `classifyWithinRoot` is the
+            // symlink-following companion the workspace read seam already uses
+            // against the same threat. A target equal to the root names the
+            // directory itself, which is not a rule file.
             const target = resolve(corpusRoot, ruleFile);
-            if (target !== corpusRoot && !target.startsWith(corpusRoot + sep)) {
+            if (target === corpusRoot || !target.startsWith(rootPrefix)) {
                 logger.warn("rule file excluded — the path resolves outside the corpus directory", { ruleFile });
+                continue;
+            }
+            let verdict;
+            try {
+                verdict = await classifyWithinRoot(corpusRoot, target);
+            } catch (err) {
+                logger.warn("rule file excluded — the path could not be classified against the corpus root", { ruleFile, ...logger.errorFields(err) });
+                continue;
+            }
+            if (verdict === "escaped") {
+                logger.warn("rule file excluded — a symlink resolves outside the corpus directory", { ruleFile });
                 continue;
             }
             let fileJson: unknown;

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -10,7 +10,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { loadFileKnowledgeBase } from "./file-knowledge-base.js";
 import { createNoopKnowledgeBase } from "./noop-knowledge-base.js";
-import { withKnowledgeObservation, type KnowledgeConsultation } from "./observe.js";
+import { withKnowledgeObservation, type KnowledgeConsultation, type ObserveKnowledge } from "./observe.js";
 
 const session = makeSession();
 
@@ -133,6 +133,34 @@ describe("loadFileKnowledgeBase", () => {
         expect(result.matches.map((m) => m.rule.id)).toEqual(["INFLEXA-R-000001"]);
     });
 
+    test("a symlink that resolves outside the corpus directory is excluded", async () => {
+        // Path resolution is lexical, thus a lexical containment test alone
+        // passes a symlink planted inside the corpus and reads through it.
+        const { logger, warns } = countingLogger();
+        const outside = await mkdtemp(join(tmpdir(), "knowledge-outside-"));
+        await writeFile(join(outside, "evil.json"), JSON.stringify([RULE("INFLEXA-R-000009", "note")]));
+        const dir = await writeCorpus([RULE("INFLEXA-R-000001", "note")], {
+            corpusId: "test-corpus",
+            version: "0.9.0",
+            ruleFiles: ["rules/all.json", "rules/link.json"],
+        });
+        await symlink(join(outside, "evil.json"), join(dir, "rules", "link.json"));
+
+        const kb = (await loadFileKnowledgeBase({ dir, logger }))._unsafeUnwrap();
+        const result = (await kb.findRules({}, session))._unsafeUnwrap();
+        expect(result.matches.map((m) => m.rule.id)).toEqual(["INFLEXA-R-000001"]);
+        expect(warns()).toBe(1);
+    });
+
+    test("a query with no usable token is no filter, and the tool boundary drops such a query", async () => {
+        const dir = await writeCorpus([RULE("INFLEXA-R-000001", "note"), RULE("INFLEXA-R-000002", "note")]);
+        const kb = (await loadFileKnowledgeBase({ dir }))._unsafeUnwrap();
+        // The realization treats an unusable filter as no filter. The tool is
+        // what must never send one, which its own suite covers.
+        const result = (await kb.findRules({ text: "  " }, session))._unsafeUnwrap();
+        expect(result.matches).toHaveLength(2);
+    });
+
     test("a manifest path outside the corpus directory is excluded", async () => {
         const { logger, warns } = countingLogger();
         const outside = await mkdtemp(join(tmpdir(), "knowledge-outside-"));
@@ -171,6 +199,17 @@ describe.skipIf(!existsSync(join(shippedDir, "manifest.json")))("the shipped cor
         expect(smallSample?.rule.effect.severity).toBe("reject");
         expect(smallSample?.rule.evidence.sources.some((s) => s.doi !== undefined || s.pmid !== undefined)).toBe(true);
     });
+
+    test("the small-sample DE rule does not claim to apply to a single-cell design", async () => {
+        // Its remedy is bulk-specific, thus it must not read as `applies` on a
+        // design where one sample for each condition is the modal case.
+        const kb = (await loadFileKnowledgeBase({ dir: shippedDir }))._unsafeUnwrap();
+        const result = (
+            await kb.findRules({ facts: { omicsType: "transcriptomics", omicsSubtype: "single-cell-rna-seq", minGroupN: 1 } }, session)
+        )._unsafeUnwrap();
+        const smallSample = result.matches.find((m) => m.rule.id === "INFLEXA-R-000101");
+        expect(smallSample?.applicability).not.toBe("applies");
+    });
 });
 
 describe("withKnowledgeObservation", () => {
@@ -191,6 +230,23 @@ describe("withKnowledgeObservation", () => {
             agentId: "conversation-agent",
         });
         expect(events[1]?.kind).toBe("get_rule");
+    });
+
+    test("a rejecting async callback never fails the consultation", async () => {
+        // `ObserveKnowledge` returns void, and return-type bivariance accepts an
+        // async callback — the shape of any ledger that writes to a database. A
+        // synchronous catch cannot contain its rejection.
+        const kb = createNoopKnowledgeBase();
+        // The cast is the point: this is what bivariance lets a host write.
+        const rejecting = (async (): Promise<void> => {
+            throw new Error("host sink down");
+        }) as unknown as ObserveKnowledge;
+        const observed = withKnowledgeObservation(kb, { observe: rejecting });
+
+        const result = (await observed.findRules({}, session))._unsafeUnwrap();
+        expect(result.matches).toEqual([]);
+        // Let the attached catch run, thus an escaped rejection would surface here.
+        await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     test("a throwing callback never fails the consultation", async () => {

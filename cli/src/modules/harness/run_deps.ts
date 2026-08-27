@@ -134,6 +134,12 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         workspaceFs: comp.workspaceFs,
         embedding: comp.embedding,
         lineageCollector: ctx.lineageCollector,
+        // The knowledge source arrives on the build context, not on the
+        // composition: the harness resolves it once at assembly and hands it
+        // down per step. Both sides are optional, thus a dropped copy would
+        // typecheck and would leave every executing step answering
+        // `no_knowledge_source` while the planner and the profiler consult it.
+        ...(ctx.knowledge ? { knowledge: ctx.knowledge } : {}),
         model: comp.sandbox.model,
         skillsDir: comp.skillsDir,
         refStorePath: comp.refStorePath,

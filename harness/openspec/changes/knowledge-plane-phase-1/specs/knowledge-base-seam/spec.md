@@ -32,7 +32,7 @@ A `resolveCompositionKnowledge(seam, knowledgeDir)` function MUST resolve the so
 
 ### Requirement: The file-backed realization reads a validated local corpus
 
-The file-backed realization MUST read the rule files and the manifest from the supplied directory. A rule-file path that resolves outside the corpus directory MUST be excluded and reported — the manifest is data. It MUST validate each record against the rule-record schema. A record that fails validation MUST be excluded and reported through the injected `Logger`, and the valid records MUST still load. Construction over a directory with no readable manifest MUST refuse with a typed error.
+The file-backed realization MUST read the rule files and the manifest from the supplied directory. A rule-file path that resolves outside the corpus directory MUST be excluded and reported, because the manifest is data. The containment MUST follow symlinks, thus a link planted inside the corpus cannot read a file outside it. It MUST validate each record against the rule-record schema. A record that fails validation MUST be excluded and reported through the injected `Logger`, and the valid records MUST still load. Construction over a directory with no readable manifest MUST refuse with a typed error.
 
 #### Scenario: An invalid record does not sink the corpus
 
@@ -43,6 +43,11 @@ The file-backed realization MUST read the rule files and the manifest from the s
 
 - **WHEN** the directory has no readable manifest
 - **THEN** construction returns a typed error, and the composition treats the source as absent
+
+#### Scenario: A symlink out of the corpus is excluded
+
+- **WHEN** a manifest names a rule file that is a symlink to a file outside the corpus directory
+- **THEN** the loader excludes it and reports it, and none of its records enter the corpus
 
 ### Requirement: Each successful consultation reports to an optional observation callback
 

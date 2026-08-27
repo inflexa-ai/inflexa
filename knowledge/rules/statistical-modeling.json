@@ -5,7 +5,7 @@
         "applies": {},
         "effect": {
             "severity": "warn",
-            "statement": "Scaling, imputation, and feature selection must happen inside the cross-validation loop, never before the split. A selection over all samples first biases the performance estimate upward by several AUC points, and nothing errors."
+            "statement": "When a step fits a model with cross-validation: scaling, imputation, and feature selection must happen inside the loop, never before the split. A selection over all samples first biases the performance estimate upward by some AUC points, and nothing errors."
         },
         "recommendation": "Use a pipeline construction that refits the preprocessing inside each fold, and report the nested-CV estimate.",
         "evidence": {
@@ -23,7 +23,7 @@
         "applies": {},
         "effect": {
             "severity": "warn",
-            "statement": "A gene list from an upstream differential-expression step on the same samples is already a selection over all samples. A panel built from it leaks. Build the panel from the full feature matrix and select again inside cross-validation. If only the pre-selected list is available, report the performance estimate as optimistic, and say why."
+            "statement": "When a step builds a panel from features that an upstream step selected on the same samples: that list is already a selection over all samples, and a panel built from it leaks. Build the panel from the full feature matrix, and select again inside cross-validation. If only the pre-selected list is available, report the performance estimate as optimistic, and say why."
         },
         "evidence": {
             "eco": "ECO:0000212",
@@ -40,7 +40,7 @@
         "applies": {},
         "effect": {
             "severity": "warn",
-            "statement": "The maximum of a log-rank statistic over many candidate cutpoints is not chi-squared distributed, thus the nominal p-value of the best split is meaningless. Report the multiplicity-corrected p-value from maximally selected rank statistics, the cutpoint, and the group sizes on either side. Do not optimize the cutpoint on the same data that the performance is reported on."
+            "statement": "When a step dichotomizes a continuous biomarker at an optimized cutpoint: the maximum of a log-rank statistic over many candidate cutpoints is not chi-squared distributed, thus the nominal p-value of the best split is meaningless. Report the multiplicity-corrected p-value from maximally selected rank statistics, the cutpoint, and the group sizes on either side. Do not optimize the cutpoint on the same data that the performance is reported on."
         },
         "evidence": {
             "eco": "ECO:0000212",
@@ -57,7 +57,7 @@
         "applies": {},
         "effect": {
             "severity": "warn",
-            "statement": "A Cox model needs the proportional-hazards assumption. Do a check of it with the scaled Schoenfeld residuals. If the check fails for a covariate, stratify on it or add a time-varying term, and report the hazard ratio as time-averaged, not as a constant effect."
+            "statement": "When a step fits a Cox model: the proportional-hazards assumption is necessary. Do a check of it with the scaled Schoenfeld residuals. If the check fails for a covariate, stratify on it or add a time-varying term, and report the hazard ratio as time-averaged, not as a constant effect."
         },
         "evidence": {
             "eco": "ECO:0000212",
@@ -71,7 +71,7 @@
         "applies": {},
         "effect": {
             "severity": "warn",
-            "statement": "A prognostic marker associates with the outcome regardless of treatment. A predictive marker needs a significant treatment-by-marker interaction term. Do not call a marker predictive without that test, and a single-arm study cannot produce the interaction at all."
+            "statement": "When a step calls a biomarker predictive: a prognostic marker associates with the outcome regardless of treatment, and a predictive marker needs a significant treatment-by-marker interaction term. Do not call a marker predictive without that test, and a single-arm study cannot produce the interaction at all."
         },
         "evidence": {
             "eco": "ECO:0000212",
@@ -85,7 +85,7 @@
         "applies": {},
         "effect": {
             "severity": "note",
-            "statement": "Below about 100 samples, prefer a simple model — logistic regression, or Cox for survival. A tree ensemble overfits on a small N, and a prediction model needs many events for each candidate parameter."
+            "statement": "When a step fits a prediction model below about 100 samples: prefer a simple model, which is logistic regression, or Cox for survival. A tree ensemble overfits on a small N, and a prediction model needs many events for each candidate parameter."
         },
         "evidence": {
             "eco": "ECO:0000212",

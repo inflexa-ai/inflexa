@@ -6,6 +6,13 @@
 
 The harness MUST give two tools, `knowledge_search` and `knowledge_read`, built by a factory that captures the resolved `KnowledgeBase`. `knowledge_search` MUST find rules by data facts or by a text query. Each match MUST carry the id, the statement, and the severity. `knowledge_read` MUST return one full record by id. Both MUST be `step`-mode and read-only. An expected outcome, which includes "not found" and "no knowledge source", MUST be a data variant, never a throw.
 
+A keyword query MUST match whole tokens, and every token MUST be present. `knowledge_search` MUST drop a query that carries no usable token, and it MUST then search on the supplied facts alone. A filter with no tokens is no filter, and returning the whole corpus is the worst available answer.
+
+#### Scenario: A query with no usable token never reaches the source
+
+- **WHEN** an agent calls `knowledge_search` with a query of punctuation or of non-Latin characters
+- **THEN** the tool searches on the facts alone, and it never sends the query as a filter
+
 #### Scenario: A search returns bounded matches
 
 - **WHEN** a planner calls `knowledge_search` with the omics type and a query

@@ -53,9 +53,9 @@ import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/res
 import { plannerPrompt } from "../../prompts/planner.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
-import { checkGrounding } from "../../schemas/validate-grounding.js";
+import { checkGrounding, type GroundingAdvisory } from "../../schemas/validate-grounding.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
-import type { KnowledgeBase, RuleMatch } from "../../knowledge/knowledge-base.js";
+import type { CorpusIdentity, KnowledgeBase, RuleMatch } from "../../knowledge/knowledge-base.js";
 import type { KnowledgeFacts } from "../../knowledge/evaluate-rule.js";
 import { createKnowledgeTools } from "../knowledge/knowledge-tools.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
@@ -216,7 +216,11 @@ function plannerInstructions(resourcePolicy?: ResourcePolicy): string {
  * rejected by the tool implementations.
  */
 type PlannerOutcome =
-    | { kind: "plan_submitted"; planId: string; plan: PlannerPlan }
+    // `advisories` rides here because the planner never reads an accepted
+    // `submit_plan` result: the loop's terminal predicate stops the turn, and
+    // the prompt forbids continuing. The outcome is the only channel that
+    // carries them out to the conversation agent, which faces the analyst.
+    | { kind: "plan_submitted"; planId: string; plan: PlannerPlan; advisories?: readonly GroundingAdvisory[] }
     | { kind: "clarification"; question: string; questionContext?: string }
     | { kind: "blocker"; reason: string }
     | { kind: "persist_error"; message: string };
@@ -244,20 +248,29 @@ interface ValidationIssue {
  * make a plan invalid (the planning-enhancements delta).
  */
 type SubmitPlanOutput =
-    { accepted: false; issues: ValidationIssue[]; advisories?: readonly string[] } | { accepted: true; planId: string; advisories?: readonly string[] };
+    | { accepted: false; issues: ValidationIssue[]; advisories?: readonly GroundingAdvisory[] }
+    | { accepted: true; planId: string; advisories?: readonly GroundingAdvisory[] };
 
 /**
  * What the grounded gate holds. Both collections are LIVE: the seed-time brief
- * and every later `knowledge_search` call record into them, thus an `applies`
- * verdict a tool surfaces mid-loop binds exactly like one from the brief. The
- * gate reads them at each submit. The context exists whenever a source is
- * resolved — a failed brief query narrows what is citable, and it never turns
- * the citation-honesty check off.
+ * and every later `knowledge_search` call record into them, thus a verdict a
+ * tool surfaces mid-loop reaches the gate like one from the brief. The gate
+ * reads them at each submit. The context exists whenever a source is resolved —
+ * a failed brief query narrows what is citable, and it never turns the
+ * citation-honesty check off.
+ *
+ * `knownMatches` is LATEST-WINS, not a ratchet. A planner that probes with a
+ * wrong number and then corrects it must be able to withdraw the first verdict.
+ * A map that only ever escalated left a stale `applies` standing, because a
+ * rule that stops applying is dropped before it is returned, thus no later
+ * call could clear it.
  */
 interface GroundingGateContext {
     readonly returnedRuleIds: ReadonlySet<string>;
-    /** Obligations by rule id. `applies` overrides `not_evaluable` for one id. */
-    readonly obligations: ReadonlyMap<string, RuleMatch>;
+    /** The most recent verdict for each rule id this invocation has seen. */
+    readonly knownMatches: ReadonlyMap<string, RuleMatch>;
+    /** The corpus the citations resolve against, stamped onto the stored plan. */
+    readonly corpus: CorpusIdentity;
 }
 
 // ── Prior plan serialization (iteration context) ───────────────────
@@ -274,7 +287,11 @@ function formatPriorPlan(parentPlanId: string, plan: unknown): string | null {
     const stepLines = p.steps.map((s) => {
         const deps = s.depends_on.length ? ` [deps: ${s.depends_on.join(", ")}]` : "";
         const agent = s.agent ? ` (${s.agent})` : "";
-        return `- **${s.id}**${agent}: ${s.name} — ${s.question}${deps}`;
+        // The citations ride here, because iteration rewrites the steps it keeps.
+        // A renderer that dropped them made the planner rebuild an unchanged step
+        // with no grounding, and the child plan then lost the chain the parent had.
+        const grounding = s.grounding?.length ? ` [grounding: ${s.grounding.map((g) => g.id).join(", ")}]` : "";
+        return `- **${s.id}**${agent}: ${s.name} — ${s.question}${deps}${grounding}`;
     });
 
     return [
@@ -465,16 +482,19 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
 }
 
 /**
- * Full validation: Zod schema + semantic checks + the grounded gate. The plan
- * is valid only if all three pass. The gate runs only when this invocation
- * holds a grounding context — with no knowledge source the stage is inert and
- * the behavior matches the pre-knowledge harness exactly.
+ * Full validation: Zod schema + semantic checks + the grounded gate. Only the
+ * citation-honesty arm of the gate can make a plan invalid. Its advisory arm
+ * rides on both outcomes and never blocks. The gate runs only when this
+ * invocation holds a grounding context — with no knowledge source the stage is
+ * inert and the behavior matches the pre-knowledge harness exactly.
  */
 function fullyValidate(
     candidate: unknown,
     resourcePolicy?: ResourcePolicy,
     groundingCtx?: GroundingGateContext,
-): { valid: true; plan: PlannerPlan; advisories?: readonly string[] } | { valid: false; issues: ValidationIssue[]; advisories?: readonly string[] } {
+):
+    | { valid: true; plan: PlannerPlan; advisories?: readonly GroundingAdvisory[] }
+    | { valid: false; issues: ValidationIssue[]; advisories?: readonly GroundingAdvisory[] } {
     const parsed = PlannerPlanSchema.safeParse(candidate);
     if (!parsed.success) {
         return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, candidate) };
@@ -509,7 +529,7 @@ function fullyValidate(
     }
 
     if (groundingCtx !== undefined) {
-        const grounded = checkGrounding(parsed.data.steps, groundingCtx.returnedRuleIds, groundingCtx.obligations.values());
+        const grounded = checkGrounding(parsed.data.steps, groundingCtx.returnedRuleIds, groundingCtx.knownMatches.values());
         const advisories = grounded.advisories.length > 0 ? { advisories: grounded.advisories } : {};
         if (grounded.violations.length > 0) {
             return {
@@ -527,6 +547,26 @@ function fullyValidate(
     }
 
     return { valid: true, plan: parsed.data };
+}
+
+/**
+ * Stamp the corpus identity onto every citation of a plan, host-side.
+ *
+ * A rule id alone does not stay resolvable. The corpus moves on, an id is
+ * re-versioned or superseded, and a step briefing then names a rule whose text
+ * no longer matches what the planner read. The stamp is what lets a reader of
+ * a stored plan resolve the exact assertion the decision rests on. It
+ * overwrites any value that reached it, thus it is never model-authored.
+ */
+function stampCorpus(plan: PlannerPlan, corpus: CorpusIdentity): PlannerPlan {
+    return {
+        ...plan,
+        steps: plan.steps.map((step) =>
+            step.grounding === undefined
+                ? step
+                : { ...step, grounding: step.grounding.map((g) => ({ ...g, corpus: { id: corpus.corpusId, version: corpus.version } })) },
+        ),
+    };
 }
 
 // ── Inner tools (fresh instance per outer tool invocation) ─────────
@@ -607,7 +647,12 @@ function buildInnerTools(
                 return ok({ accepted: false as const, issues: result.issues, ...(result.advisories ? { advisories: result.advisories } : {}) });
             }
 
-            const persisted = await persistPlan(result.plan, persistCtx, pool, logger);
+            // The corpus stamp is host-written, never model-authored: it
+            // overwrites whatever reached it. A stored id with no corpus behind
+            // it stops resolving the moment the corpus moves on, and a step
+            // briefing would then order an agent to obey text nobody read.
+            const stamped = groundingCtx === undefined ? result.plan : stampCorpus(result.plan, groundingCtx.corpus);
+            const persisted = await persistPlan(stamped, persistCtx, pool, logger);
             if (!persisted.ok) {
                 holder.outcome = { kind: "persist_error", message: persisted.message };
                 return ok({
@@ -626,15 +671,21 @@ function buildInnerTools(
             holder.outcome = {
                 kind: "plan_submitted",
                 planId: persisted.planId,
-                plan: result.plan,
+                plan: stamped,
+                ...(result.advisories ? { advisories: result.advisories } : {}),
             };
             // The attempt count is the cost of this plan, and it is only knowable here.
             // A plan accepted on attempt 5 is a success that nearly was not one.
+            // The advisory account rides too: an accepted plan that ignores every
+            // applicable rule is a success worth being able to find later.
             logger.info("submit_plan accepted a plan", {
                 planId: persisted.planId,
                 attempt,
-                stepCount: result.plan.steps.length,
-                agents: [...new Set(result.plan.steps.map((s) => s.agent))],
+                stepCount: stamped.steps.length,
+                agents: [...new Set(stamped.steps.map((s) => s.agent))],
+                ...(result.advisories && result.advisories.length > 0
+                    ? { advisories: { total: result.advisories.length, ruleIds: result.advisories.map((a) => a.ruleId) } }
+                    : {}),
             });
             return ok({ accepted: true as const, planId: persisted.planId, ...(result.advisories ? { advisories: result.advisories } : {}) });
         },
@@ -849,7 +900,15 @@ function shapeOutcome(args: ShapeOutcomeArgs): ShapedOutcome {
     const outcome = holder.outcome;
 
     if (outcome?.kind === "plan_submitted") {
-        return { output: { event: "plan_complete", planId: outcome.planId, plan: outcome.plan }, kind: "plan_submitted" };
+        return {
+            output: {
+                event: "plan_complete",
+                planId: outcome.planId,
+                plan: outcome.plan,
+                ...(outcome.advisories && outcome.advisories.length > 0 ? { advisories: [...outcome.advisories] } : {}),
+            },
+            kind: "plan_submitted",
+        };
     }
     if (outcome?.kind === "clarification") {
         return {
@@ -953,6 +1012,13 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
 
 const KNOWLEDGE_BRIEF_MAX_CHARS = 6000;
 const KNOWLEDGE_STATEMENT_CHARS = 280;
+/**
+ * The ceiling on rules the brief query fetches. Every fetched match becomes
+ * citable and reaches the advisory pass, thus the number bounds what the gate
+ * can ever say. It sits at the realization ceiling rather than below it,
+ * because a rule the query silently dropped produces no advisory and no log.
+ */
+const KNOWLEDGE_BRIEF_TOP_K = 50;
 
 /**
  * The evaluable dataset facts the profile holds: the categorical pair only.
@@ -970,8 +1036,15 @@ function factsFromGrounding(grounding: DataGrounding): KnowledgeFacts {
     };
 }
 
+/**
+ * The heading deliberately omits the words the prompt keys the citation duty
+ * on. With no source there is nothing to cite and no gate to make sure of a
+ * citation, thus a block that read as a rules block invited the planner to
+ * cite from memory into a plan nothing could check.
+ */
 const KNOWLEDGE_ABSENT_BLOCK =
-    "## Knowledge Rules\n\nNo knowledge source is available in this install. Ground the plan in the data profile and the literature searches.";
+    "## Knowledge Plane\n\nNo knowledge source is available in this install, thus there are no rules to cite. " +
+    "Leave every step's `grounding` empty, and ground the plan in the data profile and the literature searches.";
 
 const MATCH_SORT: Record<"applies" | "not_evaluable", number> = { applies: 0, not_evaluable: 1 };
 const SEVERITY_SORT: Record<RuleMatch["rule"]["effect"]["severity"], number> = { reject: 0, warn: 1, note: 2 };
@@ -992,16 +1065,19 @@ async function buildKnowledgeBrief(
     logger: Logger,
 ): Promise<string> {
     const facts = factsFromGrounding(grounding);
-    return knowledge.findRules({ facts, topK: 25 }, session).match(
+    return knowledge.findRules({ facts, topK: KNOWLEDGE_BRIEF_TOP_K }, session).match(
         (result): string => {
             recordMatches(result.matches);
             const header = [
                 `## Knowledge Rules (corpus ${result.corpus.corpusId}@${result.corpus.version})`,
                 "",
-                "The rules below constrain this dataset, from the knowledge plane. Cite the id of each rule that shapes a step, in that step's `grounding` field. " +
-                    "Every `[reject]` rule marked `applies` must be cited somewhere in the plan — an uncited one rejects the plan. " +
-                    "`knowledge_read` gives a rule's full text and its sources; `knowledge_search` finds more. " +
-                    "When the design states the smallest group size, pass it to knowledge_search as `minGroupN` — a size-conditioned rule evaluates only through the facts you supply.",
+                "The rules below can constrain this analysis. A rule marked `applies` matched the dataset facts. " +
+                    "A rule marked `unknown` needs a fact nobody established yet, and one marked with a condition in its text binds only when your plan meets that condition. " +
+                    "Cite the id of each rule that shapes a step, in that step's `grounding` field, with a one-line note. " +
+                    "An uncited applicable rule comes back as an advisory, and it never blocks the plan. " +
+                    "A cited id that this session did not return DOES reject the plan, thus never cite from memory. " +
+                    "`knowledge_read` gives a rule's full text and its sources, and `knowledge_search` finds more. " +
+                    "When the design states the smallest group size, pass it to knowledge_search as `minGroupN`, because a size-conditioned rule evaluates only through the facts you supply.",
                 "",
             ].join("\n");
             const sorted = [...result.matches].sort((a, b) => {
@@ -1031,7 +1107,10 @@ async function buildKnowledgeBrief(
         },
         (error): string => {
             logger.warn("knowledge source failed to answer — the brief is empty, the gate stays on", { detail: error.detail });
-            return "## Knowledge Rules\n\nThe knowledge source did not answer. Use knowledge_search to reach the rules, and cite only what it returns.";
+            return (
+                "## Knowledge Rules\n\nThe knowledge source did not answer this query. Use knowledge_search to reach the rules. " +
+                "Cite only an id that it returns, because a cited id from memory rejects the plan."
+            );
         },
     );
 }
@@ -1221,17 +1300,19 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // The knowledge brief is host-side and mandatory, like the two
             // inventories: an optional lookup is a lookup a small model skips.
             // The two collections below are the invocation's live citation set
-            // and obligation map — the brief and the knowledge tools record
-            // into them, and the grounded gate reads them at each submit.
+            // and verdict map — the brief and the knowledge tools record into
+            // them, and the grounded gate reads them at each submit.
+            //
+            // The verdict map is LATEST-WINS. A planner that probes with a wrong
+            // group size and then corrects it must be able to withdraw the first
+            // verdict, and a rule that stops applying is dropped before it is
+            // returned — thus an escalate-only map could never be corrected.
             const returnedRuleIds = new Set<string>();
-            const obligations = new Map<string, RuleMatch>();
+            const knownMatches = new Map<string, RuleMatch>();
             const recordMatches = (matches: readonly RuleMatch[]): void => {
                 for (const m of matches) {
                     returnedRuleIds.add(m.rule.id);
-                    const prior = obligations.get(m.rule.id);
-                    if (prior === undefined || (prior.applicability === "not_evaluable" && m.applicability === "applies")) {
-                        obligations.set(m.rule.id, m);
-                    }
+                    knownMatches.set(m.rule.id, m);
                 }
             };
             const knowledgeBlock =
@@ -1240,7 +1321,8 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     : await buildKnowledgeBrief(deps.knowledge, grounding, ctx.session, recordMatches, logger);
             // The gate exists exactly when a source is resolved. A failed brief
             // query narrows what is citable, and it never turns the gate off.
-            const knowledgeGate: GroundingGateContext | undefined = deps.knowledge === undefined ? undefined : { returnedRuleIds, obligations };
+            const knowledgeGate: GroundingGateContext | undefined =
+                deps.knowledge === undefined ? undefined : { returnedRuleIds, knownMatches, corpus: deps.knowledge.describeCorpus() };
             const groundingBlock = [refsBlock, packagesBlock, knowledgeBlock].join("\n\n");
 
             const prompt = [

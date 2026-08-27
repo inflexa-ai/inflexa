@@ -67,6 +67,24 @@ export const PlanningAgentOutputSchema = z.object({
     question: z.string().optional(),
     questionContext: z.string().optional(),
     error: z.string().optional(),
+    /**
+     * The knowledge advisories the grounded gate raised on the accepted plan:
+     * the applicable rules the plan cites nowhere, and the rules a missing fact
+     * left unevaluated. They ride on the outcome because the planner never reads
+     * an accepted `submit_plan` result — the loop stops on the terminal call.
+     * Thus the conversation agent is the first reader that can act on them, and
+     * it is the one that faces the analyst.
+     */
+    advisories: z
+        .array(
+            z.object({
+                ruleId: z.string(),
+                severity: z.enum(["reject", "warn", "note"]),
+                applicability: z.enum(["applies", "not_evaluable"]),
+                message: z.string(),
+            }),
+        )
+        .optional(),
 });
 
 export type PlanningAgentOutput = z.infer<typeof PlanningAgentOutputSchema>;
