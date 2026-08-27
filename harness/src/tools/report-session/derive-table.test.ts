@@ -30,8 +30,11 @@ import { runDeriveTableExecBody } from "../../tasks/derive-table-exec.js";
 import { workflowIdFromExec } from "../../sandbox/exec-id.js";
 import type { AppendDerivationOutcome, DerivationRecord } from "../../state/report-session-state.js";
 import { reportSessionDir } from "../../workspace/paths.js";
+import { createCapturingLogger } from "../../__tests__/setup/logger.js";
+import type { Logger } from "../../lib/logger.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
+import type { EmitReportObservation, ReportObservationEvent } from "../report-observation.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import {
     buildDerivationExec,
@@ -249,7 +252,15 @@ function pinnedSnapshot(): ReportSnapshot {
 }
 
 /** One assembled tool over the four seams, with each recording part handed back. */
-function makeTool(args: { root: string; snapshot?: ReportSnapshot; result?: ExecResult; ledger?: FakeLedger; sandbox?: FakeSandbox }) {
+function makeTool(args: {
+    root: string;
+    snapshot?: ReportSnapshot;
+    result?: ExecResult;
+    ledger?: FakeLedger;
+    sandbox?: FakeSandbox;
+    emitReportObservation?: EmitReportObservation;
+    logger?: Logger;
+}) {
     const gateway = makeFakeGateway();
     gateway.seed("t1", args.snapshot ?? pinnedSnapshot());
     // The default stub is a script that lands the table where the submit body declared it.
@@ -264,6 +275,8 @@ function makeTool(args: { root: string; snapshot?: ReportSnapshot; result?: Exec
         // with a fixed clock, thus the seam calls under test are the seam calls in production.
         runDerivation: (input) => runDeriveTableExecBody(input, { sandboxClient: sandbox.client, now: () => Promise.resolve(0) }),
         runAuthorizer: auth.authorizer,
+        ...(args.emitReportObservation ? { emitReportObservation: args.emitReportObservation } : {}),
+        ...(args.logger ? { logger: args.logger } : {}),
     });
     return { tool, gateway, sandbox, ledger, auth };
 }
@@ -641,6 +654,65 @@ describe("the disposal of a session", () => {
         await rm(sessionDir, { recursive: true, force: true });
         expect(existsSync(join(root, result.path))).toBe(false);
         expect(existsSync(sessionDir)).toBe(false);
+    });
+});
+
+describe("the report observation", () => {
+    it("gives one derivation event that carries the chain of the table", async () => {
+        const root = await makeRoot();
+        const events: ReportObservationEvent[] = [];
+        const { tool } = makeTool({ root, emitReportObservation: (event) => events.push(event) });
+
+        const result = await derive(tool, {});
+        if (result.outcome !== "derived") throw new Error("expected a derived table");
+
+        // The event carries what the record pins, thus a consumer chains the derived table back to the
+        // pinned evidence with no read of the session state.
+        expect(events).toEqual([
+            {
+                type: "run-derivation",
+                analysisId: DEFAULT_ANALYSIS_ID,
+                threadId: "t1",
+                outputPath: result.path,
+                outputHash: result.hash,
+                scriptHash: result.scriptHash,
+                sources: [{ path: PINNED_PATH, hash: PINNED_HASH }],
+            },
+        ]);
+    });
+
+    it("emits nothing when the script fails in the container", async () => {
+        const root = await makeRoot();
+        const events: ReportObservationEvent[] = [];
+        const { tool } = makeTool({
+            root,
+            result: execResult({ exitCode: 1, stderr: "KeyError: group" }),
+            emitReportObservation: (event) => events.push(event),
+        });
+
+        expect((await derive(tool, {})).outcome).toBe("exec-failed");
+        expect(events).toEqual([]);
+    });
+
+    it("logs a throw of the seam, and the derivation still stands", async () => {
+        const root = await makeRoot();
+        const logger = createCapturingLogger();
+        const { tool, ledger } = makeTool({
+            root,
+            logger,
+            emitReportObservation: () => {
+                throw new Error("the recorder is down");
+            },
+        });
+
+        const result = await derive(tool, {});
+
+        // The record landed before the emit, thus a defect of the host costs the event alone.
+        expect(result.outcome).toBe("derived");
+        expect(ledger.records).toHaveLength(1);
+        const record = logger.records.find((held) => held.msg.includes("the report observation seam threw"));
+        expect(record?.level).toBe("error");
+        expect(record?.fields).toMatchObject({ analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", event: "run-derivation", err: "the recorder is down" });
     });
 });
 

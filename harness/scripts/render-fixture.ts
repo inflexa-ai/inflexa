@@ -16,11 +16,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ASSETS_DIR, DEPS_DIR, PAGE_ASSETS } from "../src/report-render/assets.js";
-import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "../src/report-render/fixture.js";
+import { FIXTURE_DOCUMENT, FIXTURE_PROVENANCE, FIXTURE_VALUES } from "../src/report-render/fixture.js";
 import { renderReportPage } from "../src/report-render/render.js";
 import { resolvePageAssetFromInstallation } from "../src/report-render/asset-lookup.js";
 
-const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
+// The provenance rides the render, thus the page carries the lineage stamp of each grounded block and the
+// control beside each marker.
+const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, undefined, undefined, FIXTURE_PROVENANCE);
 if (rendered.isErr()) {
     throw new Error(`The fixture did not render: ${JSON.stringify(rendered.error)}`);
 }

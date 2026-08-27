@@ -7,10 +7,12 @@
  * and renders the page.
  *
  * The renderer writes no file. It gives the page and the data asset of each table, and this tool stages
- * them beside the figures. It also writes the script of each derivation that the document references, from
- * the text of the durable record. The shipped libraries and fonts stage under `assets/deps/`, and each
- * report-side file at the root of `assets/`. The stage is authoritative over that root: what this preview
- * wrote stays, and each other file goes.
+ * them beside the figures. The tool asks the optional provenance source for the frozen document of the
+ * analysis first, and the renderer turns the opaque text into data assets of the same kind. It also writes
+ * the script of each derivation that the document references, from the text of the durable record. The
+ * shipped libraries and fonts stage under `assets/deps/`, and each report-side file at the root of
+ * `assets/`. The stage is authoritative over that root: what this preview wrote stays, and each other file
+ * goes.
  *
  * The page and its staged assets land in `report-sessions/{threadId}/` under the workspace root. That
  * namespace belongs to this path alone, thus the tool never writes under the old `previews/` or `reports/`
@@ -64,6 +66,8 @@ import type { RenderProblem } from "../../report-render/types.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
+import { bindReportObservation, type EmitReportObservation } from "../report-observation.js";
+import { bindReportProvenance, type ReadReportProvenance } from "../report-provenance.js";
 import { describeSessionPageMintFailure, type MakeSessionPagePublisher, type SessionPageMintResult } from "./session-page-publisher.js";
 
 /** The empty input. The tool renders the current draft of the thread, thus it needs no field. */
@@ -126,6 +130,13 @@ export interface PreviewReportToolDeps {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly resolvePageAsset?: ResolvePageAsset;
     readonly makeSessionPages?: MakeSessionPagePublisher;
+    /** The report observation seam; an unbound seam emits nothing and the render runs the same. */
+    readonly emitReportObservation?: EmitReportObservation;
+    /**
+     * The provenance source of the analysis; an unbound seam and a source that holds no document both give
+     * absence, and the page then carries no provenance asset.
+     */
+    readonly readReportProvenance?: ReadReportProvenance;
     readonly logger?: Logger;
 }
 
@@ -505,6 +516,8 @@ async function mintAccess(
  */
 export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<PreviewReportInput, PreviewReportResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("preview-report");
+    const observe = bindReportObservation(deps.emitReportObservation, logger);
+    const readProvenance = bindReportProvenance(deps.readReportProvenance, logger);
     const resolvePageAsset = deps.resolvePageAsset ?? resolvePageAssetFromInstallation;
 
     return defineTool({
@@ -566,11 +579,16 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             // relative links of its entry, thus the renderer states them and it stages nothing.
             const used = referencedDerivations(document, derivations);
             const sessionDir = reportSessionDir(threadId);
+            // The provenance is the frozen document of the analysis. It rides the render as opaque text, thus
+            // the renderer moves it into a data asset and no part of this path reads a field of it. Absence
+            // gives a page with no provenance asset, and each other part of the render is unchanged.
+            const provenance = await readProvenance(analysisId);
             const rendered = renderReportPage(
                 document,
                 bridged.value,
                 snapshot.citationRecords,
                 used.map((record) => chainOf(record, sessionDir)),
+                provenance,
             );
             if (rendered.isErr()) {
                 return ok({ outcome: "render-problems", problems: rendered.error });
@@ -606,7 +624,8 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             // The page shows the draft that the finish read. The stamp records that draft, thus the eyes
             // copy this hash and the record compares against it. A failed stamp is a transient store fault,
             // and the page stays on disk. The agent runs the preview again to stamp the marker.
-            const stamped = await deps.gateway.stampRendered(threadId, computeDraftHash(draft));
+            const renderedHash = computeDraftHash(draft);
+            const stamped = await deps.gateway.stampRendered(threadId, renderedHash);
             if (stamped.outcome !== "stamped") {
                 const detail = stamped.outcome === "failed" ? stamped.detail : "the session state row is absent";
                 logger.warn("the rendered hash did not stamp", { threadId, analysisId, detail });
@@ -619,6 +638,10 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 type: "data-report-rendered",
                 data: { id: randomUUID(), renderedAt: new Date().toISOString(), title: document.title },
             });
+
+            // The event rides the rendered arm alone, the same as the part above. The hash is the hash of
+            // the draft that the page shows, thus a consumer ties the page to the document that made it.
+            observe({ type: "preview", analysisId, threadId, pagePath: written.value, documentHash: renderedHash });
 
             const access = await mintAccess(deps.makeSessionPages, analysisId, threadId, ctx.session.auth, logger);
             return ok({ outcome: "rendered", pagePath: written.value, ...(access !== undefined ? { access } : {}) });

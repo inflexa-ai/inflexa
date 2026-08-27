@@ -25,6 +25,7 @@ import { deriveChartRender } from "./chart.js";
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
 import { citationKeyOf, derivationChains, ReferenceLedger, type DerivationChain } from "./references.js";
+import { provenanceDataAssets, type ProvenanceExport } from "./provenance-data.js";
 import { encodeTablePayload, tableDataAsset, type TablePayload } from "./table-data.js";
 import type { RenderedPage, RenderProblem, RenderValue, RenderValues } from "./types.js";
 import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable, tableColumns, tableDisplay } from "./views/values.js";
@@ -44,6 +45,12 @@ import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTab
  * byte-identically with the chains and without them. A chain carries the relative source of its staged
  * script and of its derived file as data, thus the entry links both and this module stages nothing.
  *
+ * The provenance is the frozen document of the analysis, and it is optional too. The renderer moves the
+ * opaque text into two data assets that register one page global, and it parses no byte of it. Each
+ * grounded block then stamps its keys, and its marker carries the control that opens the chain. A caller
+ * that passes none renders the page byte for byte without the provenance script, without a stamp, and
+ * without a control.
+ *
  * The renderer writes no file. The data assets ride the result, and the caller stages them beside the page.
  * Thus the render stays pure, and two renders of one document give byte-identical assets.
  *
@@ -55,10 +62,11 @@ export function renderReportPage(
     values: RenderValues,
     records?: CitationRecords,
     derivations?: readonly DerivationChain[],
+    provenance?: ProvenanceExport,
 ): Result<RenderedPage, RenderProblem[]> {
     const problems: RenderProblem[] = [];
     const ledger = new ReferenceLedger();
-    const data: PageData = { payloads: new Map(), mounts: 0 };
+    const data: PageData = { payloads: new Map(), mounts: 0, lineage: provenance !== undefined };
 
     const content: string[] = [];
     for (const [index, section] of document.sections.entries()) {
@@ -68,10 +76,16 @@ export function renderReportPage(
         return err(problems);
     }
 
-    const dataAssets = [...data.payloads.values()].map((entry) => tableDataAsset(entry.ids, entry.payload));
+    const tableAssets = [...data.payloads.values()].map((entry) => tableDataAsset(entry.ids, entry.payload));
+    // The two asset groups stay apart in the skeleton, because the table decoder answers for a table payload
+    // alone. Thus a page that carries the provenance and no table loads no decoder.
+    const provenanceAssets = provenance === undefined ? [] : provenanceDataAssets(provenance);
     const nav = renderNav(document.sections);
     const references = renderReferenceSection(ledger, document.sections.length, records, derivationChains(derivations));
-    return ok({ html: assemblePage(document.title, nav, content.join(""), references, dataAssets, data.mounts > 0), dataAssets });
+    return ok({
+        html: assemblePage(document.title, nav, content.join(""), references, tableAssets, data.mounts > 0, provenanceAssets),
+        dataAssets: [...provenanceAssets, ...tableAssets],
+    });
 }
 
 /**
@@ -86,18 +100,23 @@ interface PayloadRegistration {
 }
 
 /**
- * The page-level collection of one walk: the payload of each bound artifact, and the count of the grid
- * mounts.
+ * The page-level state of one walk: the payload of each bound artifact, the count of the grid mounts, and
+ * the lineage condition of the page.
  *
  * The payloads key on the stable serialization of the binding. Two blocks whose bindings differ in any
  * field resolve different rows, thus they take different payloads.
  *
  * `mounts` counts the table cards. The grid runtime weighs about two megabytes, thus a page that builds no
  * grid references neither the runtime nor its boot.
+ *
+ * `lineage` states that the page carries a provenance document. Each grounded block then stamps its keys
+ * and shows its control, and a page with no document carries neither. The value is constant across the
+ * whole walk, thus each block of one page decides it alike.
  */
 interface PageData {
     readonly payloads: Map<string, PayloadRegistration>;
     mounts: number;
+    readonly lineage: boolean;
 }
 
 /**
@@ -134,9 +153,9 @@ function renderBlock(
         case "text":
             return renderText(block);
         case "claim":
-            return renderClaim(block, ledger);
+            return renderClaim(block, ledger, data.lineage);
         case "citation":
-            return renderCitation(block, ledger, citationRecordOf(records, citationKeyOf(block.binding)));
+            return renderCitation(block, ledger, citationRecordOf(records, citationKeyOf(block.binding)), data.lineage);
         case "metric": {
             const entry = values[block.id];
             if (entry === undefined) {
@@ -147,7 +166,7 @@ function renderBlock(
                 problems.push(wrongShape(block.id, entry.type, "scalar"));
                 return "";
             }
-            return renderMetric(block, ledger, entry);
+            return renderMetric(block, ledger, entry, data.lineage);
         }
         case "table": {
             const entry = values[block.id];
@@ -165,7 +184,7 @@ function renderBlock(
             const columns = tableColumns(entry);
             data.mounts += 1;
             registerPayload(data, block.binding, block.id, () => payloadOf(block.binding, entry, columns));
-            return renderTable(block, ledger, entry.rows.length, entry.total);
+            return renderTable(block, ledger, entry.rows.length, entry.total, data.lineage);
         }
         case "figure": {
             const entry = values[block.id];
@@ -177,7 +196,7 @@ function renderBlock(
                 problems.push(wrongShape(block.id, entry.type, "figure"));
                 return "";
             }
-            return renderFigure(block, ledger, entry);
+            return renderFigure(block, ledger, entry, data.lineage);
         }
         case "chart": {
             const entry = values[block.id];
@@ -202,7 +221,7 @@ function renderBlock(
             if (derived.value.readsPayload) {
                 registerPayload(data, block.binding, block.id, () => payloadOf(block.binding, entry, columns));
             }
-            return renderChart(block, ledger, derived.value.option);
+            return renderChart(block, ledger, derived.value.option, data.lineage);
         }
         case "section":
             return renderSection(block, depth, renderChildren(block.blocks, values, ledger, records, data, depth + 1, problems));

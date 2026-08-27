@@ -19,7 +19,7 @@
 
 import { raw } from "hono/html";
 
-import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, GRID_ASSET_HEAD, GRID_BOOTSTRAP, SECTION_SPY, TABLE_DATA_DECODER } from "../page.js";
+import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, GRID_ASSET_HEAD, GRID_BOOTSTRAP, LINEAGE_POPOVER, SECTION_SPY, TABLE_DATA_DECODER } from "../page.js";
 import { stagedSource } from "../assets.js";
 import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
 import type { DataAsset } from "../table-data.js";
@@ -100,10 +100,26 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
  * of them. Thus every payload is registered before any reader looks. A page with no asset carries no tag
  * and no decoder.
  *
+ * The provenance assets lead the group, and they stand before each bootstrap. Thus a reader of the global
+ * finds the document whichever script asks for it first. A page with no provenance carries no such tag, and
+ * the rest of the skeleton is what it was.
+ *
+ * The provenance also gates the lineage popover. That script reads the global when a reader clicks a
+ * control, thus its place in the order is free and it stands last. A page with no provenance carries no
+ * stamp and no control, thus the script would find nothing to open.
+ *
  * `grids` states that the content holds a grid mount. The grid runtime weighs about two megabytes, thus a
  * page whose only payload feeds a chart references neither the runtime nor the grid boot.
  */
-export function assemblePage(title: string, nav: string, content: string, references: string, dataAssets: readonly DataAsset[], grids: boolean): string {
+export function assemblePage(
+    title: string,
+    nav: string,
+    content: string,
+    references: string,
+    dataAssets: readonly DataAsset[],
+    grids: boolean,
+    provenanceAssets: readonly DataAsset[],
+): string {
     return (
         "<!doctype html>" +
         String(
@@ -138,6 +154,9 @@ export function assemblePage(title: string, nav: string, content: string, refere
                             </div>
                         </div>
                     </footer>
+                    {provenanceAssets.map((asset) => (
+                        <script src={stagedSource(asset.name)}></script>
+                    ))}
                     {dataAssets.map((asset) => (
                         <script src={stagedSource(asset.name)}></script>
                     ))}
@@ -147,6 +166,7 @@ export function assemblePage(title: string, nav: string, content: string, refere
                     {grids ? <script>{raw(GRID_BOOTSTRAP)}</script> : null}
                     <script>{raw(CHART_BOOTSTRAP)}</script>
                     <script>{raw(SECTION_SPY)}</script>
+                    {provenanceAssets.length > 0 ? <script>{raw(LINEAGE_POPOVER)}</script> : null}
                 </body>
             </html>,
         )

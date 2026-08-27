@@ -50,6 +50,7 @@ import type { RecordVersionError, ReportVersionStore } from "../../state/report-
 import { reportSessionDerivedDir, resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
+import { bindReportObservation, type EmitReportObservation } from "../report-observation.js";
 
 /** The empty input. The tool records the current draft of the thread, thus it needs no field. */
 const recordVersionInput = z.object({});
@@ -95,6 +96,8 @@ export interface RecordVersionToolDeps {
     readonly threads: Pick<ThreadStore, "getThread">;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
+    /** The report observation seam; an unbound seam emits nothing and the record runs the same. */
+    readonly emitReportObservation?: EmitReportObservation;
     readonly logger?: Logger;
 }
 
@@ -186,6 +189,7 @@ async function pruneUnusedDerivations(args: {
  */
 export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<RecordVersionInput, RecordVersionResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("record-report-version");
+    const observe = bindReportObservation(deps.emitReportObservation, logger);
 
     return defineTool({
         id: "record_report_version",
@@ -273,9 +277,11 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
                 parentSeq: thread.value.parentSeq,
             });
             if (recorded.isOk()) {
-                // The version stands from here. The prune reclaims the bytes of each derivation that the
-                // recorded document ignores, and it decides nothing about the outcome. It runs on each
-                // record, thus an output that an amend unbound goes at the next record.
+                // The version stands from here, thus the event states a version that a reader can open.
+                observe({ type: "record-version", analysisId, threadId, versionId: recorded.value.versionId, replaced: recorded.value.outcome === "replaced" });
+                // The prune reclaims the bytes of each derivation that the recorded document ignores, and it
+                // decides nothing about the outcome. It runs on each record, thus an output that an amend
+                // unbound goes at the next record.
                 await pruneUnusedDerivations({
                     resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
                     analysisId,

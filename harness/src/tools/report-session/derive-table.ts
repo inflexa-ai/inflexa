@@ -51,6 +51,7 @@ import type { DerivationRecord, DerivationSource, ReportSessionStateStore } from
 import { isSafeId, reportSessionDerivedDir, toSandboxPath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
+import { bindReportObservation, type EmitReportObservation } from "../report-observation.js";
 import { readHeaderColumns } from "./list-artifacts.js";
 
 /** The input of one derivation: the script, the declared pinned inputs, and the name of the output file. */
@@ -98,6 +99,8 @@ export interface DeriveTableToolDeps {
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     readonly runDerivation?: DeriveTableRunner;
     readonly runAuthorizer?: RunAuthorizer;
+    /** The report observation seam; an unbound seam emits nothing and the derivation runs the same. */
+    readonly emitReportObservation?: EmitReportObservation;
     readonly logger?: Logger;
 }
 
@@ -226,6 +229,7 @@ export type DeriveTableRunner = (input: DeriveTableExecInput) => Promise<ExecRes
  */
 export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTableInput, DeriveTableResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("derive-table");
+    const observe = bindReportObservation(deps.emitReportObservation, logger);
     const { runDerivation, runAuthorizer } = deps;
 
     return defineTool({
@@ -357,6 +361,19 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
                     outputName: input.output,
                     logger,
                 });
+                // The record of the derivation lands before this point, thus the event states a table that
+                // the session already holds as evidence. Each other arm derived nothing.
+                if (result.outcome === "derived") {
+                    observe({
+                        type: "run-derivation",
+                        analysisId,
+                        threadId,
+                        outputPath: result.path,
+                        outputHash: result.hash,
+                        scriptHash: result.scriptHash,
+                        sources: result.sources,
+                    });
+                }
                 return ok(result);
             } finally {
                 // A revoke fault changes no outcome of the call, thus it reaches the log alone. An absent

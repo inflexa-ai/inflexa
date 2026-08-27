@@ -13,6 +13,7 @@ import { raw } from "hono/html";
 
 import type { ClaimBlock, SectionBlock, TextBlock, TextList } from "../../contracts/report-blocks.js";
 import type { ReferenceLedger } from "../references.js";
+import { lineagePlace, lineageStamp } from "./lineage.js";
 import { Marker } from "./references-view.js";
 
 /** The paragraph class of a text block and a claim block. The paragraph fills the content column. */
@@ -74,24 +75,30 @@ export function renderText(block: TextBlock): string {
  * paragraph, thus they sit at the end of the claim text. The ledger marks each binding, thus a shared
  * reference keeps one number across the page. An artifact binding and a citation binding read the same
  * bracket, because one ladder counts them both.
+ *
+ * `lineage` states that the page carries a provenance document. The claim renders as paragraphs and it has
+ * no container of its own, thus one wrapper takes the stamp of the whole block. The wrapper carries no
+ * class, thus it adds no rule to the design sheet and each paragraph keeps its own spacing. A page with no
+ * document renders the paragraphs alone.
  */
-export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger): string {
-    const markers = block.bindings.map((reference) => <Marker n={ledger.mark(reference)} />);
+export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger, lineage = false): string {
+    const markers = block.bindings.map((reference, index) => <Marker n={ledger.mark(reference)} lineage={lineagePlace(lineage, reference, index)} />);
     const paragraphs = splitParagraphs(block.content.prose);
-    if (paragraphs.length === 0) {
-        return String(<p class={PARAGRAPH_CLASS}>{markers}</p>);
-    }
     const last = paragraphs.length - 1;
-    return String(
-        <>
-            {paragraphs.map((paragraph, index) => (
-                <p class={PARAGRAPH_CLASS}>
-                    {paragraph}
-                    {index === last ? markers : null}
-                </p>
-            ))}
-        </>,
-    );
+    const body =
+        paragraphs.length === 0 ? (
+            <p class={PARAGRAPH_CLASS}>{markers}</p>
+        ) : (
+            <>
+                {paragraphs.map((paragraph, index) => (
+                    <p class={PARAGRAPH_CLASS}>
+                        {paragraph}
+                        {index === last ? markers : null}
+                    </p>
+                ))}
+            </>
+        );
+    return String(lineage ? <div {...lineageStamp(lineage, block.id, block.bindings)}>{body}</div> : body);
 }
 
 /** The heading class of a section, by heading level. A heading uses the sans family, never the mono family. */

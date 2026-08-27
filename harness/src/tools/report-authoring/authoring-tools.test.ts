@@ -12,10 +12,14 @@ import type { Scope } from "../../auth/types.js";
 import { normalizeDetail } from "../../loop/tool-detail.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
+import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
+import type { ReportObservationEvent } from "../report-observation.js";
 import {
     createReportAuthoringTools,
+    type ReportAuthoringTools,
+    type ReportAuthoringToolDeps,
     type ReportSessionState,
     type ReportSessionStateGateway,
     type SessionStateLoad,
@@ -857,5 +861,109 @@ describe("the call detail", () => {
         expect(detailOf(tools.remove_block, { targetId: "b1" })).toBe("remove b1");
         expect(detailOf(tools.read_block, { targetId: "b1" })).toBe("read b1");
         expect(detailOf(tools.set_title, { title: "Report" })).toBe("title the report Report");
+    });
+});
+
+describe("the report observation", () => {
+    /** A draft with two atoms under one section, thus a change, a move, and a remove each have a target. */
+    function seededDraft(): DraftDocument {
+        return {
+            title: "",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [
+                        { kind: "text", id: "t1", content: { prose: "a" } },
+                        { kind: "text", id: "t2", content: { prose: "b" } },
+                    ],
+                },
+            ],
+        };
+    }
+
+    /** The tools over one seeded thread, with the gateway that holds the draft. */
+    function seeded(deps?: ReportAuthoringToolDeps): { tools: ReportAuthoringTools; gateway: FakeGateway } {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: seededDraft(), snapshot });
+        return { tools: deps === undefined ? createReportAuthoringTools(gateway) : createReportAuthoringTools(gateway, deps), gateway };
+    }
+
+    it("gives one event for each landed block operation, with the block id and the two identifiers", async () => {
+        const events: ReportObservationEvent[] = [];
+        const { tools } = seeded({ emitReportObservation: (event) => events.push(event) });
+        const ctx = ctxForThread("t1");
+
+        (await tools.add_block.execute({ block: { kind: "text", id: "t3", content: { prose: "c" } }, parentId: "s1" }, ctx))._unsafeUnwrap();
+        (await tools.change_block.execute({ targetId: "t1", block: { kind: "text", id: "t1", content: { prose: "z" } } }, ctx))._unsafeUnwrap();
+        (await tools.move_block.execute({ targetId: "t1", after: "t2" }, ctx))._unsafeUnwrap();
+        (await tools.remove_block.execute({ targetId: "t1" }, ctx))._unsafeUnwrap();
+
+        // The event names the block that the call changed, thus a consumer places each act with no read of
+        // the draft.
+        expect(events).toEqual([
+            { type: "add-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "t3" },
+            { type: "change-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "t1" },
+            { type: "move-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "t1" },
+            { type: "remove-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "t1" },
+        ]);
+    });
+
+    it("targets the document with the title event, and that event names no block", async () => {
+        const events: ReportObservationEvent[] = [];
+        const { tools } = seeded({ emitReportObservation: (event) => events.push(event) });
+
+        (await tools.set_title.execute({ title: "Differential expression" }, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(events).toEqual([{ type: "set-title", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", title: "Differential expression" }]);
+        // The title sits on the document, thus the event carries no block id at all.
+        expect(events[0]).not.toHaveProperty("blockId");
+    });
+
+    it("emits nothing for a refused operation and nothing for a failed persist", async () => {
+        const events: ReportObservationEvent[] = [];
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: seededDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway, { emitReportObservation: (event) => events.push(event) });
+        const ctx = ctxForThread("t1");
+
+        const refused = (await tools.remove_block.execute({ targetId: "no-such-block" }, ctx))._unsafeUnwrap();
+        expect(refused.applied).toBe(false);
+
+        // The core lands the title, and the persist then fails. Thus the row keeps the old draft.
+        gateway.setPersistFault(true);
+        const failed = (await tools.set_title.execute({ title: "Report" }, ctx))._unsafeUnwrap();
+        expect(failed.applied).toBe(false);
+
+        expect(events).toEqual([]);
+    });
+
+    it("lands the mutation the same way when the composition binds no seam", async () => {
+        const { tools, gateway } = seeded();
+
+        const value = (await tools.set_title.execute({ title: "Report" }, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(value.applied).toBe(true);
+        expect(gateway.peek("t1")!.document.title).toBe("Report");
+    });
+
+    it("logs a throw of the seam, and the mutation still lands", async () => {
+        const logger = createCapturingLogger();
+        const { tools, gateway } = seeded({
+            emitReportObservation: () => {
+                throw new Error("the recorder is down");
+            },
+            logger,
+        });
+
+        const value = (await tools.set_title.execute({ title: "Report" }, ctxForThread("t1")))._unsafeUnwrap();
+
+        // The act landed before the emit, thus a defect of the host costs the event alone.
+        expect(value.applied).toBe(true);
+        expect(gateway.peek("t1")!.document.title).toBe("Report");
+        const record = logger.records.find((held) => held.msg.includes("the report observation seam threw"));
+        expect(record?.level).toBe("error");
+        expect(record?.fields).toMatchObject({ analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", event: "set-title", err: "the recorder is down" });
     });
 });

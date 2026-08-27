@@ -382,6 +382,77 @@ img {
   text-decoration: underline;
 }
 
+/* ── Lineage control and popover ──────────────────────── */
+/* The control sits beside the bracket marker. It reads as a quiet disclosure and never as a second marker,
+   thus it takes the muted color until a hover. The button carries no browser chrome, because a chrome box
+   inside a line of prose would break the line. */
+.report-lineage {
+  margin-left: 2px;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--color-text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.report-lineage:hover {
+  color: var(--color-primary-500);
+}
+/* The panel floats over the page. A data card clips its own overflow, thus the page script places the panel
+   against the document and no card cuts it. The measure holds a path and its hash head on one line. */
+.report-lineage-popover {
+  position: absolute;
+  z-index: 50;
+  max-width: 32rem;
+  padding: 12px 16px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 12px -4px rgba(15, 23, 42, 0.12);
+  animation: report-lineage-open 0.12s ease-out;
+}
+.report-lineage-title {
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+/* The hops read in walk order, thus the list numbers them. The type matches the appendix, because a hop and
+   an appendix entry answer the same question about one reference. */
+.report-lineage-hops {
+  margin: 0;
+  padding-left: 24px;
+  list-style: decimal;
+  color: var(--color-text-muted);
+}
+.report-lineage-hop {
+  margin-bottom: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+/* The note states an absence or a truncation. A reader must read the chain against what it does not hold,
+   thus the note sits under the hops and never beside one. */
+.report-lineage-note {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+@keyframes report-lineage-open {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ── Corner-accent card ───────────────────────────────── */
 /* The data cards keep square corners. The L-shaped accents grow on hover. */
 .corner-accents {
@@ -793,11 +864,21 @@ a.report-citation-source:hover {
     opacity: 1;
     transform: none;
   }
+  /* The panel stands at once, thus the open costs no motion. */
+  .report-lineage-popover {
+    animation: none;
+  }
 }
 
 /* ── Print ────────────────────────────────────────────── */
 @media print {
   .report-nav {
+    display: none;
+  }
+  /* The control opens a panel, and paper opens nothing. The appendix carries the same references, thus the
+     printed page loses no evidence. */
+  .report-lineage,
+  .report-lineage-popover {
     display: none;
   }
   /* The printer gives the page margin. Thus the screen padding of the container drops out. */

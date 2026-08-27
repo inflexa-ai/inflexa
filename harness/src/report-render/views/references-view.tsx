@@ -15,17 +15,23 @@ import type { PropsWithChildren } from "hono/jsx";
 import { citationRecordOf, type CitationRecords } from "../../report-model/reference-resolver.js";
 import type { ArtifactValueReference, CitationReference, Reference } from "../../contracts/report-reference.js";
 import { citationKeyOf, type ArtifactReference, type DerivationChain, type DerivationChains, type ReferenceLedger } from "../references.js";
+import { LineageControl } from "./lineage.js";
 
 /**
  * One evidence marker as a bracket number that links to its appendix entry.
  *
  * A bracket reads as a reference inside prose, and it stays a span beside the words. One notation serves
  * every kind, thus one list answers every marker.
+ *
+ * Every grounded kind renders its marker here. Thus the lineage control has one emission point, and a
+ * marker that names no place carries no control. The page shows the control only where a stamp gives the
+ * script a key to walk.
  */
-export function Marker({ n }: { n: number }) {
+export function Marker({ n, lineage }: { n: number; lineage?: number }) {
     return (
         <span class="report-marker">
             <a href={`#ref-${n}`}>{`[${n}]`}</a>
+            {lineage !== undefined ? <LineageControl place={lineage} /> : null}
         </span>
     );
 }
@@ -56,8 +62,11 @@ function HashCode({ children }: PropsWithChildren) {
  * A content hash is 64 hex characters, and a line that carries three whole ones reads as noise. The head
  * identifies the bytes, and it matches the count that a staged file name carries. Thus a reader compares the
  * two by sight.
+ *
+ * The appendix line and the hop of the lineage popover both cut a hash to this count. Thus one hash reads
+ * the same in the two places.
  */
-const CHAIN_HASH_CHARS = 12;
+export const CHAIN_HASH_CHARS = 12;
 
 /** The head of one content hash: the hex after the algorithm name, cut to the shown length. */
 function hashHead(hash: string): string {
