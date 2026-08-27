@@ -178,6 +178,47 @@ acceptance touch GHCR and cannot run before a dispatch.
 A fourth fault in one of these is possible. Each is small and
 file-local, and none has the wholesale shape of the three walls above.
 
+## The acceptance mountpoint — the class member the sweep missed
+
+The acceptance stage failed on the exact class of run B: runc cannot
+make the `/mnt/libs/farm` mountpoint inside the read-only store mount.
+The nested bind lives in `scripts/package-store-validate/run.sh`, and my
+sweep after run B read the workflow files only, not the scripts they
+call. The validator cannot take the load-check sidestep, because the
+sandbox image bakes `R_LIBS_SITE=/mnt/libs/farm/...` — the fixed path IS
+the contract the acceptance proves. The fix is host-side. The script
+makes the `farm/` entry in its own store COPY before the mount, and crun
+treats that as a no-op. The packed artifact stays pure. The acceptance
+is non-gating by design, thus `latest` already advanced, and the manual
+`workflow_dispatch` of `package-store-acceptance.yml` proves the fix in
+minutes without a rebuild. One class member stays open: a docker-engine
+host of the CLI meets the same refusal at sandbox creation. That mount
+shape is a design decision to settle, not a patch.
+
+## The push transient, and the hardening to adopt
+
+Run 33072275743 failed once more before its store jobs: both arch image
+pushes died on `unknown blob` from GHCR, seconds apart. The images built
+whole. The load-check change invalidated the shared script layer. Both
+jobs pushed fresh identical-digest layers at the same moment, and the
+registry raced the two uploads. A rerun of the failed jobs closed
+the window, because the landed layers answer `Layer already exists`.
+
+The practice of experienced teams against this class, to adopt when the
+pipeline stabilizes:
+
+- A three-try backoff loop around each `docker push`, for the transient
+  classes only (5xx, timeouts, `unknown blob`). The build tooling ships
+  no push retry of its own.
+- Bounded push concurrency: sequential pushes per client remove the
+  GHCR race, and `--max-concurrent-uploads` bounds the blob parallelism.
+- Push by digest per arch, and merge the manifest in one job. The
+  separate manifest job exists already, thus the shape is half in place.
+- A rerun of failed jobs as the normal operational answer: the layers
+  are content-addressed, thus a rerun is idempotent and cheap.
+- Count these failures as environmental. Escalate to the provider on a
+  climbing rate, and do not chase a single occurrence.
+
 ## The next run — the watch points
 
 - Minute ~2 of each store job: the canary line, `code=200` with the
