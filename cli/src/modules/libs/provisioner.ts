@@ -33,8 +33,12 @@ export const LIB_MOUNT = "/mnt/libs";
  * The GitHub hosts and `git.bioconductor.org` belong to the catalog build
  * alone — the `github` and `git` tracks are catalog-only, thus an acquisition
  * never reaches them.
+ *
+ * p3m.dev is the pinned snapshot host that the R resolve of the image reads,
+ * and rspm-sync.rstudio.com is the redirect target of its binary GET on a
+ * cache miss. Without the pair, an R acquisition blocks at the wall.
  */
-export const ACQUIRE_EGRESS_ALLOW = "pypi.org,files.pythonhosted.org,packagemanager.posit.co,cran.r-project.org,bioconductor.org";
+export const ACQUIRE_EGRESS_ALLOW = "pypi.org,files.pythonhosted.org,packagemanager.posit.co,p3m.dev,rspm-sync.rstudio.com,cran.r-project.org,bioconductor.org";
 
 /**
  * The message the provisioner prints when a second run finds the store lock
