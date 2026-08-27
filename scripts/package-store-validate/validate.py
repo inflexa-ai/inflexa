@@ -32,6 +32,7 @@ import platform
 import re
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 import sys
 from pathlib import Path
 
@@ -324,12 +325,18 @@ def check_conda(names: list[str]) -> list[str]:
     return failed
 
 
+# One R session cannot hold the whole catalog. A session accumulates the DLL
+# of every loaded namespace and of every dependency, and R caps the loaded
+# DLLs at 614 by default. Past the cap the loads fail, and a direct load can
+# abort the session. The names split into small sessions, and a real sandbox
+# loads a few namespaces per analysis, thus the small session is also the
+# faithful shape.
+R_IMPORT_BATCH = 48
+
+
 def check_r(names: list[str]) -> list[str]:
     if not names:
         return []
-    fpath = Path("/tmp/r_import_failures.txt")
-    if fpath.exists():
-        fpath.unlink()  # clear any stale file from a prior run before this loop appends
     # Load each advertised package with loadNamespace, and not with library. The
     # invariant is that each advertised package loads. loadNamespace loads the
     # namespace and the compiled code. Thus it catches a real load failure, for
@@ -342,33 +349,48 @@ def check_r(names: list[str]) -> list[str]:
     # package on its own. It is the R form of the Python importlib.import_module check
     # above.
     #
-    # Append each failure to the file inside the loop, and not one time at the end. A
-    # native crash does not go through tryCatch, and it loses each package after it. A
-    # segfault, an out-of-memory error, or an R abort is such a crash. The incremental
-    # append keeps the failures seen so far. The Rscript exit status is the separate
-    # and authoritative signal for a clean run.
+    # Append each failure to the batch file inside the loop, and not one time at
+    # the end. A native crash does not go through tryCatch, and it loses each
+    # package after it. The incremental append keeps the failures seen so far,
+    # and the Rscript exit status stays the authoritative signal of the batch.
     script = (
         "args <- commandArgs(trailingOnly=TRUE);"
-        "ff <- '/tmp/r_import_failures.txt';"
+        "ff <- args[[1]]; pkgs <- args[-1];"
         "bad <- character(0);"
-        "for (p in args) {"
+        "for (p in pkgs) {"
         "  ok <- tryCatch({ suppressMessages(loadNamespace(p)); TRUE },"
         "                 error=function(e){ cat(sprintf('  FAIL R %s: %s\\n', p, conditionMessage(e))); FALSE });"
         "  if (!isTRUE(ok)) { bad <- c(bad, p); cat(paste0(p, '\\n'), file=ff, append=TRUE) }"
         "};"
-        "cat(sprintf('import-all R: %d/%d OK\\n', length(args)-length(bad), length(args)))"
+        "cat(sprintf('import R batch: %d/%d OK\\n', length(pkgs)-length(bad), length(pkgs)))"
     )
-    r = subprocess.run(["Rscript", "--vanilla", "-e", script, *names], text=True)
-    failed: list[str] = []
-    if fpath.exists():
-        failed = [l.strip() for l in fpath.read_text().splitlines() if l.strip()]
-        fpath.unlink()
-    # A non-zero Rscript exit is a FAILURE regardless of the failure file — tryCatch cannot
-    # catch a segfault, so a crash can produce a clean-looking (or empty) file. Surface a
-    # synthetic marker so the R track fails loud and acceptance blocks promotion. Mirrors
-    # check_node/check_conda, which already gate on subprocess return codes.
-    if r.returncode != 0 and not failed:
-        failed.append(f"<Rscript crashed: exit {r.returncode}>")
+    # The dependency closure of one batch can pass the default DLL cap on its
+    # own — the belt to the batching's braces. 1000 is the maximum R takes.
+    env = dict(os.environ, R_MAX_NUM_DLLS="1000")
+    batches = list(enumerate(names[i:i + R_IMPORT_BATCH] for i in range(0, len(names), R_IMPORT_BATCH)))
+
+    def run_batch(entry: tuple[int, list[str]]) -> list[str]:
+        idx, batch = entry
+        fpath = Path(f"/tmp/r_import_failures.{idx}.txt")
+        fpath.unlink(missing_ok=True)
+        r = subprocess.run(["Rscript", "--vanilla", "-e", script, str(fpath), *batch], text=True, env=env)
+        failed: list[str] = []
+        if fpath.exists():
+            failed = [l.strip() for l in fpath.read_text().splitlines() if l.strip()]
+            fpath.unlink()
+        # tryCatch cannot catch a segfault, thus a crash can leave a clean file.
+        # The marker keeps the R track loud, and it names the batch, because the
+        # names past the crash point were never tested.
+        if r.returncode != 0:
+            failed.append(f"<Rscript crashed on batch {idx}: exit {r.returncode}>")
+        return failed
+
+    # The sessions are independent processes, thus they run beside each other,
+    # and each batch owns its failure file — no shared-file interleaving.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        per_batch = list(pool.map(run_batch, batches))
+    failed = [name for batch in per_batch for name in batch]
+    print(f"import-all R: {len(names) - len(failed)}/{len(names)} OK")
     return failed
 
 
