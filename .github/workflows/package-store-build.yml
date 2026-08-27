@@ -94,10 +94,11 @@ jobs:
             best_effort: true
     runs-on: ${{ fromJSON(matrix.runner) }}
     continue-on-error: ${{ matrix.best_effort }}
-    # PROVISIONAL backstop, equal to the 6-hour default, made explicit. A cold
-    # build whose binary route degrades to source can spend four hours in the
-    # download phase alone. Thus the budget must hold that phase plus the
-    # compile.
+    # PROVISIONAL backstop, equal to the 6-hour default, made explicit. The
+    # spike run finished in 85 minutes with a warm route. The budget holds a
+    # cold cache, a partial source fall-back, and the compile behind it. The
+    # canary step reports a blocked route in minutes, thus a run that comes
+    # near this budget is slow work, not a dead route.
     timeout-minutes: 360
     env:
       PLATFORM: ${{ matrix.platform }}
@@ -117,7 +118,10 @@ jobs:
       # alias that the base image writes into the R `repos` option — the pak
       # downloads of the github stage read that option, thus the alias must
       # resolve and pin beside packagemanager.posit.co.
-      EGRESS_ALLOW: "pypi.org,files.pythonhosted.org,packagemanager.posit.co,p3m.dev,cran.r-project.org,bioconductor.org,github.com,api.github.com,codeload.github.com,objects.githubusercontent.com,raw.githubusercontent.com,git.bioconductor.org"
+      # rspm-sync.rstudio.com is the redirect target of a p3m.dev binary GET
+      # on a cache miss. The first live run blocked it, and every cold CRAN
+      # download hung. The canary proves the pair on every run.
+      EGRESS_ALLOW: "pypi.org,files.pythonhosted.org,packagemanager.posit.co,p3m.dev,rspm-sync.rstudio.com,cran.r-project.org,bioconductor.org,github.com,api.github.com,codeload.github.com,objects.githubusercontent.com,raw.githubusercontent.com,git.bioconductor.org"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -192,71 +196,56 @@ jobs:
             -t "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" \
             .
 
-      # TEMPORARY, remove before merge: the binary-route probe of the first
-      # live runs. The pak phase reported a failed binary download for every CRAN
-      # package on both arches, while the metadata reads of the same host
-      # worked. The probe separates the candidate causes ON THE BUILDER: it
-      # replicates the egress firewall of provisioner-entrypoint.sh, then it
-      # fetches one pinned-snapshot binary whole. A 404 names the snapshot. A
-      # stall or a reset names the network path. A clean fetch clears the
-      # transport, and the cause is then in pak. The probe is non-fatal by
-      # design: if the route is broken, the build after the probe fails the
-      # same way, and the probe output is the diagnosis.
-      - name: Probe the P3M binary route (inside the egress firewall)
+      # The fast gate before the multi-hour build. The step applies the same
+      # allowlist function that the entrypoint runs, then it proves the two
+      # sides of the allowlist. The first live run spent four hours before
+      # the fault was visible. This step shows the same fault class in two
+      # minutes, thus the step is fatal.
+      - name: Prove the egress allowlist (canary)
         run: |
-          # The default step shell is `bash -e {0}`, thus `-e` stays active.
-          # The `|| SNAPSHOT=""` guard keeps the snapshot read non-fatal.
-          set -uo pipefail
-          SNAPSHOT=$(docker run --rm --entrypoint Rscript "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" -e 'cat(getOption("repos")[[1]])') || SNAPSHOT=""
+          set -euo pipefail
+          SNAPSHOT=$(docker run --rm --entrypoint Rscript "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" -e 'cat(getOption("repos")[[1]])')
           echo "pinned snapshot: ${SNAPSHOT}"
           case "$ARCH" in
             amd64) UA="R (4.6.0 x86_64-pc-linux-gnu x86_64 linux-gnu)" ;;
             *)     UA="R (4.6.0 aarch64-unknown-linux-gnu aarch64 linux-gnu)" ;;
           esac
-          # The heredoc keeps the inner quoting plain. The script mounts
-          # read-only, and the firewall block is the block of the entrypoint.
-          cat > probe.sh <<'EOS'
-          set -u
-          iptables -A OUTPUT -o lo -j ACCEPT
-          iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-          iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-          iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-          for host in $(printf '%s' "$INFLEXA_EGRESS_ALLOW" | tr ',' ' '); do
-            for ip in $(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u); do
-              iptables -A OUTPUT -d "$ip" -p tcp --dport 443 -j ACCEPT
-              iptables -A OUTPUT -d "$ip" -p tcp --dport 80 -j ACCEPT
-              printf '%s %s\n' "$ip" "$host" >> /etc/hosts
-            done
-          done
-          iptables -P OUTPUT DROP
-          if [ -f /proc/net/if_inet6 ]; then
-            # The entrypoint drops v6 too. Without this drop, a v6 route can
-            # give the probe a clean fetch that the real build does not get.
-            ip6tables -A OUTPUT -o lo -j ACCEPT
-            ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-            ip6tables -P OUTPUT DROP
-          fi
-          echo "== pinned p3m addresses:"
-          grep p3m /etc/hosts || echo "(none pinned)"
+          # The heredoc keeps the inner quoting plain. The script holds the
+          # checks only. The rules come from the sourced library of the
+          # image, thus the canary cannot drift from the build.
+          cat > canary.sh <<'EOS'
+          set -eu
+          . /usr/local/bin/egress-allowlist.sh
+          apply_egress_allowlist
           # digest 0.6.39 is a resolved entry of the pinned snapshot, thus the
           # version is stable for this base digest.
           URL="${SNAPSHOT}/src/contrib/digest_0.6.39.tar.gz"
-          echo "== HEAD ${URL}"
-          # Two commands, so that the exit code is the code of curl, not the
-          # code of grep at the end of a pipe.
-          curl -sI -m 30 -A "$UA" -o /tmp/probe.head "$URL" || echo "HEAD failed (exit $?)"
-          grep -i '^HTTP/\|binary-tag\|content-length' /tmp/probe.head 2>/dev/null || echo "(no matched header)"
-          echo "== full GET"
-          curl -s -m 120 -A "$UA" -o /tmp/probe.tar.gz -w 'bytes=%{size_download} seconds=%{time_total} code=%{http_code}\n' "$URL" || echo "GET failed (exit $?)"
-          true
+          echo "== the open side: one pinned-snapshot binary, whole"
+          # -L follows the cache-miss redirect to rspm-sync.rstudio.com, and
+          # the final URL prints, thus a moved redirect target names itself
+          # here instead of a blocked build.
+          curl -sSfL -m 60 -A "$UA" -o /tmp/canary.tar.gz \
+            -w 'bytes=%{size_download} seconds=%{time_total} code=%{http_code} final=%{url_effective}\n' "$URL"
+          size=$(stat -c%s /tmp/canary.tar.gz)
+          if [ "$size" -le 100000 ]; then
+            echo "canary artifact too small: ${size} bytes"
+            exit 1
+          fi
+          echo "== the closed side: a host off the list must refuse fast"
+          if curl -sS -m 10 -o /dev/null "https://example.com" 2>/tmp/canary.err; then
+            echo "example.com went through: the allowlist is open"
+            exit 1
+          fi
+          cat /tmp/canary.err
+          echo "canary green"
           EOS
           docker run --rm --cap-add NET_ADMIN \
             -e "INFLEXA_EGRESS_ALLOW=${EGRESS_ALLOW}" \
             -e "SNAPSHOT=${SNAPSHOT}" -e "UA=${UA}" \
-            -v "${GITHUB_WORKSPACE}/probe.sh:/probe.sh:ro" \
-            --entrypoint bash \
-            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" /probe.sh || echo "probe container failed (exit $?)"
-          rm -f probe.sh
+            -v "${GITHUB_WORKSPACE}/canary.sh:/canary.sh:ro" \
+            --entrypoint sh \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" /canary.sh
+          rm -f canary.sh
 
       - name: Build the catalog farm (provision build)
         # NETWORK on an allowlist (the provisioner resolves + compiles). The

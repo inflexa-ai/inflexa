@@ -44,15 +44,17 @@ RUN declared="$(grep -E '^base_image:' /tmp/package-store-manifest.yaml \
 # python3-yaml is the system-python YAML the manifest parse reads.
 # python3-packaging is the reference reader of a PEP 508 marker, which
 # emit_deps.py uses. Both are named here, thus neither can arrive as a
-# transitive package that a later change removes. iptables backs the egress
-# allowlist of the entrypoint.
+# transitive package that a later change removes. nftables and dnsmasq-base
+# back the egress allowlist of the entrypoint: dnsmasq feeds each DNS answer
+# into the nft set that the rules match. iptables stays for the tools that
+# expect it.
 # The jags/libuv/libprotobuf/libglpk runtime .so set mirrors sandbox-base so R
 # packages that dlopen them at library() time load in the provisioner too. pak
 # cannot apt-get a system requirement under the egress allowlist, thus the dev
 # headers of the compiled R packages bake here: glpk for igraph, gmp and mpfr
 # for symengine and gmp, GL and GLU for rgl, protobuf for otelsdk.
 COPY images/install-build-toolchain.sh /tmp/install-build-toolchain.sh
-RUN bash /tmp/install-build-toolchain.sh python3-yaml python3-packaging iptables jags libuv1t64 libprotobuf32t64 libglpk40 \
+RUN bash /tmp/install-build-toolchain.sh python3-yaml python3-packaging iptables nftables dnsmasq-base jags libuv1t64 libprotobuf32t64 libglpk40 \
       libglpk-dev libgmp-dev libmpfr-dev libgl1-mesa-dev libglu1-mesa-dev libprotobuf-dev protobuf-compiler
 
 # Pinned to sandbox-base's uv so resolution and wheel selection are identical to
@@ -78,6 +80,7 @@ COPY images/sandbox-provisioner/provision.py /usr/local/bin/provision
 COPY images/sandbox-provisioner/emit_deps.py /usr/local/bin/emit_deps.py
 COPY images/sandbox-provisioner/base-packages.json /usr/local/bin/base-packages.json
 COPY images/sandbox-provisioner/provisioner-entrypoint.sh /usr/local/bin/provisioner-entrypoint.sh
+COPY images/sandbox-provisioner/egress-allowlist.sh /usr/local/bin/egress-allowlist.sh
 RUN chmod +x /usr/local/bin/provision /usr/local/bin/emit_deps.py \
       /usr/local/bin/provisioner-entrypoint.sh
 

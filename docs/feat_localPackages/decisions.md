@@ -454,3 +454,43 @@ The OOM killer took the EPICanno lazyload twice and the cytolib compiler
 once, and the cytolib fall removed 33 dependents. The local machine rises
 to 12 GiB. The CI builders size their own memory, and `r_ncpus` remains
 the throttle of last resort.
+
+## The third live-run postmortem (the wall against the redirect)
+
+The first CI catalog build died at the 240-minute budget with zero CRAN
+packages. The log showed six failures every five minutes for 3.5 hours on
+both arches: six download workers, each one against a 300-second timeout.
+The spike run of 10 August fetched 1000 binaries green from the same
+builders, with no firewall. The wall itself was the fault, two times over.
+
+### 36. A p3m.dev binary GET redirects on a cache miss
+
+The binary route is not one host. On an edge-cache miss, p3m.dev answers
+307 to `rspm-sync.rstudio.com/bin/<tag>/<sha256>.tar.gz`, and a HEAD
+answers 200 with no redirect, thus a HEAD-based probe reads clean. A cold
+CI cache sent every CRAN GET down the redirect, into a host that no
+allowlist named. Both allowlists now carry the pair, and the CLI acquire
+list gains `p3m.dev` itself, which it also lacked. The canary follows the
+redirect with `-L` and prints the final URL, thus a moved target names
+itself.
+
+### 37. Decision 31 reverses: the pin froze a 60-second pool
+
+Decision 31 pinned each resolved address into `/etc/hosts` against GitHub
+rotation. p3m.dev serves a rotating EC2 pool under a 60-second TTL. AWS
+documents that a client that holds an answer past the TTL connects to
+inactive addresses. A four-hour freeze is that client. The entrypoint now
+follows DNS live: dnsmasq feeds the addresses of each answer into an nft
+set before the answer returns, and the rules match the set. nftables
+replaces ipset, because the `ip_set` module is not loadable from a
+container, and the nf_tables backend is already proven under iptables.
+
+### 38. The wall rejects, and a canary proves both sides
+
+The old policy dropped in silence, and each blocked connect burned its
+full timeout — four hours of blindness. The last rule is now REJECT, thus
+a blocked connect fails in milliseconds and names the host. A fatal
+canary step runs before the build: it sources the same allowlist library,
+fetches one pinned-snapshot binary whole through the redirect, and proves
+that an off-list host refuses fast. The local rehearsal showed the pair:
+234 KB in 1.3 seconds through the wall, and a 9-millisecond refusal.
