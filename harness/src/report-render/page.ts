@@ -6,7 +6,7 @@
  * parameters live in `design.ts`.
  */
 
-import { AG_GRID_ASSET, assetSource, ECHARTS_ASSET } from "./assets.js";
+import { AG_GRID_ASSET, assetSource, ECHARTS_ASSET, TSPROV_ASSET } from "./assets.js";
 import { CHART_SOURCE_MEMBER, POINT_LABEL } from "./chart.js";
 import {
     ECHARTS_THEME_NAME,
@@ -44,6 +44,15 @@ export const ASSET_HEAD = `<script src="${assetSource(ECHARTS_ASSET)}"></script>
  * whole directory.
  */
 export const GRID_ASSET_HEAD = `<script src="${assetSource(AG_GRID_ASSET)}"></script>`;
+
+/**
+ * The head reference of the provenance library.
+ *
+ * The library walks the chain of one pin, and a page with no provenance document holds no pin to walk.
+ * Thus the skeleton writes this tag only for a page that carries the document, and the manifest still
+ * stages the file for the whole directory.
+ */
+export const LINEAGE_ASSET_HEAD = `<script src="${assetSource(TSPROV_ASSET)}"></script>`;
 
 /**
  * The name of the readiness event, and the name of the window sentinel that guards a late listener. The
@@ -907,28 +916,31 @@ export const GRID_BOOTSTRAP = `(function () {
 })();`;
 
 /**
- * The name of the lineage library on the page, and the one call that the popover makes.
+ * The name of the provenance library on the page.
  *
- * The page and the library meet at this one name and nowhere else. The renderer imports no API of the
- * library, thus the two ship apart and a change of the walk costs no change here.
+ * The browser bundle of the package declares this one global, and the page and the library meet there and
+ * nowhere else. The renderer imports no API of the library, thus the two ship apart.
  *
- * The call is:
- *
- *     window.__REPORT_LINEAGE_LIB.backwardChain(documentText, pin)
- *
- * `documentText` is the document that the provenance carrier registered, as opaque text. `pin` is the
- * `{ path, hash }` pair that a grounded block stamps. The answer is
- * `{ hops: [{ kind, label, path, hash }], truncated }`, in the order that the walk visits the hops. `path`
- * and `hash` are optional on a hop, because a hop can name an operation and no file. The answer is `null`
- * where the document holds no node for the pin.
- *
- * Each absence is a normal condition. A page where nothing registers the name still opens the popover, and
- * the popover then shows the pin as the last hop under an explicit note.
+ * A page whose staged libraries were stripped registers no such global. That absence is a normal
+ * condition: the popover still opens, and it shows the pin as the last hop under an explicit note.
  */
-export const LINEAGE_LIB_GLOBAL = "__REPORT_LINEAGE_LIB";
+export const TSPROV_GLOBAL = "tsprov";
 
-/** The one call of the library. The page names the member here, thus the script and this contract agree. */
-const LINEAGE_LIB_CALL = "backwardChain";
+/**
+ * The attribute names of the dialect that the walk reads.
+ *
+ * The writer of the document stamps these names on a file entity and on an activity. The popover reads
+ * them and nothing else of the document, thus a pin resolves to one node and a hop reads as the appendix
+ * entry of the same artifact reads.
+ *
+ * The label names are in the order of preference. An activity carries the first of them that fits its own
+ * kind, and a file entity carries none of them, because the path already names it.
+ */
+const PIN_PATH_ATTRIBUTE = "inflexa:path";
+const PIN_HASH_ATTRIBUTE = "inflexa:hash";
+const DIALECT_TYPE_PREFIX = "inflexa:";
+const DIALECT_FILE_TYPE = "File";
+const HOP_LABEL_ATTRIBUTES = ["inflexa:command", "inflexa:tool", "inflexa:stepId", "inflexa:runId", "inflexa:name", "prov:label"];
 
 /** The heading of the popover. It names what the panel holds, above the hops. */
 const LINEAGE_TITLE_TEXT = "Lineage";
@@ -947,6 +959,9 @@ export const LINEAGE_TRUNCATED_NOTE = "The library cut this chain at its depth b
 
 /** The kind tag of the pin hop that the page names on its own, without the library. */
 const LINEAGE_ARTIFACT_KIND = "Artifact";
+
+/** The kind tag of a hop that names an operation and carries no dialect type of its own. */
+const LINEAGE_OPERATION_KIND = "Activity";
 
 /** The kind tag of the one hop of an external record. */
 const LINEAGE_RECORD_KIND = "Citation";
@@ -986,11 +1001,15 @@ const LINEAGE_PANEL_GAP_PX = 8;
  * The script builds each node and it writes each string as text. Thus a hostile path, a hostile label, and
  * a hostile hop of the document reach the panel as text and never as markup.
  *
- * The page makes no request. The document rides the page already, and the library reads it in memory.
+ * The page makes no request. The document rides the page already, and the library reads it in memory. The
+ * graph builds one time, on the first click, thus a reader who opens no panel pays nothing for the parse.
  */
 export const LINEAGE_POPOVER = `(function () {
   var openPanel = null;
   var openControl = null;
+  var graph = null;
+  var graphFailed = false;
+  var labelNames = ${JSON.stringify(HOP_LABEL_ATTRIBUTES)};
   function elementOf(node) {
     while (node && node.nodeType !== 1) {
       node = node.parentNode;
@@ -1034,24 +1053,97 @@ export const LINEAGE_POPOVER = `(function () {
     }
     return keys[place];
   }
+  function graphOf(library, text) {
+    if (graph === null && !graphFailed) {
+      try {
+        // The read takes no format name. The writer of the document owns the format, thus the library
+        // detects it and a document of another serialization still opens.
+        graph = library.provToGraph(library.read(text));
+      } catch (cause) {
+        graphFailed = true;
+      }
+    }
+    return graph;
+  }
+  function attrText(record, name) {
+    var values = record.getAttribute(name);
+    if (!values || values.length === 0) {
+      return "";
+    }
+    var value = values[0];
+    // A typed value arrives inside a literal wrapper, and a plain string arrives bare.
+    return String(value !== null && typeof value === "object" && "value" in value ? value.value : value);
+  }
+  function dialectType(record) {
+    var types = record.getAssertedTypes();
+    for (var i = 0; i < types.length; i++) {
+      var text = String(types[i]);
+      if (text.indexOf("${DIALECT_TYPE_PREFIX}") === 0) {
+        return text.slice(${DIALECT_TYPE_PREFIX.length});
+      }
+    }
+    return "";
+  }
+  function labelOf(record) {
+    for (var i = 0; i < labelNames.length; i++) {
+      var text = attrText(record, labelNames[i]);
+      if (text !== "") {
+        return text;
+      }
+    }
+    return "";
+  }
+  function hopOf(library, node) {
+    var element = node.element;
+    var type = dialectType(element);
+    // A read of raw data carries no dialect type, and the walk still reaches it. Thus the fallback reads
+    // the record class, and a file of that kind names itself the same as the pin of a block does.
+    var named = type !== "" && type !== "${DIALECT_FILE_TYPE}";
+    var artifact = element instanceof library.ProvEntity;
+    return {
+      kind: named ? type : artifact ? "${LINEAGE_ARTIFACT_KIND}" : "${LINEAGE_OPERATION_KIND}",
+      label: labelOf(element),
+      path: attrText(element, "${PIN_PATH_ATTRIBUTE}"),
+      hash: attrText(element, "${PIN_HASH_ATTRIBUTE}")
+    };
+  }
   function walk(key) {
-    var library = window.${LINEAGE_LIB_GLOBAL};
+    var library = window.${TSPROV_GLOBAL};
     var carrier = window.${REPORT_PROVENANCE_GLOBAL};
-    if (!library || typeof library.${LINEAGE_LIB_CALL} !== "function" || !carrier || typeof carrier.document !== "string") {
+    if (!library || typeof library.lineage !== "function" || !carrier || typeof carrier.document !== "string") {
       return { hops: [], note: ${JSON.stringify(LINEAGE_NO_LIBRARY_NOTE)} };
     }
-    var chain = null;
-    try {
-      chain = library.${LINEAGE_LIB_CALL}(carrier.document, { path: key.path, hash: key.hash });
-    } catch (cause) {
+    var built = graphOf(library, carrier.document);
+    if (!built) {
       // A document that the library refuses is exactly the fault that a look must diagnose, thus it must
       // never leave the reader with a control that does nothing.
       return { hops: [], note: ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)} };
     }
-    if (!chain || !chain.hops || chain.hops.length === 0) {
-      return { hops: [], note: ${JSON.stringify(LINEAGE_NO_NODE_NOTE)} };
+    var walked = null;
+    var found = null;
+    try {
+      found = library.resolveUnique(built, {
+        type: library.ProvEntity,
+        attributes: [
+          { name: "${PIN_PATH_ATTRIBUTE}", equals: key.path },
+          { name: "${PIN_HASH_ATTRIBUTE}", equals: key.hash }
+        ]
+      });
+      if (found.kind === "resolved") {
+        walked = library.lineage(built, found.record, { direction: "backward", relations: "dataflow" });
+      }
+    } catch (cause) {
+      return { hops: [], note: ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)} };
     }
-    return { hops: chain.hops, note: chain.truncated === true ? ${JSON.stringify(LINEAGE_TRUNCATED_NOTE)} : "" };
+    if (walked === null) {
+      // Two nodes of one pin answer no better than none: the page cannot state which chain it shows.
+      return { hops: [], note: found.kind === "ambiguous" ? ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)} : ${JSON.stringify(LINEAGE_NO_NODE_NOTE)} };
+    }
+    var hops = [];
+    for (var i = 0; i < walked.nodes.length; i++) {
+      hops.push(hopOf(library, walked.nodes[i]));
+    }
+    return { hops: hops, note: walked.frontier.length > 0 ? ${JSON.stringify(LINEAGE_TRUNCATED_NOTE)} : "" };
   }
   function part(tag, className, text) {
     var node = document.createElement(tag);

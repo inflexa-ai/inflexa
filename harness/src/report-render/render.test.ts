@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { load } from "cheerio";
 
 import type { Block, ChartBlock, CitationBlock, FigureBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
-import { AG_GRID_ASSET, ASSETS_DIR, DEPS_DIR, ECHARTS_ASSET, PAGE_ASSETS, tableSidecarName } from "./assets.js";
+import { AG_GRID_ASSET, ASSETS_DIR, DEPS_DIR, ECHARTS_ASSET, PAGE_ASSETS, TSPROV_ASSET, tableSidecarName } from "./assets.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption } from "./chart.js";
 import {
     CHART_INLINE_OPTION_BOUND,
@@ -19,7 +19,6 @@ import { FIXTURE_DOCUMENT, FIXTURE_PROVENANCE, FIXTURE_VALUES } from "./fixture.
 import {
     CHART_BOOTSTRAP,
     GRID_BOOTSTRAP,
-    LINEAGE_LIB_GLOBAL,
     LINEAGE_NO_ANSWER_NOTE,
     LINEAGE_NO_LIBRARY_NOTE,
     LINEAGE_NO_NODE_NOTE,
@@ -27,6 +26,7 @@ import {
     LINEAGE_TRUNCATED_NOTE,
     SECTION_SPY,
     TABLE_DATA_DECODER,
+    TSPROV_GLOBAL,
 } from "./page.js";
 import { formatTableCell } from "./number-format.js";
 import { REPORT_PROVENANCE_GLOBAL } from "./provenance-data.js";
@@ -679,15 +679,46 @@ describe("the lineage stamp and the popover control", () => {
         expect(keysOf(html, "tbl")).toEqual([{ path: hostile.path, hash: hostile.hash }]);
     });
 
-    it("names the lineage library through one global, and states each absence in its own form", () => {
+    it("names the provenance library through one global, and states each absence in its own form", () => {
         // The page and the library meet at one name. Each absence is a normal condition, thus each one
         // carries a note of its own and none of them reads as the other.
-        expect(LINEAGE_POPOVER).toContain(`window.${LINEAGE_LIB_GLOBAL}`);
-        expect(LINEAGE_POPOVER).toContain("backwardChain");
+        expect(LINEAGE_POPOVER).toContain(`window.${TSPROV_GLOBAL}`);
         expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_NO_LIBRARY_NOTE));
         expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_NO_ANSWER_NOTE));
         expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_NO_NODE_NOTE));
         expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_TRUNCATED_NOTE));
+    });
+
+    it("reads the document, builds the graph one time, and walks backward over the dataflow", () => {
+        // The walk belongs to the library. The graph builds on the first click and it stands after that,
+        // thus a second panel of one page parses nothing again.
+        expect(LINEAGE_POPOVER).toContain("library.provToGraph(library.read(text))");
+        expect(LINEAGE_POPOVER).toContain("if (graph === null && !graphFailed) {");
+        expect(LINEAGE_POPOVER).toContain('library.lineage(built, found.record, { direction: "backward", relations: "dataflow" })');
+
+        // The walk rides the depth bound of the library, thus the page names none of its own.
+        expect(LINEAGE_POPOVER).not.toContain("depth:");
+    });
+
+    it("resolves the node of a pin by the path and the hash of the document writer", () => {
+        // The writer of the document stamps these two names on a file entity. A selector over any other
+        // name resolves nothing, and each popover would then show the absence note.
+        expect(LINEAGE_POPOVER).toContain("library.resolveUnique(built, {");
+        expect(LINEAGE_POPOVER).toContain('{ name: "inflexa:path", equals: key.path }');
+        expect(LINEAGE_POPOVER).toContain('{ name: "inflexa:hash", equals: key.hash }');
+    });
+
+    it("references the provenance library on a page that carries a document, and never without one", () => {
+        const html = groundedPage(PROVENANCE);
+        const tag = `<script src="${ASSETS_DIR}/${TSPROV_ASSET.file}"></script>`;
+
+        // The library walks a pin, and a page with no document holds no pin to walk. The popover reads the
+        // global, thus the tag stands before the script. The manifest still stages the file for the whole
+        // directory, the same as the grid runtime.
+        expect(html).toContain(tag);
+        expect(html.indexOf(tag)).toBeLessThan(html.indexOf(LINEAGE_POPOVER));
+        expect(PAGE_ASSETS).toContain(TSPROV_ASSET);
+        expect(groundedPage()).not.toContain(TSPROV_ASSET.file);
     });
 
     it("names the pin as the last hop where the walk gives nothing", () => {

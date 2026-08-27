@@ -96,6 +96,20 @@ export const AG_GRID_ASSET: PageAsset = {
     specifier: "ag-grid-community/dist/ag-grid-community.min.js",
 };
 
+/**
+ * The provenance library. The page-side popover reads the `tsprov` global that this file declares.
+ *
+ * The entry names the browser bundle of the package. The package `exports` map publishes the module entries
+ * alone, thus this specifier resolves as a path under the installed package directory.
+ *
+ * The harness imports no API of the library. It stages these bytes and nothing more, thus the walk of a
+ * chain belongs to the page and the renderer stays free of every provenance API.
+ */
+export const TSPROV_ASSET: PageAsset = {
+    file: `${DEPS_DIR}/tsprov.min.js`,
+    specifier: "@inflexa-ai/tsprov/dist/browser/tsprov.min.js",
+};
+
 /** The sans font. The file is the latin subset of the variable font, thus one file carries each weight. */
 export const SANS_FONT_ASSET: PageAsset = {
     file: `${DEPS_DIR}/space-grotesk-latin-wght-normal.woff2`,
@@ -136,6 +150,7 @@ export const MONO_FONT_700_ASSET: PageAsset = {
 export const PAGE_ASSETS: readonly PageAsset[] = [
     ECHARTS_ASSET,
     AG_GRID_ASSET,
+    TSPROV_ASSET,
     SANS_FONT_ASSET,
     MONO_FONT_400_ASSET,
     MONO_FONT_500_ASSET,
