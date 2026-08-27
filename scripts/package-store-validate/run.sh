@@ -37,7 +37,7 @@ LIB_PATH="${INFLEXA_LIB_STORE:-${XDG_DATA_HOME:-${HOME:-/root}/.local/share}/inf
 MOUNT_IMAGE="${SANDBOX_BASE_IMAGE:-sandbox-base:latest}"
 BAKED_IMAGE=""
 SUMMARY_MD=""
-SUITE_ARGS=()
+SUITE_ARGS=()  # expanded with the ${arr[@]+...} guard: bash 3.2 (macOS) errors on an empty array under set -u
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -78,9 +78,9 @@ if [ -n "$BAKED_IMAGE" ]; then
     --tmpfs /mnt/refs \
     -e LIB_VALIDATOR_DIR=/opt/lib-validator \
     -e PACKAGE_STORE_VERSION="${PACKAGE_STORE_VERSION:-}" \
-    "${SUMMARY_ARGS[@]}" \
+    ${SUMMARY_ARGS[@]+"${SUMMARY_ARGS[@]}"} \
     "$BAKED_IMAGE" \
-    python3 /opt/package-store-validate/validate.py "${SUITE_ARGS[@]}"
+    python3 /opt/package-store-validate/validate.py ${SUITE_ARGS[@]+"${SUITE_ARGS[@]}"}
   exit $?
 fi
 
@@ -142,6 +142,6 @@ docker run --rm --entrypoint "" \
   -e PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin:/mnt/libs/farm/python/bin" \
   -e LIB_VALIDATOR_DIR=/opt/lib-validator \
   -e PACKAGE_STORE_VERSION="${PACKAGE_STORE_VERSION:-}" \
-  "${SUMMARY_ARGS[@]}" \
+  ${SUMMARY_ARGS[@]+"${SUMMARY_ARGS[@]}"} \
   "$MOUNT_IMAGE" \
-  python3 /opt/package-store-validate/validate.py "${SUITE_ARGS[@]}"
+  python3 /opt/package-store-validate/validate.py ${SUITE_ARGS[@]+"${SUITE_ARGS[@]}"}
