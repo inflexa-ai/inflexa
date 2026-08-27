@@ -25,11 +25,34 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 PYTHON = "/usr/bin/python3"
+
+# A testable top-level import is one Python identifier. The graph's import
+# lists carry what the wheels shipped, and a wheel can ship junk beside its
+# modules: a `-stubs` directory, a stray `site-packages`, a path with a
+# slash. Such a name cannot be imported, thus testing it fails a usable
+# package. The filter keeps the test honest, and the emitter applies the
+# same rule at the source.
+IMPORT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def testable_imports(node: dict | None, dist_name: str) -> list[str]:
+    """The import names worth testing for one Python package.
+
+    An ABSENT node keeps the historic guess from the distribution name — an
+    old store carries no graph entry for every directory. A PRESENT node
+    with an empty list means the distribution ships nothing importable (a
+    meta package), and nothing-to-test is a pass, never a guess.
+    """
+    if node is None:
+        return [dist_name.replace("-", "_")]
+    return [name for name in (node.get("imports") or []) if IMPORT_NAME.match(name)]
 
 
 def check_python(imports_by_pkg: dict[str, list[str]], path_entries: list[str]) -> list[dict]:
@@ -50,31 +73,77 @@ def check_python(imports_by_pkg: dict[str, list[str]], path_entries: list[str]) 
     return results
 
 
+# How many R packages one loader session takes. A session accumulates the
+# DLL of every loaded namespace and of every dependency, and R caps the
+# loaded DLLs (614 by default). One session over the whole catalog crossed
+# the cap: the alphabetic tail failed wholesale, and a direct-load variant
+# segfaulted. A real sandbox loads a few namespaces per analysis, thus the
+# small session is also the faithful one.
+R_CHECK_BATCH = 48
+
+
 def check_r(pkgs: list[tuple[str, str]], lib_paths: list[str]) -> list[dict]:
-    """One namespace load per R package, in one Rscript call."""
+    """One namespace load per R package, in one Rscript session per batch.
+
+    EVERYTHING rides stdin: the first line carries the tab-joined library
+    paths, and each later line carries one package name. A catalog check
+    holds a thousand paths, and one `-e` expression caps at 10,000 bytes —
+    R then warns on stdout, runs nothing, and exits 0. The stdin protocol
+    has no cap, and the small fixed expression stays under the limit.
+    """
     if not pkgs:
         return []
     script = (
-        f".libPaths(c({', '.join(json.dumps(p) for p in lib_paths)}, .libPaths())); "
-        'for (line in readLines(file("stdin"))) { '
-        'ok <- tryCatch({ requireNamespace(line, quietly = TRUE) }, error = function(e) FALSE); '
-        'cat(line, "\\t", if (isTRUE(ok)) "ok" else "fail", "\\n", sep = "") '
+        'con <- file("stdin"); open(con); '
+        'paths <- strsplit(readLines(con, n = 1), "\\t", fixed = TRUE)[[1]]; '
+        ".libPaths(c(paths, .libPaths())); "
+        "for (line in readLines(con)) { "
+        "out <- tryCatch({ if (requireNamespace(line, quietly = TRUE)) TRUE else \"the namespace did not load\" }, "
+        "error = function(e) conditionMessage(e)); "
+        'cat(line, "\\t", if (isTRUE(out)) "ok" else paste0("fail\\t", gsub("[\\t\\n]", " ", out)), "\\n", sep = "") '
         "}"
     )
-    proc = subprocess.run(["Rscript", "-e", script],
-                          input="\n".join(name for _pkg, name in pkgs),
-                          capture_output=True, text=True)
-    verdicts: dict[str, str] = {}
-    for line in proc.stdout.splitlines():
-        name, tab, verdict = line.partition("\t")
-        if tab:
-            verdicts[name.strip()] = verdict.strip()
-    results = []
-    for pkg, name in pkgs:
-        ok = verdicts.get(name) == "ok"
-        results.append({"package": pkg, "track": "r", "ok": ok,
-                        **({} if ok else {"error": f"requireNamespace({name}) failed"})})
-    return results
+    env = dict(os.environ)
+    # The dependency closure of one batch can pass the default cap on its
+    # own — the belt to the batching's braces. 1000 is the maximum R takes.
+    env["R_MAX_NUM_DLLS"] = "1000"
+
+    def run_batch(batch: list[tuple[str, str]]) -> list[dict]:
+        proc = subprocess.run(["Rscript", "-e", script],
+                              input="\t".join(lib_paths) + "\n" + "\n".join(name for _pkg, name in batch),
+                              env=env, capture_output=True, text=True)
+        verdicts: dict[str, str] = {}
+        reasons: dict[str, str] = {}
+        for line in proc.stdout.splitlines():
+            name, tab, rest = line.partition("\t")
+            if tab:
+                verdict, _tab, reason = rest.partition("\t")
+                verdicts[name.strip()] = verdict.strip()
+                if reason:
+                    reasons[name.strip()] = reason.strip()
+        # A loader that ran reports one verdict per input line. Zero
+        # verdicts from a non-empty batch means the LOADER died, and each
+        # entry of the batch must say that, with the loader's own tail — a
+        # bare per-package "failed" already hid one wholesale death.
+        if not verdicts:
+            tail = " | ".join(((proc.stderr or proc.stdout or "").strip().splitlines() or ["no output"])[-3:])
+            loader = f"the R loader itself failed (exit {proc.returncode}): {tail}"
+            return [{"package": pkg, "track": "r", "ok": False, "error": loader} for pkg, _name in batch]
+        out = []
+        for pkg, name in batch:
+            ok = verdicts.get(name) == "ok"
+            detail = reasons.get(name, "the namespace did not load")
+            out.append({"package": pkg, "track": "r", "ok": ok,
+                        **({} if ok else {"error": f"requireNamespace({name}): {detail}"})})
+        return out
+
+    # The sessions are independent processes, thus they run beside each
+    # other. Each batch reloads the shared dependency closure, and the
+    # parallel width buys that cost back on the catalog scale.
+    batches = [pkgs[start:start + R_CHECK_BATCH] for start in range(0, len(pkgs), R_CHECK_BATCH)]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        per_batch = list(pool.map(run_batch, batches))
+    return [entry for batch in per_batch for entry in batch]
 
 
 def from_nodes(store_root: Path, report: dict) -> list[dict]:
@@ -82,7 +151,7 @@ def from_nodes(store_root: Path, report: dict) -> list[dict]:
     nodes = report.get("nodes") or {}
     store = store_root / "store"
     python_paths = [str(store / key) for key, node in nodes.items() if node.get("track") == "python"]
-    imports_by_pkg = {key: list(node.get("imports") or [])
+    imports_by_pkg = {key: testable_imports(node, node.get("name") or key)
                       for key, node in nodes.items() if node.get("track") == "python"}
     r_paths = sorted({str(store / key) for key, node in nodes.items() if node.get("track") == "r"})
     r_pkgs = [(key, node.get("r_dir") or node.get("name"))
@@ -108,8 +177,7 @@ def from_farm_lock(store_root: Path, farm: Path, lock: dict) -> list[dict]:
             graph = {}
     imports_by_pkg = {}
     for p in python_pkgs:
-        node = graph.get(p["store_dir"]) or {}
-        imports_by_pkg[p["name"]] = list(node.get("imports") or [p["name"].replace("-", "_")])
+        imports_by_pkg[p["name"]] = testable_imports(graph.get(p["store_dir"]), p["name"])
     r_lib_paths = sorted({str(store / p["store_dir"]) for p in r_pkgs})
     return check_python(imports_by_pkg, [str(site)]) + check_r(
         [(p["name"], p["name"]) for p in sorted(r_pkgs, key=lambda p: p["name"])], r_lib_paths)
