@@ -70,20 +70,6 @@ const RESPONSES_USAGE = {
     output_tokens_details: { reasoning_tokens: 64 },
 };
 
-/** A complete Responses reply that carries one assistant text item. */
-function responsesJson(text: string): Response {
-    return new Response(
-        JSON.stringify({
-            id: "resp_test_1",
-            created_at: 1_700_000_000,
-            model: MODEL,
-            output: [{ type: "message", role: "assistant", id: "msg_test_1", content: [{ type: "output_text", text, annotations: [] }] }],
-            usage: RESPONSES_USAGE,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-    );
-}
-
 /** One event of the Responses event stream. */
 function sseEvent(event: object): string {
     return `data: ${JSON.stringify(event)}\n\n`;
@@ -101,18 +87,14 @@ function responsesSse(deltas: readonly string[]): Response {
     return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-/** A chat-completions reply. The Responses path of the package cannot read it. */
-function chatCompletionsJson(text: string): Response {
+/** A Responses event stream that reports a failure instead of a turn. */
+function responsesErrorSse(message: string): Response {
     return new Response(
-        JSON.stringify({
-            id: "chatcmpl_test_1",
-            object: "chat.completion",
-            created: 1_700_000_000,
-            model: MODEL,
-            choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
-            usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
+        [
+            sseEvent({ type: "response.created", response: { id: "resp_test_1", created_at: 1_700_000_000, model: MODEL } }),
+            sseEvent({ type: "error", code: "server_error", message, sequence_number: 1 }),
+        ].join(""),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
     );
 }
 
@@ -162,7 +144,7 @@ describe("openai arm usage", () => {
     it("lands the cached and the reasoning counts of the Responses wire on the neutral fields", async () => {
         // The arm owns no usage mapping. The package normalizes the two nested
         // wire counts, and the shared runtime copies them onto `ChatUsage`.
-        const cap = capturingFetch(() => responsesJson("Hello, world"));
+        const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -198,11 +180,11 @@ describe("openai arm stream", () => {
     });
 });
 
-describe("openai arm wire mismatch", () => {
-    it("surfaces a classified provider error for a chat-completions body", async () => {
-        // The arm binds the Responses path. A backend that answers with the other
-        // dialect fails loud on the error channel, and it never reads as a turn.
-        const cap = capturingFetch(() => chatCompletionsJson("Hello, world"));
+describe("openai arm stream failure", () => {
+    it("surfaces a classified provider error for an error event", async () => {
+        // A backend that reports a failure mid-stream fails loud on the error
+        // channel, and it never reads as an empty turn.
+        const cap = capturingFetch(() => responsesErrorSse("upstream exploded"));
         const provider = createConfiguredAiSdkProvider({
             config: openaiArm(cap.fetch, { maxRetries: 0 }),
             resolveBilling: async () => ({}),
@@ -213,8 +195,7 @@ describe("openai arm wire mismatch", () => {
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
             expect(result.error.type).toBe("provider");
-            expect(result.error.retryable).toBe(false);
-            expect(result.error.message).toContain("Invalid JSON response");
+            expect(result.error.message).toContain("upstream exploded");
         }
     });
 });
@@ -223,7 +204,7 @@ describe("openai arm store directive", () => {
     it("sends store false when the config declares no value", async () => {
         // An unset value lets the server keep the response, and it makes the
         // package emit an item reference for a round-tripped item.
-        const cap = capturingFetch(() => responsesJson("Hello, world"));
+        const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
 
         const result = await provider.chat(request, makeSession());
@@ -233,7 +214,7 @@ describe("openai arm store directive", () => {
     });
 
     it("sends store true when the config declares it", async () => {
-        const cap = capturingFetch(() => responsesJson("Hello, world"));
+        const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { store: true }), resolveBilling: async () => ({}) });
 
         const result = await provider.chat(request, makeSession());
@@ -246,7 +227,7 @@ describe("openai arm store directive", () => {
         // The cache namespace of a different vendor is inert on this wire, thus
         // the `user` key carries the proof: the merge adds, and it does not
         // replace.
-        const cap = capturingFetch(() => responsesJson("Hello, world"));
+        const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
 
         const result = await provider.chat(
@@ -268,7 +249,7 @@ describe("openai arm output ceiling", () => {
         // The package puts a ceiling on the wire as it is. A shared default above
         // the cap of the model fails each call, thus the arm sends none and the
         // server holds the reply at the cap.
-        const cap = capturingFetch(() => responsesJson("Hello, world"));
+        const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
 
         const result = await provider.chat(request, makeSession());
@@ -278,7 +259,7 @@ describe("openai arm output ceiling", () => {
     });
 
     it("sends the ceiling that the config names", async () => {
-        const cap = capturingFetch(() => responsesJson("Hello, world"));
+        const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { maxOutputTokens: 4_096 }), resolveBilling: async () => ({}) });
 
         const result = await provider.chat(request, makeSession());
@@ -293,7 +274,7 @@ describe("openai arm encrypted reasoning", () => {
         // The stateless path of the package captures the blob in the
         // provider-scoped options of a reasoning part. A later turn hands the
         // same history back, and the blob must reach the wire again.
-        const cap = capturingFetch(() => responsesJson("The second answer."));
+        const cap = capturingFetch(() => responsesSse(["The second answer."]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
 
         const result = await provider.chat(

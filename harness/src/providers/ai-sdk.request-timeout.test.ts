@@ -12,10 +12,12 @@ const request: ChatRequest = {
     tools: {},
 };
 
-/** A minimal OpenAI-compatible chat completion that the SDK parses to `"ok"`. */
-const OK_COMPLETION = JSON.stringify({
-    choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
-});
+/** A minimal OpenAI-compatible completion stream that the SDK parses to `"ok"`. */
+const OK_COMPLETION = [
+    `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 1, model: "local-model", choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: null }] })}\n\n`,
+    `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 1, model: "local-model", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,
+    "data: [DONE]\n\n",
+].join("");
 
 /** Build an OpenAI-compatible config over a fake fetch, with the guard fields set per test. */
 function openAiConfig(fetch: FetchLike, opts: { requestTimeoutMs?: number; maxRetries?: number } = {}): AiSdkProviderConfig {
@@ -31,9 +33,9 @@ function openAiConfig(fetch: FetchLike, opts: { requestTimeoutMs?: number; maxRe
     };
 }
 
-/** A JSON response with headers ready at once. */
-function jsonResponse(body: string): Response {
-    return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+/** An event-stream response with headers ready at once. */
+function sseResponse(body: string): Response {
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
 /**
@@ -85,7 +87,7 @@ function fetchWithSteadyBody(body: string, chunks: number, gapMs: number): Fetch
                 );
             },
         });
-        return Promise.resolve(new Response(stream, { status: 200, headers: { "content-type": "application/json" } }));
+        return Promise.resolve(new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }));
     };
 }
 
@@ -146,7 +148,7 @@ describe("request-timeout guard", () => {
         const fetch: FetchLike = (input, init) => {
             calls += 1;
             if (calls === 1) return fetchThatNeverStarts()(input, init);
-            return Promise.resolve(jsonResponse(OK_COMPLETION));
+            return Promise.resolve(sseResponse(OK_COMPLETION));
         };
         const provider = createConfiguredAiSdkProvider({
             config: openAiConfig(fetch, { requestTimeoutMs: 30 }),
@@ -253,7 +255,7 @@ describe("request-timeout transport lift", () => {
         const inits: (RequestInit | undefined)[] = [];
         const wrapped = wrapFetchWithRequestTimeout((_input, init) => {
             inits.push(init);
-            return Promise.resolve(jsonResponse(OK_COMPLETION));
+            return Promise.resolve(sseResponse(OK_COMPLETION));
         }, 10_000);
 
         await wrapped("http://models.local/v1", { method: "POST" });
@@ -269,7 +271,7 @@ describe("request-timeout transport lift", () => {
         const provider = createConfiguredAiSdkProvider({
             config: openAiConfig((_input, init) => {
                 inits.push(init);
-                return Promise.resolve(jsonResponse(OK_COMPLETION));
+                return Promise.resolve(sseResponse(OK_COMPLETION));
             }),
             resolveBilling: async () => ({}),
         });

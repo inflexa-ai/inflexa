@@ -19,6 +19,8 @@ import {
     RETRY_MAX_DELAY_MS,
     RETRY_MAX_RETRIES,
 } from "./ai-sdk.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { LogFields, Logger } from "../lib/logger.js";
 import { isProviderError } from "./errors.js";
 import type { ChatRequest } from "./types.js";
 
@@ -53,6 +55,47 @@ function streamResult(deltas: readonly string[]): LanguageModelV4StreamResult {
     };
 }
 
+/**
+ * Replay a generate-shaped double as a stream. Both provider entry points drive
+ * the same wire, so one fixture has to reach `doStream` as well: the parts carry
+ * the same content, identity, finish reason and usage the generate result holds.
+ * A rejecting `impl` rejects here too, which is what the retry tests need.
+ */
+function streamFromGenerate(
+    impl: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4GenerateResult>,
+): (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4StreamResult> {
+    return async (options) => {
+        const generated = await impl(options);
+        return {
+            stream: new ReadableStream({
+                start(controller) {
+                    controller.enqueue({ type: "stream-start", warnings: generated.warnings });
+                    const modelId = generated.response?.modelId;
+                    if (modelId !== undefined) controller.enqueue({ type: "response-metadata", modelId });
+                    let seq = 0;
+                    for (const content of generated.content) {
+                        if (content.type === "text") {
+                            const id = `txt-${(seq += 1)}`;
+                            controller.enqueue({ type: "text-start", id });
+                            controller.enqueue({ type: "text-delta", id, delta: content.text });
+                            controller.enqueue({ type: "text-end", id });
+                            continue;
+                        }
+                        if (content.type === "tool-call") controller.enqueue(content);
+                    }
+                    controller.enqueue({
+                        type: "finish",
+                        finishReason: generated.finishReason,
+                        usage: generated.usage,
+                        ...(generated.providerMetadata !== undefined ? { providerMetadata: generated.providerMetadata } : {}),
+                    });
+                    controller.close();
+                },
+            }),
+        };
+    };
+}
+
 function fakeModel(
     impl: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4GenerateResult>,
     streamImpl?: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4StreamResult>,
@@ -63,11 +106,7 @@ function fakeModel(
         modelId: "fake-model",
         supportedUrls: {},
         doGenerate: impl,
-        doStream:
-            streamImpl ??
-            (async () => {
-                throw new Error("streaming is not used in these tests");
-            }),
+        doStream: streamImpl ?? streamFromGenerate(impl),
     };
 }
 
@@ -169,7 +208,10 @@ describe("createAiSdkProvider", () => {
 
         expect(result.isOk()).toBe(true);
         expect(result._unsafeUnwrap().message).toEqual({ role: "assistant", content: [{ type: "text", text: "done" }] });
-        expect(calls[0]!.headers).toMatchObject({
+        // A header name is case-insensitive on the wire, thus the assertion folds
+        // the case rather than pinning the spelling the SDK happens to forward.
+        const sent = Object.fromEntries(Object.entries(calls[0]!.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
+        expect(sent).toMatchObject({
             "x-billing-context": "bc-test",
             "x-billing-virtual-key": "vk-test",
         });
@@ -1229,5 +1271,116 @@ describe("model identity", () => {
         if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
         expect(done.response.requestedModelId).toBe("fake-model");
         expect(done.response.servedModelId).toBe("fake-model-20260101");
+    });
+});
+
+describe("stream error parts", () => {
+    /** A stream that opens, then reports `error` the way a mid-turn failure does. */
+    function erroringStream(error: unknown): () => Promise<LanguageModelV4StreamResult> {
+        return async () => ({
+            stream: new ReadableStream({
+                start(controller) {
+                    controller.enqueue({ type: "stream-start", warnings: [] });
+                    controller.enqueue({ type: "error", error });
+                    controller.close();
+                },
+            }),
+        });
+    }
+
+    it("fails the call rather than returning the empty turn the parts describe", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => okResult("unused"), erroringStream(new Error("upstream exploded"))),
+            resolveBilling: async () => ({}),
+            maxRetries: 0,
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("provider");
+            expect(result.error.message).toContain("upstream exploded");
+        }
+    });
+
+    it("classifies a named condition by the status it stands for, thus overload stays retryable", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => okResult("unused"), erroringStream({ type: "overloaded_error", message: "Overloaded" })),
+            resolveBilling: async () => ({}),
+            maxRetries: 0,
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.retryable).toBe(true);
+            // The bare payload reaches the message as its own text, never as
+            // `[object Object]`.
+            expect(result.error.message).toContain("Overloaded");
+            expect(result.error.message).toContain("529");
+        }
+    });
+});
+
+describe("failure logging", () => {
+    /** A logger that keeps the records emitted at `error`. */
+    function recordingLogger(): { logger: Logger; errors: { msg: string; fields?: LogFields }[] } {
+        const errors: { msg: string; fields?: LogFields }[] = [];
+        const base = createNoopLogger();
+        const logger: Logger = {
+            ...base,
+            error: (msg, fields) => {
+                errors.push(fields === undefined ? { msg } : { msg, fields });
+            },
+            with: () => logger,
+            named: () => logger,
+            errorFields: (err) => ({ error: err instanceof Error ? err.message : String(err) }),
+        };
+        return { logger, errors };
+    }
+
+    it("records a call the envelope gave up on, thus the operator sees what the reply says", async () => {
+        const { logger, errors } = recordingLogger();
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                throw Object.assign(new Error("payment required"), { status: 402 });
+            }),
+            resolveBilling: async () => ({}),
+            maxRetries: 0,
+            logger,
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isErr()).toBe(true);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]!.msg).toBe("provider call failed");
+        expect(errors[0]!.fields).toMatchObject({ kind: "budget", retryable: false, error: "payment required" });
+    });
+
+    it("leaves a caller abort unrecorded, because a cancellation is not a failure", async () => {
+        const { logger, errors } = recordingLogger();
+        const controller = new AbortController();
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                controller.abort();
+                throw controller.signal.reason;
+            }),
+            resolveBilling: async () => ({}),
+            maxRetries: 0,
+            logger,
+        });
+
+        let threw = false;
+        try {
+            await provider.chat(request, makeSession(), controller.signal);
+        } catch {
+            threw = true;
+        }
+
+        expect(threw).toBe(true);
+        expect(errors).toHaveLength(0);
     });
 });

@@ -1,5 +1,4 @@
 import {
-    generateText,
     streamText,
     wrapLanguageModel,
     type FinishReason,
@@ -454,10 +453,10 @@ interface ServedModelCapture {
 
 /**
  * Capture the served model id at the raw model boundary, because that is the
- * only place it is still distinguishable from the requested one: `generateText`
- * and `streamText` both coalesce an unreported response model id to the bound
- * model's own id, so reading `result.response.modelId` would silently republish
- * the requested id as an endpoint's claim. A middleware sees the provider's
+ * only place it is still distinguishable from the requested one: `streamText`
+ * coalesces an unreported response model id to the bound model's own id, so
+ * reading `result.response.modelId` would silently republish the requested id
+ * as an endpoint's claim. A middleware sees the provider's
  * result before that fallback applies, so "reported nothing" stays absent.
  *
  * Built per call, never per provider: one provider instance serves concurrent
@@ -513,20 +512,6 @@ function responseFromMessages(input: {
     return { message, finishReason, rawFinishReason, usage, requestedModelId, servedModelId };
 }
 
-function responseFromGenerate(
-    result: Awaited<ReturnType<typeof generateText>>,
-    identity: { readonly requestedModelId?: string; readonly servedModelId?: string },
-): ChatResponse {
-    return responseFromMessages({
-        messages: result.responseMessages,
-        fallbackText: result.text,
-        finishReason: result.finishReason,
-        rawFinishReason: result.rawFinishReason,
-        usage: result.usage,
-        ...identity,
-    });
-}
-
 /**
  * Drop empty text parts — and messages left with no content at all — before
  * the wire call. The Anthropic Messages API rejects any request containing an
@@ -558,9 +543,15 @@ function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
  *
  * `delta` carries the text of one content part. `aborted` marks the `abort`
  * part, which the SDK emits when the chunk bound or the caller signal stops the
- * stream. `end` marks a stream that closed with no further text.
+ * stream. `failed` marks the `error` part, which the SDK emits for a wire
+ * failure that reaches it mid-stream. `end` marks a stream that closed with no
+ * further text.
  */
-type StreamPull = { readonly kind: "delta"; readonly text: string } | { readonly kind: "aborted"; readonly reason?: string } | { readonly kind: "end" };
+type StreamPull =
+    | { readonly kind: "delta"; readonly text: string }
+    | { readonly kind: "aborted"; readonly reason?: string }
+    | { readonly kind: "failed"; readonly error: unknown }
+    | { readonly kind: "end" };
 
 /**
  * Advance the SDK stream to the next text delta.
@@ -576,8 +567,54 @@ async function pullNextDelta(iterator: AsyncIterator<TextStreamPart<ToolSet>>): 
         const part = next.value;
         if (part.type === "text-delta") return { kind: "delta", text: part.text };
         if (part.type === "abort") return { kind: "aborted", reason: part.reason };
+        // The SDK reports a wire failure as a part, not as a rejection, and it
+        // then closes the stream. Skipping it would turn a failed call into an
+        // empty assistant turn that the loop reads as a real answer.
+        if (part.type === "error") return { kind: "failed", error: part.error };
     }
     return { kind: "end" };
+}
+
+/**
+ * The HTTP status that each Anthropic stream error type stands for.
+ *
+ * A provider names a mid-stream failure in the payload, not in the status line:
+ * a stream that carries `overloaded_error` reports the condition that a 529
+ * names on the non-streaming wire. The classifier reads the status alone, thus
+ * the part has to reach it as an error that names one, or the same condition
+ * would classify one way on `chat` and another way on `chatStream`.
+ */
+const STREAM_ERROR_STATUS: Readonly<Record<string, number>> = {
+    invalid_request_error: 400,
+    authentication_error: 401,
+    permission_error: 403,
+    not_found_error: 404,
+    request_too_large: 413,
+    rate_limit_error: 429,
+    timeout_error: 408,
+    api_error: 500,
+    overloaded_error: 529,
+};
+
+/**
+ * The failure that an `error` part of the SDK stream stands for.
+ *
+ * The part carries whatever the provider put on the wire, and that is often a
+ * bare object rather than an `Error`. Left as it is, it reaches the message as
+ * `[object Object]` and reaches the classifier with no status at all.
+ */
+function streamPartFailure(error: unknown): unknown {
+    if (error instanceof Error) return error;
+    if (typeof error !== "object" || error === null) return new Error(String(error));
+    const reported = error as { readonly type?: unknown; readonly message?: unknown };
+    const type = typeof reported.type === "string" ? reported.type : undefined;
+    const message = typeof reported.message === "string" ? reported.message : undefined;
+    const failure = new Error(message ?? type ?? "The provider reported a stream error.", { cause: error });
+    const status = type === undefined ? undefined : STREAM_ERROR_STATUS[type];
+    // `extractStatus` walks the chain for this field, thus the named condition
+    // classifies the same way it would from a status line.
+    if (status !== undefined) Object.assign(failure, { status });
+    return failure;
 }
 
 /**
@@ -615,16 +652,47 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const requestedModelId = requestedModelIdOf(deps.model);
     routeSdkWarningsTo(logger);
 
+    /**
+     * Record a call that the envelope gave up on.
+     *
+     * The envelope reports one attempt at `debug`, thus a deployment that runs
+     * at `info` keeps no trace of a call that exhausted its retries: the reply
+     * carries the failure to the user and the operator sees nothing. This is the
+     * one record that names the outcome.
+     */
+    function logFailure(session: AgentSession, failure: ProviderError, thrown: unknown): void {
+        logger.error("provider call failed", {
+            workload: workloadOf(session),
+            kind: failure.type,
+            retryable: failure.retryable,
+            ...logger.errorFields(thrown),
+        });
+    }
+
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
             const retry = createRetry(signal, logger, maxRetries);
             const capture = captureServedModelId(deps.model);
             try {
-                const result = await retry(async () => {
+                const collected = await retry(async () => {
                     // Attribution headers are time-limited; resolving them inside the
                     // retried closure keeps them fresh across a multi-minute window.
                     const headers = await resolveBillingHeaders(deps.resolveBilling, session);
-                    return generateText({
+                    // The call streams on the wire and collapses below.
+                    //
+                    // A non-streaming turn sends no header until the model completes,
+                    // thus the `headersTimeout` of the host HTTP client bounds the whole
+                    // generation. No option of the SDK lifts that bound, because it sits
+                    // under the fetch. Node defaults the field to 300s, and a turn near
+                    // 18k output tokens reaches it, while `DEFAULT_MAX_OUTPUT_TOKENS`
+                    // asks for up to 64k. A cut turn then costs twice: the envelope
+                    // starts the same generation again from zero.
+                    //
+                    // Anthropic states the rule for its own SDKs: a large `max_tokens`
+                    // makes streaming necessary, to prevent an HTTP timeout. Thus a
+                    // ceiling this size streams whether or not a consumer wants the
+                    // deltas, and `chatStream` stays the seam that forwards them.
+                    const result = streamText({
                         model: capture.model,
                         system: req.system,
                         messages: sanitizeMessages(req.messages),
@@ -637,18 +705,51 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         maxRetries: 0,
                         headers,
                         abortSignal: signal,
-                        // No SDK timeout rides here. `chunkMs` bounds a stream only,
-                        // thus it is inert on this call. The fetch guard is the full
-                        // bound, because the headers of a non-streaming response arrive
-                        // when the model completes.
+                        // `firstChunkMs` bounds the wait for the first content chunk,
+                        // and `chunkMs` bounds each later gap. Thus each silent interval
+                        // carries the one configured bound, and a turn that writes
+                        // steadily runs as long as it needs.
+                        ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
                         providerOptions: req.providerOptions,
                         reasoning: req.reasoning,
                     });
+                    // The drain sits inside the retried closure, thus a failure at any
+                    // point of the stream re-runs the whole attempt and the envelope
+                    // keeps its whole-call scope. No delta reaches a consumer here —
+                    // `chatStream` is the seam that forwards them.
+                    const iterator = result.fullStream[Symbol.asyncIterator]();
+                    let text = "";
+                    for (let pull = await pullNextDelta(iterator); pull.kind !== "end"; pull = await pullNextDelta(iterator)) {
+                        // A caller abort rides out as the reason of its own signal, thus
+                        // it stays a cancellation and reaches the caller as a throw.
+                        if (pull.kind === "aborted") throw abortedStreamFailure(signal, pull.reason, requestTimeoutMs);
+                        if (pull.kind === "failed") throw streamPartFailure(pull.error);
+                        text += pull.text;
+                    }
+                    // These promises settle only once the stream is fully drained, thus
+                    // the loop above must reach its end before this point.
+                    return {
+                        messages: await result.responseMessages,
+                        fallbackText: text,
+                        finishReason: await result.finishReason,
+                        rawFinishReason: await result.rawFinishReason,
+                        usage: await result.usage,
+                    };
                 });
-                return ok(responseFromGenerate(result, { requestedModelId, servedModelId: capture.servedModelId() }));
+                return ok(
+                    responseFromMessages({
+                        ...collected,
+                        requestedModelId,
+                        // Read after the drain: the metadata chunk that carries the
+                        // served id reaches the capture only as the stream is consumed.
+                        servedModelId: capture.servedModelId(),
+                    }),
+                );
             } catch (e) {
                 if (isAbortError(e) || signal?.aborted) throw e;
-                return err(toProviderError(unwrapForClassification(e), workloadOf(session)));
+                const failure = toProviderError(unwrapForClassification(e), workloadOf(session));
+                logFailure(session, failure, e);
+                return err(failure);
             }
         };
         return new ResultAsync(run());
@@ -696,6 +797,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 // throw carries the sentinel, thus the envelope gives the attempt a
                 // fresh window under the retry policy of a connection error.
                 if (first.kind === "aborted") throw abortedStreamFailure(signal, first.reason, requestTimeoutMs);
+                if (first.kind === "failed") throw streamPartFailure(first.error);
                 if (first.kind === "end") {
                     // A doStream promise rejection — the shape a real connection
                     // failure takes — does NOT surface at this first pull: streamText
@@ -742,6 +844,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 // partial text that arrived before it. The catch below builds the
                 // terminal `ProviderError` from the throwable.
                 if (pull.kind === "aborted") throw abortedStreamFailure(signal, pull.reason, requestTimeoutMs);
+                if (pull.kind === "failed") throw streamPartFailure(pull.error);
                 text += pull.text;
                 yield { type: "text-delta", text: pull.text };
             }
@@ -759,7 +862,9 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             yield { type: "done", response };
         } catch (e) {
             if (isAbortError(e) || signal?.aborted) throw e;
-            throw toProviderError(unwrapForClassification(e), workloadOf(session));
+            const failure = toProviderError(unwrapForClassification(e), workloadOf(session));
+            logFailure(session, failure, e);
+            throw failure;
         }
     }
 
