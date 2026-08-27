@@ -14,7 +14,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import type { KnowledgeBase } from "../../knowledge/knowledge-base.js";
+import type { KnowledgeBase, RuleMatch } from "../../knowledge/knowledge-base.js";
 import type { RuleRecord } from "../../knowledge/rule-record.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
@@ -27,6 +27,13 @@ export interface KnowledgeToolsDeps {
     readonly knowledge?: KnowledgeBase;
     /** Citation-set recorder — receives each returned rule id. */
     readonly onRuleIds?: (ids: readonly string[]) => void;
+    /**
+     * Obligation recorder — receives each evaluated match that `knowledge_search`
+     * returns. The planner's gate accumulates its reject obligations from this,
+     * thus an `applies` verdict a tool surfaces binds exactly like one from the
+     * seed-time brief.
+     */
+    readonly onMatches?: (matches: readonly RuleMatch[]) => void;
 }
 
 interface RuleSummary {
@@ -90,6 +97,7 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
                             return ok({ status: "no_matches" as const, corpus: result.corpus });
                         }
                         record(result.matches.map((m) => m.rule.id));
+                        deps.onMatches?.(result.matches);
                         return ok({
                             status: "ok" as const,
                             corpus: result.corpus,

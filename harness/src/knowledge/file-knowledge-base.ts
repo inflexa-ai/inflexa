@@ -12,7 +12,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 import { errAsync, fromPromise, okAsync, type ResultAsync } from "neverthrow";
 
@@ -39,11 +39,25 @@ export interface FileKnowledgeBaseDeps {
     readonly logger?: Logger;
 }
 
+/**
+ * Whole-token AND match. A substring OR would let a short token match inside
+ * unrelated words and would broaden a multi-word query, and the top-K window
+ * then fills with rules the query never asked for.
+ */
 function matchesText(rule: RuleRecord, text: string): boolean {
-    const tokens = text.toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return true;
-    const haystack = [rule.id, rule.title, rule.effect.statement, rule.recommendation ?? ""].join("\n").toLowerCase();
-    return tokens.some((t) => haystack.includes(t));
+    const queryTokens = text
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean);
+    if (queryTokens.length === 0) return true;
+    const haystack = new Set(
+        [rule.id, rule.title, rule.effect.statement, rule.recommendation ?? ""]
+            .join(" ")
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter(Boolean),
+    );
+    return queryTokens.every((t) => haystack.has(t));
 }
 
 const SEVERITY_RANK: Record<RuleRecord["effect"]["severity"], number> = { reject: 0, warn: 1, note: 2 };
@@ -86,10 +100,18 @@ export function loadFileKnowledgeBase(deps: FileKnowledgeBaseDeps): ResultAsync<
         const corpus: CorpusIdentity = { corpusId: manifest.data.corpusId, version: manifest.data.version };
         const rules = new Map<string, RuleRecord>();
 
+        const corpusRoot = resolve(deps.dir);
         for (const ruleFile of manifest.data.ruleFiles) {
+            // Confinement: a manifest is data, and a `../` entry must not read
+            // outside the corpus directory.
+            const target = resolve(corpusRoot, ruleFile);
+            if (target !== corpusRoot && !target.startsWith(corpusRoot + sep)) {
+                logger.warn("rule file excluded — the path resolves outside the corpus directory", { ruleFile });
+                continue;
+            }
             let fileJson: unknown;
             try {
-                fileJson = JSON.parse(await readFile(join(deps.dir, ruleFile), "utf8"));
+                fileJson = JSON.parse(await readFile(target, "utf8"));
             } catch (err) {
                 logger.warn("rule file excluded — not readable as JSON", { ruleFile, ...logger.errorFields(err) });
                 continue;

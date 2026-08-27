@@ -98,7 +98,7 @@
         "title": "Count-based DE methods require raw integer counts",
         "applies": { "omicsType": ["transcriptomics"] },
         "effect": {
-            "severity": "reject",
+            "severity": "warn",
             "statement": "DESeq2, PyDESeq2, and edgeR model raw counts with a negative binomial distribution. Do not give them TPM, FPKM, RPKM, or other normalized values — the statistical model breaks and the results are invalid. For pre-normalized expression values, use limma."
         },
         "recommendation": "Make sure that the input is raw integer counts before a count-based method runs. For normalized matrices, use limma, and do not pre-normalize counts for voom.",

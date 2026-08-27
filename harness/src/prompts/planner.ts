@@ -131,6 +131,9 @@ evidence, not a substitute for the profile you were handed.
   or revise the plan to obey it, then submit again.
 - Cite only ids that the block or a knowledge tool returned. Never cite a
   rule id from memory — an unreturned id rejects the plan.
+- When the Data Context states the smallest group size, pass it to
+  \`knowledge_search\` as \`minGroupN\`. A size-conditioned rule evaluates only
+  through the facts you supply, and an \`applies\` verdict then binds the plan.
 - \`knowledge_read\` gives a rule's full statement and its cited sources when
   the one-line form is not enough. \`knowledge_search\` finds rules the block
   did not carry.

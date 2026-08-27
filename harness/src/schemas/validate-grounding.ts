@@ -39,7 +39,7 @@ export interface GroundingCheck {
 
 const MAX_ADVISORIES = 10;
 
-export function checkGrounding(steps: readonly GroundedStep[], returnedRuleIds: ReadonlySet<string>, matches: readonly RuleMatch[]): GroundingCheck {
+export function checkGrounding(steps: readonly GroundedStep[], returnedRuleIds: ReadonlySet<string>, matches: Iterable<RuleMatch>): GroundingCheck {
     const violations: GroundingViolation[] = [];
     const advisories: string[] = [];
 
@@ -72,8 +72,8 @@ export function checkGrounding(steps: readonly GroundedStep[], returnedRuleIds: 
         }
         if (advisories.length >= MAX_ADVISORIES) continue;
         if (match.applicability === "not_evaluable") {
-            advisories.push(`${rule.id} (${rule.title}) could not be evaluated against the profile — a fact its conditions test is unknown.`);
-        } else if (!cited && rule.effect.severity === "warn") {
+            advisories.push(`${rule.id} (${rule.title}) could not be evaluated — a fact its conditions test is unknown.`);
+        } else if (!cited && (rule.effect.severity === "warn" || rule.effect.severity === "note")) {
             advisories.push(`${rule.id} (${rule.title}) applies and is not cited: ${rule.effect.statement}`);
         }
     }

@@ -18,7 +18,7 @@
 
 ### Requirement: The planner seed carries a knowledge brief when a source is resolved
 
-Before the loop, the host MUST query the knowledge source with the profile facts. The seed MUST gain a knowledge-brief block beside the reference and package censuses. The block MUST list each applicable rule with its id, its statement, and its severity, under a byte cap. Each listed id MUST be recorded into the invocation citation set. When the source is absent, the block MUST be one line that states the absence.
+Before the loop, the host MUST query the knowledge source with the categorical profile facts. The profiler is never extended for the gate: a numeric fact, such as the smallest group size, comes from the planner through `knowledge_search`, from the design its Data Context states. The seed MUST gain a knowledge-brief block beside the reference and package censuses. The block MUST list each returned rule with its id, its statement, and its severity, `reject` and `applies` first, under a byte cap. Truncation MUST fall on an entry boundary and MUST name the count of the rules it hid. Each returned match MUST be recorded into the invocation citation set and the obligation map. When the source is absent, the block MUST be one line that states the absence.
 
 #### Scenario: Applicable rules ride in the seed
 
@@ -32,7 +32,7 @@ Before the loop, the host MUST query the knowledge source with the profile facts
 
 ### Requirement: Plan validation runs a grounded gate after the structural checks
 
-`fullyValidate` MUST gain a third stage. The stage MUST reject a cited identifier that is outside the invocation citation set. The stage MUST demand an acknowledgment of each `reject` rule that `applies` to the dataset facts: a plan that cites the rule nowhere is rejected, with a `ValidationIssue` that carries code `grounding`, the rule id, and the rule statement. The gate enforces the acknowledgment, not method compliance, because a Phase-1 step carries no typed method. A `warn` or `note` outcome MUST return as advisory content, and it MUST NOT block. A `not_evaluable` rule MUST report an advisory note. When no knowledge source is resolved, the stage MUST be inert.
+`fullyValidate` MUST gain a third stage. The stage MUST reject a cited identifier that is outside the invocation citation set. The obligation map is live: the seed-time brief and each later `knowledge_search` result record into it, and an `applies` verdict overrides a `not_evaluable` one for the same id. The stage MUST demand an acknowledgment of each `reject` rule whose recorded verdict is `applies`: a plan that cites the rule nowhere is rejected, with a `ValidationIssue` that carries code `grounding`, the rule id, and the rule statement. The gate enforces the acknowledgment, not method compliance, because a Phase-1 step carries no typed method. A `warn` or `note` outcome MUST return as advisory content, and it MUST NOT block. A `not_evaluable` rule MUST report an advisory note. The stage MUST be inert exactly when no knowledge source is resolved. A failed brief query narrows what is citable, and it MUST NOT turn the stage off.
 
 #### Scenario: An unreturned citation is rejected
 
@@ -41,7 +41,7 @@ Before the loop, the host MUST query the knowledge source with the profile facts
 
 #### Scenario: An unacknowledged reject rule blocks with feedback
 
-- **WHEN** the facts show one sample in a group and the submitted plan cites the small-sample rule nowhere
+- **WHEN** `knowledge_search` returned the small-sample rule as `applies` for one sample in a group, and the plan cites it nowhere
 - **THEN** the gate returns the rule as a structured issue with its statement, and the planner can cite it or revise
 
 #### Scenario: No knowledge source, no gate

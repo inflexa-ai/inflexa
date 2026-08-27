@@ -59,6 +59,13 @@ describe("checkGrounding", () => {
         expect(result.advisories.some((a) => a.includes("INFLEXA-R-000201"))).toBe(true);
     });
 
+    test("an uncited applying note rule also advises", () => {
+        const matches = [match("INFLEXA-R-000107", "note", "applies")];
+        const result = checkGrounding([step("T1S1")], new Set(["INFLEXA-R-000107"]), matches);
+        expect(result.violations).toHaveLength(0);
+        expect(result.advisories.some((a) => a.includes("INFLEXA-R-000107"))).toBe(true);
+    });
+
     test("no returned rules means nothing to enforce", () => {
         const result = checkGrounding([step("T1S1", undefined)], new Set(), []);
         expect(result.violations).toHaveLength(0);

@@ -25,11 +25,16 @@ The harness MUST give two tools, `knowledge_search` and `knowledge_read`, built 
 - **WHEN** any sandbox agent runs with a resolved knowledge source
 - **THEN** both tools are attached, with no change to `meta.skills`
 
-### Requirement: Planner tool results join the invocation citation set
+### Requirement: Planner tool results join the invocation citation set and the obligations
 
-Inside one `generate_plan` invocation, each rule identifier that `knowledge_search` or `knowledge_read` returns MUST be recorded into the invocation citation set. The grounded gate MUST accept a plan citation only from that set.
+Inside one `generate_plan` invocation, each rule identifier that `knowledge_search` or `knowledge_read` returns MUST be recorded into the invocation citation set. Each evaluated match that `knowledge_search` returns MUST also be recorded into the obligation map, thus an `applies` verdict for a `reject` rule binds the plan. The grounded gate MUST accept a plan citation only from that set.
 
 #### Scenario: A searched rule becomes citable
 
 - **WHEN** the planner finds a rule through `knowledge_search` and cites its id in a step
 - **THEN** the gate accepts the citation
+
+#### Scenario: A tool-surfaced applies verdict binds like the brief
+
+- **WHEN** the planner passes the smallest group size to `knowledge_search` and a `reject` rule returns as `applies`
+- **THEN** the gate rejects a plan that cites the rule nowhere

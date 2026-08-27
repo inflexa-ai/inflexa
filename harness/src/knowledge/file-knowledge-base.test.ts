@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -119,12 +120,40 @@ describe("loadFileKnowledgeBase", () => {
         const result = (await kb.findRules({ text: "INFLEXA-R-000002" }, session))._unsafeUnwrap();
         expect(result.matches.map((m) => m.rule.id)).toEqual(["INFLEXA-R-000002"]);
     });
+
+    test("a query token matches whole words only, and a multi-word query narrows", async () => {
+        const withStatement = {
+            ...(RULE("INFLEXA-R-000001", "note") as { effect: object }),
+            effect: { severity: "note", statement: "The DE method for this design is stated here." },
+        };
+        const dir = await writeCorpus([withStatement, RULE("INFLEXA-R-000002", "note")]);
+        const kb = (await loadFileKnowledgeBase({ dir }))._unsafeUnwrap();
+        // "de" must not match inside "model" or "inside"; both tokens must match.
+        const result = (await kb.findRules({ text: "DE method" }, session))._unsafeUnwrap();
+        expect(result.matches.map((m) => m.rule.id)).toEqual(["INFLEXA-R-000001"]);
+    });
+
+    test("a manifest path outside the corpus directory is excluded", async () => {
+        const { logger, warns } = countingLogger();
+        const outside = await mkdtemp(join(tmpdir(), "knowledge-outside-"));
+        await writeFile(join(outside, "evil.json"), JSON.stringify([RULE("INFLEXA-R-000009", "note")]));
+        const dir = await writeCorpus([RULE("INFLEXA-R-000001", "note")], {
+            corpusId: "test-corpus",
+            version: "0.9.0",
+            ruleFiles: ["rules/all.json", `../${outside.split("/").pop()}/evil.json`],
+        });
+        const kb = (await loadFileKnowledgeBase({ dir, logger }))._unsafeUnwrap();
+        const result = (await kb.findRules({}, session))._unsafeUnwrap();
+        expect(result.matches.map((m) => m.rule.id)).toEqual(["INFLEXA-R-000001"]);
+        expect(warns()).toBe(1);
+    });
 });
 
-describe("the shipped corpus", () => {
-    // harness/src/knowledge → the repository root is three levels up.
-    const shippedDir = resolve(import.meta.dir, "../../../knowledge");
-
+// The corpus is repository content, not package content — a standalone harness
+// checkout legitimately has none, thus the suite skips instead of coupling the
+// package to the monorepo layout. Distribution is the embedder's concern.
+const shippedDir = resolve(import.meta.dir, "../../../knowledge");
+describe.skipIf(!existsSync(join(shippedDir, "manifest.json")))("the shipped corpus", () => {
     test("every shipped record validates and loads", async () => {
         const { logger, warns } = countingLogger();
         const kb = (await loadFileKnowledgeBase({ dir: shippedDir, logger }))._unsafeUnwrap();

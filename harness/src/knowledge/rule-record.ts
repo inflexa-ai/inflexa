@@ -13,14 +13,25 @@
 
 import { z } from "zod";
 
+import { extractDoi, extractPmid } from "../citations/normalize.js";
+
 export const RULE_ID_PATTERN = /^INFLEXA-R-\d{6}$/;
 
+// The locator shapes defer to the citations subsystem, thus a locator that
+// validates here is one the citation resolver can actually resolve, and the
+// two vocabularies cannot drift.
 const RuleSourceSchema = z
     .object({
         /** Human-readable reference line, e.g. "Love MI et al. (2014) Genome Biology". */
         citation: z.string().min(1),
-        doi: z.string().min(1).optional(),
-        pmid: z.string().regex(/^\d+$/).optional(),
+        doi: z
+            .string()
+            .refine((v) => extractDoi(v) !== undefined, { message: "not a DOI the citation resolver can resolve" })
+            .optional(),
+        pmid: z
+            .string()
+            .refine((v) => extractPmid(v) !== undefined, { message: "not a PMID the citation resolver can resolve" })
+            .optional(),
         url: z.string().url().optional(),
     })
     .refine((s) => s.doi !== undefined || s.pmid !== undefined || s.url !== undefined, {
@@ -87,9 +98,12 @@ export const RuleRecordSchema = z.strictObject({
 /**
  * The corpus manifest. `ruleFiles` is the closed load list — a rule file the
  * manifest does not name does not load, thus the corpus content is exactly
- * what the manifest declares.
+ * what the manifest declares. The manifest is deliberately NOT strict: an
+ * unknown key from a newer corpus version is ignored, because one added field
+ * must not turn the whole knowledge plane off for an older harness. The
+ * record schema stays strict — its closure is the evaluability guarantee.
  */
-export const CorpusManifestSchema = z.strictObject({
+export const CorpusManifestSchema = z.object({
     corpusId: z.string().min(1),
     version: z.string().min(1),
     ruleFiles: z.array(z.string().min(1)).nonempty(),

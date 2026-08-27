@@ -80,7 +80,7 @@ export interface CoreWorkflowDeps {
     readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "knowledge">;
     readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver">;
     readonly executeTargetAssessment: Omit<ExecuteTargetAssessmentDeps, "usageRecorder">;
-    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder">;
+    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "knowledge">;
 }
 
 /** The registered, callable workflow handles. */
@@ -355,7 +355,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder, ...(deps.knowledge ? { knowledge: deps.knowledge } : {}) });
     const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), citationResolver, usageRecorder });
     const executeTargetAssessment = registerExecuteTargetAssessment({ ...wf.executeTargetAssessment, usageRecorder });
-    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder });
+    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder, ...(deps.knowledge ? { knowledge: deps.knowledge } : {}) });
     // The extraction workflow shares the profile's sandbox and authorization rails, thus it draws the same
     // three seams from the profile deps. The report resolver factory binds the extraction arm over this
     // callable, thus a fall-through report reference reads its file out of process on the profile rails.

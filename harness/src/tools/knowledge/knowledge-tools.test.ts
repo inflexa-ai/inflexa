@@ -60,6 +60,17 @@ describe("knowledge_search", () => {
         expect(result).toEqual({ status: "no_knowledge_source" });
     });
 
+    test("the evaluated matches reach the obligation recorder", async () => {
+        const recorded: RuleMatch[] = [];
+        const kb = fixtureKb([{ rule: rule("INFLEXA-R-000001", "reject"), applicability: "applies" }]);
+        const [search] = createKnowledgeTools({ knowledge: kb, onMatches: (ms) => recorded.push(...ms) });
+        const { ctx } = makeToolContext();
+        (await search!.execute({ minGroupN: 1 }, ctx))._unsafeUnwrap();
+        expect(recorded).toHaveLength(1);
+        expect(recorded[0]?.applicability).toBe("applies");
+        expect(recorded[0]?.rule.effect.severity).toBe("reject");
+    });
+
     test("no matches is a data outcome with the corpus identity", async () => {
         const [search] = createKnowledgeTools({ knowledge: fixtureKb([]) });
         const { ctx } = makeToolContext();

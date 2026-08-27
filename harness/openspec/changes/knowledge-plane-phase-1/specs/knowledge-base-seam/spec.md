@@ -32,7 +32,7 @@ A `resolveCompositionKnowledge(seam, knowledgeDir)` function MUST resolve the so
 
 ### Requirement: The file-backed realization reads a validated local corpus
 
-The file-backed realization MUST read the rule files and the manifest from the supplied directory. It MUST validate each record against the rule-record schema. A record that fails validation MUST be excluded and reported through the injected `Logger`, and the valid records MUST still load. Construction over a directory with no readable manifest MUST refuse with a typed error.
+The file-backed realization MUST read the rule files and the manifest from the supplied directory. A rule-file path that resolves outside the corpus directory MUST be excluded and reported — the manifest is data. It MUST validate each record against the rule-record schema. A record that fails validation MUST be excluded and reported through the injected `Logger`, and the valid records MUST still load. Construction over a directory with no readable manifest MUST refuse with a typed error.
 
 #### Scenario: An invalid record does not sink the corpus
 

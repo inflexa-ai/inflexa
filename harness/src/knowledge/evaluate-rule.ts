@@ -25,11 +25,41 @@ export type RuleApplicability = "applies" | "not_applicable" | "not_evaluable";
 
 type ConditionOutcome = "pass" | "fail" | "unknown";
 
+/** Case- and separator-insensitive token set: "bulk RNA-seq" and "bulk_rna_seq" both give {bulk, rna, seq}. */
+function tokensOf(value: string): Set<string> {
+    return new Set(
+        value
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter(Boolean),
+    );
+}
+
+/**
+ * The profile writes free-form terms, thus a bare string equality would drop a
+ * rule on a spelling it never saw. The lattice is deliberate: the accepted
+ * tokens contained in the fact is a match ("bulk transcriptomics" carries
+ * "transcriptomics"), a partial overlap is `unknown` and surfaces as
+ * `not_evaluable` ("rna-seq" against "bulk-rna-seq" cannot be decided), and a
+ * disjoint pair fails. A rule thus degrades to advice on an ambiguous term,
+ * and it never vanishes in silence.
+ */
 function evaluateCategorical(accepted: readonly string[] | undefined, fact: string | undefined): ConditionOutcome {
     if (accepted === undefined) return "pass";
     if (fact === undefined) return "unknown";
-    const lowered = fact.toLowerCase();
-    return accepted.some((v) => v.toLowerCase() === lowered) ? "pass" : "fail";
+    const factTokens = tokensOf(fact);
+    let overlap = false;
+    for (const value of accepted) {
+        const acceptedTokens = tokensOf(value);
+        if (acceptedTokens.size === 0) continue;
+        let contained = true;
+        for (const token of acceptedTokens) {
+            if (factTokens.has(token)) overlap = true;
+            else contained = false;
+        }
+        if (contained) return "pass";
+    }
+    return overlap ? "unknown" : "fail";
 }
 
 function evaluateGroupSize(predicate: { lt?: number; gte?: number } | undefined, fact: number | undefined): ConditionOutcome {

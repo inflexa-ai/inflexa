@@ -4,7 +4,7 @@
 
 ### Requirement: A rule record is a validated, cited JSON document
 
-A rule record MUST validate against a Zod schema with these fields: `id`, `title`, `applies`, `effect`, `evidence`, and `version`. The `id` MUST match `INFLEXA-R-` plus six digits, and it MUST be unique in the corpus. The `effect` MUST carry a `severity` of `reject`, `warn`, or `note`, and a plain statement of the rule. The `evidence` block MUST hold at least one resolvable locator: a DOI, a PMID, or a URL. A record with no resolvable locator MUST fail validation. An optional `recommendation` names the permitted alternative.
+A rule record MUST validate against a Zod schema with these fields: `id`, `title`, `applies`, `effect`, `evidence`, and `version`. The `id` MUST match `INFLEXA-R-` plus six digits, and it MUST be unique in the corpus. The `effect` MUST carry a `severity` of `reject`, `warn`, or `note`, and a plain statement of the rule. The `evidence` block MUST hold at least one resolvable locator: a DOI, a PMID, or a URL. A DOI and a PMID MUST validate with the patterns of the citations subsystem, thus a loaded locator is one the citation resolver can resolve. A record with no resolvable locator MUST fail validation. An optional `recommendation` names the permitted alternative.
 
 #### Scenario: A cited record validates
 
@@ -32,7 +32,7 @@ The `applies` block MUST use only the declared condition keys: the omics type, t
 
 ### Requirement: The corpus is a directory with a manifest
 
-A corpus MUST be a directory of rule files plus one manifest. The manifest MUST carry the corpus identity and the corpus version. The harness MUST NOT hold the corpus path. The embedder supplies the directory, in the pattern of `skillsDir`. `describeCorpus()` MUST return the manifest identity and version.
+A corpus MUST be a directory of rule files plus one manifest. The manifest MUST carry the corpus identity and the corpus version. An unknown manifest key from a newer corpus version MUST be ignored, because one added field must not turn the whole knowledge plane off. The harness MUST NOT hold the corpus path. The embedder supplies the directory, in the pattern of `skillsDir`. `describeCorpus()` MUST return the manifest identity and version.
 
 #### Scenario: The corpus identity reaches the consumer
 

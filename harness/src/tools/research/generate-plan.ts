@@ -141,17 +141,18 @@ function modelAuthored(fields: Record<string, string | undefined>): LogFields {
 /**
  * One `submit_plan` rejection, in the shape a log query wants.
  *
- * `codes` separates the two failure families that call for different fixes: a
+ * `codes` separates the three failure families that call for different fixes: a
  * `schema` count means the planner cannot produce the declared shape, a `semantic`
- * count means it produces valid JSON describing an impossible DAG. `paths` is what
- * makes repeated rejections comparable at a glance — identical paths across
- * attempts is a planner stuck, moving paths is a planner making progress and
- * merely running out of budget.
+ * count means it produces valid JSON describing an impossible DAG, and a
+ * `grounding` count means the citations disobey the knowledge contract. `paths`
+ * is what makes repeated rejections comparable at a glance — identical paths
+ * across attempts is a planner stuck, moving paths is a planner making progress
+ * and merely running out of budget.
  */
 interface RejectionRecord {
     readonly attempt: number;
     readonly issueCount: number;
-    readonly codes: { readonly schema: number; readonly semantic: number };
+    readonly codes: { readonly schema: number; readonly semantic: number; readonly grounding: number };
     readonly paths: readonly string[];
     readonly messages: readonly string[];
 }
@@ -164,6 +165,7 @@ function toRejectionRecord(attempt: number, issues: readonly ValidationIssue[]):
         codes: {
             schema: issues.filter((i) => i.code === "schema").length,
             semantic: issues.filter((i) => i.code === "semantic").length,
+            grounding: issues.filter((i) => i.code === "grounding").length,
         },
         paths: kept.map((i) => i.path),
         messages: kept.map((i) => bounded(i.message, MAX_LOGGED_ISSUE_CHARS)),
@@ -244,10 +246,18 @@ interface ValidationIssue {
 type SubmitPlanOutput =
     { accepted: false; issues: ValidationIssue[]; advisories?: readonly string[] } | { accepted: true; planId: string; advisories?: readonly string[] };
 
-/** What the grounded gate holds: the ids this invocation returned, and the brief's matches. */
+/**
+ * What the grounded gate holds. Both collections are LIVE: the seed-time brief
+ * and every later `knowledge_search` call record into them, thus an `applies`
+ * verdict a tool surfaces mid-loop binds exactly like one from the brief. The
+ * gate reads them at each submit. The context exists whenever a source is
+ * resolved — a failed brief query narrows what is citable, and it never turns
+ * the citation-honesty check off.
+ */
 interface GroundingGateContext {
     readonly returnedRuleIds: ReadonlySet<string>;
-    readonly matches: readonly RuleMatch[];
+    /** Obligations by rule id. `applies` overrides `not_evaluable` for one id. */
+    readonly obligations: ReadonlyMap<string, RuleMatch>;
 }
 
 // ── Prior plan serialization (iteration context) ───────────────────
@@ -499,7 +509,7 @@ function fullyValidate(
     }
 
     if (groundingCtx !== undefined) {
-        const grounded = checkGrounding(parsed.data.steps, groundingCtx.returnedRuleIds, groundingCtx.matches);
+        const grounded = checkGrounding(parsed.data.steps, groundingCtx.returnedRuleIds, groundingCtx.obligations.values());
         const advisories = grounded.advisories.length > 0 ? { advisories: grounded.advisories } : {};
         if (grounded.violations.length > 0) {
             return {
@@ -941,10 +951,16 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
 
 // ── Knowledge brief (host-side, mandatory when a source is resolved) ────
 
-const KNOWLEDGE_BRIEF_MAX_CHARS = 4000;
+const KNOWLEDGE_BRIEF_MAX_CHARS = 6000;
 const KNOWLEDGE_STATEMENT_CHARS = 280;
 
-/** The evaluable dataset facts the profile holds. Group sizes are not structured in the profile today, thus `minGroupN` stays unknown here. */
+/**
+ * The evaluable dataset facts the profile holds: the categorical pair only.
+ * A numeric fact, such as the smallest group size, never comes from the
+ * profiler (a product decision — the profile is not extended for the gate).
+ * The planner reads the design from its Data Context and supplies the number
+ * to `knowledge_search`, and the returned verdict joins the gate obligations.
+ */
 function factsFromGrounding(grounding: DataGrounding): KnowledgeFacts {
     if (grounding.kind !== "ready" && grounding.kind !== "provisional") return {};
     const result = grounding.result;
@@ -954,56 +970,68 @@ function factsFromGrounding(grounding: DataGrounding): KnowledgeFacts {
     };
 }
 
-interface KnowledgeContext {
-    readonly block: string;
-    /** Present only when the source answered — the gate binds to exactly what it returned. */
-    readonly gate?: GroundingGateContext;
-}
-
 const KNOWLEDGE_ABSENT_BLOCK =
     "## Knowledge Rules\n\nNo knowledge source is available in this install. Ground the plan in the data profile and the literature searches.";
 
+const MATCH_SORT: Record<"applies" | "not_evaluable", number> = { applies: 0, not_evaluable: 1 };
+const SEVERITY_SORT: Record<RuleMatch["rule"]["effect"]["severity"], number> = { reject: 0, warn: 1, note: 2 };
+
 /**
  * Query the knowledge source with the profile facts and render the brief the
- * seed carries. Every returned id enters the citation set — the brief and the
- * knowledge tools feed one set, and the gate accepts citations only from it.
+ * seed carries. Every returned match goes through `recordMatches` into the
+ * live citation and obligation sets of the invocation. The renderer sorts
+ * reject-first itself — a source's own order is not a contract — and it
+ * truncates at entry boundaries with a count, thus a blocking rule can never
+ * fall past the cut and no entry is ever cut mid-sentence.
  */
-async function buildKnowledgeContext(
-    knowledge: KnowledgeBase | undefined,
+async function buildKnowledgeBrief(
+    knowledge: KnowledgeBase,
     grounding: DataGrounding,
     session: Parameters<KnowledgeBase["findRules"]>[1],
-    returnedRuleIds: Set<string>,
+    recordMatches: (matches: readonly RuleMatch[]) => void,
     logger: Logger,
-): Promise<KnowledgeContext> {
-    if (knowledge === undefined) return { block: KNOWLEDGE_ABSENT_BLOCK };
-
+): Promise<string> {
     const facts = factsFromGrounding(grounding);
     return knowledge.findRules({ facts, topK: 25 }, session).match(
-        (result): KnowledgeContext => {
-            for (const m of result.matches) returnedRuleIds.add(m.rule.id);
+        (result): string => {
+            recordMatches(result.matches);
             const header = [
                 `## Knowledge Rules (corpus ${result.corpus.corpusId}@${result.corpus.version})`,
                 "",
                 "The rules below constrain this dataset, from the knowledge plane. Cite the id of each rule that shapes a step, in that step's `grounding` field. " +
                     "Every `[reject]` rule marked `applies` must be cited somewhere in the plan — an uncited one rejects the plan. " +
-                    "`knowledge_read` gives a rule's full text and its sources; `knowledge_search` finds more.",
+                    "`knowledge_read` gives a rule's full text and its sources; `knowledge_search` finds more. " +
+                    "When the design states the smallest group size, pass it to knowledge_search as `minGroupN` — a size-conditioned rule evaluates only through the facts you supply.",
                 "",
-            ];
-            const lines = result.matches.map((m) => {
-                const status = m.applicability === "applies" ? "applies" : "unknown — a needed fact is not in the profile";
+            ].join("\n");
+            const sorted = [...result.matches].sort((a, b) => {
+                const byApplicability = MATCH_SORT[a.applicability] - MATCH_SORT[b.applicability];
+                if (byApplicability !== 0) return byApplicability;
+                const bySeverity = SEVERITY_SORT[a.rule.effect.severity] - SEVERITY_SORT[b.rule.effect.severity];
+                if (bySeverity !== 0) return bySeverity;
+                return a.rule.id.localeCompare(b.rule.id);
+            });
+            const lines = sorted.map((m) => {
+                const status = m.applicability === "applies" ? "applies" : "unknown — a fact its conditions test is not established";
                 const recommendation =
                     m.rule.recommendation === undefined ? "" : `\n  Recommendation: ${m.rule.recommendation.slice(0, KNOWLEDGE_STATEMENT_CHARS)}`;
                 return `- ${m.rule.id} [${m.rule.effect.severity}] (${status}) ${m.rule.title}: ${m.rule.effect.statement.slice(0, KNOWLEDGE_STATEMENT_CHARS)}${recommendation}`;
             });
-            let block = [...header, ...(lines.length > 0 ? lines : ["No rule applies to this dataset."])].join("\n");
-            if (block.length > KNOWLEDGE_BRIEF_MAX_CHARS) {
-                block = `${block.slice(0, KNOWLEDGE_BRIEF_MAX_CHARS)}\n… (truncated — use knowledge_search for the rest)`;
+            if (lines.length === 0) return `${header}No rule applies to this dataset.`;
+            const kept: string[] = [];
+            let used = header.length;
+            for (const line of lines) {
+                if (used + line.length + 1 > KNOWLEDGE_BRIEF_MAX_CHARS) break;
+                kept.push(line);
+                used += line.length + 1;
             }
-            return { block, gate: { returnedRuleIds, matches: result.matches } };
+            const dropped = lines.length - kept.length;
+            const tail = dropped > 0 ? `\n(${dropped} more rules not shown — knowledge_search finds them)` : "";
+            return `${header}${kept.join("\n")}${tail}`;
         },
-        (error): KnowledgeContext => {
-            logger.warn("knowledge source failed to answer — planning without the brief", { detail: error.detail });
-            return { block: "## Knowledge Rules\n\nThe knowledge source did not answer. Ground the plan in the data profile and the literature searches." };
+        (error): string => {
+            logger.warn("knowledge source failed to answer — the brief is empty, the gate stays on", { detail: error.detail });
+            return "## Knowledge Rules\n\nThe knowledge source did not answer. Use knowledge_search to reach the rules, and cite only what it returns.";
         },
     );
 }
@@ -1192,12 +1220,28 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
 
             // The knowledge brief is host-side and mandatory, like the two
             // inventories: an optional lookup is a lookup a small model skips.
-            // The set below is the invocation's citation set — the brief and the
-            // knowledge tools record into it, and the grounded gate accepts a
-            // plan citation only from it.
+            // The two collections below are the invocation's live citation set
+            // and obligation map — the brief and the knowledge tools record
+            // into them, and the grounded gate reads them at each submit.
             const returnedRuleIds = new Set<string>();
-            const knowledgeCtx = await buildKnowledgeContext(deps.knowledge, grounding, ctx.session, returnedRuleIds, logger);
-            const groundingBlock = [refsBlock, packagesBlock, knowledgeCtx.block].join("\n\n");
+            const obligations = new Map<string, RuleMatch>();
+            const recordMatches = (matches: readonly RuleMatch[]): void => {
+                for (const m of matches) {
+                    returnedRuleIds.add(m.rule.id);
+                    const prior = obligations.get(m.rule.id);
+                    if (prior === undefined || (prior.applicability === "not_evaluable" && m.applicability === "applies")) {
+                        obligations.set(m.rule.id, m);
+                    }
+                }
+            };
+            const knowledgeBlock =
+                deps.knowledge === undefined
+                    ? KNOWLEDGE_ABSENT_BLOCK
+                    : await buildKnowledgeBrief(deps.knowledge, grounding, ctx.session, recordMatches, logger);
+            // The gate exists exactly when a source is resolved. A failed brief
+            // query narrows what is citable, and it never turns the gate off.
+            const knowledgeGate: GroundingGateContext | undefined = deps.knowledge === undefined ? undefined : { returnedRuleIds, obligations };
+            const groundingBlock = [refsBlock, packagesBlock, knowledgeBlock].join("\n\n");
 
             const prompt = [
                 ...(priorPlanBlock ? [priorPlanBlock, ""] : []),
@@ -1234,7 +1278,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     dataContext: dataContextBlock.length,
                     referenceData: refsBlock.length,
                     packages: packagesBlock.length,
-                    knowledge: knowledgeCtx.block.length,
+                    knowledge: knowledgeBlock.length,
                     researchQuestion: input.researchQuestion.length,
                     analystNotes: input.analystNotes?.length ?? 0,
                     priorRuns: input.priorRuns?.length ?? 0,
@@ -1247,7 +1291,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger, knowledgeCtx.gate);
+            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger, knowledgeGate);
             // Built here rather than at construction: a `describeCall` hook reads no
             // dep, thus the tool must stay constructible from an empty bag. The tool
             // definitions are identical across invocations, thus the request prefix
@@ -1260,6 +1304,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 onRuleIds: (ids) => {
                     for (const id of ids) returnedRuleIds.add(id);
                 },
+                onMatches: recordMatches,
             });
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,

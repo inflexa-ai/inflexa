@@ -38,6 +38,8 @@ export const AnalysisStepSchema = z.object({
             z.object({
                 id: z
                     .string()
+                    .min(1)
+                    .max(64)
                     .describe(
                         "A knowledge-rule id that your knowledge context returned — the Knowledge Rules block of your seed, or a knowledge_search/knowledge_read result. Never cite an id from memory; an id the knowledge source did not return is rejected.",
                     ),

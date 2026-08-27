@@ -71,6 +71,28 @@ describe("CorpusManifestSchema", () => {
         const parsed = CorpusManifestSchema.safeParse({ corpusId: "x", version: "1", ruleFiles: [] });
         expect(parsed.success).toBe(false);
     });
+
+    test("an unknown manifest key from a newer corpus is ignored, never fatal", () => {
+        const parsed = CorpusManifestSchema.safeParse({
+            corpusId: "x",
+            version: "0.2.0",
+            ruleFiles: ["rules/all.json"],
+            description: "a field this harness does not know",
+        });
+        expect(parsed.success).toBe(true);
+    });
+});
+
+describe("locator strength", () => {
+    test("a doi the citation resolver cannot resolve fails validation", () => {
+        const fake = { ...VALID_RECORD, evidence: { sources: [{ citation: "X", doi: "see lab notebook" }] } };
+        expect(RuleRecordSchema.safeParse(fake).success).toBe(false);
+    });
+
+    test("a doi with a resolver-visible shape passes", () => {
+        const real = { ...VALID_RECORD, evidence: { sources: [{ citation: "X", doi: "doi:10.1093/nar/gku864" }] } };
+        expect(RuleRecordSchema.safeParse(real).success).toBe(true);
+    });
 });
 
 describe("evaluateRule", () => {
@@ -103,6 +125,27 @@ describe("evaluateRule", () => {
             applies: {},
         }) as RuleRecord;
         expect(evaluateRule(universal, {})).toBe("applies");
+    });
+
+    test("a separator or case variant of a term still matches", () => {
+        expect(evaluateRule(rule, { omicsType: "Bulk Transcriptomics", minGroupN: 1 })).toBe("applies");
+        const subtyped = RuleRecordSchema.parse({
+            ...VALID_RECORD,
+            id: "INFLEXA-R-000102",
+            applies: { omicsSubtype: ["bulk-rna-seq"] },
+        }) as RuleRecord;
+        expect(evaluateRule(subtyped, { omicsSubtype: "bulk_rna_seq" })).toBe("applies");
+        expect(evaluateRule(subtyped, { omicsSubtype: "bulk RNA-seq" })).toBe("applies");
+    });
+
+    test("a partial term overlap degrades to not_evaluable, never to a silent drop", () => {
+        const subtyped = RuleRecordSchema.parse({
+            ...VALID_RECORD,
+            id: "INFLEXA-R-000102",
+            applies: { omicsSubtype: ["bulk-rna-seq"] },
+        }) as RuleRecord;
+        expect(evaluateRule(subtyped, { omicsSubtype: "RNA-seq" })).toBe("not_evaluable");
+        expect(evaluateRule(subtyped, { omicsSubtype: "proteomics" })).toBe("not_applicable");
     });
 
     test("a gte bound composes with an lt bound into a range", () => {
