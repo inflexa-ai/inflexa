@@ -41,4 +41,6 @@
 - [x] 5.1 Run `tsc -p tsconfig.json` and `bun test` in `harness/`, and repair what fails
 - [x] 5.2 Run `bun run format:file` on each changed source file
 - [x] 5.3 Validate the implementation against the artifacts with the `opsx:verify` workflow
-- [ ] 5.4 Drive one end-to-end plan generation against the shipped corpus through the `harness:verify` skill. Confirm the four paths that no unit test reaches: the citation-honesty rejection loop, the advisories on an accepted plan, the corpus stamp on a stored citation, and the prior-plan block of an iterated plan
+- [x] 5.4 Cover the joins of the knowledge plane with tests, over a real temp corpus. The eight cases are the two seed shapes, the citation rejection loop, the advisories and their rank, a tool-supplied fact, and a later verdict. The last two are the corpus stamp and the prior-plan block
+- [x] 5.5 Cover the CLI step-agent hop, where a dropped forward would typecheck and answer `no_knowledge_source`
+- [ ] 5.6 Drive one plan generation with a live provider as a smoke check. The joins now have tests, thus this confirms only that a real model reads the brief and cites from it
