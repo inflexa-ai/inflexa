@@ -332,6 +332,22 @@ def _requirements(dist: Distribution) -> list[str]:
         return []
 
 
+# A recorded or derived top-level entry is an import name only when it is
+# one Python identifier. A wheel can record junk beside its modules — a
+# `-stubs` directory, a stray `site-packages`, a path with a slash — and an
+# unimportable entry in the graph fails the load check of a usable package.
+_IMPORT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _ships(store_dir: Path, name: str) -> bool:
+    """Whether the store directory holds a top-level module of this name."""
+    if (store_dir / name).is_dir() or (store_dir / f"{name}.py").is_file():
+        return True
+    if (store_dir / f"{name}.so").is_file():
+        return True
+    return any(store_dir.glob(f"{name}.*.so"))
+
+
 def import_names(store_dir: Path, dist: Distribution) -> list[str]:
     """The top-level modules that a Python distribution gives.
 
@@ -345,7 +361,16 @@ def import_names(store_dir: Path, dist: Distribution) -> list[str]:
     except OSError:
         recorded = None
     if recorded:
-        return sorted({line.strip() for line in recorded.splitlines() if line.strip()})
+        names = {line.strip() for line in recorded.splitlines() if line.strip()}
+        # The record can claim a valid name that the wheel never shipped
+        # (biom-format records `build`, `ci`, `images`, `wheelhouse`). The
+        # graph advertises import names, and the load check imports each
+        # one, thus only a name that is on disk belongs in the graph. A
+        # record whose whole claim misses the disk falls to the walk.
+        shipped = sorted(name for name in names
+                         if _IMPORT_NAME.match(name) and _ships(store_dir, name))
+        if shipped:
+            return shipped
     names = set()
     for entry in store_dir.iterdir():
         if entry.name.startswith(".") or entry.name in NOT_AN_IMPORT_NAME:
@@ -358,7 +383,7 @@ def import_names(store_dir: Path, dist: Distribution) -> list[str]:
             names.add(entry.stem)
         elif entry.suffix == ".so":
             names.add(entry.name.split(".", 1)[0])
-    return sorted(names)
+    return sorted(name for name in names if _IMPORT_NAME.match(name))
 
 
 def entry_point_names(dist: Distribution) -> list[str]:

@@ -1641,6 +1641,50 @@ def image_owned_report(listed: dict[str, set[str]], installed: dict[str, set[str
             + emit_deps.REVEALED_NAME_RULE)
 
 
+class ImportNameTests(unittest.TestCase):
+    """import_names feeds the load check, thus junk entries must not pass.
+
+    A wheel can record an unimportable entry beside its modules: a `-stubs`
+    directory, a stray `site-packages`, a path with a slash. The load check
+    imports each recorded name, and one junk name fails a usable package.
+    """
+
+    class _Dist:
+        def __init__(self, top_level):
+            self._top = top_level
+
+        def read_text(self, name):
+            if name == "top_level.txt":
+                return self._top
+            raise OSError(name)
+
+    def test_recorded_junk_names_are_filtered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "wrapt").mkdir()
+            (root / "wrapt-stubs").mkdir()
+            dist = self._Dist("wrapt\nwrapt-stubs\nsite-packages\nnvidia/cusparselt\n")
+            self.assertEqual(emit_deps.import_names(root, dist), ["wrapt"])
+
+    def test_recorded_names_off_the_disk_fall_to_the_walk(self):
+        # biom-format records build/ci/images/wheelhouse and ships only
+        # biom/. A record whose whole claim misses the disk must not stand.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "biom").mkdir()
+            dist = self._Dist("build\nci\nimages\nwheelhouse\n")
+            self.assertEqual(emit_deps.import_names(root, dist), ["biom"])
+
+    def test_walked_junk_names_are_filtered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "good_pkg").mkdir()
+            (root / "bad-stubs").mkdir()
+            (root / "mod.py").write_text("")
+            self.assertEqual(emit_deps.import_names(root, self._Dist(None)),
+                             ["good_pkg", "mod"])
+
+
 class ImageOwnedPackageTests(unittest.TestCase):
     """base-packages.json against the installed set of the sandbox image."""
 
