@@ -12,8 +12,7 @@ import { type Result } from "neverthrow";
 // is dependency-free by construction, so this import costs nothing measurable. The barrel re-exports
 // the same constant; that export is the contract, this is the access path.
 import { DATA_PROFILE_RUN_LITERAL } from "@inflexa-ai/harness/contracts/data-profile.js";
-import type { StoreEcosystem, StoreFlightRow, StoreFlightStatus } from "../modules/libs/store_flight.ts";
-import type { TransferKind, TransferRow, TransferStatus } from "../modules/libs/transfers.ts";
+import type { StoreEcosystem, StoreFlightRow, StoreFlightStatus, TransferKind, TransferRow, TransferStatus } from "../types/store.ts";
 import type { DbError } from "./errors.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";

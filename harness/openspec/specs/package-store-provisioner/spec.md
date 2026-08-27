@@ -171,26 +171,37 @@ user. A silent Python-first win is a fault.
 
 ### Requirement: Reclamation is exclusive and lease-free
 
-`reclaim` MUST run under an exclusive lock, and it MUST remove only the
-store directories that no farm references. It MUST then prune the
-`deps.json` node of every store directory that is gone, and thin `by_name`
-to match. Thus the graph never advertises a package that no link can land.
-`remove-farm` MUST remove the
-named farm and its links, and it MUST NOT touch the pool. No lease guards a
-removal: the host gates its own delete flow on live work.
+`reclaim` MUST run under an exclusive lock. The reference set MUST be the
+farm links plus the graph nodes, the same set for the plain pass and the
+debris pass. A locally acquired package holds no farm link until a run
+links it, thus a farm-only set would delete fresh inventory. And a
+removal that ignores the graph leaves a dangling edge, and the strict
+graph reader then refuses the whole pool.
 
-`reclaim --debris` MUST narrow the pass to the tier that nothing
-references: a store directory with no farm link and no graph node, plus
-the stale acquire reports under `.inflexa-download/`. It MUST NOT remove a
-directory that the graph advertises, thus a pre-fetched package survives.
-It MUST NOT change the graph. The host owns the triggers of the debris
-pass, and it gates them on live work.
+`reclaim` MUST remove only an unreferenced directory. It MUST then prune
+the `deps.json` node of every store directory that is gone, and thin
+`by_name` to match. Thus the graph never advertises a package that no
+link can land.
 
-#### Scenario: A reclaimed directory leaves the graph
+`remove-farm` MUST remove the named farm and its links, and it MUST NOT
+touch the pool. No lease guards a removal: the host gates its own delete
+flow on live work.
+
+`reclaim --debris` MUST also remove the stale acquire reports under
+`.inflexa-download/`, and it MUST NOT change the graph. The host owns the
+triggers of the debris pass, and it gates them on live work.
+
+#### Scenario: An advertised directory survives reclamation
 
 - **GIVEN** a committed store directory that no farm links
 - **WHEN** `reclaim` runs
-- **THEN** the directory and its graph node are both gone, and no `by_name` entry names it
+- **THEN** the directory stays, because the graph advertises it
+
+#### Scenario: A gone directory loses its node
+
+- **GIVEN** a store directory that was removed outside the product
+- **WHEN** `reclaim` runs
+- **THEN** its graph node is pruned, and no `by_name` entry names it
 
 #### Scenario: A referenced directory survives reclamation
 

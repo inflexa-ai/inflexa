@@ -30,63 +30,10 @@ import { env } from "../../lib/env.ts";
 import { acquireInstanceLock, instanceLockHolder, releaseInstanceLock, TRANSFER_LOCK_KEY_PREFIX } from "../../lib/lock.ts";
 import { getTransfer, listTransfers } from "../../db/primary_query.ts";
 import { recordTransferProgress, recordTransferResolve, settleTransfer, startTransferRun } from "../../db/primary_mutation.ts";
+import { TRANSFER_KINDS, type TransferKind, type TransferRow, type TransferStatus } from "../../types/store.ts";
 import { provisionerImageFor } from "./images.ts";
 import { imagePackagesFile } from "./packages.ts";
 import { configuredSandboxImage } from "./pull.ts";
-
-/** The three transfer kinds, in the order the surfaces render them. */
-export const TRANSFER_KINDS = ["runtime_image", "provisioner_image", "catalog"] as const;
-
-/** One of the three transfer kinds. */
-export type TransferKind = (typeof TRANSFER_KINDS)[number];
-
-/**
- * The lifecycle states of one transfer.
- *
- * `declined` records a setup answer of no, which starts no child and writes no
- * staged tree. `canceled` records a transfer that started and that the user
- * stopped. The difference is load-bearing: only the second has a partial tree
- * to drop. `failed`, `declined`, and `canceled` are terminal, and only a retry
- * leaves one of them.
- */
-export type TransferStatus = "pending" | "running" | "installed" | "failed" | "declined" | "canceled";
-
-/**
- * The one persisted row of a transfer kind.
- *
- * The row is the truth of what the CHILD does, and it decides nothing about
- * usability: an image or a store can arrive by a route that wrote no row, thus
- * an absent row is a normal condition. The receipt on disk (catalog) and the
- * engine (images) stay the truth of what the machine holds.
- *
- * The shape lives beside the lifecycle rather than in `src/types/`, because the
- * transfers are its one consumer. `src/db/` takes it as a type-only import,
- * thus the storage layer keeps no runtime dependency on this module.
- */
-export type TransferRow = {
-    /** The kind, which is the whole identity of the row — one row per kind. */
-    readonly id: TransferKind;
-    /** When the first run wrote the row, epoch millis. */
-    readonly createdAt: number;
-    /** When the last write landed, epoch millis. */
-    readonly updatedAt: number;
-    /** The lifecycle state as WRITTEN. Read it through {@link readTransferReport}, which corrects a dead holder. */
-    readonly state: TransferStatus;
-    /** The bytes the transfer has moved so far. Zero when only the CLI-pull fallback ran, which reports no byte figure. */
-    readonly bytesTransferred: number;
-    /** The bytes the source declares, or `null` when it declares none. */
-    readonly totalBytes: number | null;
-    /** The layers the transfer has completed so far. */
-    readonly layersCompleted: number;
-    /** The layers the source declares, or `null` when it declares none. */
-    readonly totalLayers: number | null;
-    /** What the last resolve saw: a manifest digest for the catalog, a local image digest for an image. */
-    readonly digest: string | null;
-    /** The user-facing message of a failure, or the notice of a completed run. Never a stack trace. */
-    readonly message: string | null;
-    /** The process identifier of the child, or `null` when no child holds the run. */
-    readonly holderPid: number | null;
-};
 
 /** The instance-lock key of one transfer kind. The child holds it for its whole life. */
 export function transferLockKey(kind: TransferKind): string {
