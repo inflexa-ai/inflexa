@@ -468,8 +468,8 @@ def main() -> int:
                          "every advertised Python package loads from the farm's content store")
     args = ap.parse_args()
 
-    if not PACKAGES_TXT.exists():
-        print(f"ERROR: {PACKAGES_TXT} not found — is the store mounted?", file=sys.stderr)
+    if not FARM_LOCK.exists():
+        print(f"ERROR: {FARM_LOCK} not found — is the farm mounted?", file=sys.stderr)
         return 2
 
     farm_store: Path | None = None
