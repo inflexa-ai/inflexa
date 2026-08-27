@@ -59,13 +59,35 @@ unlink(stage, recursive = TRUE); dir.create(stage, recursive = TRUE)
 # package fails to build, but the sandbox contract is best-effort per package — the
 # per-track load check is the floor. So catch the abort, keep whatever did install,
 # and let the load check report the drops. A failure here is usually a resource limit
-# (a large annotation package OOMing its load test), not a broken package. pak also
-# installs the missing apt system libraries itself along the way.
+# (a large annotation package OOMing its load test), not a broken package.
+#
+# PKG_SYSREQS=false: the egress wall blocks the apt hosts, and the image bakes
+# the build libraries instead. pak then prints its whole requirement list under
+# a "Missing N system packages" header WITHOUT a dpkg check, thus that header
+# is not a statement about this image. The dpkg-verified report prints after
+# the install. Refer to docs/feat_localPackages/ci-postmortem-2026-08-27.md.
+message("NOTE: pak prints 'Missing N system packages' without a dpkg check here ",
+        "(PKG_SYSREQS=false). The line is the unmanaged-requirement list, not a gap ",
+        "report. The dpkg-verified report prints after the install.")
 install_err <- tryCatch({ pak::lockfile_install(lock_out, lib = stage); NULL },
                         error = function(e) conditionMessage(e))
 if (!is.null(install_err))
   message("WARNING: lockfile_install did not finish cleanly: ", install_err,
           "\n  keeping the packages that did install; the load check is the gate.")
+
+# The dpkg-verified sysreq report of the INSTALLED set: which system packages
+# it wants, and whether the image truly holds them. Best-effort — a report
+# failure must never fail a build that the load check gates.
+tryCatch({
+  sysreq_state <- pak::sysreqs_check_installed(library = stage)
+  gap_count <- tryCatch(sum(!sysreq_state$installed, na.rm = TRUE), error = function(e) NA_integer_)
+  if (isTRUE(gap_count > 0)) {
+    message(sprintf("VERIFIED sysreq gaps (dpkg-checked): %d system package(s) truly absent:", gap_count))
+    print(sysreq_state[!sysreq_state$installed, ])
+  } else {
+    message("VERIFIED: every system requirement of the installed set is present (dpkg-checked).")
+  }
+}, error = function(e) message("NOTE: the sysreq verification did not run: ", conditionMessage(e)))
 
 # Subtree key is REACHABILITY, not the lock `type`: pak types a Bioconductor package
 # `standard` when P3M's standard repo mirrors it, so `type` cannot separate the two.

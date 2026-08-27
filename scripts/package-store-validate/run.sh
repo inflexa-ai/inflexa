@@ -124,6 +124,13 @@ echo "Validating farm $FARM_NAME of the store at $LIB_PATH in $MOUNT_IMAGE ..."
 # The farm bind nests inside the store bind, thus it comes AFTER it. The farm
 # shadows its mount point inside the store, and each farm link into
 # /mnt/libs/store resolves through the store bind.
+#
+# runc cannot make the farm mountpoint inside a read-only mount, thus a docker
+# engine refuses the nested bind when the store copy has no `farm/` entry. crun
+# (podman) makes the mountpoint itself, and the mkdir is then a no-op. The
+# mountpoint is host-side state of the invoker's store COPY, never part of the
+# packed artifact — the build removes it from the volume before the pack.
+mkdir -p "$LIB_PATH/farm"
 docker run --rm --entrypoint "" \
   -v "$LIB_PATH:/mnt/libs:ro" \
   -v "$FARM_PATH:/mnt/libs/farm:ro" \
