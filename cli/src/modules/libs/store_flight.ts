@@ -61,19 +61,7 @@ import {
 } from "./provisioner.ts";
 import { withStoreMetadataMutex } from "./store_download.ts";
 import { readTransferReport } from "./transfers.ts";
-
-/** The package ecosystems a flight can acquire. The store carries the two tracks, and the key separates them. */
-export type StoreEcosystem = "python" | "r";
-
-/**
- * The states of one flight. `queued` is a flight that owns its key and waits
- * for a slot under the concurrency cap. `running` is a flight whose batch
- * container is up. `failed` is the ONE terminal state: a refused spec settles
- * into it with a durable message, and a retry of the same spec claims the row
- * back to `queued`. A success still removes its row — a completed state that
- * everyone has is noise.
- */
-export type StoreFlightStatus = "queued" | "running" | "failed";
+import type { StoreEcosystem, StoreFlightRow } from "../../types/store.ts";
 
 /**
  * The normalized spec that keys a flight.
@@ -87,41 +75,6 @@ export type StoreFlightSpec = {
     readonly ecosystem: StoreEcosystem | null;
     readonly name: string;
     readonly specifier: string;
-};
-
-/**
- * The persisted row of one live flight.
- *
- * The shape lives beside the flight rather than in `src/types/`, because the
- * flight is its one consumer. `src/db/` takes it as a type-only import, thus
- * the storage layer keeps no runtime dependency on this module.
- */
-export type StoreFlightRow = {
-    /** The flight key: the ecosystem, the canonical name, and the specifier, joined. */
-    readonly id: string;
-    /** When the owner claimed the key, epoch millis. */
-    readonly createdAt: number;
-    /** When the last write landed, epoch millis. */
-    readonly updatedAt: number;
-    /** The live state. */
-    readonly state: StoreFlightStatus;
-    /** The ecosystem of the spec, or `null` for a name the run resolves. */
-    readonly ecosystem: StoreEcosystem | null;
-    /** The PEP 503 canonical distribution name. */
-    readonly name: string;
-    /** The exact-version specifier, or empty. */
-    readonly specifier: string;
-    /** The newest provisioner line, or `null` before the container writes one. */
-    readonly progress: string | null;
-    /** The recorded reason of a `failed` flight: the phase, then the whole error text. `null` on a live row. */
-    readonly message: string | null;
-    /**
-     * The process that owns the flight. A live row whose holder is dead is
-     * debris that the next read sweeps. A `failed` row keeps the pid of its
-     * ended flush, and the sweep keeps the row — the record must survive the
-     * process.
-     */
-    readonly holderPid: number;
 };
 
 /** One live flight as a reader sees it: the row, and the analyses subscribed to it. */
@@ -635,9 +588,25 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
                     failures.set(entry.key, `resolve: ${reason}`);
                     break;
                 }
-                case "both_hit":
-                    outcomes.push({ kind: "both_hit", spec: entry.spec, candidates: outcome.candidates ?? [] });
+                case "both_hit": {
+                    const candidates = outcome.candidates ?? [];
+                    outcomes.push({ kind: "both_hit", spec: entry.spec, candidates });
+                    // A both-hit settles as a `failed` row like a refusal, because
+                    // the row is the one durable surface of a detached flush: a
+                    // stop that only rides the in-process outcomes would vanish
+                    // with the child, and no ask would reach the asker.
+                    // The provisioner writes two candidates on every both-hit; the
+                    // `?? []` above only guards the wire. The fixed pair keeps the
+                    // durable message whole if a report ever arrives without them.
+                    const pair =
+                        candidates.length > 0 ? candidates.map((candidate) => `--lang ${candidate.ecosystem}`).join(" or ") : "--lang python or --lang r";
+                    failures.set(
+                        entry.key,
+                        `resolve: both ecosystems hold "${entry.spec.name}" — nothing was installed. ` +
+                            `Run \`inflexa store add ${entry.spec.name}\` again with ${pair} to name the one you want.`,
+                    );
                     break;
+                }
                 default: {
                     const unreachable: never = outcome.outcome;
                     throw new Error(`unhandled acquire outcome: ${JSON.stringify(unreachable)}`);
@@ -807,8 +776,8 @@ export function describeRecordedFlightFailure(message: string | null): string {
 /**
  * Classify one pool miss against the host rows, for the launch refusal: in
  * flight, failed with its recorded reason, or unknown. `undefined` is the
- * unknown case — the seam's own `absent` outcome already directs the ask, and
- * a detail would only restate it.
+ * unknown case — each caller appends its own remedy for it, thus this
+ * classifier stays a pure read of the host rows.
  */
 export function classifyPoolMiss(name: string): string | undefined {
     const canonical = canonicalDistributionName(name);

@@ -2,7 +2,7 @@ import { randomUUIDv7 } from "bun";
 import { sep } from "node:path";
 import type { Result } from "neverthrow";
 import { tryMutation, withTransaction } from "./util.ts";
-import type { TransferKind } from "../modules/libs/transfers.ts";
+import type { TransferKind } from "../types/store.ts";
 import type { DbError } from "./errors.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
@@ -558,8 +558,10 @@ export function unsubscribeStoreFlight(params: { flightId: string; analysisId: s
  *
  * A repeat of one spec for one analysis stays one entry: the flush deduplicates by the flight key
  * anyway, and the queue is a readout the surfaces render, thus a doubled line would only mislead.
- * The dedup rides in the WHERE of the insert rather than a UNIQUE constraint, because `analysis_id`
- * is nullable and the pair of partial indexes would outweigh a queue this small.
+ * The dedup rides in the WHERE of the one insert rather than a UNIQUE constraint, because
+ * `analysis_id` is nullable and the pair of partial indexes would outweigh a queue this small.
+ * `IS ?` carries the two nullable columns, thus a NULL binding compares as a value and the one
+ * statement covers every case with no read-then-decide race between two writers.
  */
 export function enqueuePendingStoreAdd(params: {
     name: string;
@@ -569,19 +571,17 @@ export function enqueuePendingStoreAdd(params: {
 }): Result<void, DbError> {
     const now = Date.now();
     return tryMutation("enqueuePendingStoreAdd", (conn) => {
-        const dup = (
-            params.analysisId === null
-                ? conn
-                      .query("SELECT COUNT(*) AS n FROM pending_store_adds WHERE name = ? AND specifier = ? AND ecosystem IS ? AND analysis_id IS NULL")
-                      .get(params.name, params.specifier, params.ecosystem)
-                : conn
-                      .query("SELECT COUNT(*) AS n FROM pending_store_adds WHERE name = ? AND specifier = ? AND ecosystem IS ? AND analysis_id = ?")
-                      .get(params.name, params.specifier, params.ecosystem, params.analysisId)
-        ) as { n: number } | null;
-        if ((dup?.n ?? 0) > 0) return;
-        conn.query("INSERT INTO pending_store_adds (id, created_at, name, specifier, ecosystem, analysis_id) VALUES (?, ?, ?, ?, ?, ?)").run(
+        conn.query(
+            "INSERT INTO pending_store_adds (id, created_at, name, specifier, ecosystem, analysis_id) " +
+                "SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (" +
+                "SELECT 1 FROM pending_store_adds WHERE name = ? AND specifier = ? AND ecosystem IS ? AND analysis_id IS ?)",
+        ).run(
             randomUUIDv7(),
             now,
+            params.name,
+            params.specifier,
+            params.ecosystem,
+            params.analysisId,
             params.name,
             params.specifier,
             params.ecosystem,

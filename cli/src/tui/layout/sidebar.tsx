@@ -397,9 +397,8 @@ const SINGLE_CELL_GLYPHS: ReadonlySet<string> = new Set(
  * note" — a section that could show both would let a caller pair a reported number with an absence
  * message and leave the reader to work out which one is the answer.
  *
- * ONE figure case, not the two ("all on one line" / "stacked when something nests") this section used
- * to carry. The two arms now ride the same row whether or not anything nests under them, so the row
- * count no longer depends on the data and there is nothing left for a second case to select.
+ * ONE figure case: a figure renders on the same row whether or not anything nests under it, so the
+ * row count never depends on the data and a second case would have nothing to select.
  */
 export type UsageSection = { kind: "message"; text: string } | { kind: "figure"; quantities: TokenQuantities };
 

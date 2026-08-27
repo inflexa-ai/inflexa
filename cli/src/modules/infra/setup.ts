@@ -765,7 +765,6 @@ export async function setup(options: SetupOptions): Promise<void> {
             () => log.warn(`Could not clear the setup checkpoint at ${env.setupStatePath}. The next run may offer to continue from a finished step.`),
         );
 
-
         // Re-read rather than tracking "did THIS run configure embeddings": the closing hint is about the
         // MACHINE's state, and a backend left by the interactive picker above — or by an earlier run, which
         // is what makes the embedding step return early without asking — leaves "go pick a backend" exactly
@@ -803,7 +802,8 @@ export async function setup(options: SetupOptions): Promise<void> {
  * prerequisite, and the sandbox gate of the TUI names what is missing.
  */
 async function runTransfersSetup(answered: SetupAnswers["sandbox"], canPrompt: boolean): Promise<void> {
-    const { readTransferReports, startImageTransfer, TRANSFER_KINDS } = await import("../libs/transfers.ts");
+    const { readTransferReports, startImageTransfer } = await import("../libs/transfers.ts");
+    const { TRANSFER_KINDS } = await import("../../types/store.ts");
     const { startCatalogTransfer } = await import("../libs/store_download.ts");
     const { settleTransfer } = await import("../../db/primary_mutation.ts");
 

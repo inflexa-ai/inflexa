@@ -119,16 +119,29 @@ repositories, the GitHub hosts for the `github` track, and
 only the first two classes. The workflow documentation MUST record the
 privilege asymmetry between the two containers.
 
-The entrypoint MUST write each resolved address of a permitted host into
-`/etc/hosts` before the rules freeze. The rules and every later connect
-then agree on one address set. Thus a host that rotates its addresses
-under a short TTL cannot orphan its own rule during a long build.
+The egress rules MUST come from live DNS. A local resolver feeds each address
+of a permitted answer into a firewall set, before the answer returns, and
+the rules match the set. Thus a host that changes its addresses under a
+short TTL stays reachable, and no frozen address set can go stale during
+a long build. The last rule MUST reject, thus a blocked connect fails in
+milliseconds and names the host — a silent drop burns its whole timeout.
 
-#### Scenario: A rotated address does not break a permitted host
+A fatal canary step MUST run before the build. It applies the same
+allowlist library, fetches one pinned-snapshot binary whole through its
+redirect, and proves that an off-list host refuses fast. Thus a blocked
+route stops the run in minutes, not at the multi-hour budget.
 
-- **GIVEN** a permitted host that rotates its addresses during a build
-- **WHEN** a connect to that host opens after the rotation
-- **THEN** the connect uses a pinned address and the rules accept it
+#### Scenario: A changed address does not break a permitted host
+
+- **GIVEN** a permitted host that changes its addresses during a build
+- **WHEN** a connect to that host opens after the change
+- **THEN** the resolver feeds the new address into the set, and the rules accept the connect
+
+#### Scenario: The canary gates the build
+
+- **GIVEN** an allowlist that cannot serve the binary route
+- **WHEN** the canary step runs
+- **THEN** the step fails before the build starts, and the failure names the route
 
 #### Scenario: droast covers the provisioner
 

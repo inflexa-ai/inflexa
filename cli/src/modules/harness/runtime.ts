@@ -1148,13 +1148,18 @@ async function bootHarnessRuntimeOnce(
             // `execute_analysis` links the packages of the plan through it, and the
             // `link_packages` tool of the agent exists because it is bound. A pool
             // miss gains the host classification — in flight, failed with the
-            // recorded reason — thus the launch refusal tells the agent what to do
-            // instead of a bare "the pool does not hold".
+            // recorded reason, or unknown with the store-add remedy — thus the
+            // launch refusal tells the agent what to do instead of a bare "the
+            // pool does not hold". The harness names no remedy by design, and the
+            // spec puts the exact command on this wrapper.
             extendAnalysisFarm: async (id, requests) => {
                 const outcomes = await linkPackagesIntoFarm(env.packageStoreDir, id, requests);
                 return outcomes.map((outcome) => {
                     if (outcome.kind !== "absent") return outcome;
-                    const detail = classifyPoolMiss(outcome.name);
+                    const classified = classifyPoolMiss(outcome.name);
+                    const detail =
+                        classified ??
+                        (outcome.acquisitionPossible ? `the pool does not hold it — run \`inflexa store add ${outcome.name}\` to acquire it` : undefined);
                     return detail === undefined ? outcome : { ...outcome, detail };
                 });
             },

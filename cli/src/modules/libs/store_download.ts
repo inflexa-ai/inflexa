@@ -158,7 +158,7 @@ export type StoreDownloadOutcome =
 
 /**
  * A fire-and-forget progress notification for one store download. A layer event carries its digest,
- * because several layers transfer in sequence and an unattributed byte count would be ambiguous.
+ * because more than one layer transfers in sequence and an unattributed byte count would be ambiguous.
  *
  * `manifest_resolved` carries the two totals. The manifest declares the size of every layer before
  * the first byte arrives, thus an observer that records them records exact figures and never an
@@ -447,7 +447,7 @@ type TarRun = { readonly code: number; readonly stdout: string; readonly stderr:
  * Run `tar` and collect its exit code and both of its streams.
  *
  * The two reads and the exit wait run together. A sequential read would let the other pipe fill and
- * stop the child, and a member list of a large layer is several megabytes.
+ * stop the child, and a member list of a large layer is many megabytes.
  */
 async function runTar(args: readonly string[]): Promise<TarRun> {
     const proc = Bun.spawn(["tar", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });

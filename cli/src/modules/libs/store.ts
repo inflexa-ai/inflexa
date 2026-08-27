@@ -64,11 +64,10 @@ import {
     readStoreFlights,
     type FlushDeps,
     type FlushSpecOutcome,
-    type StoreEcosystem,
-    type StoreFlightStatus,
 } from "./store_flight.ts";
 import { readTransferReport } from "./transfers.ts";
 import { spawnDetachedSelf } from "./transfers.ts";
+import type { StoreEcosystem, StoreFlightStatus } from "../../types/store.ts";
 
 /** The pin marker the provisioner writes inside each store directory, recording its `name==version`. */
 const PIN_MARKER = ".inflexa-pin";
@@ -924,8 +923,8 @@ export async function runStoreAdd(pkg: string | undefined, options: StoreAddOpti
  * given, and the analysis the working directory anchors otherwise. The
  * `run_inflexa` tool runs its subprocess INSIDE the analysis folder, thus the
  * marker there names the analysis and the flag is the exception, not the
- * rule. A folder that anchors none or several analyses refuses with the flag,
- * because a silent pick would link into a farm the caller did not name.
+ * rule. A folder that anchors no analysis, or more than one, refuses with the
+ * flag, because a silent pick would link into a farm the caller did not name.
  */
 function resolveLinkTarget(ref: IdOrName | null): Result<Analysis, { readonly message: string }> {
     if (ref !== null) return resolveFarmAnalysis(ref);

@@ -197,8 +197,8 @@ export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: 
 
 /**
  * Lib-store package-discovery env, keyed on the declared toolchain.
- * PYTHONPATH is intentionally omitted — system Python resolves via a `.pth`
- * file in the lib store.
+ * PYTHONPATH is intentionally omitted — system Python resolves through a
+ * `.pth` file in the lib store.
  *
  * With `"store"` (or absent) the env is byte-identical to the legacy one:
  * the conda `bin` under `/mnt/libs/current`, thus an old embedder keeps its

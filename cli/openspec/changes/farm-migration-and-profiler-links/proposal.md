@@ -30,6 +30,9 @@ a farm until their first sandbox, thus "missing" alone cannot say "old".
 
 - `package-store-management`: the eager empty farm at creation, and the
   on-demand full composition for a farm-less analysis.
+- `farm-composition`: the same two behaviors, on the requirement that held
+  the heal-empty rule. A failed farm make stops the creation, and a
+  missing farm heals full.
 
 ## Impact
 
