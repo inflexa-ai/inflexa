@@ -25,7 +25,6 @@ import type { AgentDefinition } from "./types.js";
 
 const ANTHROPIC_5M = { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } };
 
-
 const echoTool = defineTool({
     id: "echo",
     description: "A no-op tool.",
@@ -271,29 +270,24 @@ describe("runAgent cache-token metrics", () => {
 // ── The openai-compatible no-op ─────────────────────────────────────
 
 /**
- * A canned OpenAI chat-completions response. `prompt_tokens_details.cached_tokens`
+ * A canned OpenAI chat-completions stream. `prompt_tokens_details.cached_tokens`
  * is the OpenAI-family cache-read report — the provider normalizes it onto the
  * same neutral field the Anthropic provider uses.
  */
 function cannedOpenAiFetch(seen: Record<string, unknown>[]): typeof fetch {
     return (async (_input: string | URL | Request, init?: RequestInit) => {
         seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-        return new Response(
-            JSON.stringify({
-                id: "chatcmpl-1",
-                object: "chat.completion",
-                created: 1_700_000_000,
-                model: "local-model",
-                choices: [{ index: 0, message: { role: "assistant", content: "done" }, finish_reason: "stop" }],
-                usage: {
-                    prompt_tokens: 100,
-                    completion_tokens: 7,
-                    total_tokens: 107,
-                    prompt_tokens_details: { cached_tokens: 80 },
-                },
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-        );
+        const base = { id: "chatcmpl-1", object: "chat.completion.chunk", created: 1_700_000_000, model: "local-model" };
+        const body = [
+            `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "done" }, finish_reason: null }] })}\n\n`,
+            `data: ${JSON.stringify({
+                ...base,
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                usage: { prompt_tokens: 100, completion_tokens: 7, total_tokens: 107, prompt_tokens_details: { cached_tokens: 80 } },
+            })}\n\n`,
+            "data: [DONE]\n\n",
+        ].join("");
+        return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
     }) as typeof fetch;
 }
 
