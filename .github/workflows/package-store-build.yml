@@ -305,21 +305,22 @@ jobs:
       - name: Load check inside the sandbox image
         # The check proves the image that runs the code, never the image that
         # built it. The posture is the posture of a sandbox: no network, uid
-        # 1000, no capability, the store read-only, and the farm at
-        # /mnt/libs/farm. The exit code is tolerated here — the next step
-        # applies the best-effort semantics and the non-empty floor.
-        env:
-          FARM_DIR: ${{ steps.farm.outputs.dir }}
+        # 1000, no capability, and the store read-only. The farm rides
+        # through the store mount at farms/<name>, with NO nested bind: runc
+        # cannot make a mountpoint inside a read-only mount, and the check
+        # derives the farm from the lock argument. The farm links are
+        # absolute /mnt/libs targets, thus the load path is the same. The
+        # exit code is tolerated here — the next step applies the
+        # best-effort semantics and the non-empty floor.
         run: |
           set -euo pipefail
           docker run --rm --network none \
             --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
             -v "${STORE_VOLUME}:/mnt/libs:ro" \
-            -v "${FARM_DIR}:/mnt/libs/farm:ro" \
             -v "${GITHUB_WORKSPACE}/images/package-store/load-check.py:/opt/load-check.py:ro" \
             --entrypoint python3 \
             "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" \
-            /opt/load-check.py --farm-lock /mnt/libs/farm/inflexa.lock \
+            /opt/load-check.py --farm-lock "/mnt/libs/farms/${FARM}/inflexa.lock" \
             > load-check.json || true
           cat load-check.json
 
