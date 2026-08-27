@@ -1,0 +1,99 @@
+[
+    {
+        "id": "INFLEXA-R-000201",
+        "title": "Preprocessing and feature selection belong inside the cross-validation loop",
+        "applies": {},
+        "effect": {
+            "severity": "warn",
+            "statement": "Scaling, imputation, and feature selection must happen inside the cross-validation loop, never before the split. A selection over all samples first biases the performance estimate upward by several AUC points, and nothing errors."
+        },
+        "recommendation": "Use a pipeline construction that refits the preprocessing inside each fold, and report the nested-CV estimate.",
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [
+                { "citation": "Ambroise C, McLachlan GJ (2002) Selection bias in gene extraction on the basis of microarray gene-expression data. PNAS 99:6562-6566", "doi": "10.1073/pnas.102102699", "pmid": "11983868" },
+                { "citation": "Varma S, Simon R (2006) Bias in error estimation when using cross-validation for model selection. BMC Bioinformatics 7:91", "doi": "10.1186/1471-2105-7-91", "pmid": "16504092" }
+            ]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000202",
+        "title": "A feature list from an upstream step on the same samples is already a selection",
+        "applies": {},
+        "effect": {
+            "severity": "warn",
+            "statement": "A gene list from an upstream differential-expression step on the same samples is already a selection over all samples. A panel built from it leaks. Build the panel from the full feature matrix and select again inside cross-validation. If only the pre-selected list is available, report the performance estimate as optimistic, and say why."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [
+                { "citation": "Ambroise C, McLachlan GJ (2002) Selection bias in gene extraction. PNAS 99:6562-6566", "doi": "10.1073/pnas.102102699", "pmid": "11983868" },
+                { "citation": "Kaufman S, Rosset S, Perlich C, Stitelman O (2012) Leakage in data mining: formulation, detection, and avoidance. ACM TKDD 6:15", "doi": "10.1145/2382577.2382579" }
+            ]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000203",
+        "title": "Report the multiplicity-corrected p-value for an optimized cutpoint",
+        "applies": {},
+        "effect": {
+            "severity": "warn",
+            "statement": "The maximum of a log-rank statistic over many candidate cutpoints is not chi-squared distributed, thus the nominal p-value of the best split is meaningless. Report the multiplicity-corrected p-value from maximally selected rank statistics, the cutpoint, and the group sizes on either side. Do not optimize the cutpoint on the same data that the performance is reported on."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [
+                { "citation": "Altman DG, Lausen B, Sauerbrei W, Schumacher M (1994) Dangers of using optimal cutpoints in the evaluation of prognostic factors. JNCI 86:829-835", "doi": "10.1093/jnci/86.11.829", "pmid": "8182763" },
+                { "citation": "Hothorn T, Lausen B (2003) On the exact distribution of maximally selected rank statistics. Computational Statistics and Data Analysis 43:121-137", "doi": "10.1016/S0167-9473(02)00225-6" }
+            ]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000204",
+        "title": "Do a check of the proportional-hazards assumption, and repair a failure",
+        "applies": {},
+        "effect": {
+            "severity": "warn",
+            "statement": "A Cox model needs the proportional-hazards assumption. Do a check of it with the scaled Schoenfeld residuals. If the check fails for a covariate, stratify on it or add a time-varying term, and report the hazard ratio as time-averaged, not as a constant effect."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [{ "citation": "Grambsch PM, Therneau TM (1994) Proportional hazards tests and diagnostics based on weighted residuals. Biometrika 81:515-526", "doi": "10.1093/biomet/81.3.515" }]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000205",
+        "title": "Call a biomarker predictive only on a significant treatment-marker interaction",
+        "applies": {},
+        "effect": {
+            "severity": "warn",
+            "statement": "A prognostic marker associates with the outcome regardless of treatment. A predictive marker needs a significant treatment-by-marker interaction term. Do not call a marker predictive without that test, and a single-arm study cannot produce the interaction at all."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [{ "citation": "Ballman KV (2015) Biomarker: predictive or prognostic? Journal of Clinical Oncology 33:3968-3971", "doi": "10.1200/JCO.2015.63.3651", "pmid": "26392104" }]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000206",
+        "title": "Prefer a simple model below 100 samples",
+        "applies": {},
+        "effect": {
+            "severity": "note",
+            "statement": "Below about 100 samples, prefer a simple model — logistic regression, or Cox for survival. A tree ensemble overfits on a small N, and a prediction model needs many events for each candidate parameter."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [
+                { "citation": "Riley RD et al. (2020) Calculating the sample size required for developing a clinical prediction model. BMJ 368:m441", "doi": "10.1136/bmj.m441", "pmid": "32188600" },
+                { "citation": "van der Ploeg T, Austin PC, Steyerberg EW (2014) Modern modelling techniques are data hungry. BMC Medical Research Methodology 14:137", "doi": "10.1186/1471-2288-14-137", "pmid": "25532820" }
+            ]
+        },
+        "version": "1.0.0"
+    }
+]

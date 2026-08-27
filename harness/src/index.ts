@@ -62,9 +62,36 @@ export type {
 // The outcome of the report-session anchor operation. `ConversationAgentDeps`
 // names it, thus an embedder cannot type that dep without this name.
 export type { EnsureSessionStateResult } from "./app/report-session-runtime.js";
+// The knowledge plane (the knowledge-base-seam spec). The interface, the two
+// local realizations, and the composition resolver share the export-pair
+// convention of the other seams. `resolveCompositionKnowledge` is async
+// because the file-backed corpus load reads files; `bootHarness` runs it, and
+// an embedder that drives `assembleCoreRuntime` directly resolves it first
+// and passes the instance. The rule-record schema and the pure evaluation are
+// exported for the curation tooling and for an embedder's own realization.
+export type {
+    KnowledgeBase,
+    KnowledgeError,
+    KnowledgeFacts,
+    RuleApplicability,
+    RuleQuery,
+    RuleQueryResult,
+    RuleMatch,
+    RuleLookup,
+    CorpusIdentity,
+} from "./knowledge/knowledge-base.js";
+export { createNoopKnowledgeBase } from "./knowledge/noop-knowledge-base.js";
+export { loadFileKnowledgeBase } from "./knowledge/file-knowledge-base.js";
+export type { FileKnowledgeBaseDeps, KnowledgeCorpusError } from "./knowledge/file-knowledge-base.js";
+export { withKnowledgeObservation } from "./knowledge/observe.js";
+export type { ObserveKnowledge, KnowledgeConsultation } from "./knowledge/observe.js";
+export { resolveCompositionKnowledge } from "./runtime/assemble.js";
+export { RuleRecordSchema, CorpusManifestSchema } from "./knowledge/rule-record.js";
+export type { RuleRecord, RuleSeverity, CorpusManifest } from "./knowledge/rule-record.js";
+export { evaluateRule } from "./knowledge/evaluate-rule.js";
 // The harness-owned boot sequence: ordered boot steps around `assembleCoreRuntime`
-// (skill validation → state init → connection budget → assemble → launch) + a
-// `shutdown` handle the embedder wires to its process signals.
+// (skill validation → state init → connection budget → knowledge resolution →
+// assemble → launch) + a `shutdown` handle the embedder wires to its process signals.
 export { bootHarness } from "./runtime/boot.js";
 export type { BootHarnessDeps, BootedHarness } from "./runtime/boot.js";
 

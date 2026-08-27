@@ -30,6 +30,7 @@ function fullyPopulatedStep(): AnalysisStep {
         constraints: ["SENTINEL_CONSTRAINT_A", "SENTINEL_CONSTRAINT_B"],
         acceptance_criteria: ["SENTINEL_ACCEPTANCE"],
         caveats: ["SENTINEL_CAVEAT"],
+        grounding: [{ id: "SENTINEL_GROUNDING", note: "SENTINEL_GROUNDING_NOTE" }],
         depends_on: [],
         status: "pending",
         resources: { cpu: 1, memoryGb: 2 },
@@ -295,7 +296,9 @@ describe("AnalysisStep field-coverage guard", () => {
             const sentinel = `COVER_${field.toUpperCase()}`;
             sentinels.set(field, sentinel);
             const current = (base as Record<string, unknown>)[field];
-            step[field] = Array.isArray(current) ? [sentinel] : sentinel;
+            // An object-array field (grounding) carries the sentinel on the id its
+            // renderer emits; a string-array field carries it as the element.
+            step[field] = Array.isArray(current) ? (typeof current[0] === "object" ? [{ id: sentinel }] : [sentinel]) : sentinel;
         }
         const prompt = renderTask(step as unknown as AnalysisStep);
         for (const [field, sentinel] of sentinels) {

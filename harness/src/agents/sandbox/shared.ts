@@ -67,6 +67,10 @@ import { createEditFileTool, createExecuteCommandTool, createWorkspaceMutator, c
 // Skills (declared per agent via meta.skills).
 import { createSkillTools } from "../../tools/sandbox/skills.js";
 
+// The knowledge plane (always-on; an absent source is a data variant).
+import { createKnowledgeTools } from "../../tools/knowledge/knowledge-tools.js";
+import type { KnowledgeBase } from "../../knowledge/knowledge-base.js";
+
 import { createReportBlockerTool, type BlockerHolder } from "../../tools/sandbox/report-blocker.js";
 
 import { toSandboxPath } from "../../workspace/paths.js";
@@ -124,6 +128,12 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
     readonly model: string;
     /** Absolute path to the skills tree. Omit to skip the skill tools. */
     readonly skillsDir?: string;
+    /**
+     * The resolved knowledge source. The knowledge tools attach either way,
+     * independent of `meta.skills` — with no source they answer with the
+     * absent-condition data variant (the knowledge-tools spec).
+     */
+    readonly knowledge?: KnowledgeBase;
     /** Per-step coordinates resolved at the workflow body. */
     readonly step: SandboxStepCoords;
     /** API keys for the external bio/chem data sources. */
@@ -312,6 +322,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         // raw bytes — so every sandbox agent gets it, whatever its meta declares.
         createInspectDataProfileTool(deps.pool),
         ...skillTools,
+        ...createKnowledgeTools({ ...(deps.knowledge ? { knowledge: deps.knowledge } : {}) }),
         ...resolveSandboxTools(deps, meta.tools),
         ...(deps.blockerHolder ? [createReportBlockerTool(deps.blockerHolder)] : []),
     ];

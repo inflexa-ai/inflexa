@@ -53,7 +53,11 @@ import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/res
 import { plannerPrompt } from "../../prompts/planner.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
+import { checkGrounding } from "../../schemas/validate-grounding.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
+import type { KnowledgeBase, RuleMatch } from "../../knowledge/knowledge-base.js";
+import type { KnowledgeFacts } from "../../knowledge/evaluate-rule.js";
+import { createKnowledgeTools } from "../knowledge/knowledge-tools.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
@@ -226,12 +230,25 @@ interface PersistContext {
 
 interface ValidationIssue {
     path: string;
-    code: "schema" | "semantic";
+    code: "schema" | "semantic" | "grounding";
     message: string;
     hint?: string;
 }
 
-type SubmitPlanOutput = { accepted: false; issues: ValidationIssue[] } | { accepted: true; planId: string };
+/**
+ * `advisories` carries the non-blocking knowledge outcomes of the grounded
+ * gate — the `warn`/`note` rules and the rules a missing fact left
+ * unevaluated. They ride on acceptance and on rejection alike, and they never
+ * make a plan invalid (the planning-enhancements delta).
+ */
+type SubmitPlanOutput =
+    { accepted: false; issues: ValidationIssue[]; advisories?: readonly string[] } | { accepted: true; planId: string; advisories?: readonly string[] };
+
+/** What the grounded gate holds: the ids this invocation returned, and the brief's matches. */
+interface GroundingGateContext {
+    readonly returnedRuleIds: ReadonlySet<string>;
+    readonly matches: readonly RuleMatch[];
+}
 
 // ── Prior plan serialization (iteration context) ───────────────────
 
@@ -438,10 +455,16 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
 }
 
 /**
- * Full validation: Zod schema + semantic checks. The plan is valid only if
- * BOTH pass.
+ * Full validation: Zod schema + semantic checks + the grounded gate. The plan
+ * is valid only if all three pass. The gate runs only when this invocation
+ * holds a grounding context — with no knowledge source the stage is inert and
+ * the behavior matches the pre-knowledge harness exactly.
  */
-function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
+function fullyValidate(
+    candidate: unknown,
+    resourcePolicy?: ResourcePolicy,
+    groundingCtx?: GroundingGateContext,
+): { valid: true; plan: PlannerPlan; advisories?: readonly string[] } | { valid: false; issues: ValidationIssue[]; advisories?: readonly string[] } {
     const parsed = PlannerPlanSchema.safeParse(candidate);
     if (!parsed.success) {
         return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, candidate) };
@@ -475,6 +498,24 @@ function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { v
         };
     }
 
+    if (groundingCtx !== undefined) {
+        const grounded = checkGrounding(parsed.data.steps, groundingCtx.returnedRuleIds, groundingCtx.matches);
+        const advisories = grounded.advisories.length > 0 ? { advisories: grounded.advisories } : {};
+        if (grounded.violations.length > 0) {
+            return {
+                valid: false,
+                issues: grounded.violations.map((v) => ({
+                    path: v.path,
+                    code: "grounding" as const,
+                    message: v.message,
+                    ...(v.hint !== undefined ? { hint: v.hint } : {}),
+                })),
+                ...advisories,
+            };
+        }
+        return { valid: true, plan: parsed.data, ...advisories };
+    }
+
     return { valid: true, plan: parsed.data };
 }
 
@@ -502,6 +543,7 @@ function buildInnerTools(
     pool: Pool,
     resourcePolicy: ResourcePolicy | undefined,
     logger: Logger,
+    groundingCtx: GroundingGateContext | undefined,
 ): InnerTools {
     const submitPlanTool = defineTool({
         id: "submit_plan",
@@ -542,7 +584,7 @@ function buildInnerTools(
             }
 
             const attempt = ++trace.submitAttempts;
-            const result = fullyValidate(input.plan, resourcePolicy);
+            const result = fullyValidate(input.plan, resourcePolicy, groundingCtx);
             if (!result.valid) {
                 trace.rejectedAttempts++;
                 const rejection = toRejectionRecord(attempt, result.issues);
@@ -552,7 +594,7 @@ function buildInnerTools(
                 // an attempt was spent. A run that exhausts its budget on rejections ends
                 // looking identical to one that never tried, and this is the difference.
                 logger.warn("submit_plan rejected a plan", { ...rejection });
-                return ok({ accepted: false as const, issues: result.issues });
+                return ok({ accepted: false as const, issues: result.issues, ...(result.advisories ? { advisories: result.advisories } : {}) });
             }
 
             const persisted = await persistPlan(result.plan, persistCtx, pool, logger);
@@ -584,7 +626,7 @@ function buildInnerTools(
                 stepCount: result.plan.steps.length,
                 agents: [...new Set(result.plan.steps.map((s) => s.agent))],
             });
-            return ok({ accepted: true as const, planId: persisted.planId });
+            return ok({ accepted: true as const, planId: persisted.planId, ...(result.advisories ? { advisories: result.advisories } : {}) });
         },
     });
 
@@ -888,6 +930,82 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
     readonly usageRecorder?: UsageRecorder;
     /** API keys for the search tools the planner uses to ground a plan. */
     readonly bioKeys: BioToolKeys;
+    /**
+     * The resolved knowledge source of the composition. Present, it drives the
+     * knowledge brief in the seed, the planner's knowledge tools, and the
+     * grounded gate in `submit_plan`. Absent, the brief states the absence and
+     * the gate is inert (the knowledge-base-seam spec).
+     */
+    readonly knowledge?: KnowledgeBase;
+}
+
+// ── Knowledge brief (host-side, mandatory when a source is resolved) ────
+
+const KNOWLEDGE_BRIEF_MAX_CHARS = 4000;
+const KNOWLEDGE_STATEMENT_CHARS = 280;
+
+/** The evaluable dataset facts the profile holds. Group sizes are not structured in the profile today, thus `minGroupN` stays unknown here. */
+function factsFromGrounding(grounding: DataGrounding): KnowledgeFacts {
+    if (grounding.kind !== "ready" && grounding.kind !== "provisional") return {};
+    const result = grounding.result;
+    return {
+        ...(result.domain !== undefined && result.domain !== "" ? { omicsType: result.domain } : {}),
+        ...(result.subtype !== undefined && result.subtype !== "" ? { omicsSubtype: result.subtype } : {}),
+    };
+}
+
+interface KnowledgeContext {
+    readonly block: string;
+    /** Present only when the source answered — the gate binds to exactly what it returned. */
+    readonly gate?: GroundingGateContext;
+}
+
+const KNOWLEDGE_ABSENT_BLOCK =
+    "## Knowledge Rules\n\nNo knowledge source is available in this install. Ground the plan in the data profile and the literature searches.";
+
+/**
+ * Query the knowledge source with the profile facts and render the brief the
+ * seed carries. Every returned id enters the citation set — the brief and the
+ * knowledge tools feed one set, and the gate accepts citations only from it.
+ */
+async function buildKnowledgeContext(
+    knowledge: KnowledgeBase | undefined,
+    grounding: DataGrounding,
+    session: Parameters<KnowledgeBase["findRules"]>[1],
+    returnedRuleIds: Set<string>,
+    logger: Logger,
+): Promise<KnowledgeContext> {
+    if (knowledge === undefined) return { block: KNOWLEDGE_ABSENT_BLOCK };
+
+    const facts = factsFromGrounding(grounding);
+    return knowledge.findRules({ facts, topK: 25 }, session).match(
+        (result): KnowledgeContext => {
+            for (const m of result.matches) returnedRuleIds.add(m.rule.id);
+            const header = [
+                `## Knowledge Rules (corpus ${result.corpus.corpusId}@${result.corpus.version})`,
+                "",
+                "The rules below constrain this dataset, from the knowledge plane. Cite the id of each rule that shapes a step, in that step's `grounding` field. " +
+                    "Every `[reject]` rule marked `applies` must be cited somewhere in the plan — an uncited one rejects the plan. " +
+                    "`knowledge_read` gives a rule's full text and its sources; `knowledge_search` finds more.",
+                "",
+            ];
+            const lines = result.matches.map((m) => {
+                const status = m.applicability === "applies" ? "applies" : "unknown — a needed fact is not in the profile";
+                const recommendation =
+                    m.rule.recommendation === undefined ? "" : `\n  Recommendation: ${m.rule.recommendation.slice(0, KNOWLEDGE_STATEMENT_CHARS)}`;
+                return `- ${m.rule.id} [${m.rule.effect.severity}] (${status}) ${m.rule.title}: ${m.rule.effect.statement.slice(0, KNOWLEDGE_STATEMENT_CHARS)}${recommendation}`;
+            });
+            let block = [...header, ...(lines.length > 0 ? lines : ["No rule applies to this dataset."])].join("\n");
+            if (block.length > KNOWLEDGE_BRIEF_MAX_CHARS) {
+                block = `${block.slice(0, KNOWLEDGE_BRIEF_MAX_CHARS)}\n… (truncated — use knowledge_search for the rest)`;
+            }
+            return { block, gate: { returnedRuleIds, matches: result.matches } };
+        },
+        (error): KnowledgeContext => {
+            logger.warn("knowledge source failed to answer — planning without the brief", { detail: error.detail });
+            return { block: "## Knowledge Rules\n\nThe knowledge source did not answer. Ground the plan in the data profile and the literature searches." };
+        },
+    );
 }
 
 /**
@@ -1071,7 +1189,15 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             const [refsResult, packagesResult] = await Promise.all([listAvailableRefs.execute({ query: "/" }, ctx), listAvailablePackages.execute({}, ctx)]);
             const refsBlock = inventoryContent("Available Reference Data", refsResult, logger);
             const packagesBlock = inventoryContent("Available Packages", packagesResult, logger);
-            const groundingBlock = [refsBlock, packagesBlock].join("\n\n");
+
+            // The knowledge brief is host-side and mandatory, like the two
+            // inventories: an optional lookup is a lookup a small model skips.
+            // The set below is the invocation's citation set — the brief and the
+            // knowledge tools record into it, and the grounded gate accepts a
+            // plan citation only from it.
+            const returnedRuleIds = new Set<string>();
+            const knowledgeCtx = await buildKnowledgeContext(deps.knowledge, grounding, ctx.session, returnedRuleIds, logger);
+            const groundingBlock = [refsBlock, packagesBlock, knowledgeCtx.block].join("\n\n");
 
             const prompt = [
                 ...(priorPlanBlock ? [priorPlanBlock, ""] : []),
@@ -1108,6 +1234,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     dataContext: dataContextBlock.length,
                     referenceData: refsBlock.length,
                     packages: packagesBlock.length,
+                    knowledge: knowledgeCtx.block.length,
                     researchQuestion: input.researchQuestion.length,
                     analystNotes: input.analystNotes?.length ?? 0,
                     priorRuns: input.priorRuns?.length ?? 0,
@@ -1120,12 +1247,20 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger);
+            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger, knowledgeCtx.gate);
             // Built here rather than at construction: a `describeCall` hook reads no
             // dep, thus the tool must stay constructible from an empty bag. The tool
             // definitions are identical across invocations, thus the request prefix
-            // that the cache keys on does not move.
+            // that the cache keys on does not move. The knowledge tools close over
+            // this invocation's citation set — the definitions stay identical, only
+            // the recorder closure differs.
             const searchTools = buildPlannerSearchTools(deps);
+            const knowledgeTools = createKnowledgeTools({
+                ...(deps.knowledge ? { knowledge: deps.knowledge } : {}),
+                onRuleIds: (ids) => {
+                    for (const id of ids) returnedRuleIds.add(id);
+                },
+            });
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
@@ -1133,7 +1268,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 // The search tools come first, and the terminal tools come last.
                 // The order is the order of the prompt, and it is stable across
                 // every invocation, thus the cached request prefix holds.
-                tools: [...searchTools, ...innerTools.terminal],
+                tools: [...searchTools, ...knowledgeTools, ...innerTools.terminal],
                 maxIterations: PLANNER_MAX_ITERATIONS,
             };
 

@@ -122,6 +122,19 @@ evidence, not a substitute for the profile you were handed.
 - Do NOT create "data exploration" or "initial assessment" steps — data
   profiling is already done before planning.
 
+### Grounding
+- When your seed carries a "Knowledge Rules" block, cite the id of each rule
+  that shapes a step, in that step's \`grounding\` field, with a one-line note
+  on how the step obeys it.
+- Every \`[reject]\` rule marked \`applies\` must be cited somewhere in the
+  plan. An uncited one rejects the plan with a \`grounding\` issue: cite it,
+  or revise the plan to obey it, then submit again.
+- Cite only ids that the block or a knowledge tool returned. Never cite a
+  rule id from memory — an unreturned id rejects the plan.
+- \`knowledge_read\` gives a rule's full statement and its cited sources when
+  the one-line form is not enough. \`knowledge_search\` finds rules the block
+  did not carry.
+
 ### Reference Data
 Some steps need reference data the analysis does not carry — a regulon network
 for TF activity, pathway gene sets for enrichment, an annotation for

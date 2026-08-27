@@ -49,6 +49,10 @@ import type { DeriveTableExecInput } from "../tools/report-session/derive-table.
 import type { ExecResult } from "../sandbox/types.js";
 import { createCitationResolver, type CitationResolverConfig } from "../citations/resolve.js";
 import type { CitationResolver } from "../citations/types.js";
+import type { Logger } from "../lib/logger.js";
+import { loadFileKnowledgeBase } from "../knowledge/file-knowledge-base.js";
+import type { KnowledgeBase } from "../knowledge/knowledge-base.js";
+import { withKnowledgeObservation, type ObserveKnowledge } from "../knowledge/observe.js";
 import type { AuthContext } from "../auth/types.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
@@ -73,7 +77,7 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * conversation side.
  */
 export interface CoreWorkflowDeps {
-    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver">;
+    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "knowledge">;
     readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver">;
     readonly executeTargetAssessment: Omit<ExecuteTargetAssessmentDeps, "usageRecorder">;
     readonly dataProfile: Omit<DataProfileDeps, "usageRecorder">;
@@ -107,7 +111,7 @@ export interface RegisteredWorkflows {
  */
 export type ConversationAssemblyDeps = Omit<
     ConversationAgentDeps,
-    "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver" | "anchorReportSession" | "eyes"
+    "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver" | "anchorReportSession" | "eyes" | "knowledge"
 >;
 
 /**
@@ -190,6 +194,26 @@ export interface CoreRuntimeDeps {
      * the eyes tool of a report session then reports that condition.
      */
     readonly eyes?: AcquireEyes;
+    /**
+     * The resolved knowledge source (the knowledge-base-seam spec). `bootHarness`
+     * resolves it through `resolveCompositionKnowledge` and passes the instance
+     * here; a caller that drives this function directly passes a ready instance.
+     * The assembly stamps it onto the conversation agent and the sandbox-step
+     * deps, thus one runtime consults one source. Absent, the knowledge tools
+     * and the grounded plan gate report the absent condition and stay inert.
+     */
+    readonly knowledge?: KnowledgeBase;
+    /**
+     * The local corpus directory for the file-backed realization. Read only by
+     * `resolveCompositionKnowledge`, and only when no `knowledge` seam is bound.
+     */
+    readonly knowledgeDir?: string;
+    /**
+     * The consultation observation callback. `resolveCompositionKnowledge`
+     * wraps the resolved source with it one time. The contract copies
+     * `UsageRecorder`: it must not throw and must not block.
+     */
+    readonly observeKnowledge?: ObserveKnowledge;
 }
 
 /**
@@ -281,6 +305,42 @@ export function resolveCompositionEyes(seam: AcquireEyes | undefined, chrome: Ch
     return undefined;
 }
 
+/**
+ * The knowledge source of the composition, or none (the knowledge-base-seam spec).
+ *
+ * A seam that the embedder bound answers first. Otherwise a configured corpus
+ * directory becomes the file-backed realization. Otherwise the source is absent,
+ * and each consumer reports that condition as data. A corpus that refuses to
+ * load degrades to absent with a log record, because a broken local corpus must
+ * not stop a boot that ran without one yesterday.
+ *
+ * The function is async because the corpus load reads files, thus it runs in
+ * `bootHarness`, before the sync `assembleCoreRuntime`. The observation wrapper
+ * is applied here, one time, whichever arm resolved.
+ */
+export async function resolveCompositionKnowledge(deps: {
+    readonly knowledge?: KnowledgeBase;
+    readonly knowledgeDir?: string;
+    readonly observeKnowledge?: ObserveKnowledge;
+    readonly logger?: Logger;
+}): Promise<KnowledgeBase | undefined> {
+    const logger = deps.logger;
+    const source =
+        deps.knowledge ??
+        (deps.knowledgeDir === undefined
+            ? undefined
+            : await loadFileKnowledgeBase({ dir: deps.knowledgeDir, ...(logger ? { logger } : {}) }).match(
+                  (kb) => kb,
+                  (error) => {
+                      logger?.named("knowledge").warn("knowledge corpus refused to load — the source is absent", { dir: error.dir, detail: error.detail });
+                      return undefined;
+                  },
+              ));
+    if (source === undefined) return undefined;
+    if (deps.observeKnowledge === undefined) return source;
+    return withKnowledgeObservation(source, { observe: deps.observeKnowledge, ...(logger ? { logger } : {}) });
+}
+
 export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const { conversation, workflows: wf, resourcePolicy } = deps;
     const usageRecorder = deps.usageRecorder ?? createNoopUsageRecorder();
@@ -292,7 +352,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             : { semanticScholarApiKey: conversation.bioKeys.semanticScholar }),
     });
 
-    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder });
+    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder, ...(deps.knowledge ? { knowledge: deps.knowledge } : {}) });
     const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), citationResolver, usageRecorder });
     const executeTargetAssessment = registerExecuteTargetAssessment({ ...wf.executeTargetAssessment, usageRecorder });
     const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder });
@@ -335,6 +395,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         usageRecorder,
         citationResolver,
         ...(eyes ? { eyes } : {}),
+        ...(deps.knowledge ? { knowledge: deps.knowledge } : {}),
     });
 
     // The report agent is a singleton over the conversation deps, the same way the

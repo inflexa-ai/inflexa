@@ -39,8 +39,10 @@ describe("createSandboxAgents", () => {
             expect(toolIds.has("edit_file"), `${id} edit_file`).toBe(true);
 
             // The fixture deps wire no blockerHolder / embedding / skillsDir, so the
-            // resolved surface is exactly the always-on tools + meta.tools.
-            const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + 2;
+            // resolved surface is exactly the always-on tools + meta.tools. The +2
+            // pairs are write_file/edit_file and knowledge_search/knowledge_read —
+            // the knowledge tools attach with or without a resolved source.
+            const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + 2 + 2;
             const expected = alwaysOnCount + new Set(meta.tools).size;
             expect(def.tools.length, `${id} tool count`).toBe(expected);
         }

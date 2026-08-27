@@ -30,6 +30,24 @@ export const AnalysisStepSchema = z.object({
     depends_on: z
         .array(z.string())
         .describe("IDs of steps in this plan that must complete before this one runs. Empty when the step has no prerequisites. The graph must be acyclic."),
+    // Optional on the persistence schema so historical plans (pre-grounding)
+    // still parse on the read side. The grounded gate in `submit_plan` enforces
+    // the citation duty only when a knowledge source returned rules.
+    grounding: z
+        .array(
+            z.object({
+                id: z
+                    .string()
+                    .describe(
+                        "A knowledge-rule id that your knowledge context returned — the Knowledge Rules block of your seed, or a knowledge_search/knowledge_read result. Never cite an id from memory; an id the knowledge source did not return is rejected.",
+                    ),
+                note: z.string().optional().describe("One line: how the step obeys the rule."),
+            }),
+        )
+        .optional()
+        .describe(
+            "The knowledge rules this step is grounded in. Cite each returned rule that constrains the step's method — every applicable reject-severity rule must be cited somewhere in the plan.",
+        ),
     status: z.enum(["pending", "running", "completed", "failed", "skipped"]).default("pending"),
     // Optional on the persistence schema so historical plans (pre-resources)
     // still parse on the read side. `PlanStepSchema` re-requires it for planner

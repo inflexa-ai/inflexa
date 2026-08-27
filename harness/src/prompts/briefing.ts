@@ -48,6 +48,7 @@ export const STEP_TASK_FIELDS = [
     "constraints",
     "acceptance_criteria",
     "caveats",
+    "grounding",
 ] as const satisfies readonly (keyof AnalysisStep)[];
 
 /**
@@ -116,6 +117,14 @@ export function renderTask(step: AnalysisStep): string {
     }
     if (step.caveats && step.caveats.length > 0) {
         parts.push(section("Caveats", bullets(step.caveats)));
+    }
+    if (step.grounding && step.grounding.length > 0) {
+        parts.push(
+            section(
+                "Grounding (the knowledge rules this step was planned under — obey each one; `knowledge_read` gives the full rule and its sources)",
+                bullets(step.grounding.map((g) => (g.note?.trim() ? `${g.id} — ${g.note.trim()}` : g.id))),
+            ),
+        );
     }
 
     return parts.join("\n\n");
