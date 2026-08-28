@@ -20,11 +20,18 @@
  * `deps` slot for test injection without churning callers.
  */
 
+import { createNoopLogger } from "../../../lib/console-logger.js";
+import type { Logger } from "../../../lib/logger.js";
 import { withHost } from "../../../lib/host-concurrency.js";
 
 /** Per-run context threaded to collectors that hit keyed external APIs. */
 export interface CollectorCtx {
     readonly ncbiApiKey?: string;
+    /**
+     * The diagnostics seam of the run. A collector degrades to a coverage
+     * envelope, thus an unexpected cause is invisible without a record here.
+     */
+    readonly logger?: Logger;
 }
 
 import type { SerializedError } from "../coverage.js";
@@ -101,19 +108,22 @@ export async function collectCbioportal(input: ResolvedTarget): Promise<Coverage
 
 // ── 2. ChEMBL modulators ─────────────────────────────────────────────
 
-export async function collectChemblModulators(input: ResolvedTarget): Promise<CoverageEnvelope<ChemblModulatorsBundle>> {
+export async function collectChemblModulators(input: ResolvedTarget, ctx: CollectorCtx): Promise<CoverageEnvelope<ChemblModulatorsBundle>> {
     const chemblId = input.ids.chembl;
     if (!chemblId) {
         return { coverage: "not_loaded", reason: "no ChEMBL target id resolved" };
     }
     try {
-        const primaryRows = await withHost("chembl", () => getTargetModulators(chemblId, { minPhase: 2, limit: 200 }));
+        const primaryRows = await withHost("chembl", () => getTargetModulators(chemblId, { minPhase: 2, limit: 200 }, ctx.logger));
         const activityRows = await withHost("chembl", () =>
-            getModulatorsViaActivity({
-                target_chembl_id: chemblId,
-                max_phase_min: 2,
-                molecule_type: "Small molecule",
-            }),
+            getModulatorsViaActivity(
+                {
+                    target_chembl_id: chemblId,
+                    max_phase_min: 2,
+                    molecule_type: "Small molecule",
+                },
+                ctx.logger,
+            ),
         );
         const primaryIds = new Set(primaryRows.map((m) => m.moleculeChemblId));
         const novelActivityRows = activityRows
@@ -204,18 +214,32 @@ export async function collectExpressionHuman(input: ResolvedTarget): Promise<Cov
                 },
             };
         }
-        const tissues = expressions.map((e) => ({
+        // `baselineExpression` mixes datasources under one row type, and each one
+        // carries its own unit: GTEx gives bulk-tissue TPM, Tabula Sapiens gives
+        // single-cell CPM pseudobulk, and DICE gives immune-cell TPM. The bundle
+        // declares one source and one unit, thus it can hold rows of one datasource
+        // only. Tabula Sapiens also outnumbers GTEx about 20 to 1, thus an unfiltered
+        // list drowns the tissue table in cell types.
+        const gtex = expressions.filter((e) => e.datasourceId === "gtex");
+        if (gtex.length === 0) {
+            return {
+                coverage: "queried_no_data",
+                error: {
+                    message: `Open Targets carries no GTEx baseline expression for ${ensemblId} (${expressions.length} rows of other datasources dropped)`,
+                },
+            };
+        }
+        const tissues = gtex.map((e) => ({
             tissueLabel: e.tissueLabel,
             organSystem: e.organSystem,
             value: e.rna?.value ?? null,
-            protein: e.protein?.level ?? null,
         }));
         return {
             coverage: "available",
             data: {
-                source: "hpa_consensus" as const,
-                unit: "consensus_normalized" as const,
-                normalization_notes: "Open Targets consensus expression (HPA RNA tissue, TMM-normalized nTPM across samples)",
+                source: "gtex" as const,
+                unit: "tpm" as const,
+                normalization_notes: "Open Targets baseline expression, GTEx bulk-tissue rows only, as the median TPM of each tissue",
                 tissues,
             },
         };
@@ -295,7 +319,7 @@ export async function collectFaersByTarget(input: ResolvedTarget): Promise<Cover
 
 // ── 8. Family complexes (IUPHAR) ─────────────────────────────────────
 
-export async function collectFamilyComplexes(input: ResolvedTarget): Promise<CoverageEnvelope<FamilyComplexesBundle>> {
+export async function collectFamilyComplexes(input: ResolvedTarget, ctx: CollectorCtx): Promise<CoverageEnvelope<FamilyComplexesBundle>> {
     const geneSymbol = input.geneSymbol;
     const uniprot = input.ids.uniprot;
     const lookup = uniprot ?? geneSymbol;
@@ -336,6 +360,12 @@ export async function collectFamilyComplexes(input: ResolvedTarget): Promise<Cov
             },
         };
     } catch (err) {
+        // `getFamilyHeterodimers` answers an unknown target with an empty list, thus
+        // a throw here is always an unexpected cause. The IUPHAR outage of 2026 hid
+        // behind this envelope for months, because `queried_no_data` reads as a
+        // clean miss to every consumer of the dossier.
+        const log = (ctx.logger ?? createNoopLogger()).named("ta-collector.family-complexes");
+        log.error("IUPHAR family-complex lookup failed", { lookup, ...log.errorFields(err) });
         return fail(err);
     }
 }
@@ -441,7 +471,13 @@ export async function collectOpenTargets(input: ResolvedTarget): Promise<Coverag
                 tractability: info.tractability,
                 associations: info.associations,
                 safetyLiabilities: safety?.safetyLiabilities ?? [],
-                baselineExpression: expression,
+                baselineExpression: expression.map((e) => ({
+                    tissueId: e.tissueId,
+                    tissueLabel: e.tissueLabel,
+                    organSystem: e.organSystem,
+                    datasourceId: e.datasourceId,
+                    rna: e.rna,
+                })),
             },
         };
     } catch (err) {

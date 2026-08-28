@@ -23,6 +23,7 @@ import type { Pool } from "pg";
 import { DossierBodySchema } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import { z } from "zod";
 
+import type { Logger } from "../../lib/logger.js";
 import { assembleDossier } from "./assemblers/index.js";
 import type { ClinicalConsequenceAnnotatorDeps } from "./lib/clinical-consequence-annotator.js";
 import type { Phase3Bundle } from "./steps/phase3-aggregate.js";
@@ -42,8 +43,13 @@ export type { Phase3Bundle };
  * Run Phase 4 — assemble the dossier body from the Phase-3 bundle.
  * Safely cached on DBOS replay; the caller supplies the annotator seam.
  */
-export async function phase4Assemble(pool: Pool, phase3: Phase3Bundle, annotatorDeps?: ClinicalConsequenceAnnotatorDeps): Promise<Phase4Output> {
-    const dossier = await assembleDossier(pool, phase3.phase2, phase3, annotatorDeps);
+export async function phase4Assemble(
+    pool: Pool,
+    phase3: Phase3Bundle,
+    annotatorDeps?: ClinicalConsequenceAnnotatorDeps,
+    logger?: Logger,
+): Promise<Phase4Output> {
+    const dossier = await assembleDossier(pool, phase3.phase2, phase3, annotatorDeps, logger);
     return {
         assessmentId: phase3.phase2.phase1.resolved.assessmentId,
         dossier,

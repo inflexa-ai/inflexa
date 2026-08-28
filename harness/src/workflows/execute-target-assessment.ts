@@ -272,7 +272,7 @@ export async function runExecuteTargetAssessmentBody(
         await emitProgress(deps.pool, logger, input.assessmentId, "resolving");
         const resolved: ResolvedTarget = await DBOS.runStep(
             async () => {
-                const r = await resolveTarget(input.target);
+                const r = await resolveTarget(input.target, logger);
                 return {
                     assessmentId: input.assessmentId,
                     goal: input.goal ?? null,
@@ -296,7 +296,7 @@ export async function runExecuteTargetAssessmentBody(
             run: (r: ResolvedTarget, ctx: CollectorCtx) => Promise<unknown>;
         };
         const manifest: readonly CollectorEntry[] = COLLECTOR_MANIFEST as unknown as readonly CollectorEntry[];
-        const collectorCtx: CollectorCtx = { ncbiApiKey: deps.ncbiApiKey };
+        const collectorCtx: CollectorCtx = { ncbiApiKey: deps.ncbiApiKey, logger };
         const collectorPairs = await Promise.all(
             manifest.map((entry) =>
                 DBOS.runStep(() => entry.run(resolved, collectorCtx), {
@@ -480,7 +480,7 @@ export async function runExecuteTargetAssessmentBody(
             model: deps.decisionModel,
             ...(deps.usageRecorder ? { usageRecorder: deps.usageRecorder } : {}),
         };
-        const phase4 = await DBOS.runStep(() => phase4Assemble(deps.pool, phase3 as Parameters<typeof phase4Assemble>[1], annotatorDeps), {
+        const phase4 = await DBOS.runStep(() => phase4Assemble(deps.pool, phase3 as Parameters<typeof phase4Assemble>[1], annotatorDeps, logger), {
             name: "ta-phase4-assemble",
         });
 

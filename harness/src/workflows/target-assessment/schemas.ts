@@ -82,13 +82,18 @@ export const OpenTargetsBundleSchema = z.object({
             source: z.string(),
         }),
     ),
+    // One target carries rows of more than one datasource, and each datasource has
+    // its own unit. Thus `datasourceId` rides with the row, because a reader that
+    // compares two rows without it compares a TPM against a CPM. The
+    // `baselineExpression` surface carries no protein measurement, thus the bundle
+    // makes no protein claim.
     baselineExpression: z.array(
         z.object({
             tissueId: z.string(),
             tissueLabel: z.string(),
             organSystem: z.string().nullable(),
+            datasourceId: z.string(),
             rna: z.object({ value: z.number(), unit: z.string() }).nullable(),
-            protein: z.object({ level: z.number().nullable() }).nullable(),
         }),
     ),
 });
@@ -164,6 +169,8 @@ export const FaersByTargetBundleSchema = z.object({
 });
 export type FaersByTargetBundle = z.infer<typeof FaersByTargetBundleSchema>;
 
+// The rows come from the Open Targets `baselineExpression` surface, which carries
+// no protein measurement. Thus a row states an RNA value only.
 export const ExpressionHumanBundleSchema = z.object({
     source: z.enum(["gtex", "hpa_consensus", "hpa_rna_tissue"]),
     unit: z.enum(["tpm", "ntpm", "consensus_normalized"]),
@@ -173,7 +180,6 @@ export const ExpressionHumanBundleSchema = z.object({
             tissueLabel: z.string(),
             organSystem: z.string().nullable(),
             value: z.number().nullable(),
-            protein: z.number().nullable(),
         }),
     ),
 });

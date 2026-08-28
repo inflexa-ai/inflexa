@@ -1,3 +1,9 @@
+/**
+ * Absence policy: this file calls no external API, thus no wire encodes an
+ * absent value. The bundled dataset gives each key, and `getBenchmarks` answers
+ * with the "all" baseline for an unknown therapeutic area.
+ */
+
 import benchmarksData from "../../data/clinical-benchmarks.json" with { type: "json" };
 
 export interface PhaseTransitions {
