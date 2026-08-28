@@ -108,6 +108,12 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
         case "already_running":
             log.info("A profile run is already in progress — watching it");
             break;
+        case "completed":
+            // The analysis has no input files, so the ledger row is complete at
+            // once with no result. No workflow ran, so there is nothing to watch.
+            log.step("No input files — the profile is complete with no result");
+            outro("Done — inspect details with `inflexa profile --status`");
+            return shutdown(0);
         case "failed": {
             // The trigger claims pending/completed rows only; a failed row needs
             // the retry claim. Mirror the managed retry route: claim, then start.
