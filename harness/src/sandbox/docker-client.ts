@@ -39,6 +39,7 @@ import type { Logger } from "../lib/logger.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan, sandboxWriteTail } from "./mount-plan.js";
+import { threadLimitEnv } from "./thread-env.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -329,18 +330,24 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
 
                     const image = meta.image ?? config.image;
 
+                    const spec = meta.resources;
+
                     // Poll mode never dials out and carries no CORTEX_BASE_URL; it sets the
                     // firewall flag so the root entrypoint installs the egress block before
                     // dropping to uid 1000. Callback mode is the inverse.
-                    const env = [
-                        `SANDBOX_TRANSPORT=${transport}`,
-                        `SANDBOX_CALLBACK_SECRET=${callbackSecret}`,
-                        ...(pollMode ? ["SANDBOX_EGRESS_FIREWALL=1"] : [`CORTEX_BASE_URL=${config.cortexBaseUrl}`]),
-                        ...Object.entries(plan.env).map(([k, v]) => `${k}=${v}`),
-                        ...Object.entries(meta.extraEnv ?? {}).map(([k, v]) => `${k}=${v}`),
-                    ];
+                    //
+                    // Composed as one record, not as a list of `K=V`. A duplicate key in
+                    // the Env array resolves at the libc that scans `environ`, thus the
+                    // later spread must win here, not there.
+                    const env = Object.entries({
+                        SANDBOX_TRANSPORT: transport,
+                        SANDBOX_CALLBACK_SECRET: callbackSecret,
+                        ...(pollMode ? { SANDBOX_EGRESS_FIREWALL: "1" } : { CORTEX_BASE_URL: config.cortexBaseUrl }),
+                        ...threadLimitEnv(spec),
+                        ...plan.env,
+                        ...(meta.extraEnv ?? {}),
+                    }).map(([k, v]) => `${k}=${v}`);
 
-                    const spec = meta.resources;
                     const createOpts: Docker.ContainerCreateOptions = {
                         name: sandboxId,
                         ...(config.platform !== undefined && { platform: config.platform }),
@@ -375,6 +382,11 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             SecurityOpt: ["no-new-privileges"],
                             NanoCpus: Math.round(spec.cpu * 1e9),
                             Memory: spec.memoryGb * 1024 ** 3,
+                            // `Memory` alone lets the container swap as much again. A fork
+                            // storm then thrashes for minutes, and sandbox-server stops to
+                            // answer. With no swap the OOM killer removes the largest fork in
+                            // seconds, and sandbox-server survives. K8s runs with no swap.
+                            MemorySwap: spec.memoryGb * 1024 ** 3,
                             AutoRemove: false,
                         },
                     };
