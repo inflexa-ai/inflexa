@@ -13,6 +13,10 @@ import type { ProvActor, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef }
 const goldenJson = readFileSync(new URL("./__fixtures__/golden-document.json", import.meta.url), "utf8");
 const provModel = createProvDocumentModel();
 
+// The two entities the golden fixture's report family declares: the thread `t-report` and its version `v-1`.
+const reportQn = "inflexa:report-m4vsy1xm0cwf";
+const reportVersionQn = "inflexa:report-version-1ebkcvsv7flfc";
+
 function nodeOf(model: LineageModel, qn: string): LineageModel["nodes"][number] | undefined {
     return model.nodes.find((n) => n.qn === qn);
 }
@@ -29,9 +33,8 @@ describe("deriveLineageModel — golden fixture", () => {
     const model = deriveLineageModel(goldenJson)._unsafeUnwrap();
 
     test("derives every PROV element into a node, plus the undeclared endpoints", () => {
-        // 8 declared entities + 2 synthesized from relation endpoints the document references but
-        // never declares (the resolved script and the failed command's output). The report and the
-        // report version have no entity kind of their own, thus both take the `file` fallback.
+        // 6 declared entities + 2 synthesized from relation endpoints the document references but
+        // never declares (the resolved script and the failed command's output).
         const entities = model.nodes.filter((n) => n.kind === "analysis" || n.kind === "input" || n.kind === "file");
         expect(entities.map((n) => n.qn).sort()).toEqual([
             "inflexa:analysis-a-golden",
@@ -42,9 +45,8 @@ describe("deriveLineageModel — golden fixture", () => {
             "inflexa:file-c0kyjyc0bmim",
             "inflexa:file-monvuc8rxoat",
             "inflexa:input-39n74a7sqlbvc",
-            "inflexa:report-m4vsy1xm0cwf",
-            "inflexa:report-version-1ebkcvsv7flfc",
         ]);
+        expect(model.nodes.filter((n) => n.kind === "report" || n.kind === "report_version").map((n) => n.qn)).toEqual([reportQn, reportVersionQn]);
         // 8 execution and lifecycle activities, plus the 10 action activities of the report family.
         expect(model.nodes.filter((n) => n.kind === "activity")).toHaveLength(18);
         expect(model.nodes.filter((n) => n.kind === "agent")).toHaveLength(3);
@@ -73,6 +75,23 @@ describe("deriveLineageModel — golden fixture", () => {
             slug: "golden-analysis",
         });
         expect(nodeOf(model, "inflexa:input-39n74a7sqlbvc")).toMatchObject({ kind: "input", path: "data/inputs/counts.csv", isDir: false });
+    });
+
+    test("maps the report entities onto their own node kinds", () => {
+        expect(nodeOf(model, reportQn)).toEqual({
+            kind: "report",
+            qn: reportQn,
+            label: "t-report",
+            threadId: "t-report",
+            parentThreadId: "t-chat",
+        });
+        expect(nodeOf(model, reportVersionQn)).toEqual({
+            kind: "report_version",
+            qn: reportVersionQn,
+            label: "v-1",
+            versionId: "v-1",
+            threadId: "t-report",
+        });
     });
 
     test("a synthesized endpoint node carries the QName-derived kind and label only", () => {
@@ -640,6 +659,19 @@ describe("deriveLineageModel — tolerance", () => {
         ]);
     });
 
+    test("an untyped report QName takes its kind from the prefix, the version prefix first", () => {
+        // `report-` is a prefix of `report-version-`, thus the wider test must run second.
+        const untyped = JSON.stringify({
+            prefix: { inflexa: "https://inflexa.ai/prov#" },
+            entity: { "inflexa:report-abc": {}, "inflexa:report-version-abc": {} },
+        });
+        const derived = deriveLineageModel(untyped)._unsafeUnwrap();
+        expect(derived.nodes).toEqual([
+            { kind: "report", qn: "inflexa:report-abc", label: "report-abc" },
+            { kind: "report_version", qn: "inflexa:report-version-abc", label: "report-version-abc" },
+        ]);
+    });
+
     test("a statement kind outside the seven is skipped, not an error", () => {
         const doc = JSON.parse(removalJson) as Record<string, unknown>;
         doc["agent"] = { "inflexa:agent-system": {}, "inflexa:agent-model-x": {} };
@@ -664,5 +696,24 @@ describe("findFileEntity", () => {
 
     test("misses when the hash differs", () => {
         expect(findFileEntity(golden, { path: "runs/r1/s1/output/result.csv", hash: "sha256:other" })).toBeUndefined();
+    });
+
+    test("never matches a report or a version entity", () => {
+        expect(golden.nodes.filter((n) => n.kind === "file").map((n) => n.qn)).not.toContain(reportQn);
+        // A degenerate document, where the report entity also carries a `(path, hash)` pair: the node
+        // kind, not the attribute set, is what holds a report out of the file identity space.
+        const withFileAttributes = JSON.stringify({
+            prefix: { inflexa: "https://inflexa.ai/prov#" },
+            entity: {
+                "inflexa:report-x": {
+                    "prov:type": "inflexa:Report",
+                    "inflexa:threadId": "t-1",
+                    "inflexa:path": "reports/t-1/index.html",
+                    "inflexa:hash": "sha256:aaa",
+                },
+            },
+        });
+        const derived = deriveLineageModel(withFileAttributes)._unsafeUnwrap();
+        expect(findFileEntity(derived, { path: "reports/t-1/index.html", hash: "sha256:aaa" })).toBeUndefined();
     });
 });

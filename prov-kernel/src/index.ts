@@ -54,6 +54,8 @@ export type {
     LineageInputNode,
     LineageModel,
     LineageNode,
+    LineageReportNode,
+    LineageReportVersionNode,
     LineageWalk,
     ProvReadError,
 } from "./lineage.js";
