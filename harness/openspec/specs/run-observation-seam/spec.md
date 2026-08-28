@@ -5,25 +5,30 @@ TBD - created by archiving change add-run-observation-seams. Update Purpose afte
 ## Requirements
 ### Requirement: The parent workflow accepts an optional host run-observation callback
 
-`ExecuteAnalysisDeps` SHALL carry an optional `observeRun` callback through which the
-host observes a run's progress. It SHALL be independent of `emitProvenance`: neither seam
-SHALL be implemented in terms of the other, share a payload type, or be required for the
-other to function. An embedder that supplies neither, either, or both SHALL get identical
-run behaviour in all four cases.
+`ExecuteAnalysisDeps` MUST carry an optional `observeRun` callback through
+which the host observes the progress of a run. It MUST be independent of the
+run emit of the provenance seam. Neither surface is implemented in terms of
+the other, and the two do not share a payload type. Neither is necessary for
+the other to function. An embedder that supplies neither, either, or both
+MUST get identical run behavior in all four cases.
 
-The callback SHALL be synchronous by signature (returning `void`, never a promise), so a
-host that needs to do I/O must dispatch it rather than await it inside the workflow's
-critical path.
+The callback MUST be synchronous by signature (it returns `void`, never a
+promise). Thus a host that does I/O dispatches the work, and it never awaits
+inside the critical path of the workflow.
 
 #### Scenario: A run executes unchanged with no observer
 
 - **WHEN** `executeAnalysis` runs with `observeRun` absent
-- **THEN** the run's steps, status transitions, ledger writes, and terminal outcome are identical to a run with the dep supplied, and no observation work is performed
+- **THEN** the steps, the status transitions, the ledger writes, and the
+  terminal outcome equal a run with the dep supplied, and no observation work
+  runs
 
 #### Scenario: The two observation seams are independent
 
-- **WHEN** `emitProvenance` is supplied and `observeRun` is not (or the reverse)
-- **THEN** the supplied seam receives its full sequence and the absent one is never invoked
+- **WHEN** the run emit member is bound and `observeRun` is not (or the
+  reverse)
+- **THEN** the supplied surface receives its full sequence, and the absent
+  one is never invoked
 
 ### Requirement: The observation payload is a whole-run snapshot
 
