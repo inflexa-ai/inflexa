@@ -16,9 +16,10 @@ import { cliProvDigest, provModel } from "./document.ts";
 import { flushProvenanceAsync, initProvenanceRecording, resetProvenanceRecorderForTests } from "./prov.ts";
 import { resetSigningForTests } from "./signing.ts";
 
-// The report family is mapped in the HOST, not by the kernel dispatch, so these assertions read the
+// The report family walks the same kernel dispatch the core family does, so these assertions read the
 // FLUSHED document — the bytes the column holds after the signed flush — rather than a document the
-// test built itself. That is the only state a later reader (an export, a page, a verifier) sees.
+// test built itself. That is the only state a later reader (an export, a page, a verifier) sees, and
+// it is what pins the recorded bytes against a change of the mapping.
 
 const analysis: Analysis = {
     id: "a1",
@@ -79,7 +80,7 @@ async function flushedProvN(): Promise<string> {
     return (await flushedDocument()).serialize("provn");
 }
 
-describe("report provenance recorder (report bus members → host mapping → column)", () => {
+describe("report provenance recorder (report bus members → kernel dispatch → column)", () => {
     let tmpDir: string;
 
     beforeEach(() => {
@@ -140,6 +141,20 @@ describe("report provenance recorder (report bus members → host mapping → co
         expect(integrity!.signature).not.toBeNull();
     });
 
+    test("a re-emitted report session creation leaves one generation edge and one attribution", async () => {
+        // `prepareChatTurn` and the spawn can both observe one created session, and neither edge
+        // carries an identifier that `unified()` could dedupe on. The first-declaration guard of the
+        // kernel arm is what keeps the second emit from doubling the report's provenance.
+        emitReportSessionCreated(conversationThread);
+        emitReportSessionCreated(conversationThread);
+        const provn = await flushedProvN();
+
+        expect((provn.match(new RegExp(`wasGeneratedBy\\(${reportQn}, `, "g")) ?? []).length).toBe(1);
+        expect((provn.match(new RegExp(`wasAttributedTo\\(${reportQn}, `, "g")) ?? []).length).toBe(1);
+        // Each emit still records the act itself — the guard covers the entity's edges, not the acts.
+        expect(activitiesOfType(await flushedJson(), "inflexa:CreateSession").length).toBe(2);
+    });
+
     test("a conversation session creation records the action alone and mints no report entity", async () => {
         Bus.emit("inflexa", {
             type: "prov.session_created",
@@ -157,23 +172,25 @@ describe("report provenance recorder (report bus members → host mapping → co
         expect(Object.keys(json.entity ?? {}).filter((qn) => qn.startsWith("inflexa:report-"))).toEqual([]);
     });
 
-    test("each block act lands its own typed action carrying the thread and the block", async () => {
+    test("each block act lands its own typed action carrying the thread, the block, and its kind", async () => {
         emitReportSessionCreated(conversationThread);
         const acts = [
-            ["prov.report_block_added", "inflexa:AddReportBlock", "block-a"],
-            ["prov.report_block_changed", "inflexa:ChangeReportBlock", "block-b"],
-            ["prov.report_block_removed", "inflexa:RemoveReportBlock", "block-c"],
-            ["prov.report_block_moved", "inflexa:MoveReportBlock", "block-d"],
+            ["prov.report_block_added", "inflexa:AddReportBlock", "block-a", "figure"],
+            ["prov.report_block_changed", "inflexa:ChangeReportBlock", "block-b", "chart"],
+            ["prov.report_block_removed", "inflexa:RemoveReportBlock", "block-c", "table"],
+            ["prov.report_block_moved", "inflexa:MoveReportBlock", "block-d", "text"],
         ] as const;
-        for (const [type, , blockId] of acts) {
-            Bus.emit("inflexa", { type, analysisId: "a1", actor: system, model, block: { threadId: reportThread, blockId } });
+        for (const [type, , blockId, blockKind] of acts) {
+            Bus.emit("inflexa", { type, analysisId: "a1", actor: system, model, block: { threadId: reportThread, blockId, blockKind } });
         }
         const json = await flushedJson();
 
-        for (const [, activityType, blockId] of acts) {
+        for (const [, activityType, blockId, blockKind] of acts) {
             const action = oneActivityOfType(json, activityType);
             expect(attrValues(action["inflexa:threadId"])).toEqual([reportThread]);
             expect(attrValues(action["inflexa:blockId"])).toEqual([blockId]);
+            // The kind says WHAT the act touched; a block id alone tells a later reader nothing.
+            expect(attrValues(action["inflexa:blockKind"])).toEqual([blockKind]);
         }
 
         // Each act `used` the report it operated on, so the four acts and the report node are one
@@ -236,7 +253,7 @@ describe("report provenance recorder (report bus members → host mapping → co
             analysisId: "a1",
             actor: system,
             model,
-            block: { threadId: reportThread, blockId: "block-a" },
+            block: { threadId: reportThread, blockId: "block-a", blockKind: "figure" },
         });
         const json = await flushedJson();
 
@@ -320,7 +337,7 @@ describe("report provenance recorder (report bus members → host mapping → co
             analysisId: "a1",
             actor: system,
             model,
-            block: { threadId: reportThread, blockId: "block-a" },
+            block: { threadId: reportThread, blockId: "block-a", blockKind: "figure" },
         });
         const modelQn = provModel.modelAgentQName(model);
         const json = await flushedJson();

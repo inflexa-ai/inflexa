@@ -130,8 +130,9 @@ export type BusEvent =
      * than optional here too. The user steers the agent; recording that steering is a separate
      * concern from recording who acted.
      *
-     * The recorder maps this family host-side, through the kernel's lifecycle-action extension
-     * door, because the kernel dialect owns no report vocabulary.
+     * Every payload ref is a kernel shape, `ProvReportBlockRef`'s `blockKind` included, so the
+     * recorder hands the whole family straight to the kernel dispatch. A widened kernel shape thus
+     * reaches this contract only through the pin, never silently.
      */
     | { type: "prov.session_created"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; session: ProvSessionRef }
     | { type: "prov.report_block_added"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
