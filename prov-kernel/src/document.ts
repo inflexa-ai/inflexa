@@ -14,6 +14,12 @@ import type {
     ProvFileRef,
     ProvFileKey,
     ProvCommandRef,
+    ProvReportBlockRef,
+    ProvReportDerivationRef,
+    ProvReportPreviewRef,
+    ProvReportTitleRef,
+    ProvReportVersionRef,
+    ProvSessionRef,
 } from "./types.js";
 
 // The tsprov-facing layer: seeding, appending to, and serializing an analysis's PROV document.
@@ -302,14 +308,13 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
 
     /**
      * Declare (re-declare) the model agent for `model` — the LLM that reasoned about a model-driven
-     * activity — plus its delegation to the event's responsible agent, plus its association with
-     * the driven activity. The association id is `{assocIdBase}-{agentDigest(modelQn)}` — the SAME
-     * base the caller's actor association uses, disambiguated by the agent digest. The delegation
-     * reads `actedOnBehalfOf(model, responsible)`: the host is the agent the user directed; the
-     * model acted on its behalf. Its id is keyed on both agent digests (activity-independent), so
-     * re-declaration across activities and durable re-execution collapses under `unified()`.
+     * activity — plus its delegation to the event's responsible agent, and return its QName. The
+     * delegation reads `actedOnBehalfOf(model, responsible)`: the host is the agent the user
+     * directed; the model acted on its behalf. Its id is keyed on both agent digests
+     * (activity-independent), so re-declaration across activities and durable re-execution
+     * collapses under `unified()`. The caller adds the association with its own activity.
      */
-    function appendModelAgent(doc: ProvDocument, model: ProvModelId, responsibleQn: string, activityQn: string, assocIdBase: string): void {
+    function declareModelAgent(doc: ProvDocument, model: ProvModelId, responsibleQn: string): string {
         const qn = modelAgentQName(model);
         doc.agent(qn, {
             // Both types deliberately: `prov:SoftwareAgent` places it in PROV's agent taxonomy,
@@ -319,7 +324,28 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
             "inflexa:model": model,
         });
         doc.actedOnBehalfOf(qn, responsibleQn, undefined, `${NS_PREFIX}:delegation-${agentDigest(qn)}-${agentDigest(responsibleQn)}`);
+        return qn;
+    }
+
+    /**
+     * Declare the model agent and associate it with a model-driven EXECUTION activity. The
+     * association id is `{assocIdBase}-{agentDigest(modelQn)}` — the SAME base the caller's actor
+     * association uses, disambiguated by the agent digest. An execution activity keys on a
+     * content-deterministic QName and re-emits on recovery, thus its association needs an
+     * identifier to merge.
+     */
+    function appendModelAgent(doc: ProvDocument, model: ProvModelId, responsibleQn: string, activityQn: string, assocIdBase: string): void {
+        const qn = declareModelAgent(doc, model, responsibleQn);
         doc.wasAssociatedWith(activityQn, qn, undefined, `${assocIdBase}-${agentDigest(qn)}`);
+    }
+
+    /**
+     * Declare the model agent and associate it with a lifecycle ACTION. The association is
+     * anonymous, like the actor association `appendLifecycleAction` writes: an action takes a fresh
+     * id per act, thus it is never re-emitted and an identifier would dedupe nothing.
+     */
+    function appendActionModelAgent(doc: ProvDocument, model: ProvModelId, responsibleQn: string, actionQn: string): void {
+        doc.wasAssociatedWith(actionQn, declareModelAgent(doc, model, responsibleQn));
     }
 
     /**
@@ -581,6 +607,200 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         doc.used(sQn, eQn, undefined, `${NS_PREFIX}:used-input-${step.runId}-${step.stepId}-${fileDigest(input)}`);
     }
 
+    // The session and report family: the session start plus the eight acts on a report document.
+    // Each act keeps the LIFECYCLE shape — one freshly minted action activity per act, stamped at
+    // the model clock — because a host emits these from a live bus, one time, never from a durable
+    // replay. Thus a deterministic execution-style QName would buy nothing.
+
+    /** The attribute bag a report act stamps on its action activity — the plain-record form of tsprov's attributes. */
+    type ReportActAttributes = Record<string, string | number | boolean | readonly string[]>;
+
+    /** What a mapped act mints, so its arm can hang the edges that only that act wants. */
+    type ReportAction = { actionQn: string; agentQn: string; time: string };
+
+    /** The report-entity QName, keyed by the digest of the thread id — one entity per report session. */
+    function reportQName(threadId: string): string {
+        return `${NS_PREFIX}:report-${digest(threadId)}`;
+    }
+
+    /** The report-version-entity QName, keyed by the digest of the version id — one entity per recorded version. */
+    function reportVersionQName(versionId: string): string {
+        return `${NS_PREFIX}:report-version-${digest(versionId)}`;
+    }
+
+    /**
+     * Declare (re-declare) the report entity of a thread, and return its QName. Re-declaration is
+     * harmless, because `unified()` collapses same-QName entities — and that is what makes the LAZY
+     * MINT fall out of the ordinary path: an act whose session start never reached this document
+     * declares the entity here, with no parent thread, because only the session start knows one.
+     */
+    function appendReportEntity(doc: ProvDocument, threadId: string, parentThreadId?: string): string {
+        const qn = reportQName(threadId);
+        doc.entity(qn, {
+            "prov:type": "inflexa:Report",
+            "inflexa:threadId": threadId,
+            ...(parentThreadId !== undefined ? { "inflexa:parentThreadId": parentThreadId } : {}),
+        });
+        return qn;
+    }
+
+    /**
+     * The preamble every report act shares: mint the typed action activity, stamp the data of the
+     * act onto it, and record the model that drove it.
+     *
+     * The attributes land in a SECOND declaration of the freshly minted activity, because
+     * `appendLifecycleAction` owns the first one. They carry no formal time: both time slots are
+     * stamped already, and a second stamp is a merge hazard for no gain.
+     */
+    function appendReportAction(
+        doc: ProvDocument,
+        analysisId: string,
+        actor: ProvActor,
+        model: ProvModelId,
+        activityType: string,
+        attributes: ReportActAttributes,
+    ): ReportAction {
+        const { actionQn, agentQn, time } = appendLifecycleAction(doc, analysisId, actor, activityType);
+        doc.activity(actionQn, undefined, undefined, attributes);
+        appendActionModelAgent(doc, model, agentQn, actionQn);
+        return { actionQn, agentQn, time };
+    }
+
+    /**
+     * Land one act on the report document it operated on: the action, the report entity of the
+     * thread (minted here when it is unseen), and the `used` edge between them. Every act names its
+     * thread as an attribute too, thus a reader that walks attributes and a reader that walks edges
+     * both find it.
+     */
+    function appendReportAct(
+        doc: ProvDocument,
+        analysisId: string,
+        actor: ProvActor,
+        model: ProvModelId,
+        activityType: string,
+        threadId: string,
+        attributes: ReportActAttributes,
+    ): ReportAction {
+        const action = appendReportAction(doc, analysisId, actor, model, activityType, { "inflexa:threadId": threadId, ...attributes });
+        doc.used(action.actionQn, appendReportEntity(doc, threadId), action.time);
+        return action;
+    }
+
+    /**
+     * Append the records of a started session: the typed action, and — for a report session — the
+     * report entity that every later act operates on. A conversation is the session and nothing
+     * else, thus only a report session earns an entity.
+     *
+     * The parent thread rides the action as well as the entity. The entity is where a reader walks
+     * the session tree, but only a report session HAS an entity, thus the stamp on the action is
+     * what keeps the parent of a conversation session.
+     */
+    function appendSessionCreated(doc: ProvDocument, analysisId: string, actor: ProvActor, session: ProvSessionRef, model: ProvModelId): void {
+        const { threadId, kind, parentThreadId } = session;
+        const action = appendReportAction(doc, analysisId, actor, model, "inflexa:CreateSession", {
+            "inflexa:threadId": threadId,
+            "inflexa:sessionKind": kind,
+            ...(parentThreadId !== undefined ? { "inflexa:parentThreadId": parentThreadId } : {}),
+        });
+        if (kind !== "report") return;
+        // The generation edge and the attribution are anonymous, and the generation lands on a fresh
+        // action id, thus `unified()` — which dedups by identifier alone — cannot collapse a second
+        // copy. Write the pair only on the first declaration of the entity, so a re-emitted session
+        // start adds no duplicate. Read the record count BEFORE the declaration below.
+        const firstDeclaration = doc.getRecord(reportQName(threadId)).length === 0;
+        const reportQn = appendReportEntity(doc, threadId, parentThreadId);
+        if (!firstDeclaration) return;
+        doc.wasGeneratedBy(reportQn, action.actionQn, action.time);
+        doc.wasAttributedTo(reportQn, action.agentQn);
+    }
+
+    /** Append the records of one block act. The four acts share one payload, thus they differ only in the activity type they name. */
+    function appendReportBlockAct(
+        doc: ProvDocument,
+        analysisId: string,
+        actor: ProvActor,
+        block: ProvReportBlockRef,
+        model: ProvModelId,
+        activityType: string,
+    ): void {
+        appendReportAct(doc, analysisId, actor, model, activityType, block.threadId, {
+            "inflexa:blockId": block.blockId,
+            "inflexa:blockKind": block.blockKind,
+        });
+    }
+
+    /** Append the records of an added block. */
+    function appendReportBlockAdded(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void {
+        appendReportBlockAct(doc, analysisId, actor, block, model, "inflexa:AddReportBlock");
+    }
+
+    /** Append the records of a changed block. */
+    function appendReportBlockChanged(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void {
+        appendReportBlockAct(doc, analysisId, actor, block, model, "inflexa:ChangeReportBlock");
+    }
+
+    /** Append the records of a removed block. */
+    function appendReportBlockRemoved(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void {
+        appendReportBlockAct(doc, analysisId, actor, block, model, "inflexa:RemoveReportBlock");
+    }
+
+    /** Append the records of a moved block. */
+    function appendReportBlockMoved(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void {
+        appendReportBlockAct(doc, analysisId, actor, block, model, "inflexa:MoveReportBlock");
+    }
+
+    /** Append the records of a title set on a report document. */
+    function appendReportTitleSet(doc: ProvDocument, analysisId: string, actor: ProvActor, title: ProvReportTitleRef, model: ProvModelId): void {
+        appendReportAct(doc, analysisId, actor, model, "inflexa:SetReportTitle", title.threadId, { "inflexa:title": title.title });
+    }
+
+    /** Append the records of a derivation a report session ran: the output, the script, and the sources it read. */
+    function appendReportDerivationRun(doc: ProvDocument, analysisId: string, actor: ProvActor, derivation: ProvReportDerivationRef, model: ProvModelId): void {
+        appendReportAct(doc, analysisId, actor, model, "inflexa:RunReportDerivation", derivation.threadId, {
+            "inflexa:outputPath": derivation.outputPath,
+            "inflexa:outputHash": derivation.outputHash,
+            "inflexa:scriptHash": derivation.scriptHash,
+            // Each source rides as one `path|hash` value of a repeated attribute. Parallel path and
+            // hash attributes would read the same but lose WHICH hash belongs to which path, and a
+            // verifier wants that pairing to mount the evidence again.
+            ...(derivation.sources.length > 0 ? { "inflexa:source": derivation.sources.map((s) => `${s.path}|${s.hash}`) } : {}),
+        });
+    }
+
+    /** Append the records of a rendered preview: the page and the draft document it came from. */
+    function appendReportPreviewed(doc: ProvDocument, analysisId: string, actor: ProvActor, preview: ProvReportPreviewRef, model: ProvModelId): void {
+        appendReportAct(doc, analysisId, actor, model, "inflexa:PreviewReport", preview.threadId, {
+            "inflexa:pagePath": preview.pagePath,
+            "inflexa:documentHash": preview.documentHash,
+        });
+    }
+
+    /** Append the records of a recorded version: the act, the version entity, and its specialization of the report. */
+    function appendReportVersionRecorded(doc: ProvDocument, analysisId: string, actor: ProvActor, version: ProvReportVersionRef, model: ProvModelId): void {
+        const action = appendReportAct(doc, analysisId, actor, model, "inflexa:RecordReportVersion", version.threadId, {
+            "inflexa:versionId": version.versionId,
+            "inflexa:replaced": version.replaced,
+        });
+        const versionQn = reportVersionQName(version.versionId);
+        // tsprov gives `specializationOf` no identifier, and the generation edge lands on a fresh
+        // action id, thus `unified()` cannot collapse a second copy of either. The first-declaration
+        // guard is the dedup. Read the record count BEFORE the declaration below.
+        const firstDeclaration = doc.getRecord(versionQn).length === 0;
+        doc.entity(versionQn, {
+            "prov:type": "inflexa:ReportVersion",
+            "inflexa:versionId": version.versionId,
+            "inflexa:threadId": version.threadId,
+        });
+        if (!firstDeclaration) return;
+        doc.wasGeneratedBy(versionQn, action.actionQn, action.time);
+        doc.wasAttributedTo(versionQn, action.agentQn);
+        // A version IS the report, fixed at one point in time, which is PROV's own reading of
+        // `specializationOf`. `wasAttributedTo` cannot say it, because attribution takes an AGENT
+        // and the report is an entity. `hadMember` would say the version is one PART of the report,
+        // which is false.
+        doc.specializationOf(versionQn, reportQName(version.threadId));
+    }
+
     return {
         analysisQName,
         inputQName,
@@ -601,5 +821,14 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         appendCommandExecuted,
         appendFileWritten,
         appendInputUsed,
+        appendSessionCreated,
+        appendReportBlockAdded,
+        appendReportBlockChanged,
+        appendReportBlockRemoved,
+        appendReportBlockMoved,
+        appendReportTitleSet,
+        appendReportDerivationRun,
+        appendReportPreviewed,
+        appendReportVersionRecorded,
     };
 }

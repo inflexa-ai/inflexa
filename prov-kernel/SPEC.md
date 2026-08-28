@@ -76,6 +76,8 @@ The model identifier is the vendor-qualified `{provider}/{model}` name.
 | analysis subject | `inflexa:analysis-{analysisId}` | `prov:type` `inflexa:Analysis`, optional `inflexa:name`, optional `inflexa:slug` |
 | staged input | `inflexa:input-{digest("{anchorId}\|{path}")}` | `prov:type` `inflexa:Input`, `inflexa:path`, `inflexa:isDir` |
 | file | `inflexa:file-{digest("{path}\|{hash}")}` | see below |
+| report | `inflexa:report-{digest(threadId)}` | `prov:type` `inflexa:Report`, `inflexa:threadId`, optional `inflexa:parentThreadId` |
+| report version | `inflexa:report-version-{digest(versionId)}` | `prov:type` `inflexa:ReportVersion`, `inflexa:versionId`, `inflexa:threadId` |
 
 For the staged-input QName, a null `anchorId` contributes the empty string.
 
@@ -102,9 +104,9 @@ A written file carries `prov:type` `inflexa:File`, `inflexa:path`,
 `mintActionId` mints one fresh id per genuine user action. The default minter
 is a random UUID. The model clock (`now`) defaults to the wall clock. Both are
 injectable, and a lifecycle action (`inflexa:CreateAnalysis`,
-`inflexa:AddInput`, `inflexa:RemoveInput`, or a host-defined type through the
-generic lifecycle-action builder) is deliberately not deterministic by
-default.
+`inflexa:AddInput`, `inflexa:RemoveInput`, one of the nine session and report
+types below, or a host-defined type through the generic lifecycle-action
+builder) is deliberately not deterministic by default.
 
 The command group digest is:
 
@@ -167,11 +169,11 @@ PROV-JSON attribute values encode per JSON type of the supplied value:
 
 | Value type | Encoding | Dialect attributes |
 |-|-|-|
-| string | plain JSON string | `inflexa:path`, `inflexa:hash`, `inflexa:name`, `inflexa:slug`, `inflexa:command`, `inflexa:args`, `inflexa:tool`, `inflexa:source`, `inflexa:fileId`, `inflexa:status`, `inflexa:runId`, `inflexa:stepId`, `inflexa:planSummary`, `inflexa:unresolvedScript`, `inflexa:email`, `inflexa:version`, `inflexa:commit`, `inflexa:model`, `prov:label`, `prov:type` (the type name is a plain string) |
-| boolean | plain JSON boolean | `inflexa:isDir` |
+| string | plain JSON string | `inflexa:path`, `inflexa:hash`, `inflexa:name`, `inflexa:slug`, `inflexa:command`, `inflexa:args`, `inflexa:tool`, `inflexa:source`, `inflexa:fileId`, `inflexa:status`, `inflexa:runId`, `inflexa:stepId`, `inflexa:planSummary`, `inflexa:unresolvedScript`, `inflexa:email`, `inflexa:version`, `inflexa:commit`, `inflexa:model`, `inflexa:threadId`, `inflexa:parentThreadId`, `inflexa:sessionKind`, `inflexa:blockId`, `inflexa:blockKind`, `inflexa:title`, `inflexa:outputPath`, `inflexa:outputHash`, `inflexa:scriptHash`, `inflexa:pagePath`, `inflexa:documentHash`, `inflexa:versionId`, `prov:label`, `prov:type` (the type name is a plain string) |
+| boolean | plain JSON boolean | `inflexa:isDir`, `inflexa:replaced` |
 | integral number | `{"$": n, "type": "xsd:int"}` | `inflexa:size`, `inflexa:exitCode`, `inflexa:durationMs` |
 | non-integral number | `{"$": n, "type": "xsd:double"}` | none in the dialect |
-| multiple values | JSON array of the encoded values | the model agent's `prov:type` |
+| multiple values | JSON array of the encoded values | the model agent's `prov:type`, a derivation's `inflexa:source` |
 
 Every numeric dialect attribute is integral, thus each one serializes as an
 `xsd:int` typed literal. The integral test is on the value, not on a declared
@@ -209,7 +211,8 @@ leaf file with no producing command gets the same id from its step activity.
 The two authorities write the same identifier, thus re-emission merges.
 
 A lifecycle relation (creation, input add, input remove) carries no explicit
-identifier. Only the execution relations obey the deterministic-id rule. On
+identifier, and neither does a relation of the session and report family. Only
+the execution relations obey the deterministic-id rule. On
 serialization each identifier-less record receives a blank-node id `_:idN`:
 one document-wide counter that starts at 1 and increments per distinct
 anonymous record, in record insertion order. Value-equal anonymous records
@@ -245,6 +248,10 @@ model-agent statements, after the actor association of its activity:
 2. `actedOnBehalfOf(model, actor)`, id
    `inflexa:delegation-{digest(modelQn)}-{digest(actorQn)}`
 3. `wasAssociatedWith(activity, model)`, id `{assocIdBase}-{digest(modelQn)}`
+
+A session or report event appends the same agent and the same delegation. Its
+model association is **anonymous**, because the association lands on a lifecycle
+action. Refer to "The session and report family" below.
 
 ### analysis_created
 
@@ -368,6 +375,77 @@ Payload: the step ref and the used-input ref.
 
 The event declares the actor agent too, although its own statements carry no
 agent reference.
+
+### The session and report family
+
+Nine members record a started session and the acts on its report document.
+Each one carries the model id. Each one mints one lifecycle action activity,
+and the data of the act rides that activity as attributes.
+
+| Member | Activity type | Attributes after `inflexa:threadId` |
+|-|-|-|
+| `session_created` | `inflexa:CreateSession` | `inflexa:sessionKind`, optional `inflexa:parentThreadId` |
+| `report_block_added` | `inflexa:AddReportBlock` | `inflexa:blockId`, `inflexa:blockKind` |
+| `report_block_changed` | `inflexa:ChangeReportBlock` | `inflexa:blockId`, `inflexa:blockKind` |
+| `report_block_removed` | `inflexa:RemoveReportBlock` | `inflexa:blockId`, `inflexa:blockKind` |
+| `report_block_moved` | `inflexa:MoveReportBlock` | `inflexa:blockId`, `inflexa:blockKind` |
+| `report_title_set` | `inflexa:SetReportTitle` | `inflexa:title` |
+| `report_derivation_run` | `inflexa:RunReportDerivation` | `inflexa:outputPath`, `inflexa:outputHash`, `inflexa:scriptHash`, repeated `inflexa:source` |
+| `report_previewed` | `inflexa:PreviewReport` | `inflexa:pagePath`, `inflexa:documentHash` |
+| `report_version_recorded` | `inflexa:RecordReportVersion` | `inflexa:versionId`, `inflexa:replaced` |
+
+`inflexa:threadId` is the first attribute of every act. `inflexa:blockKind` is
+the kind the block has after the act, in an open vocabulary. The derivation
+stamps one `{path}|{hash}` value per source, as a repeated `inflexa:source`
+attribute. It stamps no such attribute when the derivation read no source.
+
+Every member appends these statements, in this order:
+
+1. the action activity `inflexa:action-{mintActionId()}`, `prov:type` from the
+   table, start = end = the model clock
+2. `wasAssociatedWith(action, actor)` — anonymous
+3. the SAME action activity again, with the attributes from the table and with
+   **no** formal time. Both time slots hold the model clock already, and a
+   second stamp is a merge hazard.
+4. the model agent and its delegation, per the model-agent statements above
+5. `wasAssociatedWith(action, model)` — anonymous. An action takes a fresh id
+   per act, thus it is never re-emitted and an identifier would dedupe nothing.
+
+Every member except `session_created` then appends:
+
+6. the report entity of its thread, declared or re-declared
+7. `used(action, report, time)` — anonymous, timed
+
+Step 6 is the **lazy mint**: an act whose `session_created` never reached this
+document declares the entity itself. Only `session_created` knows a parent
+thread, thus a lazy mint writes no `inflexa:parentThreadId`.
+
+A `session_created` of kind `report` appends instead:
+
+6. the report entity, with `inflexa:parentThreadId` when the payload holds one
+7. only on the first declaration: `wasGeneratedBy(report, action, time)` —
+   anonymous, timed
+8. only on the first declaration: `wasAttributedTo(report, actor)` — anonymous
+
+A `session_created` of kind `conversation` mints no entity and appends no
+`used` edge. A conversation is the session alone.
+
+A `report_version_recorded` appends after its `used` edge:
+
+8. the version entity `inflexa:report-version-{digest(versionId)}`
+9. only on the first declaration: `wasGeneratedBy(version, action, time)` —
+   anonymous, timed
+10. only on the first declaration: `wasAttributedTo(version, actor)` —
+    anonymous
+11. only on the first declaration: `specializationOf(version, report)` —
+    anonymous. A version IS the report, fixed at one point in time.
+
+**The first-declaration rule.** A producer reads whether the document already
+holds a record under the entity's QName. It reads this BEFORE it declares the
+entity. It appends the generation edge, the attribution, and the specialization
+only when the count is zero. Each of the three relations is anonymous, and the
+generation edge lands on a fresh action id. `unified()` merges by identifier
+alone, thus it cannot collapse a second copy, and the guard is the only dedupe.
 
 ## The chain rule
 

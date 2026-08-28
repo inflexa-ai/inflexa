@@ -6,19 +6,25 @@ import type {
     ProvFileRef,
     ProvInputRef,
     ProvModelId,
+    ProvReportBlockRef,
+    ProvReportDerivationRef,
+    ProvReportPreviewRef,
+    ProvReportTitleRef,
+    ProvReportVersionRef,
     ProvRunOutcome,
     ProvRunRef,
+    ProvSessionRef,
     ProvStepOutcome,
     ProvStepRef,
     ProvUsedInputRef,
 } from "./types.js";
 
 /**
- * The core provenance event union — the nine facts every Inflexa producer records. Each event
- * carries the owning `analysisId` and the responsible {@link ProvActor}; a model-driven execution
- * event also carries the {@link ProvModelId} that reasoned about it. A host records its own
- * extension event kinds through `appendLifecycleAction` and the QName derivations, outside this
- * union.
+ * The core provenance event union — the facts every Inflexa producer records, in three families:
+ * the analysis lifecycle, the execution, and the session and report acts. Each event carries the
+ * owning `analysisId` and the responsible {@link ProvActor}; a model-driven event also carries the
+ * {@link ProvModelId} that reasoned about it. A host records its own extension event kinds through
+ * `appendLifecycleAction` and the QName derivations, outside this union.
  */
 export type ProvEvent =
     | { type: "analysis_created"; analysisId: string; actor: ProvActor }
@@ -55,7 +61,16 @@ export type ProvEvent =
           step: ProvStepRef;
           generation: "command" | "step";
       }
-    | { type: "input_used"; analysisId: string; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef };
+    | { type: "input_used"; analysisId: string; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef }
+    | { type: "session_created"; analysisId: string; actor: ProvActor; model: ProvModelId; session: ProvSessionRef }
+    | { type: "report_block_added"; analysisId: string; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
+    | { type: "report_block_changed"; analysisId: string; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
+    | { type: "report_block_removed"; analysisId: string; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
+    | { type: "report_block_moved"; analysisId: string; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
+    | { type: "report_title_set"; analysisId: string; actor: ProvActor; model: ProvModelId; title: ProvReportTitleRef }
+    | { type: "report_derivation_run"; analysisId: string; actor: ProvActor; model: ProvModelId; derivation: ProvReportDerivationRef }
+    | { type: "report_previewed"; analysisId: string; actor: ProvActor; model: ProvModelId; preview: ProvReportPreviewRef }
+    | { type: "report_version_recorded"; analysisId: string; actor: ProvActor; model: ProvModelId; version: ProvReportVersionRef };
 
 /**
  * Apply one core event to `doc` through the model's builders — the sole supported producer of
@@ -95,6 +110,33 @@ export function applyProvEvent(model: ProvDocumentModel, doc: ProvDocument, even
             return;
         case "input_used":
             m.appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
+            return;
+        case "session_created":
+            m.appendSessionCreated(doc, event.analysisId, event.actor, event.session, event.model);
+            return;
+        case "report_block_added":
+            m.appendReportBlockAdded(doc, event.analysisId, event.actor, event.block, event.model);
+            return;
+        case "report_block_changed":
+            m.appendReportBlockChanged(doc, event.analysisId, event.actor, event.block, event.model);
+            return;
+        case "report_block_removed":
+            m.appendReportBlockRemoved(doc, event.analysisId, event.actor, event.block, event.model);
+            return;
+        case "report_block_moved":
+            m.appendReportBlockMoved(doc, event.analysisId, event.actor, event.block, event.model);
+            return;
+        case "report_title_set":
+            m.appendReportTitleSet(doc, event.analysisId, event.actor, event.title, event.model);
+            return;
+        case "report_derivation_run":
+            m.appendReportDerivationRun(doc, event.analysisId, event.actor, event.derivation, event.model);
+            return;
+        case "report_previewed":
+            m.appendReportPreviewed(doc, event.analysisId, event.actor, event.preview, event.model);
+            return;
+        case "report_version_recorded":
+            m.appendReportVersionRecorded(doc, event.analysisId, event.actor, event.version, event.model);
             return;
         default: {
             const never: never = event;

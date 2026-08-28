@@ -15,7 +15,9 @@ import type { ProvActor, ProvModelId } from "./types.js";
  * Deliberate coverage: the lifecycle builders and the generic lifecycle action, a user agent
  * (opaque id plus email), a resolved and an unresolved `scriptPath`, an empty `args` vector (no
  * `inflexa:args` attribute), the `file_tool` generation path, a plain-boolean `inflexa:isDir`, a
- * typed-int `inflexa:size`, and a non-zero-millisecond formal time.
+ * typed-int `inflexa:size`, and a non-zero-millisecond formal time. The session and report family
+ * adds both session kinds (the conversation arm mints no entity), a parent thread, the four block
+ * acts, a repeated `inflexa:source` attribute, and the version entity with its specialization.
  */
 
 const user: ProvActor = { kind: "user", id: "u-42", email: "golden@example.com" };
@@ -93,6 +95,32 @@ export function buildGoldenDocument(m: ProvDocumentModelInternal): ProvDocument 
         model,
     );
     m.appendRunCompleted(doc, "a-golden", system, { runId: "r1", status: "completed", completedAtMs: 1_700_000_200_000, durationMs: 200_000 });
+    const block = { threadId: "t-report", blockId: "b-1", blockKind: "chart" };
+    m.appendSessionCreated(doc, "a-golden", user, { threadId: "t-chat", kind: "conversation" }, model);
+    m.appendSessionCreated(doc, "a-golden", user, { threadId: "t-report", kind: "report", parentThreadId: "t-chat" }, model);
+    m.appendReportBlockAdded(doc, "a-golden", user, block, model);
+    m.appendReportBlockChanged(doc, "a-golden", user, block, model);
+    m.appendReportBlockMoved(doc, "a-golden", user, block, model);
+    m.appendReportBlockRemoved(doc, "a-golden", user, block, model);
+    m.appendReportTitleSet(doc, "a-golden", user, { threadId: "t-report", title: "Golden Report" }, model);
+    m.appendReportDerivationRun(
+        doc,
+        "a-golden",
+        user,
+        {
+            threadId: "t-report",
+            outputPath: "reports/t-report/tables/counts.csv",
+            outputHash: "sha256:111",
+            scriptHash: "sha256:222",
+            sources: [
+                { path: "runs/r1/s1/output/result.csv", hash: "sha256:bbb" },
+                { path: "data/inputs/counts.csv", hash: "sha256:aaa" },
+            ],
+        },
+        model,
+    );
+    m.appendReportPreviewed(doc, "a-golden", user, { threadId: "t-report", pagePath: "reports/t-report/preview.html", documentHash: "sha256:333" }, model);
+    m.appendReportVersionRecorded(doc, "a-golden", user, { threadId: "t-report", versionId: "v-1", replaced: false }, model);
     return doc;
 }
 

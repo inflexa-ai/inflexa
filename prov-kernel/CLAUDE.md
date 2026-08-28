@@ -10,9 +10,10 @@ Inflexa PROV dialect, and nothing else:
 
 - the document model (`src/document.ts`): QName derivation, the in-package
   tsprov statement builders, `PROV_UNIFY_OPTIONS`, and the injectable digest
-- the core event union and its apply function (`src/events.ts`): the nine
-  `ProvEvent` variants and `applyProvEvent` — the event-to-statements mapping
-  determines the document bytes, thus it is format
+- the core event union and its apply function (`src/events.ts`): the
+  `ProvEvent` variants of the three families — the analysis lifecycle, the
+  execution, and the session and report acts — and `applyProvEvent`. The
+  event-to-statements mapping determines the document bytes, thus it is format
 - the signing primitives (`src/signing.ts`): the chain hash, Ed25519
   sign/verify, and the `ProvSigner` seam
 - the lineage read model (`src/lineage.ts`): the node/edge model derived from

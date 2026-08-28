@@ -202,3 +202,97 @@ describe("applyProvEvent", () => {
         expect(() => applyProvEvent(model, doc, rogue)).toThrow("unhandled prov event type");
     });
 });
+
+const reportThread = "t-report";
+const reportQn = `inflexa:report-${defaultProvDigest(reportThread)}`;
+const versionQn = `inflexa:report-version-${defaultProvDigest("v-1")}`;
+
+const reportSession: ProvEvent = {
+    type: "session_created",
+    analysisId: "a1",
+    actor,
+    model: "anthropic/test-model",
+    session: { threadId: reportThread, kind: "report", parentThreadId: "t-chat" },
+};
+
+const blockAdded: ProvEvent = {
+    type: "report_block_added",
+    analysisId: "a1",
+    actor,
+    model: "anthropic/test-model",
+    block: { threadId: reportThread, blockId: "b-1", blockKind: "chart" },
+};
+
+const versionRecorded: ProvEvent = {
+    type: "report_version_recorded",
+    analysisId: "a1",
+    actor,
+    model: "anthropic/test-model",
+    version: { threadId: reportThread, versionId: "v-1", replaced: false },
+};
+
+/** The relation records of one kind whose `field` endpoint names `qn` — the count a first-declaration guard holds at one. */
+function endpointRecords(doc: ParsedDoc, relation: string, field: string, qn: string): Record<string, unknown>[] {
+    // A relation record is a flat `{ "prov:<role>": endpoint }` object; the parsed-document type
+    // erases that one level, thus the cast restores it.
+    const records = Object.values(doc[relation] ?? {}) as Record<string, unknown>[];
+    return records.filter((record) => record[field] === qn);
+}
+
+describe("applyProvEvent — the session and report family", () => {
+    test("a re-emitted report session leaves one generation edge and one attribution", () => {
+        const doc = serialize(makeModel(), [reportSession, reportSession]);
+
+        expect(Object.keys(doc.entity ?? {}).filter((k) => k === reportQn)).toHaveLength(1);
+        expect(endpointRecords(doc, "wasGeneratedBy", "prov:entity", reportQn)).toHaveLength(1);
+        expect(endpointRecords(doc, "wasAttributedTo", "prov:entity", reportQn)).toHaveLength(1);
+    });
+
+    test("a re-emitted version leaves one specialization of its report", () => {
+        const doc = serialize(makeModel(), [reportSession, versionRecorded, versionRecorded]);
+
+        expect(doc.entity?.[versionQn]).toMatchObject({
+            "prov:type": "inflexa:ReportVersion",
+            "inflexa:versionId": "v-1",
+            "inflexa:threadId": reportThread,
+        });
+        expect(endpointRecords(doc, "specializationOf", "prov:specificEntity", versionQn)).toHaveLength(1);
+        expect(endpointRecords(doc, "specializationOf", "prov:generalEntity", reportQn)).toHaveLength(1);
+        expect(endpointRecords(doc, "wasGeneratedBy", "prov:entity", versionQn)).toHaveLength(1);
+    });
+
+    test("an act with no session start mints the report entity lazily, with no parent thread", () => {
+        const doc = serialize(makeModel(), [blockAdded]);
+
+        expect(doc.entity?.[reportQn]).toMatchObject({ "prov:type": "inflexa:Report", "inflexa:threadId": reportThread });
+        expect(doc.entity?.[reportQn]).not.toHaveProperty("inflexa:parentThreadId");
+        expect(endpointRecords(doc, "used", "prov:entity", reportQn)).toEqual([
+            expect.objectContaining({ "prov:activity": "inflexa:action-evt-1", "prov:entity": reportQn }),
+        ]);
+    });
+
+    test("a conversation session mints no entity and draws no read edge", () => {
+        const doc = serialize(makeModel(), [
+            { type: "session_created", analysisId: "a1", actor, model: "anthropic/test-model", session: { threadId: "t-chat", kind: "conversation" } },
+        ]);
+
+        expect(doc.activity?.["inflexa:action-evt-1"]).toMatchObject({
+            "prov:type": "inflexa:CreateSession",
+            "inflexa:threadId": "t-chat",
+            "inflexa:sessionKind": "conversation",
+        });
+        expect(Object.keys(doc.entity ?? {}).filter((k) => k.startsWith("inflexa:report-"))).toEqual([]);
+        expect(Object.keys(doc.used ?? {})).toHaveLength(0);
+    });
+
+    test("a block act stamps the kind of the block", () => {
+        const doc = serialize(makeModel(), [blockAdded]);
+
+        expect(doc.activity?.["inflexa:action-evt-1"]).toMatchObject({
+            "prov:type": "inflexa:AddReportBlock",
+            "inflexa:threadId": reportThread,
+            "inflexa:blockId": "b-1",
+            "inflexa:blockKind": "chart",
+        });
+    });
+});

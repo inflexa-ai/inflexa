@@ -24,6 +24,13 @@ export type {
     ProvFileKey,
     ProvCommandInputRef,
     ProvCommandRef,
+    ProvSessionRef,
+    ProvReportBlockRef,
+    ProvReportTitleRef,
+    ProvReportDerivationSourceRef,
+    ProvReportDerivationRef,
+    ProvReportPreviewRef,
+    ProvReportVersionRef,
     VerifyResult,
 } from "./types.js";
 

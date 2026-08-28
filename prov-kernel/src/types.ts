@@ -233,6 +233,94 @@ export type ProvCommandRef =
       };
 
 /**
+ * A started agent session of an analysis. One shape carries both kinds, because to start a session
+ * is one action and the kind is data of that action. Recorded as a PROV **activity**; a `report`
+ * session also mints the report entity every later act operates on.
+ */
+export type ProvSessionRef = {
+    /** The thread that identifies the session — the key every later report act names. */
+    threadId: string;
+    /** A `report` session owns a report document; a `conversation` is the session alone. */
+    kind: "conversation" | "report";
+    /** The thread the session was started from. Absent on a root session. */
+    parentThreadId?: string;
+};
+
+/**
+ * One block operation on a report document — the payload of the four block acts (add, change,
+ * remove, move), which share this shape because they differ only in what they did.
+ */
+export type ProvReportBlockRef = {
+    /** The report session that holds the block. */
+    threadId: string;
+    /** The block the act added, changed, removed, or moved. */
+    blockId: string;
+    /**
+     * The kind of the block after the act, recorded verbatim as an OPEN vocabulary: the kernel
+     * carries the value into the document and owns no block grammar, thus a host can record a new
+     * kind with no kernel change.
+     */
+    blockKind: string;
+};
+
+/** A title set on a report document. The title sits on the document, thus it names no block. */
+export type ProvReportTitleRef = {
+    /** The report session whose document carries the title. */
+    threadId: string;
+    /** The title text the act set. */
+    title: string;
+};
+
+/** One `(path, content hash)` input of a derivation — the evidence a verifier mounts to make the derived file again. */
+export type ProvReportDerivationSourceRef = {
+    /** The path of the source file, relative to the workspace root. */
+    path: string;
+    /** The content hash of the source at derivation time. */
+    hash: string;
+};
+
+/**
+ * A derivation a report session ran. The source chain rides the ref because the emitting host pins
+ * it, and a reader cannot rebuild it from the output path alone — one path can be derived again
+ * from different sources.
+ */
+export type ProvReportDerivationRef = {
+    /** The report session that ran the derivation. */
+    threadId: string;
+    /** The path of the derived file, relative to the workspace root. A record is immutable, thus a new derivation takes a new path. */
+    outputPath: string;
+    /** The content hash of the derived file. */
+    outputHash: string;
+    /** The content hash of the script that produced the derived file. */
+    scriptHash: string;
+    /** Every source the derivation read, each as a `(path, hash)` pair. */
+    sources: readonly ProvReportDerivationSourceRef[];
+};
+
+/** A rendered preview of a report document. */
+export type ProvReportPreviewRef = {
+    /** The report session whose document the page shows. */
+    threadId: string;
+    /** The path of the rendered page, relative to the workspace root. */
+    pagePath: string;
+    /** The hash of the draft document the page was rendered from, thus a reader ties a page to its source. */
+    documentHash: string;
+};
+
+/**
+ * A recorded version of a report. Recorded as a PROV **entity** that is a `specializationOf` the
+ * report entity — the report, fixed at one point in time.
+ */
+export type ProvReportVersionRef = {
+    /** The report session the version was recorded from. */
+    threadId: string;
+    /** The version the act recorded. */
+    versionId: string;
+    /** True when the record superseded an earlier version of the same session. */
+    replaced: boolean;
+};
+
+/**
  * The outcome of a provenance verification: one of several mutually exclusive states, each with
  * enough detail for a host to render a clear message.
  */
