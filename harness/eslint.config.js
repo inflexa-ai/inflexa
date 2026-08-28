@@ -140,6 +140,21 @@ export default defineConfig([
                     varsIgnorePattern: "^_",
                 },
             ],
+            // tsprov is a page-asset dependency: the report page ships its browser
+            // bundle as bytes, and the manifest names it by a string specifier. An
+            // API import would make the harness a provenance reader, which the
+            // prov-harness-bridge contract of the cli forbids.
+            "no-restricted-imports": [
+                "error",
+                {
+                    patterns: [
+                        {
+                            group: ["@inflexa-ai/tsprov", "@inflexa-ai/tsprov/*"],
+                            message: "tsprov rides the report page as a static asset only — never import its API in the harness.",
+                        },
+                    ],
+                },
+            ],
             "no-restricted-syntax": [
                 "error",
                 {

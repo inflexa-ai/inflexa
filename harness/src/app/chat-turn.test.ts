@@ -7,6 +7,7 @@ import { createThreadHistory } from "../memory/thread-history.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { insertRun, updateRunStatus } from "../state/index.js";
+import type { ReportObservationEvent } from "../tools/report-observation.js";
 import { prepareChatTurn } from "./chat-turn.js";
 
 const ANALYSIS_A = "analysis-a";
@@ -238,6 +239,44 @@ describe("prepareChatTurn", () => {
         // The other two tail messages stay.
         expect(joined).toContain("[Run Activity]");
         expect(joined).toContain("draft the summary");
+    });
+
+    it("emits one create-session event when it writes a new conversation thread", async () => {
+        const events: ReportObservationEvent[] = [];
+
+        const result = await prepareChatTurn(
+            { pool, emitReportObservation: (event) => events.push(event) },
+            { analysisId: ANALYSIS_A, threadId: "t-observed", userInput: "hello" },
+        );
+
+        expect(result.kind).toBe("ok");
+        expect(events).toEqual([{ type: "create-session", analysisId: ANALYSIS_A, threadId: "t-observed", sessionKind: "conversation" }]);
+    });
+
+    it("emits nothing on a turn over a thread that the store already holds", async () => {
+        const events: ReportObservationEvent[] = [];
+        (await createThreadStore(pool).createThread({ threadId: "t-already", analysisId: ANALYSIS_A, title: "Already here" }))._unsafeUnwrap();
+
+        const result = await prepareChatTurn(
+            { pool, emitReportObservation: (event) => events.push(event) },
+            { analysisId: ANALYSIS_A, threadId: "t-already", userInput: "hello again" },
+        );
+
+        expect(result.kind).toBe("ok");
+        expect(events).toEqual([]);
+    });
+
+    it("emits nothing for a thread that another analysis owns", async () => {
+        const events: ReportObservationEvent[] = [];
+        (await createThreadStore(pool).createThread({ threadId: "t-foreign", analysisId: ANALYSIS_B, title: "Owned by B" }))._unsafeUnwrap();
+
+        const result = await prepareChatTurn(
+            { pool, emitReportObservation: (event) => events.push(event) },
+            { analysisId: ANALYSIS_A, threadId: "t-foreign", userInput: "hello" },
+        );
+
+        expect(result.kind).toBe("not_found");
+        expect(events).toEqual([]);
     });
 
     it("assembles the working-memory render on a conversation thread", async () => {

@@ -79,6 +79,7 @@ import { createListAvailableRefsTool } from "../tools/sandbox/list-available-ref
 import { createExecuteAnalysisTool } from "../tools/execute-analysis.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
+import type { EmitReportObservation } from "../tools/report-observation.js";
 import { createStartReportSessionTool } from "../tools/start-report-session.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -162,6 +163,12 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      * at a page reads that same answer.
      */
     readonly eyes?: AcquireEyes;
+    /**
+     * The observation seam of a report session. `start_report_session` hands it to
+     * its spawn, which emits the creation of the session at the moment that the
+     * child lands. No other tool of this roster emits on it.
+     */
+    readonly emitReportObservation?: EmitReportObservation;
     /**
      * Host resource policy — per-step ceilings + machine budget. `generate_plan`
      * states the ceilings to the planner and validates against them;
@@ -280,6 +287,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             chrome,
             anchorSession: deps.anchorReportSession,
             ...(deps.eyes ? { eyes: deps.eyes } : {}),
+            ...(deps.emitReportObservation ? { emitReportObservation: deps.emitReportObservation } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         // Display.

@@ -25,11 +25,21 @@ import { assembleMessages, type AssembledMessages } from "./message-assembly.js"
 import { renderRunActivity, renderRunActivityUnavailable, RUN_ACTIVITY_DETAIL_LIMIT } from "./run-activity.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { bindReportObservation, type EmitReportObservation } from "../tools/report-observation.js";
 
 export interface PrepareChatTurnDeps {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly pool: Pool;
+    /**
+     * The session observation seam. The turn holds the one site that writes the
+     * conversation thread of an analysis, thus it is the one site that can tell
+     * the embedder the true moment of that creation.
+     *
+     * The seam is optional and fire-and-forget, the same as it is at each site of
+     * a report session.
+     */
+    readonly emitReportObservation?: EmitReportObservation;
 }
 
 export interface PrepareChatTurnParams {
@@ -48,6 +58,10 @@ export type PrepareChatTurnResult = ({ readonly kind: "ok"; readonly threadType:
 export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: PrepareChatTurnParams): Promise<PrepareChatTurnResult> {
     const { pool } = deps;
     const { analysisId, threadId, userInput } = params;
+    const logger = (deps.logger ?? createNoopLogger()).named("harness.chat");
+    // An unbound seam gives a call that does nothing, thus the emit below needs no
+    // test of its own.
+    const observe = bindReportObservation(deps.emitReportObservation, logger);
 
     // Ownership check before any read/write of the thread — a `threadId`
     // owned by a different analysis is indistinguishable from a missing one.
@@ -78,11 +92,16 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
                 }),
             );
             threadType = created.threadType;
+            // This branch is the one site that writes a conversation thread, thus
+            // the emit lands one time for each analysis. The kind comes from the
+            // row and not from an assumption, because the insert is idempotent and
+            // the store tells a caller to read the type back. A root session has no
+            // parent, thus the event carries none.
+            observe({ type: "create-session", analysisId, threadId, sessionKind: created.threadType });
         } else if (!existing.title || existing.title.length === 0) {
             unwrapOrThrow(await store.updateTitle(threadId, deriveThreadTitle(userInput)));
         }
     } catch (err) {
-        const logger = (deps.logger ?? createNoopLogger()).named("harness.chat");
         logger.warn("title-seed failed (non-fatal)", logger.errorFields(err));
     }
 

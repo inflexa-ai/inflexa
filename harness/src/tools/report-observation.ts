@@ -1,14 +1,15 @@
 /**
  * The report observation seam -- what one report session tells its embedder.
  *
- * A report session composes a document, derives a table, previews a page, and records a version. The
- * record of those acts belongs to the embedder, which holds the signed document of the analysis. Thus
- * the harness declares the vocabulary and the seam alone, and it keeps no ledger of its own.
+ * A session of an analysis starts, composes a document, derives a table, previews a page, and records a
+ * version. The record of those acts belongs to the embedder, which holds the signed document of the
+ * analysis. Thus the harness declares the vocabulary and the seam alone, and it keeps no ledger of its
+ * own.
  *
- * The union names one event for each act: the four block operations, the title, the derivation, the
- * preview, and the record. Each event carries the analysis and the thread, thus a consumer places it
- * with no lookup. A block event names the block that it changed. The title sits on the document, thus
- * the title event names no block.
+ * The union names one event for each act: the creation of a session, the four block operations, the
+ * title, the derivation, the preview, and the record. Each event carries the analysis and the thread,
+ * thus a consumer places it with no lookup. A block event names the block that it changed. The title
+ * sits on the document, thus the title event names no block.
  *
  * The seam is fire-and-forget. It gives no result, and the harness reads none. A tool emits after the
  * act lands, thus a refused act and a failed act each emit nothing and the record states what happened.
@@ -24,8 +25,21 @@ import type { DerivationSource } from "../state/report-session-state.js";
  * derivation carries the chain of the table, because the site pins it and a consumer cannot rebuild it
  * from the path. The preview carries the page and the hash of the draft that it shows, thus a consumer
  * ties a page to the document that made it.
+ *
+ * The `create-session` event names the kind of the new session, and it names the parent thread of a
+ * child session. An analysis holds sessions of more than one kind, and the thread id alone says
+ * neither. Thus the document of the analysis tells the whole tree of the sessions, and a reader walks
+ * it with no second read of the seam. A root session carries no parent, thus `parentThreadId` is absent
+ * on it.
  */
 export type ReportObservationEvent =
+    | {
+          type: "create-session";
+          analysisId: string;
+          threadId: string;
+          sessionKind: "conversation" | "report";
+          parentThreadId?: string;
+      }
     | { type: "add-block"; analysisId: string; threadId: string; blockId: string }
     | { type: "change-block"; analysisId: string; threadId: string; blockId: string }
     | { type: "remove-block"; analysisId: string; threadId: string; blockId: string }

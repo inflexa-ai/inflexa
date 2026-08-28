@@ -193,11 +193,16 @@ export interface CoreRuntimeDeps {
      */
     readonly eyes?: AcquireEyes;
     /**
-     * The observation seam of a report session. Each act of a session — the block operations, the title,
-     * the derivation, the preview, and the record — rides it as one typed event, and the embedder lands the
-     * events in the record of the analysis that it owns. The emit is fire-and-forget: it gives no result, a
-     * throw of the realization reaches the log alone, and an unbound seam emits nothing. Thus a composition
-     * that binds none behaves the same as one that never had the seam.
+     * The observation seam of a report session. Each act of a session — the creation of the session, the
+     * block operations, the title, the derivation, the preview, and the record — rides it as one typed
+     * event, and the embedder lands the events in the record of the analysis that it owns. The emit is
+     * fire-and-forget: it gives no result, a throw of the realization reaches the log alone, and an unbound
+     * seam emits nothing. Thus a composition that binds none behaves the same as one that never had the
+     * seam.
+     *
+     * The assembly reaches two consumers with it: the report agent, and the conversation agent, whose start
+     * tool passes it to the spawn. The creation of a conversation thread rides `prepareChatTurn`, which an
+     * embedder calls on its own. Thus that composition binds the seam there as well.
      */
     readonly emitReportObservation?: EmitReportObservation;
     /**
@@ -354,6 +359,9 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         usageRecorder,
         citationResolver,
         ...(eyes ? { eyes } : {}),
+        // The start tool passes it to the spawn, which emits the creation of a
+        // report session. The same seam reaches the report agent below.
+        ...(deps.emitReportObservation ? { emitReportObservation: deps.emitReportObservation } : {}),
     });
 
     // The report agent is a singleton over the conversation deps, the same way the

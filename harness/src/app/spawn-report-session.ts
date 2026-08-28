@@ -74,6 +74,7 @@ import type { DomainError } from "../lib/result.js";
 import { conversationRecordTurn, createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type Thread, type ThreadInputError, type ThreadPage, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
+import { bindReportObservation, type EmitReportObservation } from "../tools/report-observation.js";
 import type { EnsureSessionStateResult } from "./report-session-runtime.js";
 
 /**
@@ -215,6 +216,16 @@ export interface ReportSessionSpawnDeps {
      * is idempotent.
      */
     readonly anchorSession?: (threadId: string) => Promise<EnsureSessionStateResult>;
+    /**
+     * The observation seam of a report session. The spawn is the birth of the
+     * session, thus it is the one site that can tell the embedder the true moment
+     * of the ask. A consumer that waits for the first authoring act reads a later
+     * moment, and it reads nothing at all for a session that stays empty.
+     *
+     * The seam is optional and fire-and-forget, the same as it is at each
+     * authoring site.
+     */
+    readonly emitReportObservation?: EmitReportObservation;
     /** Operational logging seam. An omitted logger falls back to the no-op. */
     readonly logger?: Logger;
 }
@@ -364,6 +375,9 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
     // The routes are fixed at construction, thus the gate reads one boolean and
     // never a live probe of the sidecar.
     const eyesAvailable = compositionHasEyes(deps);
+    // An unbound seam gives a call that does nothing, thus the spawn emits at one
+    // site with no test of its own.
+    const observe = bindReportObservation(deps.emitReportObservation, log);
 
     /**
      * Write the one seed message of the child and give the child back. The
@@ -456,7 +470,7 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
         if (!eyesAvailable) {
             return errAsync({ type: "no_browser", op: OP, parentThreadId, detail: NO_BROWSER_DETAIL });
         }
-        return store.getThread(parentThreadId).andThen((parent): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> => {
+        const spawned = store.getThread(parentThreadId).andThen((parent): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> => {
             // An absent parent and an archived one arrive the same way — `getThread`
             // filters the tombstone — and both refuse as `parent_not_found`.
             if (parent === null) {
@@ -495,6 +509,22 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
                             .andThen((child) => ResultAsync.fromSafePromise(pinSessionSnapshot(child))),
                     );
             });
+        });
+        // The emit rides the ok channel alone, thus a refusal and a fault tell the
+        // embedder nothing. The child row is on disk at this point, and no
+        // authoring act of the session ran yet.
+        //
+        // The kind comes from the row and not from the input, because the insert
+        // is idempotent and the store tells a caller to read the type back.
+        return spawned.map((child) => {
+            observe({
+                type: "create-session",
+                analysisId: child.analysisId,
+                threadId: child.threadId,
+                sessionKind: child.threadType,
+                parentThreadId,
+            });
+            return child;
         });
     }
 
