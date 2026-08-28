@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { BatchV1Api, CoreV1Api, V1Job, V1Pod } from "@kubernetes/client-node";
+import type { BatchV1Api, CoreV1Api, V1ConfigMap, V1Job, V1Pod } from "@kubernetes/client-node";
 
 import { createK8sSandboxOps, sanitizeLabelValue } from "./k8s-client.js";
 import { mintSandboxIdentity } from "./identity.js";
@@ -15,9 +15,16 @@ import { mintSandboxIdentity } from "./identity.js";
 const SESSION_PVC_ROOT = "/sessions";
 const resolveWorkspaceRoot = (analysisId: string) => `${SESSION_PVC_ROOT}/${analysisId}`;
 
-function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: number; existingOwner?: string } = {}) {
+function stubApis(
+    podSequence: Array<Partial<V1Pod>>,
+    opts: { create409Times?: number; existingOwner?: string; configMap409?: boolean; configMapError?: { code: number } } = {},
+) {
     const createdJobs: V1Job[] = [];
     const deletedJobs: string[] = [];
+    const createdConfigMaps: V1ConfigMap[] = [];
+    const replacedConfigMaps: V1ConfigMap[] = [];
+    const deletedConfigMaps: string[] = [];
+    let configMap409 = opts.configMap409 ?? false;
     let podIdx = 0;
     let deletedError: { code: number } | null = null;
     let pending409 = opts.create409Times ?? 0;
@@ -36,6 +43,7 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
                 throw err;
             }
             createdJobs.push(body);
+            return { metadata: { name: body.metadata?.name, uid: "job-uid-1" } };
         },
         deleteNamespacedJob: async ({ name }: { namespace: string; name: string }) => {
             if (deletedError) throw deletedError;
@@ -51,11 +59,28 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
                 err.code = 404;
                 throw err;
             }
-            return { metadata: { name, annotations: { "cortex/owner-workflow-id": existingOwner } } };
+            return { metadata: { name, uid: "job-uid-existing", annotations: { "cortex/owner-workflow-id": existingOwner } } };
         },
     } as unknown as BatchV1Api;
 
     const coreApi = {
+        createNamespacedConfigMap: async ({ body }: { namespace: string; body: V1ConfigMap }) => {
+            if (opts.configMapError) throw Object.assign(new Error("configmaps is forbidden"), opts.configMapError);
+            if (configMap409) {
+                configMap409 = false;
+                throw Object.assign(new Error("configmaps already exists"), { code: 409 });
+            }
+            createdConfigMaps.push(body);
+            return body;
+        },
+        readNamespacedConfigMap: async ({ name }: { namespace: string; name: string }) => ({ metadata: { name, resourceVersion: "7" } }),
+        replaceNamespacedConfigMap: async ({ body }: { namespace: string; name: string; body: V1ConfigMap }) => {
+            replacedConfigMaps.push(body);
+            return body;
+        },
+        deleteNamespacedConfigMap: async ({ name }: { namespace: string; name: string }) => {
+            deletedConfigMaps.push(name);
+        },
         listNamespacedPod: async (_args: { namespace: string; labelSelector?: string }) => {
             const pod = podSequence[Math.min(podIdx, podSequence.length - 1)];
             podIdx++;
@@ -68,6 +93,9 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
         coreApi,
         createdJobs,
         deletedJobs,
+        createdConfigMaps,
+        replacedConfigMaps,
+        deletedConfigMaps,
         setDeleteError: (err: { code: number } | null) => {
             deletedError = err;
         },
@@ -145,7 +173,7 @@ describe("k8s createSandbox", () => {
 
         const sessionVolume = podSpec.volumes!.find((v) => v.name === "session");
         expect(sessionVolume!.persistentVolumeClaim!.claimName).toBe("cortex-sessions");
-        expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session", "libs", "refs"]);
+        expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session", "libs", "refs", "cpu"]);
 
         const mounts = container.volumeMounts!;
         const ro = mounts.find((m) => m.name === "session" && m.mountPath === "/an-1")!;
@@ -478,7 +506,7 @@ describe("k8s createSandbox", () => {
         )._unsafeUnwrap();
 
         const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
-        expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session"]);
+        expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session", "cpu"]);
         const mounts = podSpec.containers[0].volumeMounts!;
         expect(mounts.some((m) => m.mountPath.startsWith("/mnt"))).toBe(false);
         const env = podSpec.containers[0].env ?? [];
@@ -1033,5 +1061,105 @@ describe("k8s isAlive", () => {
             })
         )._unsafeUnwrap();
         expect(liveness).toEqual({ alive: false, oomKilled: true });
+    });
+});
+
+/** Three processor blocks, in the shape of a real `/proc/cpuinfo`. */
+const HOST_CPUINFO = [0, 1, 2].map((i) => `processor\t: ${i}\nmodel name\t: test cpu\n`).join("\n") + "\n";
+
+const RUNNING_POD = { status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "sbx-x-abc" } };
+
+function cpuOps(stub: ReturnType<typeof stubApis>, readHostCpuinfo: () => Promise<string | undefined>) {
+    return createK8sSandboxOps({
+        image: "sandbox-base:latest",
+        cortexBaseUrl: "https://cortex.example.com:443",
+        namespace: "sandbox",
+        sessionPvcRoot: SESSION_PVC_ROOT,
+        resolveWorkspaceRoot,
+        sessionPvc: "cortex-sessions",
+        batchApi: stub.batchApi,
+        coreApi: stub.coreApi,
+        readHostCpuinfo,
+        registerSandbox: async () => {},
+    });
+}
+
+const CPU_META = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } };
+
+describe("k8s cpu files", () => {
+    test("the cpu files ride in a ConfigMap owned by the Job and mount over the two kernel paths", async () => {
+        const stub = stubApis([RUNNING_POD]);
+        const ops = cpuOps(stub, async () => HOST_CPUINFO);
+
+        const ref = (await ops.createSandbox(CPU_META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(stub.createdConfigMaps).toHaveLength(1);
+        const map = stub.createdConfigMaps[0]!;
+        expect(map.metadata!.name).toBe(ref.sandboxId);
+        expect(map.metadata!.ownerReferences).toEqual([{ apiVersion: "batch/v1", kind: "Job", name: ref.sandboxId, uid: "job-uid-1" }]);
+        expect(map.data!.online).toBe("0-1\n");
+        // Two of the three blocks of the host: the quota counts logical cores.
+        expect(map.data!.cpuinfo!.match(/^processor/gm)).toHaveLength(2);
+
+        const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
+        expect(podSpec.volumes!.find((v) => v.name === "cpu")!.configMap!.name).toBe(ref.sandboxId);
+        const mounts = podSpec.containers[0]!.volumeMounts!.filter((m) => m.name === "cpu");
+        expect(mounts).toEqual([
+            { name: "cpu", mountPath: "/sys/devices/system/cpu/online", subPath: "online", readOnly: true },
+            { name: "cpu", mountPath: "/proc/cpuinfo", subPath: "cpuinfo", readOnly: true },
+        ]);
+    });
+
+    test("a harness host with no cpuinfo covers online only", async () => {
+        const stub = stubApis([RUNNING_POD]);
+        const ops = cpuOps(stub, async () => undefined);
+
+        (await ops.createSandbox(CPU_META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(stub.createdConfigMaps[0]!.data).toEqual({ online: "0-1\n" });
+        const mounts = stub.createdJobs[0]!.spec!.template.spec!.containers[0]!.volumeMounts!.filter((m) => m.name === "cpu");
+        expect(mounts.map((m) => m.mountPath)).toEqual(["/sys/devices/system/cpu/online"]);
+    });
+
+    test("a ConfigMap that exists already is replaced with the same data and the current owner", async () => {
+        const stub = stubApis([RUNNING_POD], { configMap409: true });
+        const ops = cpuOps(stub, async () => HOST_CPUINFO);
+
+        const ref = (await ops.createSandbox(CPU_META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(stub.createdConfigMaps).toHaveLength(0);
+        expect(stub.replacedConfigMaps).toHaveLength(1);
+        const map = stub.replacedConfigMaps[0]!;
+        expect(map.metadata!.resourceVersion).toBe("7");
+        expect(map.metadata!.ownerReferences![0]!.uid).toBe("job-uid-1");
+        expect(map.metadata!.name).toBe(ref.sandboxId);
+        expect(map.data!.online).toBe("0-1\n");
+    });
+
+    test("a ConfigMap failure deletes the Job and fails the create with the real cause", async () => {
+        const stub = stubApis([RUNNING_POD], { configMapError: { code: 403 } });
+        const ops = cpuOps(stub, async () => HOST_CPUINFO);
+
+        const error = (await ops.createSandbox(CPU_META, mintSandboxIdentity("run-1"))).match(
+            () => {
+                throw new Error("the create must fail");
+            },
+            (e) => e,
+        );
+
+        expect(error.type).toBe("container_create_failed");
+        expect(error.op).toBe("k8s.createNamespacedConfigMap");
+        expect(stub.deletedJobs).toHaveLength(1);
+    });
+
+    test("teardown deletes the ConfigMap with the Job", async () => {
+        const stub = stubApis([RUNNING_POD]);
+        const ops = cpuOps(stub, async () => HOST_CPUINFO);
+
+        const ref = (await ops.createSandbox(CPU_META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.teardown(ref))._unsafeUnwrap();
+
+        expect(stub.deletedJobs).toEqual([ref.sandboxId]);
+        expect(stub.deletedConfigMaps).toEqual([ref.sandboxId]);
     });
 });
