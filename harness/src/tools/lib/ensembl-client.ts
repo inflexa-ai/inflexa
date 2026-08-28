@@ -2,6 +2,10 @@
  * Pure async client functions for the Ensembl REST API.
  *
  * Used by §1.1 (Entity resolution) and as a fallback for ID resolution.
+ *
+ * Absence policy: Ensembl omits the key of an absent value, and it never sends
+ * an explicit `null`. Thus a maybe-absent field carries `.optional()`, not
+ * `.nullable()`.
  */
 
 import { z } from "zod";

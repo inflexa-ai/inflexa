@@ -11,7 +11,9 @@
  * synchronous after a single upfront await.
  */
 
+import { createNoopLogger } from "../../../lib/console-logger.js";
 import { withHost } from "../../../lib/host-concurrency.js";
+import type { Logger } from "../../../lib/logger.js";
 import { getFamilySiblingUniprots } from "../../../tools/lib/iuphar-client.js";
 import { getChemblIdsByUniProt } from "../../../tools/lib/uniprot-client.js";
 
@@ -65,11 +67,16 @@ export async function classifyTrialAttribution(input: TrialAttributionInput): Pr
  * Network failures are surfaced as an empty list so the assembler degrades
  * to "no alternate-id filtering" rather than blocking the run.
  */
-export async function resolveOnTargetChemblIds(assessmentUniprot: string): Promise<string[]> {
+export async function resolveOnTargetChemblIds(assessmentUniprot: string, logger?: Logger): Promise<string[]> {
     if (!assessmentUniprot) return [];
     try {
         return await withHost("uniprot", () => getChemblIdsByUniProt(assessmentUniprot));
-    } catch {
+    } catch (err) {
+        // UniProt answers an unknown accession with a 404, and the client maps that
+        // to an empty record. Thus a throw here is always an unexpected cause, and
+        // the empty list silently turns off the self-hit filter of the panel.
+        const log = (logger ?? createNoopLogger()).named("ta-identity.on-target-chembl");
+        log.error("UniProt ChEMBL cross-reference lookup failed", { uniprot: assessmentUniprot, ...log.errorFields(err) });
         return [];
     }
 }
@@ -81,11 +88,16 @@ export async function resolveOnTargetChemblIds(assessmentUniprot: string): Promi
  * assessment target) lands in the related bucket rather than the
  * primary trials list.
  */
-export async function resolveFamilySiblingUniprots(uniprotOrGeneSymbol: string): Promise<string[]> {
+export async function resolveFamilySiblingUniprots(uniprotOrGeneSymbol: string, logger?: Logger): Promise<string[]> {
     if (!uniprotOrGeneSymbol) return [];
+    const log = (logger ?? createNoopLogger()).named("ta-identity.family-siblings");
     try {
-        return await withHost("iuphar", () => getFamilySiblingUniprots(uniprotOrGeneSymbol));
-    } catch {
+        return await withHost("iuphar", () => getFamilySiblingUniprots(uniprotOrGeneSymbol, log));
+    } catch (err) {
+        // IUPHAR answers an unknown target with an empty list, thus a throw here is
+        // always an unexpected cause. The empty list then routes a paralog trial into
+        // the primary trials list, which is the defect that this resolver prevents.
+        log.error("IUPHAR family-sibling lookup failed", { query: uniprotOrGeneSymbol, ...log.errorFields(err) });
         return [];
     }
 }

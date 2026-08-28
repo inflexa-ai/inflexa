@@ -164,8 +164,8 @@ function extractCuratedSafetyLiabilities(input: CorroborationInput): RawOrganSig
 /**
  * Baseline expression in safety-relevant tissues.
  *
- * The atlas reaches the dossier through Open Targets' consensus expression,
- * which is Human Protein Atlas data — the same path
+ * The atlas reaches the dossier through the Open Targets `baselineExpression`
+ * surface, narrowed to the GTEx bulk-tissue rows — the same path
  * `reference_biology.normal_tissue_expression` and the off-tissue risk rows
  * read, with the same safety-relevance and floor rules applied. Only the
  * highest-expressing tissue per organ is raised: several tissues mapping to one

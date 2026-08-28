@@ -3,6 +3,10 @@
  *
  * Used by §3.11 (Key Papers), §3.10.4 (Preclinical literature), and the
  * pubmed-index Phase-1 collector.
+ *
+ * Absence policy: NCBI E-utilities omits the key of an absent value, and it
+ * never sends an explicit `null`. Thus a maybe-absent field carries
+ * `.optional()`, not `.nullable()`.
  */
 
 import {

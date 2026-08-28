@@ -600,11 +600,42 @@ one DBOS engine across `bun test`, and carves out a fresh cortex schema for each
 test with `withSchema()`. Use it for a workflow test or a runtime-shape test. A
 pure body-level unit test must stay on `passthroughStep`.
 
-**Integration tests** (`__tests__/integration/`): they hit a real external API with
-canonical queries. There is one file for each API provider under
-`__tests__/integration/`. Assert on the response structure and on field presence,
-not on exact values. A tool that needs an API key that is not set is skipped
-automatically, through `describe.skipIf(!process.env.KEY_NAME)`.
+**Real-upstream integration tests** live under `src/providers/integration/`. There
+is one file for each provider, named `<provider>.integration.test.ts`. They hit a
+real external API with canonical queries. Assert on the response structure and on
+field presence, not on exact values.
+
+A block that needs an API key wraps its `describe` in
+`describe.skipIf(!process.env.KEY_NAME)`. An absent key then skips the whole
+block, and no test in it fails. A keyless bio provider has no key to gate on.
+Such a block wraps its `describe` in
+`describe.skipIf(!process.env.CORTEX_LIVE_API_TESTS)` instead. Without that gate
+a keyless block runs on each clean checkout, and the suite then depends on the
+network
+([integration-tests-external-api](openspec/specs/integration-tests-external-api/spec.md)).
+
+**Golden-fixture tests** guard each external-API zod schema offline. The fixtures
+are raw JSON payloads under `src/tools/lib/__fixtures__/<provider>/`, and
+`fixture-runner.ts` drives the table. Each schema gets one positive fixture, which
+carries the observed absence encoding of its provider. It also gets one negative
+`*.drift.json` twin, which carries one genuine type break.
+
+The runner asserts three facts for each schema. The schema accepts the positive
+fixture. The mapped output matches the expected record. The schema rejects the
+twin. These tests run on every `bun test`, with no key and no network.
+
+**The fixture refresh script** is `bun scripts/refresh-fixtures.ts`. It replays
+each `__fixtures__/<provider>/manifest.json` against the live provider, and it
+diffs the answer against the stored file. The replay is polite: the requests run
+one at a time, with a gap of at least 300 ms, and an NCBI request waits 334 ms.
+The default run changes no file, and it exits non-zero on drift. `--write`
+rewrites each drifted fixture and sets the `capturedAt` of its entry.
+
+A manifest entry records the method, the body, and the headers of its capture,
+thus a GraphQL POST replays as a POST. An entry that holds an excerpt of a large
+payload carries `replay: false`. The script then reports it as skipped, and not
+as drift. The script runs on demand, never in CI. As a result the offline suite
+stays offline.
 
 ## References
 

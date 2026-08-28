@@ -3,6 +3,10 @@
  * Consortium) Solr API.
  *
  * Used by §3.10.1 (Knockout phenotype card).
+ *
+ * Absence policy: the Solr API omits the key of an absent value, and it never
+ * sends an explicit `null`. Thus a maybe-absent field carries `.optional()`,
+ * not `.nullable()`.
  */
 
 import { z } from "zod";

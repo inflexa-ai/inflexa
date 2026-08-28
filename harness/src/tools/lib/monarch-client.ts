@@ -11,6 +11,10 @@
  * rather than by matching prose.
  *
  * The API is keyless and public.
+ *
+ * Absence policy: the OpenAPI document of Monarch declares an absent value as
+ * `anyOf` with `null`, thus the API sends an explicit `null`. A maybe-absent
+ * field carries `.nullish()` exactly.
  */
 
 import { z } from "zod";

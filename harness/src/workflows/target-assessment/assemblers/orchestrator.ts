@@ -33,6 +33,7 @@ import { resolveFamilySiblingUniprots, resolveOnTargetChemblIds } from "../lib/t
 import { getDrugPrimaryTargetUniprots } from "../../../tools/lib/chembl-client.js";
 import type { Pool } from "pg";
 import { annotateOffTargetPanel } from "../lib/clinical-consequence-annotator.js";
+import type { Logger } from "../../../lib/logger.js";
 import type { ClinicalConsequenceAnnotatorDeps } from "../lib/clinical-consequence-annotator.js";
 import { coverageFromFilteredRows, coverageFromRows } from "../coverage.js";
 import { toOrganSystems } from "../lib/impc-organ-map.js";
@@ -306,6 +307,7 @@ export async function assembleDossier(
     phase2: Phase2Bundle,
     phase3?: Phase3Bundle,
     annotatorDeps?: ClinicalConsequenceAnnotatorDeps,
+    logger?: Logger,
 ): Promise<DossierBody> {
     const fanout = phase3?.fanout;
     const faersAgg = aggregateFaersAcrossModulators(fanout);
@@ -320,8 +322,8 @@ export async function assembleDossier(
     const familyComplexesCollector = phase2.phase1.collectors.familyComplexes;
     const familyComplexesBundle = familyComplexesCollector.coverage === "available" ? familyComplexesCollector.data : null;
     const [onTargetChemblIds, familySiblingUniprots] = await Promise.all([
-        resolveOnTargetChemblIds(assessmentUniprot),
-        resolveFamilySiblingUniprots(assessmentUniprot || geneSymbol),
+        resolveOnTargetChemblIds(assessmentUniprot, logger),
+        resolveFamilySiblingUniprots(assessmentUniprot || geneSymbol, logger),
     ]);
     const offTargetPanel = aggregateOffTargetPanel(phase2, fanout, assessmentUniprot, geneSymbol, familyComplexesBundle, onTargetChemblIds);
     if (offTargetPanel) {
