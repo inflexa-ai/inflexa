@@ -5,6 +5,7 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import {
     clearDataProfile,
     completeDataProfile,
+    completeEmptyDataProfile,
     failDataProfile,
     loadDataProfileStatus,
     recordDataProfileWorkflowId,
@@ -749,5 +750,125 @@ describe("the recorded profile workflow id", () => {
         // Read raw: the public read collapses a cleared row to null, so it cannot show this.
         expect(await rawWorkflowId(pool, "a-wf-clear")).toBeNull();
         expect((await loadDataProfileStatus(pool, "a-wf-clear"))._unsafeUnwrap()).toBeNull();
+    });
+});
+
+// An analysis with no input files has nothing to profile. The empty-set completion stamps
+// the row `completed` at once, with no result and no workflow, and names the empty set as
+// its seed. The CAS refuses a live run and a row whose seed names files.
+describe("completing an analysis with no input files", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_complete_empty");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    /** Read the two lifecycle timestamps straight off the row. */
+    async function rawTimestamps(analysisId: string): Promise<{ startedAt: string | null; completedAt: string | null }> {
+        const res = await pool.query<{ data_profile_started_at: string | null; data_profile_completed_at: string | null }>({
+            text: "SELECT data_profile_started_at, data_profile_completed_at FROM cortex_analysis_state WHERE analysis_id = $1",
+            values: [analysisId],
+        });
+        return { startedAt: res.rows[0]?.data_profile_started_at ?? null, completedAt: res.rows[0]?.data_profile_completed_at ?? null };
+    }
+
+    it("stamps a never-profiled NULL-seed row completed, with no result and the empty seed", async () => {
+        await seedAnalysis(pool, "a-empty-null", null, null);
+
+        const stamped = (await completeEmptyDataProfile(pool, "a-empty-null"))._unsafeUnwrap();
+        expect(stamped).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-empty-null"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.result).toBeNull();
+        expect(status?.error).toBeNull();
+        expect(status?.workflowId).toBeNull();
+        expect(status?.seedInputFileIds).toEqual([]);
+
+        // No workflow ran, so the profile started and completed at one instant.
+        const stamps = await rawTimestamps("a-empty-null");
+        expect(stamps.startedAt).not.toBeNull();
+        expect(stamps.completedAt).toBe(stamps.startedAt);
+    });
+
+    it("stamps a pending row seeded with `[]`", async () => {
+        await seedAnalysis(pool, "a-empty-pending", "pending", []);
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-pending"))._unsafeUnwrap()).toBe(true);
+        expect(await rawStatus(pool, "a-empty-pending")).toBe("completed");
+    });
+
+    it("replaces a prior profile whose files are gone with no result", async () => {
+        // The inputs were removed after a profile. The prior result describes files the
+        // analysis no longer has, so the empty completion replaces it.
+        await seedAnalysis(pool, "a-empty-prior", "completed", []);
+        await pool.query({
+            text: "UPDATE cortex_analysis_state SET data_profile_result = $1::jsonb, data_profile_workflow_id = 'dataprofile:a-empty-prior:old' WHERE analysis_id = $2",
+            values: [JSON.stringify(SAMPLE_RESULT), "a-empty-prior"],
+        });
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-prior"))._unsafeUnwrap()).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-empty-prior"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.result).toBeNull();
+        expect(await rawWorkflowId(pool, "a-empty-prior")).toBeNull();
+    });
+
+    it("replaces a failed attempt whose files are gone", async () => {
+        await seedAnalysis(pool, "a-empty-failed", "failed", null);
+        await pool.query({
+            text: "UPDATE cortex_analysis_state SET data_profile_error = 'boom' WHERE analysis_id = $1",
+            values: ["a-empty-failed"],
+        });
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-failed"))._unsafeUnwrap()).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-empty-failed"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.error).toBeNull();
+    });
+
+    it("refuses a live run and leaves the row untouched", async () => {
+        await seedAnalysis(pool, "a-empty-running", "running", []);
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-running"))._unsafeUnwrap()).toBe(false);
+        expect(await rawStatus(pool, "a-empty-running")).toBe("running");
+    });
+
+    it("refuses a row whose seed names files — the caller's pre-read is not the enforcement", async () => {
+        // A seed upsert landed between a caller's read and this write. The row now names
+        // files, and a `completed` stamp would hide them behind a finished profile.
+        await seedAnalysis(pool, "a-empty-reseeded", "pending", ["file-aaa"]);
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-reseeded"))._unsafeUnwrap()).toBe(false);
+        expect(await rawStatus(pool, "a-empty-reseeded")).toBe("pending");
+        const status = (await loadDataProfileStatus(pool, "a-empty-reseeded"))._unsafeUnwrap();
+        expect(status?.seedInputFileIds).toEqual(["file-aaa"]);
+    });
+
+    it("refuses an analysis with no ledger row", async () => {
+        expect((await completeEmptyDataProfile(pool, "a-empty-norow"))._unsafeUnwrap()).toBe(false);
+    });
+
+    it("is not claimable for a rerun until a later seed names files", async () => {
+        await seedAnalysis(pool, "a-empty-then-files", null, null);
+        expect((await completeEmptyDataProfile(pool, "a-empty-then-files"))._unsafeUnwrap()).toBe(true);
+
+        // `[]` is not a seed, so the rerun claim refuses the completed-empty row.
+        expect((await tryRerunDataProfile(pool, "a-empty-then-files"))._unsafeUnwrap()).toBe(false);
+        expect(await rawStatus(pool, "a-empty-then-files")).toBe("completed");
+
+        // Inputs arrive: the seed upsert names them, and the rerun claim takes the row.
+        await setSeed(pool, "a-empty-then-files", ["file-aaa"]);
+        expect((await tryRerunDataProfile(pool, "a-empty-then-files"))._unsafeUnwrap()).toBe(true);
+        expect(await rawStatus(pool, "a-empty-then-files")).toBe("running");
     });
 });

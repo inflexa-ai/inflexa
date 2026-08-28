@@ -64,6 +64,7 @@ import { absorbRecipe, renderAbsorbDelta, type AbsorbKind } from "./data-profile
 import { formatResolutionErrors, resolveProfileSubmission, type ProfileResolution, type ResolvedGroup } from "./data-profile-resolve.js";
 import {
     completeDataProfile,
+    completeEmptyDataProfile,
     failDataProfile,
     loadDataProfileStatus,
     loadSeedInputFileIds,
@@ -805,7 +806,16 @@ function logTerminalNoop(logger: Logger, analysisId: string, write: string): voi
     logger.warn("terminal write skipped: ledger row not running (cleared or expired concurrently)", { analysisId, write });
 }
 
-export type DataProfileTriggerResult = "started" | "restarted" | "already_running" | "failed";
+/**
+ * What the trigger did:
+ * - `"started"`: a first profile claimed the row and a workflow runs.
+ * - `"restarted"`: a re-profile claimed a `completed` row and a workflow runs.
+ * - `"already_running"`: a workflow already owns the row, and nothing new ran.
+ * - `"completed"`: the analysis has no input files, so the row is `completed` at once
+ *   with no result. No workflow ran (see {@link completeEmptyDataProfile}).
+ * - `"failed"`: the trigger refused the call or faulted, and the row is unchanged.
+ */
+export type DataProfileTriggerResult = "started" | "restarted" | "already_running" | "completed" | "failed";
 
 /**
  * Route-side deps for triggering the data-profile workflow: the ledger pool,
@@ -897,6 +907,12 @@ async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: Da
  * row is claimed by neither: retrying a failure is a deliberate act the caller drives
  * through `tryRetryDataProfile` + `runDataProfile`.
  *
+ * An analysis with no input files takes none of the claims. An empty manifest against
+ * a seed that names no file stamps the row `completed` at once, with no result and no
+ * workflow (see {@link completeEmptyDataProfile}), and the trigger returns
+ * `"completed"`. An empty manifest against a seed that names files is a divergence
+ * between the caller and the ledger, and the trigger refuses it.
+ *
  * Returns what happened, so the caller can surface it (e.g. in the seed response).
  */
 export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<DataProfileTriggerResult> {
@@ -911,18 +927,33 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
         // `loadSeedInputFileIds`, which returns null for BOTH a missing analysis row and
         // a NULL-seed row (`loadDataProfileStatus` would hide the seed of a cleared row).
         const seeded = unwrapOrThrow(await loadSeedInputFileIds(deps.pool, analysisId));
-        if (seeded === null || seeded.length === 0) {
-            logger.error("trigger rejected: no seeded input set (missing analysis row or caller skipped seeding)");
+
+        if (params.stagedInputs.length === 0) {
+            // The trigger validates the manifest it is about to dispatch against the ledger
+            // seed. A seeded row profiled against an EMPTY manifest would claim `running` and
+            // then hit the body's empty-manifest path, and complete with a NULL result while
+            // the seed still names files. Refuse the divergence before any claim.
+            if (seeded !== null && seeded.length > 0) {
+                logger.error("trigger rejected: empty manifest dispatched against a non-empty seed", { seededCount: seeded.length });
+                return "failed";
+            }
+
+            // The analysis has no input files, so there is nothing to profile. The row is
+            // `completed` at once, with no workflow. The CAS carries the same seed
+            // predicate as this pre-read, so a seed upsert that lands in between cannot be
+            // hidden behind a finished profile: the stamp refuses, and the status read
+            // below names the cause.
+            if (unwrapOrThrow(await completeEmptyDataProfile(deps.pool, analysisId))) return "completed";
+            const current = unwrapOrThrow(await loadDataProfileStatus(deps.pool, analysisId));
+            if (current?.status === "running") return "already_running";
+            logger.error("trigger rejected: empty-set completion refused (no analysis row, or the seed now names files)");
             return "failed";
         }
 
-        // The trigger validates the ledger seed above; it must also validate the manifest
-        // it is about to dispatch. A seeded row profiled against an EMPTY manifest would
-        // claim `running` and then hit the body's empty-manifest path — completing with a
-        // NULL result while the seed still names files, an incoherence a staleness policy
-        // then loops on re-triggering. Refuse the divergence before any claim.
-        if (params.stagedInputs.length === 0) {
-            logger.error("trigger rejected: empty manifest dispatched against a non-empty seed", { seededCount: seeded.length });
+        // A non-empty manifest against a seed that names no file: the caller skipped the
+        // seed, or the analysis row is missing. Name the cause before any claim.
+        if (seeded === null || seeded.length === 0) {
+            logger.error("trigger rejected: no seeded input set (missing analysis row or caller skipped seeding)");
             return "failed";
         }
 
