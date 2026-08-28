@@ -246,7 +246,8 @@ function buildUrl(entry: FixtureManifestEntry): string {
  * `Accept` header.
  */
 async function politeFetch(url: string, entry: FixtureManifestEntry): Promise<Response> {
-    const gap = new URL(url).hostname.endsWith(NCBI_HOST_SUFFIX) ? NCBI_GAP_MS : MIN_GAP_MS;
+    const hostname = new URL(url).hostname;
+    const gap = hostname === NCBI_HOST_SUFFIX || hostname.endsWith("." + NCBI_HOST_SUFFIX) ? NCBI_GAP_MS : MIN_GAP_MS;
     const wait = lastRequestAt + gap - Date.now();
     if (wait > 0) await sleep(wait);
     const init: RequestInit = {

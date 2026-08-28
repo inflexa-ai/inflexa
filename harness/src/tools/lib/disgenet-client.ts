@@ -19,6 +19,8 @@
 
 import { z } from "zod";
 
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { DISGENET_BASE, getDisgenetHeaders } from "./disgenet-config.js";
 
@@ -141,13 +143,16 @@ export interface DisgenetSearchResult {
  *
  * A non-OK `status` with an `error` record is an expected gated outcome, not a
  * transport failure: a free academic key serves the curated sources only. Such
- * an answer gives an empty result.
+ * an answer gives an empty result. The envelope gives no marker that separates
+ * the gated answer from a rejected query, thus the cause goes to the injected
+ * `Logger` before the result degrades.
  */
 export async function searchDisgenet(
     apiKey: string,
     query: string,
     searchType: DisgenetSearchType,
     options: DisgenetSearchOptions = {},
+    logger?: Logger,
 ): Promise<DisgenetSearchResult> {
     const headers = getDisgenetHeaders(apiKey);
     const minScore = options.minScore ?? 0.1;
@@ -164,7 +169,15 @@ export async function searchDisgenet(
     if (res.isErr()) throw new Error(describeApiError(res.error));
 
     const envelope = res.value;
-    if (envelope.status !== "OK" || !envelope.payload) return { records: [], totalFound: 0 };
+    if (envelope.status !== "OK" || !envelope.payload) {
+        const log = (logger ?? createNoopLogger()).named("disgenet-client").with({ query, searchType });
+        log.error("gda query degraded to an empty result", {
+            status: envelope.status ?? null,
+            httpStatus: envelope.httpStatus ?? null,
+            cause: envelope.error?.message ?? null,
+        });
+        return { records: [], totalFound: 0 };
+    }
 
     return {
         records: envelope.payload.slice(0, limit),

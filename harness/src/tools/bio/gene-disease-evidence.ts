@@ -28,6 +28,7 @@
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import type { Logger } from "../../lib/logger.js";
 import { defineTool } from "../define-tool.js";
 import { getSomaticMutationFrequencies, type MutationFrequency } from "../lib/cbioportal-client.js";
 import { filterInformative, searchClinvar, type ClinicalSignificance, type ClinvarVariant } from "../lib/clinvar-client.js";
@@ -97,7 +98,8 @@ const inputSchema = z.object({
         .min(1)
         .describe(
             "The entity, matching `queryType`. gene: a HUGO symbol ('PCSK9'); DisGeNET also takes an Entrez ID, and cBioPortal takes the symbol " +
-                "directly. disease: a disease or trait name ('LDL cholesterol'); DisGeNET also takes a UMLS CUI ('C0006142'). variant: a dbSNP rsID " +
+                "directly. disease: a disease or trait name ('asthma'); the GWAS Catalog needs the exact EFO trait label, and DisGeNET also takes a UMLS " +
+                "CUI ('C0006142'). variant: a dbSNP rsID " +
                 "('rs11591147'). gwas_study: a GWAS Catalog study accession ('GCST000392'). clinvar_accession: a ClinVar accession ('VCV000012345', " +
                 "'RCV000009910') or a bare variation ID.",
         ),
@@ -198,7 +200,7 @@ async function runSource<T>(source: Source, fetch: () => Promise<{ records: T[];
     }
 }
 
-export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disgenetApiKey: string }) {
+export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disgenetApiKey: string; logger?: Logger }) {
     return defineTool({
         id: "gene_disease_evidence",
         description:
@@ -208,8 +210,10 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
             "and the drug landscape. Reach here for the underlying records: actual SNPs, effect sizes, scores, pathogenicity calls and somatic mutation " +
             "frequencies with their studies and PMIDs.\n" +
             "ACCEPTED IDENTIFIERS, each named by its `queryType`: a HUGO gene symbol or an Entrez ID ('PCSK9', '5008'); a disease or trait name or a UMLS " +
-            "CUI ('LDL cholesterol', 'C0006142'); a dbSNP rsID ('rs11591147'); a GWAS Catalog study accession ('GCST000392'); and a ClinVar accession " +
-            "('VCV000012345'). The last two read one record back by the accession that an earlier result of this same tool reported.\n" +
+            "CUI ('asthma', 'C0006142'); a dbSNP rsID ('rs11591147'); a GWAS Catalog study accession ('GCST000392'); and a ClinVar accession " +
+            "('VCV000012345'). The last two read one record back by the accession that an earlier result of this same tool reported. " +
+            "The GWAS Catalog matches the EXACT EFO trait label (case-insensitive): 'asthma' resolves, a paraphrase such as 'LDL cholesterol' reads as " +
+            "no_data there ('low density lipoprotein cholesterol measurement' is the label) while the other corpora still answer it.\n" +
             "ALWAYS read `perSource` before concluding anything is absent. 'no_data' means that corpus genuinely has nothing; 'unavailable' means it " +
             "could not be reached (a missing DISGENET_API_KEY lands here — tell the user and proceed with the others); 'not_applicable' means that " +
             "corpus has no lookup for this queryType. Only 'no_data' is evidence of absence, and none is worth retrying unchanged.",
@@ -248,11 +252,17 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
                 selected.includes("disgenet")
                     ? runSource<Gda>("disgenet", async () => {
                           if (!deps.disgenetApiKey) throw new Error("DISGENET_API_KEY is not configured");
-                          return await searchDisgenet(deps.disgenetApiKey, input.query, input.queryType === "gene" ? "gene" : "disease", {
-                              limit,
-                              ...(input.minScore !== undefined ? { minScore: input.minScore } : {}),
-                              ...(input.disgenetSource !== undefined ? { source: input.disgenetSource } : {}),
-                          });
+                          return await searchDisgenet(
+                              deps.disgenetApiKey,
+                              input.query,
+                              input.queryType === "gene" ? "gene" : "disease",
+                              {
+                                  limit,
+                                  ...(input.minScore !== undefined ? { minScore: input.minScore } : {}),
+                                  ...(input.disgenetSource !== undefined ? { source: input.disgenetSource } : {}),
+                              },
+                              deps.logger,
+                          );
                       })
                     : null,
                 selected.includes("clinvar")

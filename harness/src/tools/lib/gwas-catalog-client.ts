@@ -178,8 +178,10 @@ export async function searchGwasCatalog(
         // accession, the PubMed id and the sample size without a second request.
         associationsUrl = `${GWAS_BASE}/studies/${encodeURIComponent(query)}/associations?projection=associationByStudy&size=${limit}`;
     } else {
-        // `findByEfoTrait` matches the trait label, and it answers HTTP 200 with
-        // an empty `efoTraits` list when nothing matches.
+        // `findByEfoTrait` matches the EXACT EFO trait label (case-insensitive),
+        // and it answers HTTP 200 with an empty `efoTraits` list when nothing
+        // matches. A paraphrase of a label thus reads as clean no-data, and the
+        // tool description warns the caller.
         const traitRes = await apiFetchValidated(
             `${GWAS_BASE}/efoTraits/search/findByEfoTrait?trait=${encodeURIComponent(query)}`,
             GwasTraitSearchResponseSchema,

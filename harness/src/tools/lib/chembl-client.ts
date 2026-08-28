@@ -557,13 +557,16 @@ async function searchApprovedDrugsByName(query: string, limit: number): Promise<
  * Approved drugs by name or by disease term.
  *
  * The `drug` resource of ChEMBL has no search endpoint, and it carries neither a
- * name nor an indication. Thus the lookup reads the `drug_indication` resource
- * first, and it falls back to the molecule search when no disease term matches.
+ * name nor an indication. The molecule name search runs first, because an
+ * `icontains` read of `drug_indication` captures a drug name that is a substring
+ * of a disease term ("insulin" matches "insulin resistance"). A query that
+ * names no molecule falls through to the indication read, which answers
+ * highest-phase first and can carry a clinical-stage molecule below approval.
  */
 export async function getDrugInfo(query: string, limit = 25): Promise<ChemblDrug[]> {
-    const byIndication = await searchDrugsByIndication(query, limit);
-    if (byIndication.length > 0) return byIndication;
-    return searchApprovedDrugsByName(query, limit);
+    const byName = await searchApprovedDrugsByName(query, limit);
+    if (byName.length > 0) return byName;
+    return searchDrugsByIndication(query, limit);
 }
 
 /**
@@ -684,14 +687,18 @@ export async function getModulatorPolypharmacology(
  * Used by the polypharm fanout step so the assembler's computeSelectivity
  * can produce real fold values instead of selectivity_unknown.
  */
-export async function getModulatorOnTargetPchembl(modulatorChemblId: string, targetChemblId: string): Promise<number | null> {
+export async function getModulatorOnTargetPchembl(modulatorChemblId: string, targetChemblId: string, logger?: Logger): Promise<number | null> {
+    const log = (logger ?? createNoopLogger()).named("chembl-client.on-target-pchembl").with({ targetChemblId });
     const url =
         `${CHEMBL_BASE}/activity.json?molecule_chembl_id=${encodeURIComponent(modulatorChemblId)}` +
         `&target_chembl_id=${encodeURIComponent(targetChemblId)}` +
         `&pchembl_value__isnull=false&limit=10`;
     const res = await apiFetchValidated(url, ActivitiesResponseSchema, { headers: HEADERS });
-    if (res.isErr()) return null;
-    const values = (res.value.activities ?? []).map((a) => a.pchembl_value ?? null).filter((v): v is number => v !== null);
+    if (res.isErr()) {
+        reportSkippedMolecule(log, res.error, modulatorChemblId);
+        return null;
+    }
+    const values = (res.value.activities ?? []).map((a) => a.pchembl_value).filter((v): v is number => v != null);
     if (values.length === 0) return null;
     values.sort((a, b) => a - b);
     const mid = Math.floor(values.length / 2);

@@ -60,6 +60,7 @@ export function createChemDbTools(
         geneDiseaseEvidence: createGeneDiseaseEvidenceTool({
             disgenetApiKey: keys.disgenet,
             ...(keys.ncbi ? { ncbiApiKey: keys.ncbi } : {}),
+            ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         drugGeneInteractions: createDrugGeneInteractionsTool({
             drugbankApiKey: keys.drugbank,
