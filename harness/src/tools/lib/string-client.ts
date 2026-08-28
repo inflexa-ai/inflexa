@@ -2,6 +2,10 @@
  * Pure async client functions for STRING DB protein-protein interactions.
  *
  * Used by §3.8 (PPI Network).
+ *
+ * Absence policy: STRING omits the key of an absent value, and it never sends
+ * an explicit `null`. Thus a maybe-absent field carries `.optional()`, not
+ * `.nullable()`.
  */
 
 import { z } from "zod";
@@ -53,7 +57,7 @@ export interface InteractionOptions {
 // `.transform(...)` half normalizes it into the `StringInteraction` we return. Parsing IS
 // the validation: `apiFetchValidated` runs this over the JSON, so a field whose type drifts
 // is rejected as `invalid_response` rather than silently mis-mapped.
-const StringInteractionSchema = z
+export const StringInteractionSchema = z
     .object({
         preferredName_A: z.string().optional(),
         preferredName_B: z.string().optional(),
@@ -71,10 +75,11 @@ const StringInteractionSchema = z
         textminingScore: d.tscore ?? undefined,
     }));
 
-// One STRING enrichment row. `preferredNames` legitimately arrives as either a string array
-// or a single comma-joined string, so the schema accepts the union and the transform folds
-// both into a `string[]`.
-const StringEnrichmentSchema = z
+// One STRING enrichment row. The `/api/json` renderer sends `preferredNames` as a
+// JSON array of gene names on every row, thus the schema declares an array. A
+// comma-joined string is a form of the tsv renderer, which this client never
+// calls.
+export const StringEnrichmentSchema = z
     .object({
         category: z.string().optional(),
         term: z.string().optional(),
@@ -82,7 +87,7 @@ const StringEnrichmentSchema = z
         p_value: z.number().optional(),
         fdr: z.number().optional(),
         number_of_genes: z.number().optional(),
-        preferredNames: z.union([z.array(z.string()), z.string()]).optional(),
+        preferredNames: z.array(z.string()).optional(),
     })
     .transform((d) => ({
         category: d.category ?? "",
@@ -91,7 +96,7 @@ const StringEnrichmentSchema = z
         pValue: d.p_value ?? 1,
         fdr: d.fdr ?? 1,
         geneCount: d.number_of_genes ?? 0,
-        genes: Array.isArray(d.preferredNames) ? d.preferredNames : (d.preferredNames ?? "").split(",").filter(Boolean),
+        genes: d.preferredNames ?? [],
     }));
 
 /** Fetch interaction partners (one-hop) for the given identifiers. */

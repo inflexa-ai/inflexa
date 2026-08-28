@@ -1,0 +1,188 @@
+[
+    {
+        "accession": "4.10.1240.10",
+        "database": "CATH/Gene3D",
+        "url": "http://www.cathdb.info/version/latest/superfamily/4.10.1240.10",
+        "species": "None"
+    },
+    {
+        "accession": "CHEMBL1832",
+        "database": "ChEMBL Target",
+        "url": "https://www.ebi.ac.uk/chembl/explore/target/CHEMBL1832",
+        "species": "Human"
+    },
+    {
+        "accession": "CHEMBL2204",
+        "database": "ChEMBL Target",
+        "url": "https://www.ebi.ac.uk/chembl/explore/target/CHEMBL2204",
+        "species": "Rat"
+    },
+    {
+        "accession": "P30988",
+        "database": "DrugBank Target",
+        "url": "https://go.drugbank.com/biodb/polypeptides/P30988",
+        "species": "Human"
+    },
+    {
+        "accession": "ENSG00000004948",
+        "database": "Ensembl Gene",
+        "url": "https://www.ensembl.org/Gene/Summary?g=ENSG00000004948",
+        "species": "Human"
+    },
+    {
+        "accession": "ENSMUSG00000023964",
+        "database": "Ensembl Gene",
+        "url": "https://www.ensembl.org/Gene/Summary?g=ENSMUSG00000023964",
+        "species": "Mouse"
+    },
+    {
+        "accession": "ENSRNOG00000010053",
+        "database": "Ensembl Gene",
+        "url": "https://www.ensembl.org/Gene/Summary?g=ENSRNOG00000010053",
+        "species": "Rat"
+    },
+    {
+        "accession": "799",
+        "database": "Entrez Gene",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/query.fcgi?db=gene&cmd=Retrieve&dopt=Graphics&list_uids=799",
+        "species": "Human"
+    },
+    {
+        "accession": "12311",
+        "database": "Entrez Gene",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/query.fcgi?db=gene&cmd=Retrieve&dopt=Graphics&list_uids=12311",
+        "species": "Mouse"
+    },
+    {
+        "accession": "116506",
+        "database": "Entrez Gene",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/query.fcgi?db=gene&cmd=Retrieve&dopt=Graphics&list_uids=116506",
+        "species": "Rat"
+    },
+    {
+        "accession": "calcr_human",
+        "database": "GPCRdb",
+        "url": "http://gpcrdb.org/protein/calcr_human",
+        "species": "Human"
+    },
+    {
+        "accession": "calcr_mouse",
+        "database": "GPCRdb",
+        "url": "http://gpcrdb.org/protein/calcr_mouse",
+        "species": "Mouse"
+    },
+    {
+        "accession": "calcr_rat",
+        "database": "GPCRdb",
+        "url": "http://gpcrdb.org/protein/calcr_rat",
+        "species": "Rat"
+    },
+    {
+        "accession": "114131",
+        "database": "OMIM",
+        "url": "https://www.omim.org/entry/114131",
+        "species": "Human"
+    },
+    {
+        "accession": "260064027",
+        "database": "Protein GI",
+        "species": "Human"
+    },
+    {
+        "accession": "112181179",
+        "database": "Protein GI",
+        "species": "Mouse"
+    },
+    {
+        "accession": "77404387",
+        "database": "Protein GI",
+        "species": "Rat"
+    },
+    {
+        "accession": "NM_001742",
+        "database": "RefSeq Nucleotide",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/viewer.fcgi?db=nuccore&id=NM_001742",
+        "species": "Human"
+    },
+    {
+        "accession": "NM_007588",
+        "database": "RefSeq Nucleotide",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/viewer.fcgi?db=nuccore&id=NM_007588",
+        "species": "Mouse"
+    },
+    {
+        "accession": "NM_053816",
+        "database": "RefSeq Nucleotide",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/viewer.fcgi?db=nuccore&id=NM_053816",
+        "species": "Rat"
+    },
+    {
+        "accession": "NM_001034015",
+        "database": "RefSeq Nucleotide",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/viewer.fcgi?db=nuccore&id=NM_001034015",
+        "species": "Rat"
+    },
+    {
+        "accession": "NP_001733",
+        "database": "RefSeq Protein",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/viewer.fcgi?db=protein&id=NP_001733",
+        "species": "Human"
+    },
+    {
+        "accession": "NP_001158209",
+        "database": "RefSeq Protein",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/viewer.fcgi?db=protein&id=NP_001158209",
+        "species": "Human"
+    },
+    {
+        "accession": "NP_031614",
+        "database": "RefSeq Protein",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/viewer.fcgi?db=protein&id=NP_031614",
+        "species": "Mouse"
+    },
+    {
+        "accession": "NP_001029187",
+        "database": "RefSeq Protein",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/viewer.fcgi?db=protein&id=NP_001029187",
+        "species": "Rat"
+    },
+    {
+        "accession": "NP_446268",
+        "database": "RefSeq Protein",
+        "url": "https://www.ncbi.nlm.nih.gov/entrez/viewer.fcgi?db=protein&id=NP_446268",
+        "species": "Rat"
+    },
+    {
+        "accession": "P30988",
+        "database": "UniProtKB",
+        "url": "https://www.uniprot.org/uniprot/P30988",
+        "species": "Human"
+    },
+    {
+        "accession": "Q60755",
+        "database": "UniProtKB",
+        "url": "https://www.uniprot.org/uniprot/Q60755",
+        "species": "Mouse"
+    },
+    {
+        "accession": "P32214",
+        "database": "UniProtKB",
+        "url": "https://www.uniprot.org/uniprot/P32214",
+        "species": "Rat"
+    },
+    {
+        "accession": "CALCR_HUMAN",
+        "database": "UniProtKB ID/Entry name",
+        "species": "Human"
+    },
+    {
+        "accession": "CALCR_MOUSE",
+        "database": "UniProtKB ID/Entry name",
+        "species": "Mouse"
+    },
+    {
+        "accession": "CALCR_RAT",
+        "database": "UniProtKB ID/Entry name",
+        "species": "Rat"
+    }
+]

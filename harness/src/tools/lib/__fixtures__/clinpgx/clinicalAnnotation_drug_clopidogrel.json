@@ -1,0 +1,282 @@
+{
+    "data": [
+        {
+            "id": 982031045,
+            "accessionId": "PA166134678",
+            "allelePhenotypes": [
+                {
+                    "id": 1446909012,
+                    "allele": "GG",
+                    "limitedEvidence": false,
+                    "phenotype": "Male patients with the GG genotype and Coronary Artery Disease may have a decreased, but not absent, risk of in-stent restenosis when treated with aspirin, Beta Blocking Agents, clopidogrel and hmg coa reductase inhibitors as compared to male patients with the TT genotype. Other genetic and clinical factors may also influence a patient's risk of in-stent restenosis."
+                },
+                {
+                    "id": 1446909013,
+                    "allele": "TG",
+                    "limitedEvidence": false,
+                    "phenotype": "Male patients with the TG genotype and Coronary Artery Disease may have an increased risk of in-stent restenosis when treated with aspirin, Beta Blocking Agents, clopidogrel and hmg coa reductase inhibitors as compared to male patients with the GG genotype. Other genetic and clinical factors may also influence a patient's risk of in-stent restenosis."
+                },
+                {
+                    "id": 1446909014,
+                    "allele": "TT",
+                    "limitedEvidence": false,
+                    "phenotype": "Male patients with the TT genotype and Coronary Artery Disease may have an increased risk of in-stent restenosis when treated with aspirin, Beta Blocking Agents, clopidogrel and hmg coa reductase inhibitors as compared to male patients with the GG genotype. Other genetic and clinical factors may also influence a patient's risk of in-stent restenosis."
+                }
+            ],
+            "conflictingVariantAnnotationIds": [],
+            "history": [
+                {
+                    "id": 1446909016,
+                    "date": "2015-10-28T12:52:58.541-07:00",
+                    "type": "Approve",
+                    "version": 0
+                },
+                {
+                    "id": 1451392804,
+                    "date": "2021-03-24T20:11:46.728-07:00",
+                    "description": "CA score added as part of scoring system release. LOE may have automatically changed based on new score but may be subject to further changes upon curator review.",
+                    "type": "Update",
+                    "version": 0
+                }
+            ],
+            "levelOfEvidence": {
+                "id": 827923056,
+                "resource": "Level of Evidence",
+                "synonyms": [],
+                "term": "3",
+                "termId": "levelsOfEvidence:827923056",
+                "valid": true
+            },
+            "location": {
+                "id": 1446909015,
+                "buildVersion": "hg38",
+                "chromosomeId": "PA534",
+                "chromosomeName": "chr7",
+                "copyNumber": "1",
+                "diplotypes": [],
+                "displayName": "rs1799983",
+                "genes": [
+                    {
+                        "objCls": "Gene",
+                        "id": "PA254",
+                        "symbol": "NOS3",
+                        "name": "nitric oxide synthase 3"
+                    }
+                ],
+                "gpPosition": 150696111,
+                "haplotypes": [],
+                "linkedObjects": [
+                    {
+                        "objCls": "Variant",
+                        "id": "PA166157303",
+                        "symbol": "rs1799983",
+                        "name": "rs1799983"
+                    }
+                ],
+                "refSeqCrossReference": {
+                    "id": 1444700296,
+                    "resource": "RefSeq RNA",
+                    "resourceId": "NM_000603.4",
+                    "_url": "https://www.ncbi.nlm.nih.gov/nuccore/NM_000603.4"
+                },
+                "refSeqPosition": 894,
+                "rsid": "rs1799983",
+                "tagGene": false,
+                "type": "SNP",
+                "variant": {
+                    "objCls": "Variant",
+                    "id": "PA166157303",
+                    "symbol": "rs1799983",
+                    "name": "rs1799983"
+                }
+            },
+            "name": "rs1799983 (NOS3); aspirin, Beta Blocking Agents, clopidogrel or hmg coa reductase inhibitors; Coronary Artery Disease (level 3 Toxicity)",
+            "objCls": "Clinical Annotation",
+            "overrideLevel": false,
+            "pediatric": false,
+            "relatedChemicals": [
+                {
+                    "objCls": "Chemical",
+                    "id": "PA448497",
+                    "name": "aspirin"
+                },
+                {
+                    "objCls": "Chemical",
+                    "id": "PA164712535",
+                    "name": "Beta Blocking Agents"
+                },
+                {
+                    "objCls": "Chemical",
+                    "id": "PA449053",
+                    "name": "clopidogrel"
+                },
+                {
+                    "objCls": "Chemical",
+                    "id": "PA133950441",
+                    "name": "HMG-CoA reductase inhibitors"
+                }
+            ],
+            "relatedChemicalsLogic": "Or",
+            "relatedDiseases": [
+                {
+                    "objCls": "Disease",
+                    "id": "PA443796",
+                    "name": "Coronary Artery Disease"
+                }
+            ],
+            "relatedGuidelines": [],
+            "relatedLabels": [],
+            "relatedVariations": [
+                {
+                    "objCls": "Allele",
+                    "id": "PA166372249",
+                    "symbol": "CA123702",
+                    "name": "NM_000603.5(NOS3):c.894T>G (p.Asp298Glu)"
+                },
+                {
+                    "objCls": "Allele",
+                    "id": "PA166372248",
+                    "symbol": "CA1630835012",
+                    "name": "NM_000603.5(NOS3):c.894T= (p.Asp298=)"
+                }
+            ],
+            "score": 2,
+            "scoreDetails": "{\"vaScores\": [{\"step5A\": 1.0, \"step5B\": 1.0, \"chosenSpId\": 981204863, \"step1Score\": 0.0, \"step2Score\": 1.0, \"step3Score\": 0.5, \"step4Score\": 0.5, \"totalScore\": 2.0, \"chosenSpIndex\": \"1 of 1\", \"generatedDate\": \"2021-03-21T04:18:03.854-07:00\", \"variantAnnotationId\": 981204837}], \"totalScore\": 2.0, \"vaScoreTotal\": 2.0, \"generatedDate\": \"2021-03-21T04:18:03.855-07:00\", \"labelScoreTotal\": 0.0, \"guidelineScoreTotal\": 0.0}",
+            "types": [
+                "Toxicity"
+            ]
+        },
+        {
+            "id": 1444703195,
+            "accessionId": "PA166136301",
+            "allelePhenotypes": [
+                {
+                    "id": 1444703202,
+                    "allele": "CC",
+                    "limitedEvidence": false,
+                    "phenotype": "Patients with the CC genotype and Coronary Artery Disease may have  decreased platelet reactivity when treated with clopidogrel as compared to patients with the GG genotype. Other genetic and clinical factors may also influence a patient's response to clopidogrel. "
+                },
+                {
+                    "id": 1444703203,
+                    "allele": "CG",
+                    "limitedEvidence": false,
+                    "phenotype": "Patients with the CG genotype and Coronary Artery Disease may have  increased platelet reactivity when treated with clopidogrel as compared to patients with the CC genotype or may have  decreased platelet reactivity when treated with clopidogrel as compared to patients with the GG genotype. Other genetic and clinical factors may also influence a patient's response to clopidogrel. "
+                },
+                {
+                    "id": 1444703204,
+                    "allele": "GG",
+                    "limitedEvidence": false,
+                    "phenotype": "Patients with the GG genotype and Coronary Artery Disease may have  increased platelet reactivity when treated with clopidogrel as compared to patients with the CC genotype. Other genetic and clinical factors may also influence a patient's response to clopidogrel. "
+                }
+            ],
+            "conflictingVariantAnnotationIds": [],
+            "history": [
+                {
+                    "id": 1444703196,
+                    "date": "2015-04-14T15:21:04.857-07:00",
+                    "type": "Create",
+                    "version": 0
+                },
+                {
+                    "id": 1444703201,
+                    "date": "2015-04-14T15:21:30.537-07:00",
+                    "type": "Update",
+                    "version": 0
+                },
+                {
+                    "id": 1449763835,
+                    "date": "2018-11-05T14:23:38.498-08:00",
+                    "description": "Updated OMB race to appropriate biogeographical group",
+                    "type": "Update",
+                    "version": 0
+                },
+                {
+                    "id": 1451393960,
+                    "date": "2021-03-24T20:20:03.035-07:00",
+                    "description": "CA score added as part of scoring system release. LOE may have automatically changed based on new score but may be subject to further changes upon curator review.",
+                    "type": "Update",
+                    "version": 0
+                }
+            ],
+            "levelOfEvidence": {
+                "id": 827923056,
+                "resource": "Level of Evidence",
+                "synonyms": [],
+                "term": "3",
+                "termId": "levelsOfEvidence:827923056",
+                "valid": true
+            },
+            "location": {
+                "id": 1444703205,
+                "buildVersion": "hg38",
+                "chromosomeId": "PA534",
+                "chromosomeName": "chr7",
+                "copyNumber": "1",
+                "diplotypes": [],
+                "displayName": "rs342293",
+                "genes": [],
+                "gpPosition": 106372219,
+                "haplotypes": [],
+                "linkedObjects": [
+                    {
+                        "objCls": "Variant",
+                        "id": "PA166157255",
+                        "symbol": "rs342293",
+                        "name": "rs342293"
+                    }
+                ],
+                "refSeqPosition": -1,
+                "rsid": "rs342293",
+                "tagGene": false,
+                "type": "SNP",
+                "variant": {
+                    "objCls": "Variant",
+                    "id": "PA166157255",
+                    "symbol": "rs342293",
+                    "name": "rs342293"
+                }
+            },
+            "name": "rs342293; clopidogrel; Coronary Artery Disease (level 3 Efficacy)",
+            "objCls": "Clinical Annotation",
+            "overrideLevel": false,
+            "pediatric": false,
+            "relatedChemicals": [
+                {
+                    "objCls": "Chemical",
+                    "id": "PA449053",
+                    "name": "clopidogrel"
+                }
+            ],
+            "relatedChemicalsLogic": "Or",
+            "relatedDiseases": [
+                {
+                    "objCls": "Disease",
+                    "id": "PA443796",
+                    "name": "Coronary Artery Disease"
+                }
+            ],
+            "relatedGuidelines": [],
+            "relatedLabels": [],
+            "relatedVariations": [
+                {
+                    "objCls": "Allele",
+                    "id": "PA166383762",
+                    "symbol": "CA12570423",
+                    "name": "NC_000007.14:g.106731773C>G"
+                },
+                {
+                    "objCls": "Allele",
+                    "id": "PA166383761",
+                    "symbol": "CA1732296746",
+                    "name": "NC_000007.14:g.106731773C="
+                }
+            ],
+            "score": 0,
+            "scoreDetails": "{\"vaScores\": [{\"step5A\": 1.0, \"step5B\": 1.0, \"chosenSpId\": 1444702847, \"step1Score\": 1.0, \"step2Score\": 1.0, \"step3Score\": 0.5, \"step4Score\": 0.0, \"totalScore\": 2.5, \"chosenSpIndex\": \"1 of 2\", \"generatedDate\": \"2021-03-21T04:55:31.605-07:00\", \"variantAnnotationId\": 1444702840}], \"totalScore\": 2.5, \"vaScoreTotal\": 2.5, \"generatedDate\": \"2021-03-21T04:55:31.606-07:00\", \"labelScoreTotal\": 0.0, \"guidelineScoreTotal\": 0.0}",
+            "types": [
+                "Efficacy"
+            ]
+        }
+    ],
+    "status": "success"
+}

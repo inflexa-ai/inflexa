@@ -8,6 +8,10 @@
  *   - Protein family text — used together with IUPHAR family-target
  *     resolution to identify sibling receptors in the same pharmacological
  *     family (replaces the hand-curated RELATED_FAMILY_UNIPROTS map).
+ *
+ * Absence policy: the OpenAPI document of UniProt marks no field as required,
+ * and the API omits the key of an absent value. Thus a maybe-absent field
+ * carries `.optional()`, not `.nullable()`.
  */
 
 import { z } from "zod";

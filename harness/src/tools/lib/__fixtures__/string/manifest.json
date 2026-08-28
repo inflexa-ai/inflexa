@@ -1,0 +1,11 @@
+{
+    "enrichment_gabaa.json": {
+        "url": "https://string-db.org/api/json/enrichment?identifiers=GABRA1%0dGABRB2%0dGABRG2%0dGABRA2%0dGABRB1&species=9606&caller_identity=inflexa_cortex",
+        "capturedAt": "2026-08-28",
+        "replay": false
+    },
+    "partners_ACE.json": {
+        "url": "https://string-db.org/api/json/interaction_partners?identifiers=ACE&species=9606&caller_identity=inflexa_cortex&required_score=400&limit=20",
+        "capturedAt": "2026-08-28"
+    }
+}
