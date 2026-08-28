@@ -321,44 +321,14 @@ export async function setup(options: SetupOptions): Promise<void> {
     let currentStep: SetupStep = "connection";
 
     try {
-        // The connection mode is the ONE question whose batch default the resolver applies early and
-        // whose interactive default it deliberately does NOT — applying it would pre-empt the wizard's
-        // first prompt. So an unresolved mode here means exactly "an interactive run still has to ask".
-        const mode = await chooseConnectionMode(connectionMode, asks("connection"));
-
-        // `--provider` wears the vocabulary of the connection mode (design D4), so its check can only run
-        // once the mode is known — under batch that is upfront in the resolver, on an interactive run it
-        // is here, immediately after the prompt. It runs BEFORE the runtime pin below because under BATCH
-        // that write is the run's first mutation, and an answer setup is going to reject must not cost the
-        // operator a persisted side effect first. The claim is scoped to batch deliberately: an
-        // INTERACTIVE run with an answered embedding mode has already configured embeddings at the
-        // pre-gate above, so its fail-before-mutate boundary is that step, not this one.
-        const providerCheck = checkProviderAnswer(answers.connection?.provider, mode);
-        if (providerCheck.isErr()) {
-            console.error(`\n  ${providerCheck.error.message}\n`);
-            process.exitCode = 1;
-            return;
-        }
-        const provider = providerCheck.value;
-
-        // The other half of the stranded-answer rule the `--no-postgres` guard above states: a step
-        // switched OFF consumes no answers. `provider` is non-undefined only in cliproxy mode — direct
-        // mode records the slug on the connection, which `--no-auth` does not touch — so this is exactly
-        // the interactive `--no-auth --provider <kind>` case. It cannot be checked beside the postgres
-        // guard because the mode is not known there, and batch cliproxy never reaches it: the resolver
-        // already rejects a provider answer whose sign-in cannot run unattended.
-        if (!options.auth && provider !== undefined) {
-            console.error(
-                "\n  --no-auth skips the sign-in step that would consume `--provider` / `connection.provider`.\n" + "  Drop the answer, or drop --no-auth.\n",
-            );
-            process.exitCode = 1;
-            return;
-        }
-
-        // Persisted only now: the probe above proved the runtime usable, and the answers are validated,
-        // so this is the first point where writing cannot strand the user with a rejected run. Later
-        // steps (postgres provisioning, the sandbox pull) re-read config for the runtime, so it must be
-        // durable before any of them — a failed write aborts rather than splitting the run across two.
+        // The download consent is the FIRST question of the wizard, by decision:
+        // the transfers move multi-GB in the background, thus every second they
+        // start earlier is a second the user waits less at the end. The runtime
+        // pin must persist first, because the pull child re-reads config for
+        // the runtime. The trade, accepted with the order: a batch answer the
+        // checks below reject can leave a saved runtime selection and started
+        // transfers. Both are idempotent, and the batch resolver validates its
+        // answers upfront, thus the window is the interactive flag edge only.
         if (rt.id !== selected?.id) {
             log.info(
                 runtimeAnswer.answered
@@ -385,6 +355,38 @@ export async function setup(options: SetupOptions): Promise<void> {
         // wait on them. The `--sandbox` answer is the ONE consent for all
         // three, and nothing downloads without it.
         await runTransfersSetup(answers.sandbox, canPrompt);
+
+        // The connection mode is the ONE question whose batch default the resolver applies early and
+        // whose interactive default it deliberately does NOT — applying it would pre-empt the wizard's
+        // first prompt. So an unresolved mode here means exactly "an interactive run still has to ask".
+        const mode = await chooseConnectionMode(connectionMode, asks("connection"));
+
+        // `--provider` wears the vocabulary of the connection mode (design D4), so its check can only run
+        // once the mode is known — under batch that is upfront in the resolver, on an interactive run it
+        // is here, immediately after the prompt. The runtime pin and the transfers run ABOVE this check,
+        // because the download-first decision outranks the fail-before-mutate purity here — the accepted
+        // trade is stated at the head of the try.
+        const providerCheck = checkProviderAnswer(answers.connection?.provider, mode);
+        if (providerCheck.isErr()) {
+            console.error(`\n  ${providerCheck.error.message}\n`);
+            process.exitCode = 1;
+            return;
+        }
+        const provider = providerCheck.value;
+
+        // The other half of the stranded-answer rule the `--no-postgres` guard above states: a step
+        // switched OFF consumes no answers. `provider` is non-undefined only in cliproxy mode — direct
+        // mode records the slug on the connection, which `--no-auth` does not touch — so this is exactly
+        // the interactive `--no-auth --provider <kind>` case. It cannot be checked beside the postgres
+        // guard because the mode is not known there, and batch cliproxy never reaches it: the resolver
+        // already rejects a provider answer whose sign-in cannot run unattended.
+        if (!options.auth && provider !== undefined) {
+            console.error(
+                "\n  --no-auth skips the sign-in step that would consume `--provider` / `connection.provider`.\n" + "  Drop the answer, or drop --no-auth.\n",
+            );
+            process.exitCode = 1;
+            return;
+        }
 
         currentStep = "auth";
         // Skipped as a UNIT: both halves persist their result to config, and the direct half has no silent

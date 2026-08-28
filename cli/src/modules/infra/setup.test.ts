@@ -1495,12 +1495,14 @@ describe("setup() — batch orchestration", () => {
             const wasTTY = process.stdin.isTTY;
             Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
             try {
+                // The download consent is the first question of the wizard, thus
+                // the test answers it — the refusal under test sits behind it.
                 const errors = await runCapturingStderr({
                     auth: false,
                     start: false,
                     force: false,
                     postgres: false,
-                    flags: { connection: "cliproxy", provider: "claude" },
+                    flags: { connection: "cliproxy", provider: "claude", sandbox: false },
                 });
 
                 expect(process.exitCode).toBe(1);
