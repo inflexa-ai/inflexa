@@ -1,0 +1,16 @@
+[
+    {
+        "type": "Target",
+        "drug": {
+            "name": "Nirsevimab"
+        },
+        "bio_entity": {
+            "bio_entity_id": "BE0000686",
+            "name": "Fusion glycoprotein F0"
+        },
+        "known_action": "yes",
+        "actions": [
+            "antibody"
+        ]
+    }
+]

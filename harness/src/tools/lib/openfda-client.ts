@@ -3,6 +3,10 @@
  *
  * Used by §2.6.2 (FAERS summary) and §2.6.6 (class precedent — drugs-in-class
  * AEs).
+ *
+ * Absence policy: openFDA omits the key of an absent value, and the `openfda`
+ * object can arrive as `{}`. Thus a maybe-absent field carries `.optional()`,
+ * not `.nullable()`.
  */
 
 import { z } from "zod";
@@ -56,7 +60,13 @@ const OpenFdaLabelMetaSchema = z.object({
 });
 type OpenFdaLabelMeta = z.infer<typeof OpenFdaLabelMetaSchema>;
 
-/** A single openFDA structured-product-label record (raw wire shape). */
+/**
+ * A single openFDA structured-product-label record (raw wire shape).
+ *
+ * `spl_medguide` and `patient_medication_information` are the two label sections
+ * that carry the patient-facing safety documents. The field reference of the
+ * provider types both as an array of string.
+ */
 const OpenFdaLabelSchema = z.object({
     set_id: z.unknown().optional(),
     openfda: OpenFdaLabelMetaSchema.optional(),
@@ -64,9 +74,8 @@ const OpenFdaLabelSchema = z.object({
     boxed_warning: z.unknown().optional(),
     warnings_and_cautions: z.unknown().optional(),
     warnings: z.unknown().optional(),
-    rems_summary: z.unknown().optional(),
-    rems_indication: z.unknown().optional(),
-    medication_guide: z.unknown().optional(),
+    spl_medguide: z.array(z.string()).optional(),
+    patient_medication_information: z.array(z.string()).optional(),
 });
 type OpenFdaLabel = z.infer<typeof OpenFdaLabelSchema>;
 
@@ -212,8 +221,12 @@ function buildLabelSourceUrl(label: OpenFdaLabel): string {
 
 function mapLabel(raw: OpenFdaLabel): DrugLabelAction {
     const openfda: OpenFdaLabelMeta = raw?.openfda ?? {};
-    const remsTextCandidates = [raw?.rems_summary, raw?.rems_indication, raw?.medication_guide];
-    const hasRems = remsTextCandidates.some((v) => joinSection(v) !== null) || (joinSection(raw?.boxed_warning)?.toLowerCase().includes("rems") ?? false);
+    // The label reference carries no REMS field, thus the signal is the word
+    // itself in one of the three sections that a REMS program writes to. The
+    // presence of a medication guide alone is not the signal: many labels with no
+    // REMS carry one, and a presence test would report a REMS that does not exist.
+    const remsTextCandidates = [raw?.boxed_warning, raw?.spl_medguide, raw?.patient_medication_information];
+    const hasRems = remsTextCandidates.some((v) => joinSection(v)?.toLowerCase().includes("rems") ?? false);
 
     return {
         applicationNumber: firstString(openfda.application_number),
@@ -229,8 +242,9 @@ function mapLabel(raw: OpenFdaLabel): DrugLabelAction {
 
 // The label endpoint's records are mapped to `DrugLabelAction` rows by
 // `mapLabel` — a context-free normalize folded into the schema so ONE schema
-// validates the raw wire AND emits the output rows.
-const OpenFdaLabelResponseSchema = z.object({
+// validates the raw wire AND emits the output rows. It is exported so that the
+// golden-fixture table drives it.
+export const OpenFdaLabelResponseSchema = z.object({
     results: z.array(OpenFdaLabelSchema.transform(mapLabel)).optional(),
 });
 

@@ -5,6 +5,10 @@
  * DGIdb aggregates 30+ sources (ChEMBL, DrugBank, TTD, PharmGKB,
  * GuideToPharmacology, CIViC, …) and reports per-interaction source counts,
  * which the caller uses as a confidence signal.
+ *
+ * Absence policy: the nullability of the GraphQL SDL encodes an absent value.
+ * DGIdb answers each requested field with a key and an explicit `null`, thus
+ * the SDL gives each modifier and `.optional()` is wrong.
  */
 
 import { z } from "zod";
@@ -68,32 +72,33 @@ export interface DgidbResult {
 }
 
 // Shape of the DGIdb GraphQL payload as it arrives on the wire. Validated at
-// the fetch boundary; `mapInteraction` normalizes each record. Most fields are
-// optional/nullable to match GraphQL's per-field nullability — but
-// `RawNode.name` is required because we key the node map on
-// `name.toLowerCase()`; a node missing it is a contract break we surface as an
-// `invalid_response` error rather than a runtime TypeError.
+// the fetch boundary; `mapInteraction` normalizes each record. GraphQL always
+// answers a requested field with a key, thus absence is an explicit `null` and
+// never an omission. As a result each modifier below comes from the SDL:
+// `Gene.name`, `InteractionClaimType.type` and `directionality` are nullable,
+// and `GeneConnection.nodes` is a nullable list of nullable elements.
 const RawInteractionSchema = z.object({
     interactionScore: z.number().nullable().optional(),
-    interactionTypes: z.array(z.object({ type: z.string().optional(), directionality: z.string().nullable().optional() })).optional(),
+    interactionTypes: z.array(z.object({ type: z.string().nullable().optional(), directionality: z.string().nullable().optional() })).optional(),
     drug: z.object({ name: z.string().optional(), conceptId: z.string().nullable().optional() }).nullable().optional(),
-    gene: z.object({ name: z.string().optional() }).nullable().optional(),
+    gene: z.object({ name: z.string().nullable().optional() }).nullable().optional(),
     interactionAttributes: z.array(z.object({ name: z.string().optional(), value: z.string().optional() })).optional(),
     publications: z.array(z.object({ pmid: z.union([z.string(), z.number()]).optional() })).optional(),
     sources: z.array(z.object({ sourceDbName: z.string().optional() })).optional(),
 });
 
 const RawNodeSchema = z.object({
-    name: z.string(),
+    name: z.string().nullable(),
     conceptId: z.string().nullable().optional(),
     interactions: z.array(RawInteractionSchema).optional(),
 });
 
-const DgidbResponseSchema = z.object({
+/** The response envelope. It is exported so that the golden-fixture table drives it. */
+export const DgidbResponseSchema = z.object({
     data: z
         .object({
-            genes: z.object({ nodes: z.array(RawNodeSchema).optional() }).optional(),
-            drugs: z.object({ nodes: z.array(RawNodeSchema).optional() }).optional(),
+            genes: z.object({ nodes: z.array(RawNodeSchema.nullable()).nullish() }).optional(),
+            drugs: z.object({ nodes: z.array(RawNodeSchema.nullable()).nullish() }).optional(),
         })
         .optional(),
     errors: z.array(z.object({ message: z.string().optional() })).optional(),
@@ -200,10 +205,16 @@ export async function searchDgidb(
     if (body.errors?.length) onPartialErrors?.(body.errors.slice(0, 3));
 
     const nodes = (isGene ? body.data.genes?.nodes : body.data.drugs?.nodes) ?? [];
-    const nodeMap = new Map<string, RawNode>();
+    const nodeMap = new Map<string, RawNode & { name: string }>();
     for (const node of nodes) {
-        nodeMap.set(node.name.toLowerCase(), node);
-        if (!isGene && node.conceptId) nodeMap.set(node.conceptId.toLowerCase(), node);
+        // The node list and `Gene.name` are nullable in the SDL. The map keys on
+        // the name, thus a null element and a null-named node have no key, and
+        // the input that asked for them reports `found: false`.
+        const name = node?.name;
+        if (!node || !name) continue;
+        const named = { ...node, name };
+        nodeMap.set(name.toLowerCase(), named);
+        if (!isGene && node.conceptId) nodeMap.set(node.conceptId.toLowerCase(), named);
     }
 
     const limit = filters.limit ?? 20;

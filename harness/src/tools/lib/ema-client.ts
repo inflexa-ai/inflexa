@@ -7,6 +7,10 @@
  * Article 20, etc.). We fetch and cache it in-process; per-drug queries
  * filter the cached records by INN, referral name, and associated
  * medicine names.
+ *
+ * Absence policy: the bulk file gives each key and writes an absent value as
+ * the empty string. Thus a field carries neither `.nullable()` nor
+ * `.optional()`.
  */
 
 import { z } from "zod";
@@ -36,22 +40,29 @@ export interface EmaReferral {
     referralUrl: string;
 }
 
+/**
+ * Split one medicine column into names.
+ *
+ * The separator is the semicolon alone. A comma belongs to the name of the
+ * medicine, for example `Lidocaïne / Prilocaïne 5% Focus, Crème`, thus a split on
+ * the comma breaks that name into two.
+ */
 function parseMedicineList(field: string | null | undefined): string[] {
     if (!field || !field.trim()) return [];
     return field
-        .split(/[;,]/)
+        .split(";")
         .map((s) => s.trim())
         .filter(Boolean);
 }
 
-// One schema that both validates the raw referral wire shape (snake_case, every
-// field optional or null — the bulk file omits or nulls absent values) and
+// One schema that both validates the raw referral wire shape (snake_case) and
 // normalizes it into the camelCase `EmaReferral` we return. Parsing IS the
 // validation: `apiFetchValidated` runs this over the download, so a record whose
 // field TYPES drift is rejected as `invalid_response` instead of silently
-// mis-mapped. Every field is `.nullable()` so one null-bearing record in the
-// ~600-row catalogue doesn't fail the whole `data` array (the transform already
-// collapses null to "" via `??`).
+// mis-mapped. The sampled records give each key and write an absent value as the
+// empty string. The modifiers stay wider than that sample, thus one odd record in
+// the ~600-row catalogue does not fail the whole `data` array. The transform
+// collapses a null to "" with `??`.
 const EmaReferralSchema = z
     .object({
         category: z.string().nullable().optional(),
@@ -96,7 +107,8 @@ const EmaReferralSchema = z
         referralUrl: raw.referral_url ?? "",
     }));
 
-const ReferralFileSchema = z.object({
+/** The catalogue file. It is exported so that the golden-fixture table drives it. */
+export const ReferralFileSchema = z.object({
     meta: z.object({ total_records: z.number().optional(), timestamp: z.string().optional() }).optional(),
     data: z.array(EmaReferralSchema).optional(),
 });

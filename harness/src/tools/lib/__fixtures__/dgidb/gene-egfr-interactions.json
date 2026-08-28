@@ -1,0 +1,632 @@
+{
+    "data": {
+        "genes": {
+            "nodes": [
+                {
+                    "name": "EGFR",
+                    "interactions": [
+                        {
+                            "interactionScore": 0.3637937422218744,
+                            "interactionTypes": [
+                                {
+                                    "type": "inhibitor",
+                                    "directionality": "INHIBITORY"
+                                },
+                                {
+                                    "type": "inhibitor",
+                                    "directionality": "INHIBITORY"
+                                }
+                            ],
+                            "drug": {
+                                "name": "AUMOLERTINIB",
+                                "conceptId": "ncit:C133691"
+                            },
+                            "interactionAttributes": [
+                                {
+                                    "name": "Mechanism of Action",
+                                    "value": "Epidermal growth factor receptor erbB1 inhibitor"
+                                },
+                                {
+                                    "name": "Direct Interaction",
+                                    "value": "true"
+                                },
+                                {
+                                    "name": "Assay Details",
+                                    "value": "Inhibition of wild type EGFR enzyme activity in a TR-FRET assay"
+                                },
+                                {
+                                    "name": "Mechanism of Action",
+                                    "value": "Inhibition"
+                                },
+                                {
+                                    "name": "Endogenous Drug",
+                                    "value": "false"
+                                },
+                                {
+                                    "name": "Direct Interaction",
+                                    "value": "false"
+                                }
+                            ],
+                            "publications": [],
+                            "sources": [
+                                {
+                                    "sourceDbName": "GuideToPharmacology"
+                                },
+                                {
+                                    "sourceDbName": "ChEMBL"
+                                }
+                            ]
+                        },
+                        {
+                            "interactionScore": 0.8549152942214049,
+                            "interactionTypes": [
+                                {
+                                    "type": "inhibitor",
+                                    "directionality": "INHIBITORY"
+                                },
+                                {
+                                    "type": "inhibitor",
+                                    "directionality": "INHIBITORY"
+                                }
+                            ],
+                            "drug": {
+                                "name": "AFATINIB",
+                                "conceptId": "rxcui:1430438"
+                            },
+                            "interactionAttributes": [
+                                {
+                                    "name": "Mechanism of Action",
+                                    "value": "Inhibition"
+                                },
+                                {
+                                    "name": "Endogenous Drug",
+                                    "value": "false"
+                                },
+                                {
+                                    "name": "Direct Interaction",
+                                    "value": "true"
+                                },
+                                {
+                                    "name": "Details",
+                                    "value": "ex19del EGFR"
+                                },
+                                {
+                                    "name": "Direct Interaction",
+                                    "value": "false"
+                                },
+                                {
+                                    "name": "Details",
+                                    "value": "WT EGFR"
+                                },
+                                {
+                                    "name": "Alteration",
+                                    "value": "EGFR::consequence::inframe_deletion:729-761"
+                                },
+                                {
+                                    "name": "Alteration",
+                                    "value": "EGFR::consequence::inframe_insertion:729-761"
+                                },
+                                {
+                                    "name": "Alteration",
+                                    "value": "EGFR:L858R,L861Q,G719A,G719S,G719C,G719D,L747S,S768I,L861P,L861Q,L861R"
+                                },
+                                {
+                                    "name": "Alteration",
+                                    "value": "EGFR:L861Q,G719A,G719S,G719C,G719D,L747S,S768I,L861P,L861Q,L861R"
+                                },
+                                {
+                                    "name": "Combination Therapy",
+                                    "value": "Afatinib;Cetuximab"
+                                },
+                                {
+                                    "name": "Alteration",
+                                    "value": "EGFR:L858R,L861Q,G719A,G719S,G719C,G719D,L747S,S768I,L861P,L861R"
+                                },
+                                {
+                                    "name": "Alteration",
+                                    "value": "EGFR:T790M"
+                                },
+                                {
+                                    "name": "Combination Therapy",
+                                    "value": "Afatinib;Nimotuzumab"
+                                },
+                                {
+                                    "name": "Clinical Trial ID",
+                                    "value": "NCT01553942"
+                                },
+                                {
+                                    "name": "Cancer Type",
+                                    "value": "Lung cancer"
+                                },
+                                {
+                                    "name": "Indication",
+                                    "value": "Purpose: Afatinib is a tyrosine kinase inhibitor. It has been studied in a previous research study in participants with more advanced NSCLC. Results from that study indicate it may be helpful in treating NSCLC with EGFR mutations. %Inclusion criteria: Have lung cancer harboring an EGFR mutation. %Exclusion criteria: Prior EGFR TKI therapy"
+                                },
+                                {
+                                    "name": "Clinical Trial ID",
+                                    "value": "NCT01647711"
+                                },
+                                {
+                                    "name": "Indication",
+                                    "value": "Official title: Irreversible EGFR Inhibitor Afatinib. %Inclusion criteria: Documented Epidermal Growth Factor Receptor (EGFR) T790M mutation."
+                                },
+                                {
+                                    "name": "Clinical Trial ID",
+                                    "value": "NCT01746251"
+                                },
+                                {
+                                    "name": "Indication",
+                                    "value": "Official title: Afatinib as Adjuvant Therapy for Patients With Resected Stage I-III NSCLC With EGFR Mutation. %Inclusion criteria: Pathologically confirmed diagnosis of non-small cell lung cancer with EGFR mutation."
+                                },
+                                {
+                                    "name": "Approval Status",
+                                    "value": "FDA-approved"
+                                },
+                                {
+                                    "name": "Approval Status",
+                                    "value": "NCCN/ CAP guidelines"
+                                },
+                                {
+                                    "name": "Approval Status",
+                                    "value": "early trials"
+                                },
+                                {
+                                    "name": "Pathway",
+                                    "value": "activation"
+                                },
+                                {
+                                    "name": "Variant Effect",
+                                    "value": "gain-of-function"
+                                },
+                                {
+                                    "name": "Cancer Type",
+                                    "value": "Lung, Prostate"
+                                },
+                                {
+                                    "name": "Clinical Trial ID",
+                                    "value": "NCT01542437"
+                                },
+                                {
+                                    "name": "Cancer Type",
+                                    "value": "GIST"
+                                },
+                                {
+                                    "name": "Indication",
+                                    "value": "Purpose: BIBW 2992, an irreversible inhibitor of receptor Epidermal growth factor type 1/2 (EGFR/HER2). %Official title: BIBW 2992, Irreversible Inhibitor of EGFR and HER-2. %Exclusion criteria: Pre-treatment with systemic anti-tumor therapy with EGFR inhibitors"
+                                },
+                                {
+                                    "name": "Clinical Trial ID",
+                                    "value": "NCT01156545"
+                                },
+                                {
+                                    "name": "Indication",
+                                    "value": "Purpose: BIBW2992, an irreversible EGFR-TKI"
+                                },
+                                {
+                                    "name": "Clinical Trial ID",
+                                    "value": "NCT00993499"
+                                },
+                                {
+                                    "name": "Indication",
+                                    "value": "Official title: BIBW 2992 Plus Sirolimus in Patients With Non-small Cell Lung Cancer Harbouring an EGFR Mutation."
+                                },
+                                {
+                                    "name": "Clinical Trial ID",
+                                    "value": "NCT01415011"
+                                },
+                                {
+                                    "name": "Indication",
+                                    "value": "Purpose: BIBW 2992 to treat patients with non-small cell lung cancer and suspected Epidermal Growth Factor Receptor (EGFR) mutation. %Detailed description: irreversible EGFR inhibitor drug BIBW 2992. %Exclusion criteria: Previous treatment with BIBW 2992, or any EGFR-directed inhibitor."
+                                },
+                                {
+                                    "name": "Clinical Trial Name",
+                                    "value": "afatinib, BIBW 2992,Tovok"
+                                },
+                                {
+                                    "name": "Novel Drug Target",
+                                    "value": "Established target"
+                                }
+                            ],
+                            "publications": [
+                                {
+                                    "pmid": 22753918
+                                },
+                                {
+                                    "pmid": 25589191
+                                },
+                                {
+                                    "pmid": 24565969
+                                },
+                                {
+                                    "pmid": 23930994
+                                },
+                                {
+                                    "pmid": 26619011
+                                },
+                                {
+                                    "pmid": 20573926
+                                },
+                                {
+                                    "pmid": 22452895
+                                },
+                                {
+                                    "pmid": 17332364
+                                },
+                                {
+                                    "pmid": 21783417
+                                },
+                                {
+                                    "pmid": 22452896
+                                },
+                                {
+                                    "pmid": 18458038
+                                },
+                                {
+                                    "pmid": 21430269
+                                },
+                                {
+                                    "pmid": 21531810
+                                },
+                                {
+                                    "pmid": 19922469
+                                },
+                                {
+                                    "pmid": 21670455
+                                },
+                                {
+                                    "pmid": 19692680
+                                },
+                                {
+                                    "pmid": 16258541
+                                },
+                                {
+                                    "pmid": 18303429
+                                },
+                                {
+                                    "pmid": 15737014
+                                },
+                                {
+                                    "pmid": 25668228
+                                },
+                                {
+                                    "pmid": 16912157
+                                },
+                                {
+                                    "pmid": 20068085
+                                },
+                                {
+                                    "pmid": 24065731
+                                },
+                                {
+                                    "pmid": 23102728
+                                },
+                                {
+                                    "pmid": 21194487
+                                },
+                                {
+                                    "pmid": 15329413
+                                },
+                                {
+                                    "pmid": 16115929
+                                },
+                                {
+                                    "pmid": 24894453
+                                },
+                                {
+                                    "pmid": 22285168
+                                },
+                                {
+                                    "pmid": 23242437
+                                },
+                                {
+                                    "pmid": 23816960
+                                },
+                                {
+                                    "pmid": 19671738
+                                },
+                                {
+                                    "pmid": 19096302
+                                },
+                                {
+                                    "pmid": 25923549
+                                },
+                                {
+                                    "pmid": 16187797
+                                },
+                                {
+                                    "pmid": 25923550
+                                },
+                                {
+                                    "pmid": 23945392
+                                },
+                                {
+                                    "pmid": 15710947
+                                },
+                                {
+                                    "pmid": 19147750
+                                },
+                                {
+                                    "pmid": 16204070
+                                },
+                                {
+                                    "pmid": 24893891
+                                },
+                                {
+                                    "pmid": 18227510
+                                },
+                                {
+                                    "pmid": 16043828
+                                },
+                                {
+                                    "pmid": 24729716
+                                },
+                                {
+                                    "pmid": 23948351
+                                },
+                                {
+                                    "pmid": 24636847
+                                },
+                                {
+                                    "pmid": 25157968
+                                },
+                                {
+                                    "pmid": 16707764
+                                },
+                                {
+                                    "pmid": 18199554
+                                },
+                                {
+                                    "pmid": 22588155
+                                },
+                                {
+                                    "pmid": 15728811
+                                },
+                                {
+                                    "pmid": 24623981
+                                },
+                                {
+                                    "pmid": 22215752
+                                },
+                                {
+                                    "pmid": 20033049
+                                },
+                                {
+                                    "pmid": 15118073
+                                },
+                                {
+                                    "pmid": 20479403
+                                },
+                                {
+                                    "pmid": 17653080
+                                },
+                                {
+                                    "pmid": 19455431
+                                },
+                                {
+                                    "pmid": 26515464
+                                },
+                                {
+                                    "pmid": 15118125
+                                },
+                                {
+                                    "pmid": 26720284
+                                },
+                                {
+                                    "pmid": 2302402
+                                },
+                                {
+                                    "pmid": 16011858
+                                },
+                                {
+                                    "pmid": 23816963
+                                },
+                                {
+                                    "pmid": 20022809
+                                },
+                                {
+                                    "pmid": 21233402
+                                },
+                                {
+                                    "pmid": 24658966
+                                },
+                                {
+                                    "pmid": 19692684
+                                },
+                                {
+                                    "pmid": 27207775
+                                },
+                                {
+                                    "pmid": 24353160
+                                },
+                                {
+                                    "pmid": 25948633
+                                },
+                                {
+                                    "pmid": 32193290
+                                },
+                                {
+                                    "pmid": 40940797
+                                },
+                                {
+                                    "pmid": 23982599
+                                },
+                                {
+                                    "pmid": 24439929
+                                },
+                                {
+                                    "pmid": 27083334
+                                },
+                                {
+                                    "pmid": 24035188
+                                },
+                                {
+                                    "pmid": 26051236
+                                },
+                                {
+                                    "pmid": 34298851
+                                },
+                                {
+                                    "pmid": 32226941
+                                }
+                            ],
+                            "sources": [
+                                {
+                                    "sourceDbName": "DTC"
+                                },
+                                {
+                                    "sourceDbName": "CancerCommons"
+                                },
+                                {
+                                    "sourceDbName": "COSMIC"
+                                },
+                                {
+                                    "sourceDbName": "MyCancerGenomeClinicalTrial"
+                                },
+                                {
+                                    "sourceDbName": "TdgClinicalTrial"
+                                },
+                                {
+                                    "sourceDbName": "CGI"
+                                },
+                                {
+                                    "sourceDbName": "DoCM"
+                                },
+                                {
+                                    "sourceDbName": "MyCancerGenome"
+                                },
+                                {
+                                    "sourceDbName": "OncoKB"
+                                },
+                                {
+                                    "sourceDbName": "GuideToPharmacology"
+                                },
+                                {
+                                    "sourceDbName": "CIViC"
+                                },
+                                {
+                                    "sourceDbName": "TALC"
+                                },
+                                {
+                                    "sourceDbName": "FDA"
+                                },
+                                {
+                                    "sourceDbName": "TTD"
+                                }
+                            ]
+                        },
+                        {
+                            "interactionScore": 0.002178405642047152,
+                            "interactionTypes": [],
+                            "drug": {
+                                "name": "CISPLATIN",
+                                "conceptId": "rxcui:2555"
+                            },
+                            "interactionAttributes": [],
+                            "publications": [
+                                {
+                                    "pmid": 23764753
+                                }
+                            ],
+                            "sources": [
+                                {
+                                    "sourceDbName": "CIViC"
+                                }
+                            ]
+                        },
+                        {
+                            "interactionScore": 0.1818968711109372,
+                            "interactionTypes": [
+                                {
+                                    "type": "modulator",
+                                    "directionality": null
+                                }
+                            ],
+                            "drug": {
+                                "name": "EAI045",
+                                "conceptId": "iuphar.ligand:9222"
+                            },
+                            "interactionAttributes": [
+                                {
+                                    "name": "Direct Interaction",
+                                    "value": "false"
+                                },
+                                {
+                                    "name": "Endogenous Drug",
+                                    "value": "false"
+                                },
+                                {
+                                    "name": "Mechanism of Action",
+                                    "value": "Inhibition"
+                                }
+                            ],
+                            "publications": [],
+                            "sources": [
+                                {
+                                    "sourceDbName": "GuideToPharmacology"
+                                }
+                            ]
+                        },
+                        {
+                            "interactionScore": 0.01136855444443357,
+                            "interactionTypes": [
+                                {
+                                    "type": "binder",
+                                    "directionality": null
+                                }
+                            ],
+                            "drug": {
+                                "name": "DEPATUXIZUMAB MAFODOTIN",
+                                "conceptId": "chembl:CHEMBL3707277"
+                            },
+                            "interactionAttributes": [
+                                {
+                                    "name": "Direct Interaction",
+                                    "value": "true"
+                                },
+                                {
+                                    "name": "Mechanism of Action",
+                                    "value": "Epidermal growth factor receptor erbB1 binding agent"
+                                }
+                            ],
+                            "publications": [],
+                            "sources": [
+                                {
+                                    "sourceDbName": "ChEMBL"
+                                }
+                            ]
+                        },
+                        {
+                            "interactionScore": 0.01136855444443357,
+                            "interactionTypes": [
+                                {
+                                    "type": "binder",
+                                    "directionality": null
+                                }
+                            ],
+                            "drug": {
+                                "name": "LOSATUXIZUMAB VEDOTIN",
+                                "conceptId": "chembl:CHEMBL4594515"
+                            },
+                            "interactionAttributes": [
+                                {
+                                    "name": "Direct Interaction",
+                                    "value": "true"
+                                },
+                                {
+                                    "name": "Mechanism of Action",
+                                    "value": "Epidermal growth factor receptor binding agent"
+                                }
+                            ],
+                            "publications": [],
+                            "sources": [
+                                {
+                                    "sourceDbName": "ChEMBL"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+}

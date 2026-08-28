@@ -24,6 +24,9 @@ function outcome(perSource: { source: string; status: string; detail?: string }[
     return perSource.find((s) => s.source === source);
 }
 
+// The wire shape of DGIdb. GraphQL answers a nullable field with an explicit
+// null, thus every second row carries `directionality: null`, as the live
+// payloads do.
 function dgidbGeneNode(name: string, interactionCount: number) {
     return {
         data: {
@@ -33,7 +36,7 @@ function dgidbGeneNode(name: string, interactionCount: number) {
                         name,
                         interactions: Array.from({ length: interactionCount }, (_, i) => ({
                             interactionScore: interactionCount - i,
-                            interactionTypes: [{ type: "inhibitor", directionality: "INHIBITORY" }],
+                            interactionTypes: [{ type: "inhibitor", directionality: i % 2 === 0 ? "INHIBITORY" : null }],
                             drug: { name: `DRUG${i}`, conceptId: `chembl:CHEMBL${i}` },
                             interactionAttributes: [{ name: "Assay", value: "x".repeat(500) }],
                             publications: [{ pmid: 1 }, { pmid: 2 }, { pmid: 3 }, { pmid: 4 }, { pmid: 5 }, { pmid: 6 }, { pmid: 7 }],
@@ -118,24 +121,52 @@ describe("drugGeneInteractions — DGIdb corpus", () => {
 
         expect(result.dgidb![0]!.interactions).toHaveLength(1);
     });
+
+    it("keeps a row whose directionality is null", async () => {
+        stubFetch(() => json(dgidbGeneNode("EGFR", 2)));
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ query: "EGFR", direction: "gene_to_drugs" }, ctx))._unsafeUnwrap();
+
+        const types = result.dgidb![0]!.interactions.map((i) => i.interactionTypes[0]!);
+        expect(types).toHaveLength(2);
+        expect(types[0]!.directionality).toBe("INHIBITORY");
+        expect(types[1]!.directionality).toBeUndefined();
+    });
+
+    it("skips a node whose name is null, and keeps the rest", async () => {
+        // `Gene.name` is nullable in the SDL, thus a null-named node must not
+        // reject the whole response.
+        stubFetch(() => json({ data: { genes: { nodes: [null, { name: null, interactions: [] }, { name: "EGFR", interactions: [] }] } } }));
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ query: ["EGFR", "BRAF"], direction: "gene_to_drugs" }, ctx))._unsafeUnwrap();
+
+        expect(result.dgidb!.map((r) => r.found)).toEqual([true, false]);
+    });
 });
 
 describe("drugGeneInteractions — DrugBank corpus", () => {
+    // The Discovery drug record. The API serves no indication, pharmacology,
+    // target list or drug-drug interaction on it.
     const IMATINIB = {
         drugbank_id: "DB00619",
         name: "Imatinib",
         description: "Tyrosine kinase inhibitor. ".repeat(40),
-        type: "small molecule",
-        groups: ["approved"],
-        categories: [{ category: "Antineoplastic Agents" }],
-        indication: "CML, GIST.",
-        pharmacodynamics: "Inhibits BCR-ABL.",
-        mechanism_of_action: "BCR-ABL inhibitor.",
-        toxicity: "Hepatotoxicity possible.",
-        half_life: "18 hours",
-        targets: [{ name: "BCR-ABL", gene_name: "ABL1", actions: ["inhibitor"], known_action: "yes" }],
-        drug_interactions: [{ drugbank_id: "DB00682", name: "Warfarin", description: "May increase anticoagulant effect." }],
+        type: "Small Molecule",
+        groups: ["Approved"],
     };
+
+    /** One bond row of `/bonds/targets`, as the Discovery documents show it. */
+    function bond(drugbankId: string, name: string) {
+        return {
+            type: "Target",
+            drug: { drugbank_id: drugbankId, name },
+            bio_entity: { bio_entity_id: "BE0000001", name: "Tyrosine-protein kinase ABL1", organism: "Humans" },
+            known_action: "yes",
+            actions: ["inhibitor"],
+        };
+    }
 
     it("maps a single record and previews prose by default", async () => {
         stubFetch(() => json(IMATINIB));
@@ -145,10 +176,21 @@ describe("drugGeneInteractions — DrugBank corpus", () => {
 
         const drug = result.drugbank![0]!;
         expect(drug.drugbankId).toBe("DB00619");
-        expect(drug.targets[0]!.geneSymbol).toBe("ABL1");
-        expect(drug.interactions[0]!.name).toBe("Warfarin");
+        expect(drug.type).toBe("Small Molecule");
+        expect(drug.groups).toEqual(["Approved"]);
         expect(drug.proseTruncated).toBe(true);
         expect(drug.description.length).toBe(200);
+    });
+
+    it("degrades to 'unavailable' on an error envelope, rather than one blank row", async () => {
+        stubFetch(() => json({ error: "Key invalid" }));
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ query: "DB00619", direction: "drug_to_genes", sources: ["drugbank"] }, ctx))._unsafeUnwrap();
+
+        expect(result.drugbank).toEqual([]);
+        expect(outcome(result.perSource, "drugbank")).toMatchObject({ status: "unavailable" });
+        expect(outcome(result.perSource, "drugbank")!.detail).toContain("did not match the expected schema");
     });
 
     it("returns the full prose on request", async () => {
@@ -165,17 +207,18 @@ describe("drugGeneInteractions — DrugBank corpus", () => {
         expect(drug.description.length).toBe(500);
     });
 
-    it("maps an array payload from a gene-side lookup", async () => {
-        stubFetch(() =>
-            json([
-                { drugbank_id: "DB00619", name: "Imatinib", targets: [{ gene_name: "ABL1", actions: ["inhibitor"] }] },
-                { drugbank_id: "DB01254", name: "Dasatinib", targets: [{ gene_name: "ABL1", actions: ["inhibitor"] }] },
-            ]),
-        );
+    it("reads the drugs of a gene off the target bonds", async () => {
+        const seen: string[] = [];
+        stubFetch((url) => {
+            seen.push(url);
+            return json([bond("DB00619", "Imatinib"), bond("DB01254", "Dasatinib"), bond("DB00619", "Imatinib")]);
+        });
 
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: "ABL1", direction: "gene_to_drugs", sources: ["drugbank"] }, ctx))._unsafeUnwrap();
 
+        expect(seen[0]).toContain("bonds/targets?q=polypeptides.gene_name%3AABL1");
+        // One drug binds a target through more than one bond, thus the rows repeat.
         expect(result.drugbank!.map((d) => d.drugbankId)).toEqual(["DB00619", "DB01254"]);
     });
 
@@ -195,7 +238,7 @@ describe("drugGeneInteractions — DrugBank corpus", () => {
     });
 
     it("says which identifier it read when handed a batch it cannot honour", async () => {
-        stubFetch((url) => (url.includes("dgidb") ? json(dgidbGeneNode("EGFR", 1)) : json([IMATINIB])));
+        stubFetch((url) => (url.includes("dgidb") ? json(dgidbGeneNode("EGFR", 1)) : json([bond("DB00619", "Imatinib")])));
 
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ query: ["EGFR", "ALK"], direction: "gene_to_drugs", sources: ["dgidb", "drugbank"] }, ctx))._unsafeUnwrap();

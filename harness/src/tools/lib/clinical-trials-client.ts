@@ -3,6 +3,10 @@
  *
  * Used by target-assessment workflow steps for §2.5 (clinical record),
  * §2.6.3 (trial AEs), §2.5 (failed trials), and §6.5 (discovery trials).
+ *
+ * Absence policy: the API omits the key of an absent value, and its OpenAPI
+ * document marks nothing as nullable. Thus a maybe-absent field carries
+ * `.optional()`, not `.nullable()`.
  */
 
 import { z } from "zod";
@@ -77,8 +81,14 @@ export interface TrialDetails {
     adverseEvents: AdverseEvent[];
 }
 
+/**
+ * One phase token of `protocolSection.designModule.phases`. `NA` marks a study
+ * that runs under no phase, such as an observational study.
+ */
+export type TrialPhase = "EARLY_PHASE1" | "PHASE1" | "PHASE2" | "PHASE3" | "PHASE4" | "NA";
+
 export interface SearchOptions {
-    phase?: "EARLY_PHASE1" | "PHASE1" | "PHASE2" | "PHASE3" | "PHASE4";
+    phase?: TrialPhase;
     status?: "RECRUITING" | "ACTIVE_NOT_RECRUITING" | "COMPLETED" | "NOT_YET_RECRUITING" | "TERMINATED" | "WITHDRAWN" | "SUSPENDED";
     limit?: number;
 }
@@ -178,15 +188,22 @@ const CtResultsSectionSchema = z.object({
     adverseEventsModule: CtAdverseEventsModuleSchema.optional(),
 });
 type CtResultsSection = z.infer<typeof CtResultsSectionSchema>;
-const CtStudySchema = z.object({
+/** One study record. It is exported so that the golden-fixture table drives it. */
+export const CtStudySchema = z.object({
     protocolSection: CtProtocolSectionSchema.optional(),
     resultsSection: CtResultsSectionSchema.optional(),
 });
 type CtStudy = z.infer<typeof CtStudySchema>;
-const CtSearchResponseSchema = z.object({
+/** The search envelope. It is exported so that the golden-fixture table drives it. */
+export const CtSearchResponseSchema = z.object({
     studies: z.array(CtStudySchema).optional(),
     totalCount: z.number().optional(),
 });
+
+/** The page ceiling of the v2 `pageSize` parameter. */
+const CT_MAX_PAGE_SIZE = 1000;
+/** How many rows a phase-filtered search asks for, per row that the caller wants. */
+const PHASE_PAGE_FACTOR = 5;
 
 const STUDY_FIELDS = [
     "NCTId",
@@ -246,15 +263,31 @@ export function mapClinicalTrialStudy(s: CtStudy): ClinicalTrial {
     };
 }
 
+/** Does the study run under the requested phase? The tokens are the wire tokens. */
+function studyHasPhase(study: CtStudy, phase: TrialPhase): boolean {
+    return (study.protocolSection?.designModule?.phases ?? []).includes(phase);
+}
+
+/**
+ * Search the registry.
+ *
+ * `totalFound` is the count of the whole query, which `countTotal=true` asks
+ * for. A phase filter runs over the returned page only, thus `totalFound` can
+ * exceed the number of trials that the answer carries.
+ */
 export async function searchTrials(query: string, options: SearchOptions = {}): Promise<{ totalFound: number; trials: ClinicalTrial[] }> {
     const limit = options.limit ?? 20;
+    // `filter.phase` is not a v2 parameter, and the API answers HTTP 400 for it.
+    // The phase filter runs here, over `designModule.phases`. A filtered page
+    // holds fewer rows than the caller asked for, thus the request asks for more.
+    const pageSize = options.phase ? Math.min(limit * PHASE_PAGE_FACTOR, CT_MAX_PAGE_SIZE) : limit;
     const params = new URLSearchParams({
         "query.term": query,
-        pageSize: String(limit),
+        pageSize: String(pageSize),
         format: "json",
+        countTotal: "true",
         fields: STUDY_FIELDS,
     });
-    if (options.phase) params.set("filter.phase", options.phase);
     if (options.status) params.set("filter.overallStatus", options.status);
 
     const res = await apiFetchValidated(`${CT_BASE}/studies?${params.toString()}`, CtSearchResponseSchema, {
@@ -263,7 +296,9 @@ export async function searchTrials(query: string, options: SearchOptions = {}): 
     if (res.isErr()) throw new Error(describeApiError(res.error));
 
     const studies = res.value?.studies ?? [];
-    const trials = studies.map(mapClinicalTrialStudy);
+    const phase = options.phase;
+    const selected = phase ? studies.filter((study) => studyHasPhase(study, phase)) : studies;
+    const trials = selected.slice(0, limit).map(mapClinicalTrialStudy);
     return { totalFound: res.value?.totalCount ?? trials.length, trials };
 }
 

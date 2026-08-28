@@ -1,0 +1,58 @@
+[
+    {
+        "hits": [
+            {
+                "field": "polypeptides.name",
+                "value": "<em>Fusion</em> <em>glycoprotein</em> F0"
+            }
+        ],
+        "type": "Target",
+        "drug": {
+            "drugbank_id": "DB16258",
+            "name": "Nirsevimab"
+        },
+        "bio_entity": {
+            "bio_entity_id": "BE0000686",
+            "name": "Fusion glycoprotein F0",
+            "organism": "Human respiratory syncytial virus B (strain 18537)"
+        },
+        "known_action": "yes",
+        "actions": [
+            "antibody"
+        ],
+        "inhibition_strength": null,
+        "induction_strength": null
+    },
+    {
+        "type": "Target",
+        "drug": {
+            "drugbank_id": "DB00110",
+            "name": "Palivizumab"
+        },
+        "bio_entity": {
+            "bio_entity_id": "BE0000686",
+            "name": "Fusion glycoprotein F0",
+            "organism": "Human respiratory syncytial virus B (strain 18537)"
+        },
+        "known_action": "yes",
+        "actions": [],
+        "inhibition_strength": null,
+        "induction_strength": null
+    },
+    {
+        "type": "Target",
+        "drug": {
+            "drugbank_id": "DB16258",
+            "name": "Nirsevimab"
+        },
+        "bio_entity": {
+            "bio_entity_id": "BE0000687",
+            "name": "Fusion glycoprotein F0",
+            "organism": "Human respiratory syncytial virus A"
+        },
+        "known_action": "unknown",
+        "actions": [
+            "antibody"
+        ]
+    }
+]

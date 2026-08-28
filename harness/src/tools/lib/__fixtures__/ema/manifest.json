@@ -1,0 +1,10 @@
+{
+    "referrals-catalogue.json": {
+        "url": "https://www.ema.europa.eu/en/documents/report/referrals-output-json-report_en.json",
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "meta.timestamp"
+        ],
+        "replay": false
+    }
+}

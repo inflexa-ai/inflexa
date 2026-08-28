@@ -1,0 +1,36 @@
+{
+    "gene-egfr-interactions.json": {
+        "url": "https://dgidb.org/api/graphql",
+        "method": "POST",
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": "{\"query\": \"query($genes: [String!]!) {\\n  genes(names: $genes) {\\n    nodes {\\n      name\\n      interactions {\\n        interactionScore\\n        interactionTypes { type directionality }\\n        drug { name conceptId }\\n        interactionAttributes { name value }\\n        publications { pmid }\\n        sources { sourceDbName }\\n      }\\n    }\\n  }\\n}\", \"variables\": {\"genes\": [\"EGFR\"]}}",
+        "capturedAt": "2026-08-28",
+        "replay": false
+    },
+    "graphql-error-envelope.json": {
+        "url": "https://dgidb.org/api/graphql",
+        "method": "POST",
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": "{\"query\": \"query { genes(names: [\\\"EGFR\\\"]) { nodes { name conceptId longName bogusField } } }\"}",
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "errors.*.locations"
+        ]
+    },
+    "_introspection_types.json": {
+        "url": "https://dgidb.org/api/graphql",
+        "capturedAt": "2026-08-28",
+        "oracle": true,
+        "replay": false
+    },
+    "_introspection_interactionclaimtype.json": {
+        "url": "https://dgidb.org/api/graphql",
+        "capturedAt": "2026-08-28",
+        "oracle": true,
+        "replay": false
+    }
+}

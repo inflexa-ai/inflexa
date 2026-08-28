@@ -1,0 +1,43 @@
+{
+    "search-imatinib.json": {
+        "url": "https://clinicaltrials.gov/api/v2/studies",
+        "params": {
+            "query.term": "imatinib",
+            "pageSize": "5",
+            "format": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "nextPageToken"
+        ],
+        "replay": false
+    },
+    "search-adalimumab-counttotal.json": {
+        "url": "https://clinicaltrials.gov/api/v2/studies",
+        "params": {
+            "query.term": "adalimumab",
+            "pageSize": "3",
+            "format": "json",
+            "countTotal": "true"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "nextPageToken",
+            "totalCount"
+        ],
+        "replay": false
+    },
+    "details-NCT00760929-results.json": {
+        "url": "https://clinicaltrials.gov/api/v2/studies/NCT00760929",
+        "params": {
+            "format": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "replay": false
+    },
+    "_openapi-v2.yaml": {
+        "url": "https://clinicaltrials.gov/api/oas/v2",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    }
+}

@@ -1,0 +1,888 @@
+{
+    "protocolSection": {
+        "identificationModule": {
+            "nctId": "NCT00760929",
+            "orgStudyIdInfo": {
+                "id": "NO21160"
+            },
+            "secondaryIdInfos": [
+                {
+                    "id": "2008-001736-12",
+                    "type": "EUDRACT_NUMBER"
+                },
+                {
+                    "id": "2008",
+                    "type": "NIH",
+                    "link": "https://reporter.nih.gov/quickSearch/2008"
+                }
+            ],
+            "organization": {
+                "fullName": "Hoffmann-La Roche",
+                "class": "INDUSTRY"
+            },
+            "briefTitle": "A Study of the Effect of R1507 in Combination With Tarceva (Erlotinib) on Progression-Free Survival in Patients With Stage IIIb/IV Non-Small Cell Lung Cancer (NSCLC).",
+            "officialTitle": "A Randomized, Placebo Controlled Study to Determine the Effect of Two Dose Schedules of R1507 or Placebo, Both in Combination With Erlotinib (Tarceva®), on Progression-free Survival in Patients With Advanced Non-small Cell Lung Cancer With Disease Progression After First or Second Line Chemotherapy"
+        },
+        "statusModule": {
+            "statusVerifiedDate": "2020-12",
+            "overallStatus": "TERMINATED",
+            "whyStopped": "The study was terminated due to the termination of the clinical development program.",
+            "expandedAccessInfo": {
+                "hasExpandedAccess": false
+            },
+            "startDateStruct": {
+                "date": "2008-11-10",
+                "type": "ACTUAL"
+            },
+            "primaryCompletionDateStruct": {
+                "date": "2010-06-25",
+                "type": "ACTUAL"
+            },
+            "completionDateStruct": {
+                "date": "2010-06-25",
+                "type": "ACTUAL"
+            },
+            "studyFirstSubmitDate": "2008-09-25",
+            "studyFirstSubmitQcDate": "2008-09-25",
+            "studyFirstPostDateStruct": {
+                "date": "2008-09-26",
+                "type": "ESTIMATED"
+            },
+            "resultsFirstSubmitDate": "2020-09-09",
+            "resultsFirstSubmitQcDate": "2020-12-05",
+            "resultsFirstPostDateStruct": {
+                "date": "2021-01-05",
+                "type": "ACTUAL"
+            },
+            "dispFirstSubmitDate": "2016-07-26",
+            "dispFirstSubmitQcDate": "2016-07-26",
+            "dispFirstPostDateStruct": {
+                "date": "2016-07-28",
+                "type": "ESTIMATED"
+            },
+            "lastUpdateSubmitDate": "2020-12-05",
+            "lastUpdatePostDateStruct": {
+                "date": "2021-01-05",
+                "type": "ACTUAL"
+            }
+        },
+        "sponsorCollaboratorsModule": {
+            "responsibleParty": {
+                "type": "SPONSOR"
+            },
+            "leadSponsor": {
+                "name": "Hoffmann-La Roche",
+                "class": "INDUSTRY"
+            }
+        },
+        "descriptionModule": {
+            "briefSummary": "This 4 arm study in patients with advanced Stage IIIb/IV non-small cell cancer (NSCLC) who failed at least one standard chemotherapy regimen will determine the proportion of patients with progression-free survival at 12 weeks following combination therapy with R1507 and Tarceva or placebo and Tarceva. Patients will be randomized to one of four treatment arms to receive R1507 (9mg/kg iv) or placebo weekly or R1507 (16mg/kg iv) or placebo every 3 weeks. Tarceva (150mg oral daily) will be administered in all treatment arms. Other disease-related endpoints including overall survival, objective response rate, time to response, time to progressive disease and duration of response will also be evaluated. The anticipated time on study treatment is 1-2 years, and the target sample size is \\<500 individuals."
+        },
+        "conditionsModule": {
+            "conditions": [
+                "Non-Squamous Non-Small Cell Lung Cancer"
+            ]
+        },
+        "designModule": {
+            "studyType": "INTERVENTIONAL",
+            "phases": [
+                "PHASE2"
+            ],
+            "designInfo": {
+                "allocation": "RANDOMIZED",
+                "interventionModel": "PARALLEL",
+                "primaryPurpose": "TREATMENT",
+                "maskingInfo": {
+                    "masking": "DOUBLE",
+                    "whoMasked": [
+                        "PARTICIPANT",
+                        "INVESTIGATOR"
+                    ]
+                }
+            },
+            "enrollmentInfo": {
+                "count": 171,
+                "type": "ACTUAL"
+            }
+        },
+        "armsInterventionsModule": {
+            "armGroups": [
+                {
+                    "label": "Placebo for R1507 (16mg/kg iv)",
+                    "type": "PLACEBO_COMPARATOR",
+                    "interventionNames": [
+                        "Drug: Placebo",
+                        "Drug: erlotinib [Tarceva]"
+                    ]
+                },
+                {
+                    "label": "Placebo for R1507 (9mg/kg iv)",
+                    "type": "PLACEBO_COMPARATOR",
+                    "interventionNames": [
+                        "Drug: Placebo",
+                        "Drug: erlotinib [Tarceva]"
+                    ]
+                },
+                {
+                    "label": "R1507 (16mg/kg iv)",
+                    "type": "EXPERIMENTAL",
+                    "interventionNames": [
+                        "Drug: RG1507",
+                        "Drug: erlotinib [Tarceva]"
+                    ]
+                },
+                {
+                    "label": "R1507 (9mg/kg iv)",
+                    "type": "EXPERIMENTAL",
+                    "interventionNames": [
+                        "Drug: RG1507",
+                        "Drug: erlotinib [Tarceva]"
+                    ]
+                }
+            ],
+            "interventions": [
+                {
+                    "type": "DRUG",
+                    "name": "Placebo",
+                    "description": "iv 9mg/kg weekly",
+                    "armGroupLabels": [
+                        "Placebo for R1507 (9mg/kg iv)"
+                    ]
+                },
+                {
+                    "type": "DRUG",
+                    "name": "Placebo",
+                    "description": "iv 16mg/kg every 3 weeks",
+                    "armGroupLabels": [
+                        "Placebo for R1507 (16mg/kg iv)"
+                    ]
+                },
+                {
+                    "type": "DRUG",
+                    "name": "RG1507",
+                    "description": "iv 9mg/kg weekly",
+                    "armGroupLabels": [
+                        "R1507 (9mg/kg iv)"
+                    ]
+                },
+                {
+                    "type": "DRUG",
+                    "name": "RG1507",
+                    "description": "iv 16mg/kg every 3 weeks",
+                    "armGroupLabels": [
+                        "R1507 (16mg/kg iv)"
+                    ]
+                },
+                {
+                    "type": "DRUG",
+                    "name": "erlotinib [Tarceva]",
+                    "description": "150mg oral daily",
+                    "armGroupLabels": [
+                        "Placebo for R1507 (16mg/kg iv)",
+                        "Placebo for R1507 (9mg/kg iv)",
+                        "R1507 (16mg/kg iv)",
+                        "R1507 (9mg/kg iv)"
+                    ]
+                }
+            ]
+        },
+        "outcomesModule": {
+            "primaryOutcomes": [
+                {
+                    "measure": "Number of Participants With Progression Free Survival (PFS)",
+                    "description": "PFS was defined as the time at which half of the participants have progressed (progressive disease \\[PD\\]) based on RECIST tumor response criteria or died from any cause, whichever occurred first. PD: At least a 20% increase in the sum of diameters of target lesions, taking as reference the smallest sum on study (this includes the baseline sum if that is the smallest on study). In addition to the relative increase of 20%, the sum must also demonstrate an absolute increase of at least 5 mm. Participants who had not died or progressed at the time of the final analysis were censored at the date of last contact.",
+                    "timeFrame": "12 weeks"
+                }
+            ],
+            "secondaryOutcomes": [
+                {
+                    "measure": "Overall Survival (OS)",
+                    "description": "OS was defined as the median time, in weeks, from the date of randomization to the date of death, due to any cause. Participants who have not died at the time of the final analysis will be censored at the date the participant was last known to be alive. The 90% CI was estimated using Kaplan-Meier methodology.",
+                    "timeFrame": "From baseline up to 20 months"
+                },
+                {
+                    "measure": "Objective Response Rate",
+                    "description": "Objective response rate (ORR) was defined by RECIST criteria as the best response achieved by a patient over the course of the trial, which includes a complete response (CR) or partial response (PR) that has been confirmed by a second tumor assessment no earlier than 4 weeks after the initial documentation, stable disease (SD), or progressive disease (PD). PR was defined as ≥ 30% decrease in sum of longest diameter of all target lesions, from baseline sum. CR was defined as disappearance of all target and non-target lesions. For CR or PR, tumor measurements must be confirmed by 2nd assessments within 4 weeks. PD = 20% increase in the sum of longest diameter of all target lesions, from smallest sum of longest diameter of all target lesions recorded at or after baseline; or a new lesion; or progression of non-target lesions. SD = Neither sufficient shrinkage to qualify for PR nor sufficient increase to qualify for PD, taking as reference the smallest sum diameters while on the study.",
+                    "timeFrame": "From baseline up to 20 months"
+                },
+                {
+                    "measure": "Duration of Response",
+                    "description": "Duration of response was defined as the time from the first documented complete response (CR) or partial response (PR) to the first documented disease progression (PD) or death, whichever occurs first. A CR was defined as the disappearance of all target lesions (TL). A PR was defined as at least a 30% decrease in the sum of the longest diameter (SLD) of TLs taking as reference the Baseline SLD. PD was defined as at least a 20% increase in the SLD of TLs, taking as reference the smallest SLD recorded since treatment started or the unequivocal progression of existing non-TLs.",
+                    "timeFrame": "From baseline up to 20 months"
+                },
+                {
+                    "measure": "Time to Response",
+                    "description": "This is defined for participants with objective response, as the date of randomization to the date of first CR or PR which will be the date the response is first radiographically documented following initiation of therapy (the date of the actual imaging modality).",
+                    "timeFrame": "From baseline up to 20 months"
+                }
+            ]
+        }
+    },
+    "resultsSection": {
+        "outcomeMeasuresModule": {
+            "outcomeMeasures": [
+                {
+                    "type": "PRIMARY",
+                    "title": "Number of Participants With Progression Free Survival (PFS)",
+                    "description": "PFS was defined as the time at which half of the participants have progressed (progressive disease \\[PD\\]) based on RECIST tumor response criteria or died from any cause, whichever occurred first. PD: At least a 20% increase in the sum of diameters of target lesions, taking as reference the smallest sum on study (this includes the baseline sum if that is the smallest on study). In addition to the relative increase of 20%, the sum must also demonstrate an absolute increase of at least 5 mm. Participants who had not died or progressed at the time of the final analysis were censored at the date of last contact.",
+                    "populationDescription": "All-treated population: All participants enrolled in the study who had been randomly assigned to one of the four study treatments were included. For analysis, participants receiving both weekly and every 3 weeks of placebo were combined and evaluated as one group.",
+                    "reportingStatus": "POSTED",
+                    "paramType": "COUNT_OF_PARTICIPANTS",
+                    "unitOfMeasure": "Participants",
+                    "timeFrame": "12 weeks",
+                    "groups": [
+                        {
+                            "id": "OG000",
+                            "title": "Placebo",
+                            "description": "Participants received a placebo equivalent to R1507 (9mg/kg iv) intravenously every week until disease progression or the placebo equivalent to R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        },
+                        {
+                            "id": "OG001",
+                            "title": "R1507 (9mg/kg iv)",
+                            "description": "Participants received R1507 (9mg/kg iv) intravenously every week until disease progression."
+                        },
+                        {
+                            "id": "OG002",
+                            "title": "R1507 (16mg/kg iv)",
+                            "description": "Participants received R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        }
+                    ],
+                    "denoms": [
+                        {
+                            "units": "Participants",
+                            "counts": [
+                                {
+                                    "groupId": "OG000",
+                                    "value": "57"
+                                },
+                                {
+                                    "groupId": "OG001",
+                                    "value": "57"
+                                },
+                                {
+                                    "groupId": "OG002",
+                                    "value": "57"
+                                }
+                            ]
+                        }
+                    ],
+                    "classes": [
+                        {
+                            "title": "Progression-Free & Alive",
+                            "categories": [
+                                {
+                                    "measurements": [
+                                        {
+                                            "groupId": "OG000",
+                                            "value": 5.6
+                                        },
+                                        {
+                                            "groupId": "OG001",
+                                            "value": "16"
+                                        },
+                                        {
+                                            "groupId": "OG002",
+                                            "value": "21"
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "title": "Progressed, Died, or Unknown",
+                            "categories": [
+                                {
+                                    "measurements": [
+                                        {
+                                            "groupId": "OG000",
+                                            "value": "39"
+                                        },
+                                        {
+                                            "groupId": "OG001",
+                                            "value": "41"
+                                        },
+                                        {
+                                            "groupId": "OG002",
+                                            "value": "36"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "SECONDARY",
+                    "title": "Overall Survival (OS)",
+                    "description": "OS was defined as the median time, in weeks, from the date of randomization to the date of death, due to any cause. Participants who have not died at the time of the final analysis will be censored at the date the participant was last known to be alive. The 90% CI was estimated using Kaplan-Meier methodology.",
+                    "populationDescription": "All-treated population: All participants enrolled in the study who had been randomly assigned to one of the four study treatments were included. For analysis, participants receiving both weekly and every 3 weeks of placebo were combined and evaluated as one group.",
+                    "reportingStatus": "POSTED",
+                    "paramType": "MEDIAN",
+                    "dispersionType": "90% Confidence Interval",
+                    "unitOfMeasure": "Weeks",
+                    "timeFrame": "From baseline up to 20 months",
+                    "groups": [
+                        {
+                            "id": "OG000",
+                            "title": "Placebo",
+                            "description": "Participants received a placebo equivalent to R1507 (9mg/kg iv) intravenously every week until disease progression or the placebo equivalent to R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        },
+                        {
+                            "id": "OG001",
+                            "title": "R1507 (9mg/kg iv)",
+                            "description": "Participants received R1507 (9mg/kg iv) intravenously every week until disease progression."
+                        },
+                        {
+                            "id": "OG002",
+                            "title": "R1507 (16mg/kg iv)",
+                            "description": "Participants received R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        }
+                    ],
+                    "denoms": [
+                        {
+                            "units": "Participants",
+                            "counts": [
+                                {
+                                    "groupId": "OG000",
+                                    "value": "57"
+                                },
+                                {
+                                    "groupId": "OG001",
+                                    "value": "57"
+                                },
+                                {
+                                    "groupId": "OG002",
+                                    "value": "57"
+                                }
+                            ]
+                        }
+                    ],
+                    "classes": [
+                        {
+                            "categories": [
+                                {
+                                    "measurements": [
+                                        {
+                                            "groupId": "OG000",
+                                            "value": "35.1",
+                                            "lowerLimit": "20.9",
+                                            "upperLimit": "44.7"
+                                        },
+                                        {
+                                            "groupId": "OG001",
+                                            "value": "35.1",
+                                            "lowerLimit": "26.1",
+                                            "upperLimit": "43.4"
+                                        },
+                                        {
+                                            "groupId": "OG002",
+                                            "value": "52.4",
+                                            "lowerLimit": "33.7",
+                                            "upperLimit": "65.7"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    "analyses": [
+                        {
+                            "groupIds": [
+                                "OG000",
+                                "OG001"
+                            ],
+                            "nonInferiorityType": "SUPERIORITY",
+                            "pValue": "0.4301",
+                            "statisticalMethod": "Wald Test",
+                            "paramType": "Hazard Ratio (HR)",
+                            "paramValue": "0.84",
+                            "ciPctValue": "90",
+                            "ciLowerLimit": "0.58",
+                            "ciUpperLimit": "1.21"
+                        },
+                        {
+                            "groupIds": [
+                                "OG000",
+                                "OG002"
+                            ],
+                            "nonInferiorityType": "SUPERIORITY",
+                            "pValue": "0.0342",
+                            "statisticalMethod": "Wald Test",
+                            "paramType": "Hazard Ratio (HR)",
+                            "paramValue": "0.61",
+                            "ciPctValue": "90",
+                            "ciLowerLimit": "0.42",
+                            "ciUpperLimit": "0.90"
+                        }
+                    ]
+                },
+                {
+                    "type": "SECONDARY",
+                    "title": "Objective Response Rate",
+                    "description": "Objective response rate (ORR) was defined by RECIST criteria as the best response achieved by a patient over the course of the trial, which includes a complete response (CR) or partial response (PR) that has been confirmed by a second tumor assessment no earlier than 4 weeks after the initial documentation, stable disease (SD), or progressive disease (PD). PR was defined as ≥ 30% decrease in sum of longest diameter of all target lesions, from baseline sum. CR was defined as disappearance of all target and non-target lesions. For CR or PR, tumor measurements must be confirmed by 2nd assessments within 4 weeks. PD = 20% increase in the sum of longest diameter of all target lesions, from smallest sum of longest diameter of all target lesions recorded at or after baseline; or a new lesion; or progression of non-target lesions. SD = Neither sufficient shrinkage to qualify for PR nor sufficient increase to qualify for PD, taking as reference the smallest sum diameters while on the study.",
+                    "populationDescription": "All-treated population: All participants enrolled in the study who had been randomly assigned to one of the four study treatments were included. For analysis, participants receiving both weekly and every 3 weeks of placebo were combined and evaluated as one group.",
+                    "reportingStatus": "POSTED",
+                    "paramType": "NUMBER",
+                    "dispersionType": "95% Confidence Interval",
+                    "unitOfMeasure": "Percentage of Participants",
+                    "timeFrame": "From baseline up to 20 months",
+                    "groups": [
+                        {
+                            "id": "OG000",
+                            "title": "Placebo",
+                            "description": "Participants received a placebo equivalent to R1507 (9mg/kg iv) intravenously every week until disease progression or the placebo equivalent to R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        },
+                        {
+                            "id": "OG001",
+                            "title": "R1507 (9mg/kg iv)",
+                            "description": "Participants received R1507 (9mg/kg iv) intravenously every week until disease progression."
+                        },
+                        {
+                            "id": "OG002",
+                            "title": "R1507 (16mg/kg iv)",
+                            "description": "Participants received R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        }
+                    ],
+                    "denoms": [
+                        {
+                            "units": "Participants",
+                            "counts": [
+                                {
+                                    "groupId": "OG000",
+                                    "value": "57"
+                                },
+                                {
+                                    "groupId": "OG001",
+                                    "value": "57"
+                                },
+                                {
+                                    "groupId": "OG002",
+                                    "value": "57"
+                                }
+                            ]
+                        }
+                    ],
+                    "classes": [
+                        {
+                            "categories": [
+                                {
+                                    "measurements": [
+                                        {
+                                            "groupId": "OG000",
+                                            "value": "8.8",
+                                            "lowerLimit": "3.5",
+                                            "upperLimit": "17.6"
+                                        },
+                                        {
+                                            "groupId": "OG001",
+                                            "value": "7",
+                                            "lowerLimit": "2.4",
+                                            "upperLimit": "15.3"
+                                        },
+                                        {
+                                            "groupId": "OG002",
+                                            "value": "7",
+                                            "lowerLimit": "2.4",
+                                            "upperLimit": "15.3"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "SECONDARY",
+                    "title": "Duration of Response",
+                    "description": "Duration of response was defined as the time from the first documented complete response (CR) or partial response (PR) to the first documented disease progression (PD) or death, whichever occurs first. A CR was defined as the disappearance of all target lesions (TL). A PR was defined as at least a 30% decrease in the sum of the longest diameter (SLD) of TLs taking as reference the Baseline SLD. PD was defined as at least a 20% increase in the SLD of TLs, taking as reference the smallest SLD recorded since treatment started or the unequivocal progression of existing non-TLs.",
+                    "populationDescription": "All-treated population: All participants enrolled in the study who had been randomly assigned to one of the four study treatments were included. For analysis, participants receiving both weekly and every 3 weeks of placebo were combined and evaluated as one group.",
+                    "reportingStatus": "POSTED",
+                    "paramType": "MEAN",
+                    "dispersionType": "Standard Deviation",
+                    "unitOfMeasure": "days",
+                    "timeFrame": "From baseline up to 20 months",
+                    "groups": [
+                        {
+                            "id": "OG000",
+                            "title": "Placebo",
+                            "description": "Participants received a placebo equivalent to R1507 (9mg/kg iv) intravenously every week until disease progression or the placebo equivalent to R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        },
+                        {
+                            "id": "OG001",
+                            "title": "R1507 (9mg/kg iv)",
+                            "description": "Participants received R1507 (9mg/kg iv) intravenously every week until disease progression."
+                        },
+                        {
+                            "id": "OG002",
+                            "title": "R1507 (16mg/kg iv)",
+                            "description": "Participants received R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        }
+                    ],
+                    "denoms": [
+                        {
+                            "units": "Participants",
+                            "counts": [
+                                {
+                                    "groupId": "OG000",
+                                    "value": "5"
+                                },
+                                {
+                                    "groupId": "OG001",
+                                    "value": "4"
+                                },
+                                {
+                                    "groupId": "OG002",
+                                    "value": "4"
+                                }
+                            ]
+                        }
+                    ],
+                    "classes": [
+                        {
+                            "categories": [
+                                {
+                                    "measurements": [
+                                        {
+                                            "groupId": "OG000",
+                                            "value": "260.40",
+                                            "spread": "140.56"
+                                        },
+                                        {
+                                            "groupId": "OG001",
+                                            "value": "215.50",
+                                            "spread": "91.70"
+                                        },
+                                        {
+                                            "groupId": "OG002",
+                                            "value": "257.75",
+                                            "spread": "130.07"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "SECONDARY",
+                    "title": "Time to Response",
+                    "description": "This is defined for participants with objective response, as the date of randomization to the date of first CR or PR which will be the date the response is first radiographically documented following initiation of therapy (the date of the actual imaging modality).",
+                    "populationDescription": "All-treated population: All participants enrolled in the study who had been randomly assigned to one of the four study treatments were included. For analysis, participants receiving both weekly and every 3 weeks of placebo were combined and evaluated as one group.",
+                    "reportingStatus": "POSTED",
+                    "paramType": "MEAN",
+                    "dispersionType": "Standard Deviation",
+                    "unitOfMeasure": "days",
+                    "timeFrame": "From baseline up to 20 months",
+                    "groups": [
+                        {
+                            "id": "OG000",
+                            "title": "Placebo",
+                            "description": "Participants received a placebo equivalent to R1507 (9mg/kg iv) intravenously every week until disease progression or the placebo equivalent to R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        },
+                        {
+                            "id": "OG001",
+                            "title": "R1507 (9mg/kg iv)",
+                            "description": "Participants received R1507 (9mg/kg iv) intravenously every week until disease progression."
+                        },
+                        {
+                            "id": "OG002",
+                            "title": "R1507 (16mg/kg iv)",
+                            "description": "Participants received R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression."
+                        }
+                    ],
+                    "denoms": [
+                        {
+                            "units": "Participants",
+                            "counts": [
+                                {
+                                    "groupId": "OG000",
+                                    "value": "5"
+                                },
+                                {
+                                    "groupId": "OG001",
+                                    "value": "4"
+                                },
+                                {
+                                    "groupId": "OG002",
+                                    "value": "4"
+                                }
+                            ]
+                        }
+                    ],
+                    "classes": [
+                        {
+                            "categories": [
+                                {
+                                    "measurements": [
+                                        {
+                                            "groupId": "OG000",
+                                            "value": "42.40",
+                                            "spread": "4.34"
+                                        },
+                                        {
+                                            "groupId": "OG001",
+                                            "value": "65.25",
+                                            "spread": "22.95"
+                                        },
+                                        {
+                                            "groupId": "OG002",
+                                            "value": "85.25",
+                                            "spread": "34.70"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        "adverseEventsModule": {
+            "frequencyThreshold": "0.05",
+            "timeFrame": "Baseline up to 20 months",
+            "eventGroups": [
+                {
+                    "id": "EG000",
+                    "title": "Placebo for R1507 (9mg/kg iv)",
+                    "description": "Participants received a placebo equivalent to R1507 (9mg/kg iv) intravenously every week until disease progression.",
+                    "deathsNumAffected": 20,
+                    "deathsNumAtRisk": 26,
+                    "seriousNumAffected": 5,
+                    "seriousNumAtRisk": 26,
+                    "otherNumAffected": 26,
+                    "otherNumAtRisk": 26
+                },
+                {
+                    "id": "EG001",
+                    "title": "Placebo for R1507 (16mg/kg iv)",
+                    "description": "Participants received the placebo equivalent to R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression.",
+                    "deathsNumAffected": 22,
+                    "deathsNumAtRisk": 29,
+                    "seriousNumAffected": 3,
+                    "seriousNumAtRisk": 29,
+                    "otherNumAffected": 27,
+                    "otherNumAtRisk": 29
+                },
+                {
+                    "id": "EG002",
+                    "title": "R1507 (9mg/kg iv)",
+                    "description": "Participants received R1507 (9mg/kg iv) intravenously every week until disease progression.",
+                    "deathsNumAffected": 43,
+                    "deathsNumAtRisk": 59,
+                    "seriousNumAffected": 18,
+                    "seriousNumAtRisk": 59,
+                    "otherNumAffected": 57,
+                    "otherNumAtRisk": 59
+                },
+                {
+                    "id": "EG003",
+                    "title": "R1507 (16mg/kg iv)",
+                    "description": "Participants received R1507 (16 mg/kg iv) intravenously every 3 weeks until disease progression.",
+                    "deathsNumAffected": 34,
+                    "deathsNumAtRisk": 57,
+                    "seriousNumAffected": 14,
+                    "seriousNumAtRisk": 57,
+                    "otherNumAffected": 56,
+                    "otherNumAtRisk": 57
+                }
+            ],
+            "seriousEvents": [
+                {
+                    "term": "INFECTION",
+                    "organSystem": "Infections and infestations",
+                    "sourceVocabulary": "MedDRA version 13.0.",
+                    "assessmentType": "NON_SYSTEMATIC_ASSESSMENT",
+                    "stats": [
+                        {
+                            "groupId": "EG000",
+                            "numEvents": 0,
+                            "numAffected": 0,
+                            "numAtRisk": 26
+                        },
+                        {
+                            "groupId": "EG001",
+                            "numEvents": 0,
+                            "numAffected": 0,
+                            "numAtRisk": 29
+                        },
+                        {
+                            "groupId": "EG002",
+                            "numEvents": 2,
+                            "numAffected": 2,
+                            "numAtRisk": 59
+                        },
+                        {
+                            "groupId": "EG003",
+                            "numEvents": 1,
+                            "numAffected": 1,
+                            "numAtRisk": 57
+                        }
+                    ]
+                },
+                {
+                    "term": "PNEUMONIA",
+                    "organSystem": "Infections and infestations",
+                    "sourceVocabulary": "MedDRA version 13.0.",
+                    "assessmentType": "NON_SYSTEMATIC_ASSESSMENT",
+                    "stats": [
+                        {
+                            "groupId": "EG000",
+                            "numEvents": 1,
+                            "numAffected": 1,
+                            "numAtRisk": 26
+                        },
+                        {
+                            "groupId": "EG001",
+                            "numEvents": 0,
+                            "numAffected": 0,
+                            "numAtRisk": 29
+                        },
+                        {
+                            "groupId": "EG002",
+                            "numEvents": 0,
+                            "numAffected": 0,
+                            "numAtRisk": 59
+                        },
+                        {
+                            "groupId": "EG003",
+                            "numEvents": 1,
+                            "numAffected": 1,
+                            "numAtRisk": 57
+                        }
+                    ]
+                },
+                {
+                    "term": "BACTERAEMIA",
+                    "organSystem": "Infections and infestations",
+                    "sourceVocabulary": "MedDRA version 13.0.",
+                    "assessmentType": "NON_SYSTEMATIC_ASSESSMENT",
+                    "stats": [
+                        {
+                            "groupId": "EG000",
+                            "numEvents": 1,
+                            "numAffected": 1,
+                            "numAtRisk": 26
+                        },
+                        {
+                            "groupId": "EG001",
+                            "numEvents": 0,
+                            "numAffected": 0,
+                            "numAtRisk": 29
+                        },
+                        {
+                            "groupId": "EG002",
+                            "numEvents": 0,
+                            "numAffected": 0,
+                            "numAtRisk": 59
+                        },
+                        {
+                            "groupId": "EG003",
+                            "numEvents": 0,
+                            "numAffected": 0,
+                            "numAtRisk": 57
+                        }
+                    ]
+                }
+            ],
+            "otherEvents": [
+                {
+                    "term": "RASH",
+                    "organSystem": "Skin and subcutaneous tissue disorders",
+                    "sourceVocabulary": "MedDRA version 13.0.",
+                    "assessmentType": "NON_SYSTEMATIC_ASSESSMENT",
+                    "stats": [
+                        {
+                            "groupId": "EG000",
+                            "numEvents": 14,
+                            "numAffected": 14,
+                            "numAtRisk": 26
+                        },
+                        {
+                            "groupId": "EG001",
+                            "numEvents": 16,
+                            "numAffected": 16,
+                            "numAtRisk": 29
+                        },
+                        {
+                            "groupId": "EG002",
+                            "numEvents": 32,
+                            "numAffected": 32,
+                            "numAtRisk": 59
+                        },
+                        {
+                            "groupId": "EG003",
+                            "numEvents": 42,
+                            "numAffected": 42,
+                            "numAtRisk": 57
+                        }
+                    ]
+                },
+                {
+                    "term": "PRURITUS",
+                    "organSystem": "Skin and subcutaneous tissue disorders",
+                    "sourceVocabulary": "MedDRA version 13.0.",
+                    "assessmentType": "NON_SYSTEMATIC_ASSESSMENT",
+                    "stats": [
+                        {
+                            "groupId": "EG000",
+                            "numEvents": 2,
+                            "numAffected": 2,
+                            "numAtRisk": 26
+                        },
+                        {
+                            "groupId": "EG001",
+                            "numEvents": 3,
+                            "numAffected": 3,
+                            "numAtRisk": 29
+                        },
+                        {
+                            "groupId": "EG002",
+                            "numEvents": 5,
+                            "numAffected": 5,
+                            "numAtRisk": 59
+                        },
+                        {
+                            "groupId": "EG003",
+                            "numEvents": 7,
+                            "numAffected": 7,
+                            "numAtRisk": 57
+                        }
+                    ]
+                },
+                {
+                    "term": "DRY SKIN",
+                    "organSystem": "Skin and subcutaneous tissue disorders",
+                    "sourceVocabulary": "MedDRA version 13.0.",
+                    "assessmentType": "NON_SYSTEMATIC_ASSESSMENT",
+                    "stats": [
+                        {
+                            "groupId": "EG000",
+                            "numEvents": 3,
+                            "numAffected": 3,
+                            "numAtRisk": 26
+                        },
+                        {
+                            "groupId": "EG001",
+                            "numEvents": 4,
+                            "numAffected": 4,
+                            "numAtRisk": 29
+                        },
+                        {
+                            "groupId": "EG002",
+                            "numEvents": 5,
+                            "numAffected": 5,
+                            "numAtRisk": 59
+                        },
+                        {
+                            "groupId": "EG003",
+                            "numEvents": 4,
+                            "numAffected": 4,
+                            "numAtRisk": 57
+                        }
+                    ]
+                }
+            ]
+        }
+    },
+    "hasResults": true
+}

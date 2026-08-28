@@ -1,0 +1,158 @@
+{
+    "totalCount": 881,
+    "studies": [
+        {
+            "protocolSection": {
+                "identificationModule": {
+                    "nctId": "NCT04798755",
+                    "briefTitle": "Efficacy, Safety and Costs of Methotrexate, Adalimumab, or Their Combination in Non-infectious Non-anterior Uveitis",
+                    "officialTitle": "Efficacy, Safety and Cost-effectiveness of Methotrexate, Adalimumab, or Their Combination in Non-infectious Non-anterior Uveitis: a Randomized, Parallel 3 Arms, Active-controlled, Phase 3 Open Label With Blinded Outcome Assessment Study"
+                },
+                "statusModule": {
+                    "overallStatus": "UNKNOWN",
+                    "startDateStruct": {
+                        "date": "2022-01-12"
+                    },
+                    "primaryCompletionDateStruct": {
+                        "date": "2024-10-01"
+                    }
+                },
+                "sponsorCollaboratorsModule": {
+                    "leadSponsor": {
+                        "name": "Hospital San Carlos, Madrid"
+                    }
+                },
+                "descriptionModule": {
+                    "briefSummary": "Introduction: Non-infectious uveitis (NIUs) include a heterogeneous group of sight-threatening conditions. NIUs can be highly disabling and be associated with a profound impact in the quality-of-life (QoL) and wellbeing. Their correct management sometimes requires the use of immunosuppressive drugs (ISDs), which can be prescribed in monotherapy or in combination. Several observational studies have provided evidence that the use of ISDs in combination could be more effective than and as safe as their use in monotherapy. However, a direct comparison between these two treatment strategies has not been carried out yet.\n\nMethods and analysis: The Combination THerapy with mEthotrexate and adalImumAb for uveitis (CoTHEIA) study is a phase III, multicenter, prospective, randomized, single-blinded with masked outcome assessment, parallel three arms with 1:1:1 allocation, active-controlled, superiority study design, comparing the efficacy, safety and cost-effectiveness of methotrexate (MTX), adalimumab (ADA), or their combination in non-infectious non-anterior uveitis. The duration of the treatment and follow-up will last up to 52 weeks. The complete and maintained resolution of the ocular inflammation will be assessed by masked evaluators (primary outcome). In addition to other secundray measures of efficacy (QoL, visual acuity, costs) and safety, we will identify subjects' subgroups with different treatment responses by developing prediction models based on machine learning techniques using genetic and proteomic biomarkers."
+                },
+                "conditionsModule": {
+                    "conditions": [
+                        "Uveitis"
+                    ]
+                },
+                "designModule": {
+                    "studyType": "INTERVENTIONAL",
+                    "phases": [
+                        "PHASE3"
+                    ],
+                    "designInfo": {
+                        "primaryPurpose": "TREATMENT"
+                    },
+                    "enrollmentInfo": {
+                        "count": 192
+                    }
+                },
+                "armsInterventionsModule": {
+                    "interventions": [
+                        {
+                            "type": "DRUG",
+                            "name": "Methotrexate",
+                            "description": "Inicial dose 15mg/week increasing up to 25 mg/week"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "Adalimumab",
+                            "description": "At the Baselin visit adalimumab 80 mg subcutaneous loading dose followed a week later by 40 mg every-other-week starting at Week 1."
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "Adalimumab+Methotrexate",
+                            "description": "Adalimumab: at the Baseline visit 80 mg subcutaneous loading dose followed a week later by 40 mg every-other-week starting at Week 1.\n\nMethotrexate:Inicial dose 15mg/week increasing up to 25 mg/week"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "protocolSection": {
+                "identificationModule": {
+                    "nctId": "NCT02925338",
+                    "briefTitle": "National Observational Study On The Use Of Inflectra™ An Infliximab Biosimilar In Real Life",
+                    "officialTitle": "OBSERVATOIRE NATIONAL D'UTILISATION D'INFLECTRA™ EN VIE RÉELLE."
+                },
+                "statusModule": {
+                    "overallStatus": "COMPLETED",
+                    "startDateStruct": {
+                        "date": "2016-10-19"
+                    },
+                    "primaryCompletionDateStruct": {
+                        "date": "2021-04-12"
+                    }
+                },
+                "sponsorCollaboratorsModule": {
+                    "leadSponsor": {
+                        "name": "Pfizer"
+                    }
+                },
+                "descriptionModule": {
+                    "briefSummary": "National, prospective, multicentre observational study designed for eligible patients treated with Inflectra.\n\nIts objectives are to describe under real conditions of use, the profile of patients treated with Inflectra and the response to treatment."
+                },
+                "conditionsModule": {
+                    "conditions": [
+                        "Crohn Disease",
+                        "Ulcerative Colitis",
+                        "Rheumatoid Arthritis",
+                        "Ankylosing Spondylitis",
+                        "Psoriatic Arthritis"
+                    ]
+                },
+                "designModule": {
+                    "studyType": "OBSERVATIONAL",
+                    "designInfo": {},
+                    "enrollmentInfo": {
+                        "count": 1431
+                    }
+                },
+                "armsInterventionsModule": {
+                    "interventions": [
+                        {
+                            "type": "OTHER",
+                            "name": "QOL questionaire",
+                            "description": "Health assessment questionnaire disability index for rheumatoid polyarthritis questionnaire"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "protocolSection": {
+                "identificationModule": {
+                    "nctId": "NCT01759264",
+                    "briefTitle": "An Observational Study of Fecal Calprotectin as Clinical Tool in Monitoring Moderate-to-severe Crohn's Disease on Adalimumab Induction Therapy: a KoRean Experience (FAIR)",
+                    "officialTitle": "An Observational Study of Fecal Calprotectin as Clinical Tool in Monitoring Moderate-to-severe Crohn's Disease on Adalimumab Induction Therapy: a KoRean Experience"
+                },
+                "statusModule": {
+                    "overallStatus": "COMPLETED",
+                    "startDateStruct": {
+                        "date": "2013-01"
+                    },
+                    "primaryCompletionDateStruct": {
+                        "date": "2014-05"
+                    }
+                },
+                "sponsorCollaboratorsModule": {
+                    "leadSponsor": {
+                        "name": "AbbVie (prior sponsor, Abbott)"
+                    }
+                },
+                "descriptionModule": {
+                    "briefSummary": "The objective of this observational study was to assess changes in fecal calprotectin levels and its suitability as a monitoring tool in participants with moderate-to-severe Crohn's Disease who were treated with adalimumab."
+                },
+                "conditionsModule": {
+                    "conditions": [
+                        "Crohn's Disease"
+                    ]
+                },
+                "designModule": {
+                    "studyType": "OBSERVATIONAL",
+                    "designInfo": {},
+                    "enrollmentInfo": {
+                        "count": 101
+                    }
+                },
+                "armsInterventionsModule": {}
+            }
+        }
+    ],
+    "nextPageToken": "ZVt07cGHkvI2wRk2CJf6_LLt2oHCes8od7KrgP4TnDqWtA"
+}

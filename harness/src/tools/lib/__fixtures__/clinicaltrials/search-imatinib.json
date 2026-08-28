@@ -1,0 +1,343 @@
+{
+    "studies": [
+        {
+            "protocolSection": {
+                "identificationModule": {
+                    "nctId": "NCT00039364",
+                    "briefTitle": "Imatinib Mesylate in Treating Patients With Gliomas",
+                    "officialTitle": "Open Label Phase II Study On STI571 (Glivec) Administered As A Daily Oral Treatment In Gliomas"
+                },
+                "statusModule": {
+                    "overallStatus": "COMPLETED",
+                    "startDateStruct": {
+                        "date": "2002-03"
+                    },
+                    "primaryCompletionDateStruct": {
+                        "date": "2004-08"
+                    }
+                },
+                "sponsorCollaboratorsModule": {
+                    "leadSponsor": {
+                        "name": "European Organisation for Research and Treatment of Cancer - EORTC"
+                    }
+                },
+                "descriptionModule": {
+                    "briefSummary": "RATIONALE: Imatinib mesylate may interfere with the growth of tumor cells and slow the growth of the tumor.\n\nPURPOSE: Phase II trial to study the effectiveness of imatinib mesylate in treating patients who have gliomas.",
+                    "detailedDescription": "OBJECTIVES:\n\n* Determine the therapeutic activity of imatinib mesylate (in terms of objective response and progression-free survival at 6 months) in patients with gliomas.\n* Determine the safety of this drug in these patients.\n* Determine the pharmacokinetics of this drug in these patients.\n\nOUTLINE: This is a multicenter study. Patients are stratified according to glioma (glioblastoma multiforme vs anaplastic oligodendroglioma or mixed oligoastrocytoma vs anaplastic astrocytoma or recurrent low-grade astrocytoma).\n\nPatients receive oral imatinib mesylate once or twice daily. Treatment repeats every 4 weeks for up to 9 courses in the absence of disease progression or unacceptable toxicity.\n\nPatients are followed every 2 months for 6 months and then every 3 months thereafter.\n\nPROJECTED ACCRUAL: A total of 77 patients (29 patients with glioblastoma multiforme, 24 patients with anaplastic oligodendroglioma or mixed oligoastrocytoma, and 24 patients with anaplastic astrocytoma or recurrent low-grade astrocytoma) will be accrued for this study."
+                },
+                "conditionsModule": {
+                    "conditions": [
+                        "Brain and Central Nervous System Tumors"
+                    ]
+                },
+                "designModule": {
+                    "studyType": "INTERVENTIONAL",
+                    "phases": [
+                        "PHASE2"
+                    ],
+                    "designInfo": {
+                        "primaryPurpose": "TREATMENT"
+                    },
+                    "enrollmentInfo": {
+                        "count": 112
+                    }
+                },
+                "armsInterventionsModule": {
+                    "interventions": [
+                        {
+                            "type": "DRUG",
+                            "name": "imatinib mesylate"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "protocolSection": {
+                "identificationModule": {
+                    "nctId": "NCT01673009",
+                    "briefTitle": "Phase II Study of Gleevec/Imatinib Mesylate (STI-571, NCS 716051) in Neurofibromatosis (NF1) Patients With Plexiform Neurofibromas",
+                    "officialTitle": "Phase II Study of Gleevec/Imatinib Mesylate (STI-571, NCS 716051) in Neurofibromatosis (NF1) Patients With Plexiform Neurofibromas"
+                },
+                "statusModule": {
+                    "overallStatus": "COMPLETED",
+                    "startDateStruct": {
+                        "date": "2006-05"
+                    },
+                    "primaryCompletionDateStruct": {
+                        "date": "2011-12"
+                    }
+                },
+                "sponsorCollaboratorsModule": {
+                    "leadSponsor": {
+                        "name": "Indiana University"
+                    }
+                },
+                "descriptionModule": {
+                    "briefSummary": "THe primary objective is to estimate the response rate at 6 months to Gleevec® in patients with plexiform neurofibromas",
+                    "detailedDescription": "This is an open-label Phase II Study to determine the efficacy of Gleevec® in neurofibromatosis (NF1) patients with plexiform neurofibromas with the secondary goals of determining the toxicity, and tumor markers in this genetically defined population. The rationale for this study arises from the response of human and murine NF1 cells to Gleevec® in vitro and the response of a single NF1 patient treated with Gleevec® for airway compression by a plexiform neurofibroma with a dramatic response not previously seen in NF1 therapy. The plan of therapy will include oral dosing of Gleevec® at 440 mg/m\\^2/day (max 800 mg/day) for pediatric subjects and 800 mg/day for adult patients. (with 25% dose reduction for significant toxicity). Treatment will continue for 6 months with an option to continue as long as the patient remains on study provided the patient shows benefit from treatments with Gleevec® and there are no safety concerns."
+                },
+                "conditionsModule": {
+                    "conditions": [
+                        "Neurofibromatosis"
+                    ]
+                },
+                "designModule": {
+                    "studyType": "INTERVENTIONAL",
+                    "phases": [
+                        "PHASE2"
+                    ],
+                    "designInfo": {
+                        "primaryPurpose": "TREATMENT"
+                    },
+                    "enrollmentInfo": {
+                        "count": 36
+                    }
+                },
+                "armsInterventionsModule": {
+                    "interventions": [
+                        {
+                            "type": "DRUG",
+                            "name": "Gleevec",
+                            "description": "Gleevec® will be dosed orally 440 mg/m\\^2/day (max 800 mg/day) for pediatric subjects and 800 mg/day for adult patients."
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "protocolSection": {
+                "identificationModule": {
+                    "nctId": "NCT00081926",
+                    "briefTitle": "Gleevec Trial in Patients With Newly Diagnosed Chronic Phase Chronic Myelogenous Leukemia"
+                },
+                "statusModule": {
+                    "overallStatus": "COMPLETED",
+                    "startDateStruct": {
+                        "date": "2003-10"
+                    }
+                },
+                "sponsorCollaboratorsModule": {
+                    "leadSponsor": {
+                        "name": "Novartis Pharmaceuticals"
+                    }
+                },
+                "descriptionModule": {
+                    "briefSummary": "This study will evaluate the molecular response to high dose Gleevec in newly diagnosed patients with Chronic Myelogenous Leukemia (CML) in Chronic Phase. This study will evaluate the ability of Gleevec to reduce the amount of abnormal protein that occurs in patients with CML.\n\nPatients who are eligible to participate will be treated for 18 months. This trial will include male or female patients 18 years or older who are newly diagnosed (within 6 months) with CML."
+                },
+                "conditionsModule": {
+                    "conditions": [
+                        "Chronic Myelogenous Leukemia"
+                    ]
+                },
+                "designModule": {
+                    "studyType": "INTERVENTIONAL",
+                    "phases": [
+                        "PHASE4"
+                    ],
+                    "designInfo": {
+                        "primaryPurpose": "TREATMENT"
+                    },
+                    "enrollmentInfo": {
+                        "count": 112
+                    }
+                },
+                "armsInterventionsModule": {
+                    "interventions": [
+                        {
+                            "type": "DRUG",
+                            "name": "Gleevec"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "protocolSection": {
+                "identificationModule": {
+                    "nctId": "NCT00251225",
+                    "briefTitle": "A Study of Imatinib and Docetaxel in Prostate Cancer",
+                    "officialTitle": "A Phase II Study of Imatinib and Docetaxel in Metastatic Hormone Refractory Prostate Cancer"
+                },
+                "statusModule": {
+                    "overallStatus": "COMPLETED",
+                    "startDateStruct": {
+                        "date": "2005-08"
+                    },
+                    "primaryCompletionDateStruct": {
+                        "date": "2009-03"
+                    }
+                },
+                "sponsorCollaboratorsModule": {
+                    "leadSponsor": {
+                        "name": "Leonard Appleman"
+                    }
+                },
+                "descriptionModule": {
+                    "briefSummary": "The purpose of this study is to determine the effectiveness of two drugs, docetaxel and Gleevec®(also called imatinib), in prostate cancer that no longer responds to hormone therapy. The investigators are interested in finding out if the combination of these two drugs is more effective than docetaxel alone in the treatment of prostate cancer.",
+                    "detailedDescription": "This is a non-randomized multicenter Phase II trial of Gleevec and docetaxel in chemo naïve metastatic hormone refractory prostate cancer. The primary objective of this study is to assess the time to disease progression in patients with hormone refractory prostate cancer treated with daily oral imatinib and intravenous docetaxel, administered every three weeks. Secondary objectives include: 1) to assess the rate of response to imatinib and docetaxel, using Prostate Specific Antigen (PSA) and/or measurable disease; 2) to assess the overall survival of patients with hormone refractory prostate cancer treated with imatinib and docetaxel; and 3) to evaluate the qualitative and quantitative toxicities of this combination."
+                },
+                "conditionsModule": {
+                    "conditions": [
+                        "Prostate Cancer"
+                    ]
+                },
+                "designModule": {
+                    "studyType": "INTERVENTIONAL",
+                    "phases": [
+                        "PHASE2"
+                    ],
+                    "designInfo": {
+                        "primaryPurpose": "TREATMENT"
+                    },
+                    "enrollmentInfo": {
+                        "count": 49
+                    }
+                },
+                "armsInterventionsModule": {
+                    "interventions": [
+                        {
+                            "type": "DRUG",
+                            "name": "Gleevec",
+                            "description": "Imatinib-400mg po qd for 10 days to commence on day 3. On day 0, Docetaxel 60mg/m\\^2 administered IV",
+                            "otherNames": [
+                                "Imatinib",
+                                "Imatinib Mesylate",
+                                "ST1571"
+                            ]
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "Docetaxel",
+                            "description": "60 mg/m\\^2 administered IV on day 0",
+                            "otherNames": [
+                                "Taxotere"
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "protocolSection": {
+                "identificationModule": {
+                    "nctId": "NCT00002514",
+                    "briefTitle": "Stem Cell Transplantation Compared With Standard Chemotherapy in Treating Patients With Acute Lymphoblastic Leukemia in First Remission",
+                    "officialTitle": "Phase III Randomized Trial of Autologous and Allogeneic Stem Cell Transplantation Versus Intensive Conventional Chemotherapy in Acute Lymphoblastic Leukemia in First Remission"
+                },
+                "statusModule": {
+                    "overallStatus": "COMPLETED",
+                    "startDateStruct": {
+                        "date": "1993-05-07"
+                    },
+                    "primaryCompletionDateStruct": {
+                        "date": "2006-12"
+                    }
+                },
+                "sponsorCollaboratorsModule": {
+                    "leadSponsor": {
+                        "name": "Eastern Cooperative Oncology Group"
+                    }
+                },
+                "descriptionModule": {
+                    "briefSummary": "RATIONALE: Drugs used in chemotherapy work in different ways to stop cancer cells from dividing so they stop growing or die. Combining chemotherapy with allogeneic or autologous stem cell transplantation may allow the doctor to give higher doses of chemotherapy drugs and kill more cancer cells. It is not yet known whether stem cell transplantation is more effective than standard chemotherapy in treating acute lymphoblastic leukemia.\n\nPURPOSE: This randomized phase III trial is studying how well stem cell transplantation works compared to standard combination chemotherapy in treating patients with acute lymphoblastic leukemia in first remission.",
+                    "detailedDescription": "OBJECTIVES:\n\n* Compare the duration of complete remission (CR) and survival in patients with acute lymphoblastic leukemia in first remission treated with allogeneic or autologous stem cell transplantation (SCT) vs conventional consolidation and maintenance chemotherapy.\n* Compare the overall treatment outcomes in patients treated with these regimens.\n* Determine the effect of imatinib mesylate given after induction therapy in Philadelphia (Ph) chromosome-positive patients in CR.\n* Determine the benefit of allogeneic or autologous SCT after imatinib mesylate in Ph chromosome-positive patients.\n* Determine the benefit of additional imatinib mesylate administered after allogeneic or autologous SCT in Ph chromosome-positive patients.\n* Determine the minimal residual disease in Ph chromosome-positive patients before and after treatment with imatinib mesylate.\n* Determine the clinical resistance to imatinib mesylate caused by BCR-ABL gene amplification or mutation in Ph chromosome-positive patients.\n\nOUTLINE: This is a randomized, multicenter study. Patients are stratified according to age (50 and under vs over 50), time to achieve complete remission (CR) (4 weeks or less vs more than 4 weeks), and Philadelphia (Ph) chromosome status (positive vs negative).\n\n* First induction therapy: Patients receive daunorubicin (DNR) IV over 15-30 minutes and vincristine (VCR) IV over 3-5 minutes on days 1, 8, 15, and 22; oral prednisone (PRED) once daily on days 1-28; and asparaginase (ASP) IV over 30 minutes or intramuscularly on days 17-28. Patients with CNS leukemia at presentation also receive methotrexate (MTX) intrathecally (IT) via an Ommaya reservoir weekly until the CSF is clear. Patients without CNS leukemia at presentation receive MTX IT on day 23 only.\n* Second induction therapy: Beginning immediately after first induction therapy, patients receive cyclophosphamide (CTX) IV over 30 minutes on days 1, 15, and 29; cytarabine (ARA-C) IV over 30 minutes on days 1-4, 8-11, 15-18, and 22-25; and oral mercaptopurine (MP) once daily on days 1-28. Patients with CNS leukemia at presentation also undergo concurrent craniospinal irradiation. Patients without CNS leukemia at presentation receive MTX IT on days 1, 8, 15, and 22. Patients with Ph chromosome-positive status receive oral imatinib mesylate once daily for at least 28 days (days 1-28).\n\nPatients with Ph chromosome-positive status and CR after second induction therapy proceed to group I for autologous or allogeneic stem cell transplantation (SCT). Patients with Ph chromosome-negative status and CR after second induction therapy proceed to group II.\n\n* Group I (Ph chromosome-positive patients):\n\n  * Autologous SCT: Patients receive high-dose consolidation/mobilization chemotherapy comprising ARA-C IV over 3 hours on days 1-3 and mitoxantrone IV immediately after ARA-C administration on days 1 and 2. Patients also receive filgrastim (G-CSF) subcutaneously (SC) once daily beginning on day 5 and continuing until blood counts recover.\n\nPatients then undergo peripheral blood stem cell collection or bone marrow harvesting.\n\nPatients receive preparative therapy comprising total body irradiation twice daily (5-10 hours apart) on days -6 to -4 and high-dose etoposide (VP-16) IV over 4 hours on day -3. Male patients also undergo radiotherapy boost to the testes on day -6.\n\nPatients undergo autologous SCT on day 0 and receive sargramostim (GM-CSF) SC once daily beginning 6 hours after the completion of SCT and continuing until blood counts recover.\n\n* Allogeneic SCT: Patients receive the preparative regimen as in autologous SCT and then undergo allogeneic SCT on day 0. Patients receive GM-CSF as in autologous SCT.\n* Post-SCT imatinib mesylate therapy: After recovery from autologous or allogeneic SCT, patients receive oral imatinib mesylate once daily. Imatinib mesylate therapy continues in the absence of disease progression or unacceptable toxicity.\n\n  * Group II (Ph chromosome-negative patients):\n* Intensification therapy: Beginning 4 weeks after the completion of the second induction therapy, patients receive high-dose MTX IV over 2 hours on days 1, 8, and 22; leucovorin calcium IV every 6 hours for 4 doses and then orally every 6 hours for 12 doses beginning 22-24 hours after each MTX infusion; and ASP IV over 30 minutes on days 2, 9, and 23.\n\nPatients who are ≤ 50 years of age with a histocompatible donor proceed to allogeneic SCT and undergo allogeneic SCT as in group I. Patients who are ≤ 50 years of age without an appropriate donor are randomized to 1 of 2 treatment arms.\n\n* Arm I (conventional consolidation/maintenance therapy):\n\n  * Conventional consolidation therapy: During course 1, patients receive ARA-C IV over 30 minutes and VP-16 IV over 1 hour on days 1-5; VCR IV on days 1, 8, 15, and 22; and oral dexamethasone on days 1-28. During course 2 (which begins 4 weeks after initiation of course 1 or when blood counts recover), patients receive ARA-C and VP-16 as in course 1. During course 3 (which begins 4 weeks after initiation of course 2 or when blood counts recover), patients receive DNR IV on days 1, 8, 15, and 22; CTX IV over 30 minutes on day 29; ARA-C IV over 30 minutes on days 31-34 and 38-41; and oral thioguanine on days 29-42. During course 4 (which begins 8 weeks after initiation of course 3 or when blood counts recover), patients receive treatment as in course 2.\n  * Maintenance therapy: Beginning 4 weeks after initiation of course 4 of consolidation therapy or when blood counts recover, patients receive oral MP daily; MTX orally or IV once weekly; VCR IV once every 12 weeks; and oral PRED for 5 days every 12 weeks. Maintenance therapy continues for 2.5 years after initiation of intensification therapy.\n* Arm II (autologous SCT): Patients undergo autologous SCT as in group I with the exception of high-dose consolidation/mobilization chemotherapy.\n\nPatients are followed every 6 months for 2 years.\n\nPROJECTED ACCRUAL: Approximately 40 patients per year will be accrued for group I (Philadelphia \\[Ph\\] chromosome-positive patients) of this study. Approximately 550 patients will be accrued for group II (Ph chromosome-negative patients) of this study within 5 years."
+                },
+                "conditionsModule": {
+                    "conditions": [
+                        "Leukemia"
+                    ]
+                },
+                "designModule": {
+                    "studyType": "INTERVENTIONAL",
+                    "phases": [
+                        "PHASE3"
+                    ],
+                    "designInfo": {
+                        "primaryPurpose": "TREATMENT"
+                    },
+                    "enrollmentInfo": {
+                        "count": 1929
+                    }
+                },
+                "armsInterventionsModule": {
+                    "interventions": [
+                        {
+                            "type": "BIOLOGICAL",
+                            "name": "sargramostim"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "asparaginase"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "cyclophosphamide"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "cytarabine"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "daunorubicin hydrochloride"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "dexamethasone"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "etoposide"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "imatinib mesylate"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "leucovorin calcium"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "mercaptopurine"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "methotrexate"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "prednisone"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "thioguanine"
+                        },
+                        {
+                            "type": "DRUG",
+                            "name": "vincristine sulfate"
+                        },
+                        {
+                            "type": "PROCEDURE",
+                            "name": "allogeneic bone marrow transplantation"
+                        },
+                        {
+                            "type": "PROCEDURE",
+                            "name": "autologous bone marrow transplantation"
+                        },
+                        {
+                            "type": "PROCEDURE",
+                            "name": "peripheral blood stem cell transplantation"
+                        },
+                        {
+                            "type": "RADIATION",
+                            "name": "radiation therapy"
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "nextPageToken": "ZVt07cGHkvI2wRk2CJf6_LLt2oHCes8od7KrgP4dmzibtA"
+}
