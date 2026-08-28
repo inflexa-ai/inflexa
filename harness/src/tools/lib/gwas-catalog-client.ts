@@ -5,6 +5,10 @@
  * per-SNP associations), by trait (EFO trait search then its associations), by
  * variant (direct rsID associations), and by study (the associations of one
  * GCST study accession).
+ *
+ * Absence policy: the sampled payloads show an explicit `null` for an absent
+ * leaf value, and the key set of one projection stays constant. A key is absent
+ * only when the projection that the request named excludes it.
  */
 
 import { z } from "zod";
@@ -33,9 +37,16 @@ export type GwasSearchType = "gene" | "trait" | "variant" | "study";
 // GWAS Catalog raw wire shapes (HAL+JSON), validated at the fetch boundary.
 // Every field is optional because the API omits absent values; leaf strings
 // that the API can return as an explicit `null` are `.nullable()`.
+//
+// The `study` and `efoTraits` keys of an association exist only on some
+// projections: `associationByStudy` nests the study, `associationByEfoTrait`
+// nests the traits, and the gene path serves neither. Thus their absence is a
+// property of the projection that the request named, and it is not drift.
 const RawGwasStudySchema = z.object({
     accessionId: z.string().optional(),
-    pubmedId: z.string().optional(),
+    // The PubMed id is a field of the publication record, and never of the study
+    // record itself.
+    publicationInfo: z.object({ pubmedId: z.string().nullable().optional() }).optional(),
     initialSampleSize: z.string().optional(),
 });
 type RawGwasStudy = z.infer<typeof RawGwasStudySchema>;
@@ -63,12 +74,12 @@ const RawGwasAssociationSchema = z.object({
 });
 type RawGwasAssociation = z.infer<typeof RawGwasAssociationSchema>;
 
-const GwasEmbeddedSchema = z.object({
+export const GwasEmbeddedSchema = z.object({
     _embedded: z.object({ associations: z.array(RawGwasAssociationSchema).optional() }).optional(),
     page: z.object({ totalElements: z.number().optional() }).optional(),
 });
 
-const GwasTraitSearchResponseSchema = z.object({
+export const GwasTraitSearchResponseSchema = z.object({
     _embedded: z
         .object({
             efoTraits: z.array(z.object({ _links: z.object({ self: z.object({ href: z.string().optional() }).optional() }).optional() })).optional(),
@@ -76,7 +87,7 @@ const GwasTraitSearchResponseSchema = z.object({
         .optional(),
 });
 
-const GwasSnpSearchResponseSchema = z.object({
+export const GwasSnpSearchResponseSchema = z.object({
     _embedded: z
         .object({
             singleNucleotidePolymorphisms: z
@@ -112,7 +123,7 @@ export function mapAssociation(a: RawGwasAssociation): GwasAssociation {
         trait: traits.join("; "),
         mappedGenes: [...new Set(genes)] as string[],
         studyAccession: String(study.accessionId ?? ""),
-        pubmedId: String(study.pubmedId ?? ""),
+        pubmedId: String(study.publicationInfo?.pubmedId ?? ""),
         sampleSize: String(study.initialSampleSize ?? ""),
     };
 }
@@ -167,8 +178,10 @@ export async function searchGwasCatalog(
         // accession, the PubMed id and the sample size without a second request.
         associationsUrl = `${GWAS_BASE}/studies/${encodeURIComponent(query)}/associations?projection=associationByStudy&size=${limit}`;
     } else {
+        // `findByEfoTrait` matches the trait label, and it answers HTTP 200 with
+        // an empty `efoTraits` list when nothing matches.
         const traitRes = await apiFetchValidated(
-            `${GWAS_BASE}/efoTraits/search/findBySearchQuery?query=${encodeURIComponent(query)}`,
+            `${GWAS_BASE}/efoTraits/search/findByEfoTrait?trait=${encodeURIComponent(query)}`,
             GwasTraitSearchResponseSchema,
             {
                 headers: GWAS_HEADERS,

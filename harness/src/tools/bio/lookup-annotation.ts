@@ -13,6 +13,10 @@
  * schema and made conditionally required by `.refine`, so a malformed call
  * fails at the loop boundary naming the missing field instead of reaching an
  * API request that cannot be built.
+ *
+ * Absence policy: QuickGO gives each key and sends an explicit `null` for an
+ * absent value. Thus a maybe-absent QuickGO field carries `.nullable()`, and
+ * `pathway-client.ts` holds the policy of KEGG and Reactome.
  */
 
 import { ok, type Result } from "neverthrow";
@@ -26,6 +30,15 @@ const QUICKGO_BASE = "https://www.ebi.ac.uk/QuickGO/services";
 const HEADERS = { Accept: "application/json" };
 
 const DEFAULT_LIMIT = 10;
+
+/**
+ * The fields that the annotation search must name.
+ *
+ * QuickGO serves the label of a GO term only when the request asks for it. A
+ * request that does not ask gets `"goName": null` on each row, thus every
+ * annotation reads as an identifier with no name.
+ */
+const ANNOTATION_INCLUDE_FIELDS = "goName";
 
 interface GoTerm {
     id: string;
@@ -47,7 +60,7 @@ interface GoAnnotation {
 // carries the (context-free) rename from the raw wire fields to the `GoTerm[]`
 // we return, so parsing IS both the validation and the normalization — there
 // is no separate raw interface or mapper to keep in sync.
-const GoTermResponseSchema = z
+export const GoTermResponseSchema = z
     .object({
         results: z
             .array(
@@ -69,14 +82,17 @@ const GoTermResponseSchema = z
         })),
     );
 
-const GoAnnotationResponseSchema = z
+// QuickGO answers a `goName` with an explicit `null` on each row unless the
+// request names the field. `ANNOTATION_INCLUDE_FIELDS` names it, and `goName`
+// stays nullable because the wire can still send the null.
+export const GoAnnotationResponseSchema = z
     .object({
         results: z
             .array(
                 z.object({
                     geneProductId: z.string().optional(),
                     goId: z.string().optional(),
-                    goName: z.string().optional(),
+                    goName: z.string().nullable().optional(),
                     goAspect: z.string().optional(),
                     goEvidence: z.string().optional(),
                     qualifier: z.string().optional(),
@@ -238,7 +254,7 @@ export const lookupAnnotationTool = defineTool({
         if (geneProductId) {
             tasks.push(
                 (async () => {
-                    const params = new URLSearchParams({ geneProductId, limit: String(cap) });
+                    const params = new URLSearchParams({ geneProductId, limit: String(cap), includeFields: ANNOTATION_INCLUDE_FIELDS });
                     if (taxonId) params.set("taxonId", String(taxonId));
 
                     const res = await apiFetchValidated(`${QUICKGO_BASE}/annotation/search?${params}`, GoAnnotationResponseSchema, { headers: HEADERS });

@@ -1,0 +1,36 @@
+{
+    "snp_findByGene_TP53.json": {
+        "url": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/search/findByGene",
+        "params": {
+            "geneName": "TP53",
+            "projection": "snpByGene",
+            "size": "2"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "page",
+            "_embedded.singleNucleotidePolymorphisms.*.lastUpdateDate"
+        ]
+    },
+    "study_assoc_GCST000392.json": {
+        "url": "https://www.ebi.ac.uk/gwas/rest/api/studies/GCST000392/associations",
+        "params": {
+            "projection": "associationByStudy",
+            "size": "5"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "_embedded.associations"
+        ]
+    },
+    "efotraits_findByEfoTrait_asthma.json": {
+        "url": "https://www.ebi.ac.uk/gwas/rest/api/efoTraits/search/findByEfoTrait",
+        "params": {
+            "trait": "asthma"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "page"
+        ]
+    }
+}

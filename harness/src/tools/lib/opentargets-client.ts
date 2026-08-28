@@ -2,6 +2,10 @@
  * Pure async client functions for the Open Targets Platform GraphQL API.
  *
  * Used directly by target-assessment workflow steps and by tool wrappers.
+ *
+ * Absence policy: the nullability of the GraphQL SDL encodes an absent value.
+ * Open Targets answers each requested field with a key and an explicit `null`,
+ * thus the SDL gives each modifier and `.optional()` is wrong.
  */
 
 import { z } from "zod";
@@ -61,6 +65,13 @@ export interface BaselineExpressionEntry {
     tissueId: string;
     tissueLabel: string;
     organSystem: string | null;
+    /**
+     * The Open Targets datasource of the row, for example `gtex`,
+     * `tabula_sapiens` or `DICE`. One target carries rows of more than one
+     * datasource, and each datasource has its own unit and its own resolution.
+     * Thus a consumer that compares two entries must first compare this value.
+     */
+    datasourceId: string;
     rna: { value: number; unit: string } | null;
     protein: { level: number | null } | null;
 }
@@ -142,22 +153,37 @@ const SAFETY_QUERY = `
 `;
 
 const EXPRESSION_QUERY = `
-  query TargetExpression($ensemblId: String!) {
+  query TargetBaselineExpression($ensemblId: String!, $size: Int!) {
     target(ensemblId: $ensemblId) {
       id
       approvedSymbol
-      expressions {
-        tissue {
-          id
-          label
-          organs
+      baselineExpression(page: { size: $size, index: 0 }) {
+        count
+        rows {
+          unit
+          median
+          q1
+          q3
+          min
+          max
+          datasourceId
+          targetId
+          tissueBiosample { biosampleId biosampleName }
+          tissueBiosampleParent { biosampleId biosampleName }
         }
-        rna { value unit }
-        protein { level }
       }
     }
   }
 `;
+
+/**
+ * The page size of one `baselineExpression` request.
+ *
+ * `Pagination.size` caps at 3000 in the SDL, and one target carries more than
+ * 1400 rows. Thus a smaller page drops tissues, and it gives no signal that it
+ * dropped them.
+ */
+const BASELINE_EXPRESSION_PAGE_SIZE = 3000;
 
 // Open Targets GraphQL `data` payload schemas, validated at the fetch boundary.
 // Fields the mapping code reads behind a guard (optional chaining, `?? default`,
@@ -169,7 +195,7 @@ const EXPRESSION_QUERY = `
 // bare `.optional()` rejects, turning a clean "not found" into a thrown error.
 const DatatypeScoreSchema = z.object({ id: z.string().optional(), score: z.number().optional() });
 
-const TargetAssociationsDataSchema = z.object({
+export const TargetAssociationsDataSchema = z.object({
     target: z
         .object({
             id: z.string(),
@@ -249,7 +275,7 @@ const DiseaseSearchDataSchema = z.object({
         .optional(),
 });
 
-const TargetSafetyDataSchema = z.object({
+export const TargetSafetyDataSchema = z.object({
     target: z
         .object({
             id: z.string().optional(),
@@ -276,22 +302,39 @@ const TargetSafetyDataSchema = z.object({
         .optional(),
 });
 
-const TargetExpressionDataSchema = z.object({
+/** `Biosample`, as `BaselineExpressionRow` embeds it. Both leaf fields are non-null in the SDL. */
+const BiosampleSchema = z.object({ biosampleId: z.string(), biosampleName: z.string() });
+
+/**
+ * `Target.baselineExpression`, per the SDL.
+ *
+ * The modifiers come from the SDL and from nothing else: `BaselineExpression!`
+ * and its `count`, `rows`, `unit`, `datasourceId` and `targetId` are non-null,
+ * the five quantile fields are `Float` and thus nullable, and each biosample
+ * link is a nullable `Biosample`.
+ */
+export const TargetExpressionDataSchema = z.object({
     target: z
         .object({
-            expressions: z
-                .array(
+            baselineExpression: z.object({
+                count: z.number(),
+                rows: z.array(
                     z.object({
-                        tissue: z.object({ id: z.string(), label: z.string(), organs: z.array(z.string()).nullable().optional() }),
-                        rna: z.object({ value: z.number().nullable().optional(), unit: z.string().nullable().optional() }).nullable().optional(),
-                        protein: z.object({ level: z.number().nullable().optional() }).nullable().optional(),
+                        unit: z.string(),
+                        median: z.number().nullable(),
+                        q1: z.number().nullable(),
+                        q3: z.number().nullable(),
+                        min: z.number().nullable(),
+                        max: z.number().nullable(),
+                        datasourceId: z.string(),
+                        targetId: z.string(),
+                        tissueBiosample: BiosampleSchema.nullable(),
+                        tissueBiosampleParent: BiosampleSchema.nullable(),
                     }),
-                )
-                .nullable()
-                .optional(),
+                ),
+            }),
         })
-        .nullable()
-        .optional(),
+        .nullable(),
 });
 
 function extractDatatype(datatypeScores: { id?: string; score?: number }[], id: string): number | null {
@@ -300,13 +343,24 @@ function extractDatatype(datatypeScores: { id?: string; score?: number }[], id: 
 }
 
 async function gqlFetch<S extends z.ZodType>(query: string, variables: Record<string, unknown>, schema: S): Promise<z.infer<S>> {
-    const res = await apiFetchValidated(OT_GRAPHQL, z.object({ data: schema.optional() }), {
-        method: "POST",
-        headers: OT_HEADERS,
-        body: JSON.stringify({ query, variables }),
-    });
+    const res = await apiFetchValidated(
+        OT_GRAPHQL,
+        z.object({ data: schema.optional(), errors: z.array(z.object({ message: z.string().optional() })).optional() }),
+        {
+            method: "POST",
+            headers: OT_HEADERS,
+            body: JSON.stringify({ query, variables }),
+        },
+    );
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    if (!res.value.data) throw new Error("Open Targets returned no data");
+    if (!res.value.data) {
+        // A GraphQL server answers HTTP 200 with an `errors` array and no `data`
+        // key when the document itself is invalid, for example when it names a
+        // retired field. Without the first message the caller sees only "no
+        // data", which names no cause and points at no field.
+        const firstError = res.value.errors?.[0]?.message;
+        throw new Error(firstError ? `Open Targets returned no data: ${firstError}` : "Open Targets returned no data");
+    }
     return res.value.data;
 }
 
@@ -410,19 +464,38 @@ export async function getTargetSafetyLiabilities(ensemblId: string): Promise<{ t
 }
 
 /**
- * Fetch baseline RNA/protein expression across tissues. Open Targets
- * exposes per-tissue expression with organ system tags — used by §2.7
- * (Off-Tissue Risk) and §3.9 (Normal Tissue Expression).
+ * Map one `baselineExpression` page onto the baseline-expression entries.
+ *
+ * The function is pure, thus the golden-fixture table exercises it against a
+ * stored payload.
  */
-export async function getBaselineExpression(ensemblId: string): Promise<BaselineExpressionEntry[]> {
-    const data = await gqlFetch(EXPRESSION_QUERY, { ensemblId }, TargetExpressionDataSchema);
+export function mapBaselineExpression(data: z.infer<typeof TargetExpressionDataSchema>): BaselineExpressionEntry[] {
+    const entries: BaselineExpressionEntry[] = [];
+    for (const row of data.target?.baselineExpression.rows ?? []) {
+        // A row with no tissue biosample measures a cell type alone, thus it
+        // carries no tissue identity and it cannot become a tissue entry.
+        const tissue = row.tissueBiosample;
+        if (!tissue) continue;
+        entries.push({
+            tissueId: tissue.biosampleId,
+            tissueLabel: tissue.biosampleName,
+            organSystem: row.tissueBiosampleParent?.biosampleName ?? null,
+            datasourceId: row.datasourceId,
+            rna: row.median === null ? null : { value: row.median, unit: row.unit },
+            // The `baselineExpression` surface carries no protein measurement,
+            // thus the protein level of an entry is always absent.
+            protein: null,
+        });
+    }
+    return entries;
+}
 
-    const expressions = data.target?.expressions ?? [];
-    return expressions.map((e) => ({
-        tissueId: e.tissue.id,
-        tissueLabel: e.tissue.label,
-        organSystem: Array.isArray(e.tissue.organs) && e.tissue.organs.length > 0 ? e.tissue.organs[0] : null,
-        rna: e.rna && typeof e.rna.value === "number" ? { value: e.rna.value, unit: e.rna.unit ?? "TPM" } : null,
-        protein: e.protein ? { level: typeof e.protein.level === "number" ? e.protein.level : null } : null,
-    }));
+/**
+ * Fetch baseline RNA expression across tissues. Open Targets gives one row for
+ * each tissue and datasource, with the parent biosample as the organ system —
+ * used by §2.7 (Off-Tissue Risk) and §3.9 (Normal Tissue Expression).
+ */
+export async function getBaselineExpression(ensemblId: string, limit = BASELINE_EXPRESSION_PAGE_SIZE): Promise<BaselineExpressionEntry[]> {
+    const data = await gqlFetch(EXPRESSION_QUERY, { ensemblId, size: limit }, TargetExpressionDataSchema);
+    return mapBaselineExpression(data);
 }

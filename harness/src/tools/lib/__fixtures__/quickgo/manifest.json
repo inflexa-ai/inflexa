@@ -1,0 +1,31 @@
+{
+    "annotation_P04637_includeFields_goName.json": {
+        "url": "https://www.ebi.ac.uk/QuickGO/services/annotation/search",
+        "params": {
+            "geneProductId": "P04637",
+            "limit": "5",
+            "includeFields": "goName"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "numberOfHits",
+            "pageInfo"
+        ]
+    },
+    "annotation_P04637.json": {
+        "url": "https://www.ebi.ac.uk/QuickGO/services/annotation/search",
+        "params": {
+            "geneProductId": "P04637",
+            "limit": "10"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "numberOfHits",
+            "pageInfo"
+        ]
+    },
+    "term_GO_0008150.json": {
+        "url": "https://www.ebi.ac.uk/QuickGO/services/ontology/go/terms/GO%3A0008150",
+        "capturedAt": "2026-08-28"
+    }
+}

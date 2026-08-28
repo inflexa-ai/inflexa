@@ -1,0 +1,56 @@
+{
+    "data": {
+        "target": {
+            "id": "ENSG00000141510",
+            "approvedSymbol": "TP53",
+            "safetyLiabilities": [
+                {
+                    "event": 42,
+                    "biosamples": [],
+                    "effects": [],
+                    "datasource": "ClinPGx",
+                    "literature": null,
+                    "url": "https://www.clinpgx.org/search?query=ENSG00000141510"
+                },
+                {
+                    "event": "Tumorigenesis, Hepatocellular carcinoma",
+                    "biosamples": [],
+                    "effects": [
+                        {
+                            "direction": "Activation/Increase/Upregulation"
+                        }
+                    ],
+                    "datasource": "AOP-Wiki",
+                    "literature": null,
+                    "url": "https://aopwiki.org/aops/46"
+                },
+                {
+                    "event": "regulation of transcription factor activity",
+                    "biosamples": [
+                        {
+                            "tissueLabel": null
+                        },
+                        {
+                            "tissueLabel": null
+                        },
+                        {
+                            "tissueLabel": null
+                        }
+                    ],
+                    "effects": [],
+                    "datasource": "ToxCast",
+                    "literature": null,
+                    "url": "https://www.epa.gov/chemical-research/exploring-toxcast-data-downloadable-data"
+                },
+                {
+                    "event": "neutropenia",
+                    "biosamples": [],
+                    "effects": [],
+                    "datasource": "ClinPGx",
+                    "literature": null,
+                    "url": "https://www.clinpgx.org/search?query=ENSG00000141510"
+                }
+            ]
+        }
+    }
+}

@@ -1,0 +1,60 @@
+{
+    "header": {
+        "type": "esearch",
+        "version": "0.3"
+    },
+    "esearchresult": {
+        "count": 2343,
+        "retmax": "5",
+        "retstart": "0",
+        "idlist": [
+            "200305584",
+            "200343535",
+            "200337500",
+            "200337499",
+            "200322909"
+        ],
+        "translationset": [
+            {
+                "from": "RNA-seq",
+                "to": "RNA-seq[All Fields]"
+            },
+            {
+                "from": "breast cancer",
+                "to": "\"breast neoplasms\"[MeSH Terms] OR breast cancer[All Fields]"
+            }
+        ],
+        "translationstack": [
+            {
+                "term": "\"breast neoplasms\"[MeSH Terms]",
+                "field": "MeSH Terms",
+                "count": "206274",
+                "explode": "Y"
+            },
+            {
+                "term": "breast cancer[All Fields]",
+                "field": "All Fields",
+                "count": "151745",
+                "explode": "N"
+            },
+            "OR",
+            "GROUP",
+            {
+                "term": "RNA-seq[All Fields]",
+                "field": "All Fields",
+                "count": "349932",
+                "explode": "N"
+            },
+            "AND",
+            "GROUP",
+            {
+                "term": "gse[Entry Type]",
+                "field": "Entry Type",
+                "count": "294373",
+                "explode": "N"
+            },
+            "AND"
+        ],
+        "querytranslation": "((\"breast neoplasms\"[MeSH Terms] OR breast cancer[All Fields]) AND RNA-seq[All Fields]) AND gse[Entry Type]"
+    }
+}

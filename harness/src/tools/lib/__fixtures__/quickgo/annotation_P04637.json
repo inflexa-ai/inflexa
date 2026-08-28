@@ -1,0 +1,307 @@
+{
+    "numberOfHits": 1043,
+    "results": [
+        {
+            "id": "UniProtKB:P04637!58679183",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of",
+            "goId": "GO:0008285",
+            "goName": null,
+            "goEvidence": "ISS",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000250",
+            "reference": "PMID:30514107",
+            "withFrom": [
+                {
+                    "connectedXrefs": [
+                        {
+                            "db": "UniProtKB",
+                            "id": "P10361"
+                        }
+                    ]
+                }
+            ],
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "ARUK-UCL",
+            "extensions": [
+                {
+                    "connectedXrefs": [
+                        {
+                            "db": "CL",
+                            "id": "0002254",
+                            "relation": "occurs_in"
+                        }
+                    ]
+                }
+            ],
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20210810",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679184",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of",
+            "goId": "GO:0051726",
+            "goName": null,
+            "goEvidence": "ISS",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000250",
+            "reference": "PMID:30514107",
+            "withFrom": [
+                {
+                    "connectedXrefs": [
+                        {
+                            "db": "UniProtKB",
+                            "id": "P10361"
+                        }
+                    ]
+                }
+            ],
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "ARUK-UCL",
+            "extensions": [
+                {
+                    "connectedXrefs": [
+                        {
+                            "db": "CL",
+                            "id": "0002254",
+                            "relation": "occurs_in"
+                        }
+                    ]
+                }
+            ],
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20210810",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679185",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_negative_effect",
+            "goId": "GO:1902749",
+            "goName": null,
+            "goEvidence": "IMP",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000315",
+            "reference": "PMID:10962037",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "UniProt",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20210802",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679186",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_or_within",
+            "goId": "GO:0006974",
+            "goName": null,
+            "goEvidence": "IDA",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000314",
+            "reference": "PMID:14744935",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "MGI",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20101109",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679187",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_or_within",
+            "goId": "GO:0006983",
+            "goName": null,
+            "goEvidence": "IDA",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000314",
+            "reference": "PMID:14744935",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "MGI",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20101109",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679188",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_or_within",
+            "goId": "GO:0042149",
+            "goName": null,
+            "goEvidence": "IDA",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000314",
+            "reference": "PMID:14744935",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "MGI",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20070314",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679189",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_or_within",
+            "goId": "GO:0042771",
+            "goName": null,
+            "goEvidence": "IDA",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000314",
+            "reference": "PMID:14654789",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "MGI",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20101117",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679190",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_or_within",
+            "goId": "GO:0042771",
+            "goName": null,
+            "goEvidence": "IDA",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000314",
+            "reference": "PMID:14744935",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "MGI",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20101109",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679191",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_or_within",
+            "goId": "GO:0042981",
+            "goName": null,
+            "goEvidence": "IDA",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000314",
+            "reference": "PMID:14744935",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "MGI",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20101109",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679192",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_or_within",
+            "goId": "GO:0045944",
+            "goName": null,
+            "goEvidence": "IGI",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000316",
+            "reference": "PMID:16061649",
+            "withFrom": [
+                {
+                    "connectedXrefs": [
+                        {
+                            "db": "UniProtKB",
+                            "id": "Q8WWK9"
+                        }
+                    ]
+                }
+            ],
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "MGI",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20120113",
+            "synonyms": null,
+            "name": null
+        }
+    ],
+    "pageInfo": {
+        "resultsPerPage": 10,
+        "current": 1,
+        "total": 105
+    }
+}

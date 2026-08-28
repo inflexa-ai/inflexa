@@ -1,0 +1,119 @@
+{
+    "numberOfHits": 1,
+    "results": [
+        {
+            "id": "GO:0008150",
+            "isObsolete": false,
+            "name": "biological_process",
+            "definition": "A biological process is the execution of a genetically-encoded biological module.",
+            "comment": "Note that, in addition to forming the root of the biological process ontology, this term is recommended for the annotation of gene products whose biological process is unknown. When this term is used for annotation, it indicates that no information was available about the biological process of the gene product annotated as of the date the annotation was made; the evidence code 'no data' (ND), is used to indicate this.",
+            "synonyms": [
+                {
+                    "name": "single-organism process",
+                    "type": "related"
+                },
+                {
+                    "name": "physiological process",
+                    "type": "exact"
+                },
+                {
+                    "name": "single organism process",
+                    "type": "related"
+                },
+                {
+                    "name": "biological process",
+                    "type": "exact"
+                }
+            ],
+            "children": [
+                {
+                    "id": "GO:0042592",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0040007",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0016032",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0050896",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0044848",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0040011",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0048511",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0051703",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0098754",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0051179",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0009987",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0048518",
+                    "relation": "positively_regulates"
+                },
+                {
+                    "id": "GO:0032502",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0032501",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0002376",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0022414",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0065007",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0048519",
+                    "relation": "negatively_regulates"
+                },
+                {
+                    "id": "GO:0044419",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0043473",
+                    "relation": "is_a"
+                },
+                {
+                    "id": "GO:0050789",
+                    "relation": "regulates"
+                }
+            ],
+            "aspect": "biological_process",
+            "usage": "Unrestricted"
+        }
+    ],
+    "pageInfo": null
+}

@@ -5,6 +5,10 @@
  * lookups for the configured non-human species (Ensembl REST), then
  * queries Bgee per (species, ortholog ENSG) for tissue-level expression
  * calls. Returns a per-species table of tissue × expression-rank.
+ *
+ * Absence policy: Bgee and the Ensembl calls in this file omit the key of an
+ * absent value, and neither one sends an explicit `null`. Thus a maybe-absent
+ * field carries `.optional()`, not `.nullable()`.
  */
 
 import { z } from "zod";
@@ -84,8 +88,8 @@ const BgeeExpressionResponseSchema = z.object({
 });
 
 // Ensembl REST response shapes consumed by the ortholog-resolution path.
-const EnsemblLookupSchema = z.object({ id: z.string().optional() });
-const EnsemblHomologyResponseSchema = z.object({
+export const EnsemblLookupSchema = z.object({ id: z.string().optional() });
+export const EnsemblHomologyResponseSchema = z.object({
     data: z.array(z.object({ homologies: z.array(z.object({ id: z.string().optional(), type: z.string().optional() })).optional() })).optional(),
 });
 
@@ -140,9 +144,16 @@ async function resolveHumanEnsembl(symbol: string): Promise<string | null> {
     return res.value.id;
 }
 
-async function resolveOrtholog(symbol: string, targetSpecies: SupportedSpecies): Promise<string | null> {
+/**
+ * Resolve the ortholog of one human gene in one other species.
+ *
+ * The route keys on the Ensembl gene id, and never on the symbol. The symbol
+ * route serves the identical envelope, but it answers HTTP 503 under load while
+ * the id route answers. Thus the caller resolves the id first.
+ */
+async function resolveOrtholog(humanEnsemblId: string, targetSpecies: SupportedSpecies): Promise<string | null> {
     const url =
-        `${ENSEMBL_BASE}/homology/symbol/homo_sapiens/${encodeURIComponent(symbol)}` + `?type=orthologues;target_species=${targetSpecies};format=condensed`;
+        `${ENSEMBL_BASE}/homology/id/homo_sapiens/${encodeURIComponent(humanEnsemblId)}` + `?type=orthologues;target_species=${targetSpecies};format=condensed`;
     const res = await apiFetchValidated(url, EnsemblHomologyResponseSchema, { headers: ENSEMBL_HEADERS });
     if (res.isErr()) {
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
@@ -173,7 +184,7 @@ export async function getMultiSpeciesExpression(geneSymbol: string, species: Sup
     const idEntries = await Promise.all(
         species.map(async (sp) => {
             if (sp === "homo_sapiens") return { sp, id: humanEnsemblId };
-            const id = await resolveOrtholog(geneSymbol, sp);
+            const id = await resolveOrtholog(humanEnsemblId, sp);
             return { sp, id };
         }),
     );

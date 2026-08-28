@@ -1,0 +1,52 @@
+{
+    "target_TP53.json": {
+        "url": "https://api.platform.opentargets.org/api/v4/graphql",
+        "method": "POST",
+        "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        },
+        "body": "{\"query\": \"\\n  query TargetAssociations($ensemblId: String!, $size: Int!) {\\n    target(ensemblId: $ensemblId) {\\n      id\\n      approvedSymbol\\n      approvedName\\n      tractability {\\n        label\\n        modality\\n        value\\n      }\\n    }\\n    associations: target(ensemblId: $ensemblId) {\\n      associatedDiseases(page: { size: $size, index: 0 }) {\\n        rows {\\n          disease { id name }\\n          score\\n          datatypeScores {\\n            id\\n            score\\n          }\\n        }\\n      }\\n    }\\n  }\\n\", \"variables\": {\"ensemblId\": \"ENSG00000141510\", \"size\": 25}}",
+        "capturedAt": "2026-08-28",
+        "replay": false
+    },
+    "target_invalid.json": {
+        "url": "https://api.platform.opentargets.org/api/v4/graphql",
+        "method": "POST",
+        "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        },
+        "body": "{\"query\": \"\\n  query TargetAssociations($ensemblId: String!, $size: Int!) {\\n    target(ensemblId: $ensemblId) {\\n      id\\n      approvedSymbol\\n      approvedName\\n      tractability {\\n        label\\n        modality\\n        value\\n      }\\n    }\\n    associations: target(ensemblId: $ensemblId) {\\n      associatedDiseases(page: { size: $size, index: 0 }) {\\n        rows {\\n          disease { id name }\\n          score\\n          datatypeScores {\\n            id\\n            score\\n          }\\n        }\\n      }\\n    }\\n  }\\n\", \"variables\": {\"ensemblId\": \"ENSG00000000000\", \"size\": 25}}",
+        "capturedAt": "2026-08-28"
+    },
+    "safety_TP53.json": {
+        "url": "https://api.platform.opentargets.org/api/v4/graphql",
+        "method": "POST",
+        "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        },
+        "body": "{\"query\": \"\\n  query TargetSafety($ensemblId: String!) {\\n    target(ensemblId: $ensemblId) {\\n      id\\n      approvedSymbol\\n      safetyLiabilities {\\n        event\\n        biosamples { tissueLabel }\\n        effects { direction }\\n        datasource\\n        literature\\n        url\\n      }\\n    }\\n  }\\n\", \"variables\": {\"ensemblId\": \"ENSG00000141510\"}}",
+        "capturedAt": "2026-08-28"
+    },
+    "baseline_expression_TP53.json": {
+        "url": "https://api.platform.opentargets.org/api/v4/graphql",
+        "method": "POST",
+        "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        },
+        "body": "{\"query\": \"\\n  query TargetBaselineExpression($ensemblId: String!, $size: Int!) {\\n    target(ensemblId: $ensemblId) {\\n      id\\n      approvedSymbol\\n      baselineExpression(page: { size: $size, index: 0 }) {\\n        count\\n        rows {\\n          unit\\n          median\\n          q1\\n          q3\\n          min\\n          max\\n          datasourceId\\n          targetId\\n          tissueBiosample { biosampleId biosampleName }\\n          tissueBiosampleParent { biosampleId biosampleName }\\n        }\\n      }\\n    }\\n  }\\n\", \"variables\": {\"ensemblId\": \"ENSG00000141510\", \"size\": 3000}}",
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "data.target.baselineExpression.count",
+            "data.target.baselineExpression.rows"
+        ]
+    },
+    "SDL_schema.graphql": {
+        "url": "https://api.platform.opentargets.org/api/v4/graphql/schema",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    }
+}

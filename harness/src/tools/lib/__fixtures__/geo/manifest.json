@@ -1,0 +1,44 @@
+{
+    "esearch_gse_breast_cancer.json": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        "params": {
+            "db": "gds",
+            "term": "breast cancer RNA-seq AND gse[Entry Type]",
+            "retmax": "5",
+            "retmode": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "header",
+            "esearchresult.count",
+            "esearchresult.idlist",
+            "esearchresult.retmax",
+            "esearchresult.translationstack",
+            "esearchresult.translationset"
+        ]
+    },
+    "esummary_gse_multi.json": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
+        "params": {
+            "db": "gds",
+            "id": "200305584,200343535,200337500,200337499,200322909",
+            "retmode": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "header"
+        ]
+    },
+    "esummary_invalid_uid.json": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
+        "params": {
+            "db": "gds",
+            "id": "999999999",
+            "retmode": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "header"
+        ]
+    }
+}

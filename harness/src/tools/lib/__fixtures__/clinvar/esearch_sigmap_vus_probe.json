@@ -1,0 +1,32 @@
+{
+    "header": {
+        "type": "esearch",
+        "version": "0.3"
+    },
+    "esearchresult": {
+        "count": "19046",
+        "retmax": "2",
+        "retstart": "0",
+        "idlist": [
+            "4885790",
+            "4883931"
+        ],
+        "translationset": [],
+        "translationstack": [
+            {
+                "term": "BRCA1[All Fields]",
+                "field": "All Fields",
+                "count": "85233",
+                "explode": "N"
+            },
+            {
+                "term": "clinsig_vus[Properties]",
+                "field": "Properties",
+                "count": "2372801",
+                "explode": "N"
+            },
+            "AND"
+        ],
+        "querytranslation": "BRCA1[All Fields] AND clinsig_vus[Properties]"
+    }
+}

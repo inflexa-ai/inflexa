@@ -1,0 +1,431 @@
+{
+    "header": {
+        "type": "esummary",
+        "version": "0.3"
+    },
+    "result": {
+        "uids": [
+            "200305584",
+            "200343535",
+            "200337500",
+            "200337499",
+            "200322909"
+        ],
+        "200305584": {
+            "uid": "200305584",
+            "accession": "GSE305584",
+            "gds": "",
+            "title": "ZEB1-IL-6 axis promotes cancer stem cell properties in breast cancer",
+            "summary": "ZEB1 plays a pivotal role in the pathogenesis of breast cancer and therapeutic resistance by promoting cancer stem cells (CSCs). Cytokines and chemokines secreted by tumor cells are also critically involved in tumor progression. However, the relationship between ZEB1 and these molecules remains poorly understood. This study therefore investigated the pro-carcinogenic role of ZEB1 overexpression in affecting the autocrine pathway in tumor cells. Here, we verified that ZEB1 acts as a transcription factor in MDA-MB-231 cells, promoting IL-6 expression. Elevated IL-6 significantly enhanced the stemness of MDA-MB-231 cells in vitro, as well as promoting tumor formation in a mouse transplantation tumor model. Notably, administration of IL-6 neutralizing antibodies was found to significantly inhibit tumor growth. Furthermore, knockdown of IL-6 in ZEB1-overexpressing MDA-MB-231 cells attenuated stemness, confirming the functional role of the ZEB1-IL-6 axis in promoting tumor stemness. Collectively, these results establish a theoretical foundation for a dual therapeutic approach that targets both ZEB1 and cytokines.",
+            "gpl": "20301",
+            "gse": "305584",
+            "taxon": "Homo sapiens",
+            "entrytype": "GSE",
+            "gdstype": "Expression profiling by high throughput sequencing",
+            "ptechtype": "",
+            "valtype": "",
+            "ssinfo": "",
+            "subsetinfo": "",
+            "pdat": "2026/08/26",
+            "suppfile": "TXT",
+            "samples": [
+                {
+                    "accession": "GSM9179780",
+                    "title": "231cells, control"
+                },
+                {
+                    "accession": "GSM9179781",
+                    "title": "231cells, ZEB1 overexpression"
+                }
+            ],
+            "relations": [],
+            "extrelations": [],
+            "n_samples": 2,
+            "seriestitle": "",
+            "platformtitle": "",
+            "platformtaxa": "",
+            "samplestaxa": "",
+            "pubmedids": [],
+            "projects": [],
+            "ftplink": "ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE305nnn/GSE305584/",
+            "geo2r": "no",
+            "bioproject": "PRJNA1306587"
+        },
+        "200343535": {
+            "uid": "200343535",
+            "accession": "GSE343535",
+            "gds": "",
+            "title": "Whole-Transcriptome Analysis of Three Human Cell Lines Stably Infected with Bovine Leukemia Virus (BLV) Reveals Novel Apoptosis-Associated Factors",
+            "summary": "Bovine leukemia virus (BLV), a major cause of B-cell lymphoma in cattle worldwide, has been linked to human breast cancer. Here, we performed comparative whole-transcriptome analysis of single clones of human epithelial 293T, breast cancer MCF7, and cervical cancer HeLa cells, stably infected with BLV, versus uninfected controls using RNA-sequencing technology. Differential expression analysis revealed 2,050, 1,314, and 2,772 differentially expressed genes (DEGs) between BLV-infected 293T, MCF7, and HeLa cells and controls, respectively. Most DEGs were upregulated in BLV-infected 293T (76.5%) and MCF7 (69.1%) cells but downregulated in HeLa cells (62.0%). Functional enrichment analyses revealed enrichment of “Gene expression” and “Membrane Trafficking” pathways across all cell lines, and that of “Apoptosis” and “Axon guidance” pathways uniquely in 293T and MCF7 cells. Twenty genes linked to apoptosis of 293T and MCF7 cells were identified, and expression of 11 of these was confirmed using quantitative real-time PCR. The expression of EFEMP1 and LXN, which showed the greatest fold change, was validated: EFEMP1 knockdown and LXN overexpression inhibited cell proliferation, induced apoptosis, and altered growth morphology of 293T and MCF7 cells. This is the first transcriptome profiling of human cells during BLV latency, which should help understand the behavior of BLV.",
+            "gpl": "34284",
+            "gse": "343535",
+            "taxon": "Homo sapiens",
+            "entrytype": "GSE",
+            "gdstype": "Expression profiling by high throughput sequencing",
+            "ptechtype": "",
+            "valtype": "",
+            "ssinfo": "",
+            "subsetinfo": "",
+            "pdat": "2026/08/25",
+            "suppfile": "XLSX",
+            "samples": [
+                {
+                    "accession": "GSM9956868",
+                    "title": "Control-2"
+                },
+                {
+                    "accession": "GSM9956882",
+                    "title": "BLV-infected-16"
+                },
+                {
+                    "accession": "GSM9956879",
+                    "title": "Control-13"
+                },
+                {
+                    "accession": "GSM9956876",
+                    "title": "BLV-infected-10"
+                },
+                {
+                    "accession": "GSM9956883",
+                    "title": "BLV-infected-17"
+                },
+                {
+                    "accession": "GSM9956880",
+                    "title": "Control-14"
+                },
+                {
+                    "accession": "GSM9956874",
+                    "title": "Control-8"
+                },
+                {
+                    "accession": "GSM9956871",
+                    "title": "BLV-infected-5"
+                },
+                {
+                    "accession": "GSM9956877",
+                    "title": "BLV-infected-11"
+                },
+                {
+                    "accession": "GSM9956875",
+                    "title": "Control-9"
+                },
+                {
+                    "accession": "GSM9956878",
+                    "title": "BLV-infected-12"
+                },
+                {
+                    "accession": "GSM9956872",
+                    "title": "BLV-infected-6"
+                },
+                {
+                    "accession": "GSM9956873",
+                    "title": "Control-7"
+                },
+                {
+                    "accession": "GSM9956869",
+                    "title": "Control-3"
+                },
+                {
+                    "accession": "GSM9956870",
+                    "title": "BLV-infected-4"
+                },
+                {
+                    "accession": "GSM9956884",
+                    "title": "BLV-infected-18"
+                },
+                {
+                    "accession": "GSM9956881",
+                    "title": "Control-15"
+                },
+                {
+                    "accession": "GSM9956867",
+                    "title": "Control-1"
+                }
+            ],
+            "relations": [],
+            "extrelations": [],
+            "n_samples": 18,
+            "seriestitle": "",
+            "platformtitle": "",
+            "platformtaxa": "",
+            "samplestaxa": "",
+            "pubmedids": [],
+            "projects": [],
+            "ftplink": "ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE343nnn/GSE343535/",
+            "geo2r": "no",
+            "bioproject": "PRJNA1511823"
+        },
+        "200337500": {
+            "uid": "200337500",
+            "accession": "GSE337500",
+            "gds": "",
+            "title": "Processed RNA-seq and ATAC-seq data from 8 triple-negative breast cancer cell lines [ATAC-Seq]",
+            "summary": "Multiomics data were generated from triple-negative breast cancer (TNBC) cell lines to compare patterns first observed in TNBC tumors, as well as to inform possible gene regulation occurring specifically in tumor cells.",
+            "gpl": "18573",
+            "gse": "337500",
+            "taxon": "Homo sapiens",
+            "entrytype": "GSE",
+            "gdstype": "Genome binding/occupancy profiling by high throughput sequencing",
+            "ptechtype": "",
+            "valtype": "",
+            "ssinfo": "",
+            "subsetinfo": "",
+            "pdat": "2026/08/24",
+            "suppfile": "BW",
+            "samples": [
+                {
+                    "accession": "GSM9856674",
+                    "title": "SUM185PE cell line, replicate 1, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856668",
+                    "title": "MDAMB231 cell line, replicate 1, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856671",
+                    "title": "MDAMB453 cell line, replicate 2, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856665",
+                    "title": "HCC1937 cell line, replicate 2, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856662",
+                    "title": "HCC1599 cell line, replicate 1, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856666",
+                    "title": "HCC2157 cell line, replicate 1, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856669",
+                    "title": "MDAMB231 cell line, replicate 2, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856663",
+                    "title": "HCC1599 cell line, replicate 2, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856660",
+                    "title": "BT549 cell line, replicate 1, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856664",
+                    "title": "HCC1937 cell line, replicate 1, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856661",
+                    "title": "BT549 cell line, replicate 2, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856675",
+                    "title": "SUM185PE cell line, replicate 2, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856672",
+                    "title": "MDAMB468 cell line, replicate 1, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856673",
+                    "title": "MDAMB468 cell line, replicate 2, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856667",
+                    "title": "HCC2157 cell line, replicate 2, ATAC-seq"
+                },
+                {
+                    "accession": "GSM9856670",
+                    "title": "MDAMB453 cell line, replicate 1, ATAC-seq"
+                }
+            ],
+            "relations": [],
+            "extrelations": [],
+            "n_samples": 16,
+            "seriestitle": "",
+            "platformtitle": "",
+            "platformtaxa": "",
+            "samplestaxa": "",
+            "pubmedids": [],
+            "projects": [],
+            "ftplink": "ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE337nnn/GSE337500/",
+            "geo2r": "no",
+            "bioproject": "PRJNA1189708"
+        },
+        "200337499": {
+            "uid": "200337499",
+            "accession": "GSE337499",
+            "gds": "",
+            "title": "Processed RNA-seq and ATAC-seq data from 8 triple-negative breast cancer cell lines [RNA-Seq]",
+            "summary": "Multiomics data were generated from triple-negative breast cancer (TNBC) cell lines to compare patterns first observed in TNBC tumors, as well as to inform possible gene regulation occurring specifically in tumor cells.",
+            "gpl": "24676",
+            "gse": "337499",
+            "taxon": "Homo sapiens",
+            "entrytype": "GSE",
+            "gdstype": "Expression profiling by high throughput sequencing",
+            "ptechtype": "",
+            "valtype": "",
+            "ssinfo": "",
+            "subsetinfo": "",
+            "pdat": "2026/08/24",
+            "suppfile": "TSV",
+            "samples": [
+                {
+                    "accession": "GSM9856644",
+                    "title": "BT549 cell line, replicate 1, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856647",
+                    "title": "HCC1599 cell line, replicate 2, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856658",
+                    "title": "SUM185PE cell line, replicate 1, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856655",
+                    "title": "MDAMB453 cell line, replicate 2, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856659",
+                    "title": "SUM185PE cell line, replicate 2, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856653",
+                    "title": "MDAMB231 cell line, replicate 2, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856650",
+                    "title": "HCC2157 cell line, replicate 1, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856656",
+                    "title": "MDAMB468 cell line, replicate 1, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856654",
+                    "title": "MDAMB453 cell line, replicate 1, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856657",
+                    "title": "MDAMB468 cell line, replicate 2, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856651",
+                    "title": "HCC2157 cell line, replicate 2, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856648",
+                    "title": "HCC1937 cell line, replicate 1, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856645",
+                    "title": "BT549 cell line, replicate 2, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856652",
+                    "title": "MDAMB231 cell line, replicate 1, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856649",
+                    "title": "HCC1937 cell line, replicate 2, RNA-seq"
+                },
+                {
+                    "accession": "GSM9856646",
+                    "title": "HCC1599 cell line, replicate 1, RNA-seq"
+                }
+            ],
+            "relations": [],
+            "extrelations": [],
+            "n_samples": 16,
+            "seriestitle": "",
+            "platformtitle": "",
+            "platformtaxa": "",
+            "samplestaxa": "",
+            "pubmedids": [],
+            "projects": [],
+            "ftplink": "ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE337nnn/GSE337499/",
+            "geo2r": "no",
+            "bioproject": "PRJNA1189708"
+        },
+        "200322909": {
+            "uid": "200322909",
+            "accession": "GSE322909",
+            "gds": "",
+            "title": "A functional role for an intronic enhancer of the ZBTB16 gene in AR-mediated tumour suppression in ER+ breast cancer",
+            "summary": "The androgen receptor (AR) is a tumour suppressor in estrogen receptor-positive (ER⁺) breast cancer, repressing cell cycle genes and restraining proliferation. We previously identified ZBTB16 as a candidate AR-regulated tumour suppressor gene. Here, we validated ZBTB16 as a direct AR target and tested whether it mediates AR tumour suppressor activity. In clinical cohorts, ZBTB16 mRNA expression was reduced in breast tumours relative to normal tissue, and higher expression correlated with improved survival in ER+ disease. Androgen treatment increased ZBTB16 protein in ER+ breast cancer cell lines, but ZBTB16 knockdown or overexpression did not detectably alter AR anti-proliferative effects in the models tested. AR bound a conserved intron 3 hormone response region (HRRINT3) within the ZBTB16 locus in breast cancer models and clinical specimens, with androgen-dependent H3K27ac enrichment, consistent with an AR-responsive enhancer. HRRINT3 CRISPR/Cas9 deletion prevented AR-dependent ZBTB16 induction, impaired AR-mediated growth suppression, attenuated canonical AR target gene activation and increased baseline proliferation across breast and prostate cancer cells with upregulation of E2F targets. These findings identify HRRINT3 as a lineage-conserved enhancer contributing to AR-mediated tumour suppression across AR+ cancers.  ",
+            "gpl": "28038",
+            "gse": "322909",
+            "taxon": "Homo sapiens",
+            "entrytype": "GSE",
+            "gdstype": "Expression profiling by high throughput sequencing",
+            "ptechtype": "",
+            "valtype": "",
+            "ssinfo": "",
+            "subsetinfo": "",
+            "pdat": "2026/08/23",
+            "suppfile": "TABULAR, XLSX",
+            "samples": [
+                {
+                    "accession": "GSM9560847",
+                    "title": "T-47D Ctrl-Veh-2"
+                },
+                {
+                    "accession": "GSM9560850",
+                    "title": "T-47D Ctrl-DHT-3"
+                },
+                {
+                    "accession": "GSM9560856",
+                    "title": "T-47D HRRINT3-KO-DHT-3"
+                },
+                {
+                    "accession": "GSM9560853",
+                    "title": "T-47D HRRINT3-KO-Veh-2"
+                },
+                {
+                    "accession": "GSM9560845",
+                    "title": "T-47D Ctrl-Veh-1"
+                },
+                {
+                    "accession": "GSM9560848",
+                    "title": "T-47D Ctrl-DHT-2"
+                },
+                {
+                    "accession": "GSM9560854",
+                    "title": "T-47D HRRINT3-KO-DHT-2"
+                },
+                {
+                    "accession": "GSM9560851",
+                    "title": "T-47D HRRINT3-KO-Veh-1"
+                },
+                {
+                    "accession": "GSM9560849",
+                    "title": "T-47D Ctrl-Veh-3"
+                },
+                {
+                    "accession": "GSM9560846",
+                    "title": "T-47D Ctrl-DHT-1"
+                },
+                {
+                    "accession": "GSM9560855",
+                    "title": "T-47D HRRINT3-KO-Veh-3"
+                },
+                {
+                    "accession": "GSM9560852",
+                    "title": "T-47D HRRINT3-KO-DHT-1"
+                }
+            ],
+            "relations": [],
+            "extrelations": [],
+            "n_samples": 12,
+            "seriestitle": "",
+            "platformtitle": "",
+            "platformtaxa": "",
+            "samplestaxa": "",
+            "pubmedids": [],
+            "projects": [],
+            "ftplink": "ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE322nnn/GSE322909/",
+            "geo2r": "no",
+            "bioproject": "PRJNA1431974"
+        }
+    }
+}

@@ -1,0 +1,109 @@
+{
+    "data": {
+        "target": {
+            "id": "ENSG00000141510",
+            "approvedSymbol": "TP53",
+            "baselineExpression": {
+                "count": 1409,
+                "rows": [
+                    {
+                        "unit": "TPM",
+                        "median": 8.4579,
+                        "q1": 6.86882,
+                        "q3": 10.5936,
+                        "min": 2.25904,
+                        "max": 39.3025,
+                        "datasourceId": "gtex",
+                        "targetId": "ENSG00000141510",
+                        "tissueBiosample": {
+                            "biosampleId": "UBERON_0000007",
+                            "biosampleName": "pituitary gland"
+                        },
+                        "tissueBiosampleParent": {
+                            "biosampleId": "UBERON_0000955",
+                            "biosampleName": "brain"
+                        }
+                    },
+                    {
+                        "unit": "CPM(pseudobulk sum[counts])",
+                        "median": 42.655113220214844,
+                        "q1": 42.655113220214844,
+                        "q3": 42.655113220214844,
+                        "min": 42.655113220214844,
+                        "max": 42.655113220214844,
+                        "datasourceId": "tabula_sapiens",
+                        "targetId": "ENSG00000141510",
+                        "tissueBiosample": {
+                            "biosampleId": "UBERON_0000016",
+                            "biosampleName": "endocrine pancreas"
+                        },
+                        "tissueBiosampleParent": {
+                            "biosampleId": "UBERON_0001264",
+                            "biosampleName": "pancreas"
+                        }
+                    },
+                    {
+                        "unit": "CPM(pseudobulk sum[counts])",
+                        "median": 20.937028884887695,
+                        "q1": 20.937028884887695,
+                        "q3": 20.937028884887695,
+                        "min": 20.937028884887695,
+                        "max": 20.937028884887695,
+                        "datasourceId": "tabula_sapiens",
+                        "targetId": "ENSG00000141510",
+                        "tissueBiosample": null,
+                        "tissueBiosampleParent": null
+                    },
+                    {
+                        "unit": "TPM",
+                        "median": 29.2817943342,
+                        "q1": 26.9622026557,
+                        "q3": 31.2202888279,
+                        "min": 16.6190774632,
+                        "max": 38.3043579715,
+                        "datasourceId": "DICE",
+                        "targetId": "ENSG00000141510",
+                        "tissueBiosample": null,
+                        "tissueBiosampleParent": null
+                    },
+                    {
+                        "unit": "TPM",
+                        "median": 30.5794,
+                        "q1": 25.83,
+                        "q3": 38.1392,
+                        "min": 13.9153,
+                        "max": 51.8058,
+                        "datasourceId": "gtex",
+                        "targetId": "ENSG00000141510",
+                        "tissueBiosample": {
+                            "biosampleId": "UBERON_0000458",
+                            "biosampleName": "endocervix"
+                        },
+                        "tissueBiosampleParent": {
+                            "biosampleId": "UBERON_0003134",
+                            "biosampleName": "female reproductive organ"
+                        }
+                    },
+                    {
+                        "unit": "TPM",
+                        "median": 14.8295,
+                        "q1": 12.2824,
+                        "q3": 18.2903,
+                        "min": 5.40314,
+                        "max": 33.7599,
+                        "datasourceId": "gtex",
+                        "targetId": "ENSG00000141510",
+                        "tissueBiosample": {
+                            "biosampleId": "UBERON_0000473",
+                            "biosampleName": "testis"
+                        },
+                        "tissueBiosampleParent": {
+                            "biosampleId": "UBERON_0003135",
+                            "biosampleName": "male reproductive organ"
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}
