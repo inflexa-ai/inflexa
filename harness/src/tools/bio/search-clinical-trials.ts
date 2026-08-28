@@ -37,8 +37,8 @@ export const searchClinicalTrialsTool = defineTool({
         "read a result, as opposed to finding a trial.\n" +
         "ACCEPTED IDENTIFIERS: `query` is free text matched across the whole study record, so a gene symbol ('KRAS'), a drug or brand name ('imatinib', " +
         "'Gleevec'), a condition ('melanoma') or an NCT ID ('NCT00000102') all work. `nctId` takes one NCT ID and nothing else.\n" +
-        "`phase` and `status` are optional server-side filters — omit them to see the full landscape; totalFound reports the true match count even when it " +
-        "exceeds the page returned.\n" +
+        "`status` is an optional server-side filter and `phase` narrows the returned page. Omit both to see the full landscape. totalFound reports the true " +
+        "match count of `query` plus `status`, thus it can exceed the trials that a phase-narrowed answer carries.\n" +
         "ABSENCE IS NORMAL. An empty trials array is a valid 'nothing matched' (often an over-narrow filter) and a null trial from 'details' means the " +
         "registry holds no such NCT ID — report it and move on, do not retry the identical call. A trial with no posted results carries empty outcomes " +
         "and adverse events, which means unreported, never zero.",
@@ -57,8 +57,9 @@ export const searchClinicalTrialsTool = defineTool({
                 .enum(["EARLY_PHASE1", "PHASE1", "PHASE2", "PHASE3", "PHASE4"])
                 .optional()
                 .describe(
-                    "'search' only. Optional exact phase filter. Omit for all phases (observational and expanded-access studies carry no phase and are " +
-                        "excluded when this is set).",
+                    "'search' only. Optional exact phase filter, applied to the returned page rather than to the whole query. Omit for all phases " +
+                        "(observational and expanded-access studies carry no phase and are excluded when this is set). A narrow phase over a broad query " +
+                        "can give fewer trials than `limit` asks for, even when the registry holds more.",
                 ),
             status: z
                 .enum(["RECRUITING", "ACTIVE_NOT_RECRUITING", "COMPLETED", "NOT_YET_RECRUITING", "TERMINATED", "WITHDRAWN", "SUSPENDED"])

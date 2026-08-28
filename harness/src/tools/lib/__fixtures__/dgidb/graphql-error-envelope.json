@@ -1,0 +1,24 @@
+{
+    "errors": [
+        {
+            "message": "Field 'bogusField' doesn't exist on type 'Gene'",
+            "locations": [
+                {
+                    "line": 1,
+                    "column": 65
+                }
+            ],
+            "path": [
+                "query",
+                "genes",
+                "nodes",
+                "bogusField"
+            ],
+            "extensions": {
+                "code": "undefinedField",
+                "typeName": "Gene",
+                "fieldName": "bogusField"
+            }
+        }
+    ]
+}

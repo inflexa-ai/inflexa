@@ -1,0 +1,26 @@
+{
+    "drugbank_id": "DB00316",
+    "name": "Acetaminophen",
+    "cas_number": "103-90-2",
+    "annotation_status": "complete",
+    "type": "Small Molecule",
+    "groups": [
+        "Approved"
+    ],
+    "description": "Acetaminophen (paracetamol), also commonly known as Tylenol, is the most commonly taken analgesic worldwide and is recommended as first-line therapy in pain conditions by the World Health Organization.",
+    "simple_description": "A medication used to reduce fever and treat pain.",
+    "synonyms": [
+        "4-(Acetylamino)phenol",
+        "4-acetamidophenol"
+    ],
+    "pharmacology": {
+        "indication_description": "In general, acetaminophen is used for the treatment of mild to moderate pain and reduction of fever.",
+        "half_life": "The half-life for adults is 2.5 hours."
+    },
+    "therapeutic_categories": [
+        {
+            "drugbank_id": "DBCAT000041",
+            "name": "Analgesics"
+        }
+    ]
+}

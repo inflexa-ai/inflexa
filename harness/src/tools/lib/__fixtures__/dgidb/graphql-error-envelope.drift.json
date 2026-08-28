@@ -1,0 +1,3 @@
+{
+    "errors": "Field 'bogusField' doesn't exist on type 'Gene'"
+}

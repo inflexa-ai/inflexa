@@ -1,0 +1,38 @@
+{
+    "label-lenalidomide-rems.json": {
+        "url": "https://api.fda.gov/drug/label.json",
+        "params": {
+            "search": "(openfda.generic_name:\"lenalidomide\" OR openfda.brand_name:\"lenalidomide\")",
+            "sort": "effective_time:desc",
+            "limit": "5"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "meta.last_updated",
+            "meta.results.total"
+        ],
+        "replay": false
+    },
+    "label-missing-openfda.json": {
+        "url": "https://api.fda.gov/drug/label.json",
+        "params": {
+            "search": "_missing_:openfda.generic_name",
+            "limit": "3"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "meta.last_updated",
+            "meta.results.total"
+        ]
+    },
+    "_fields_druglabel.yaml": {
+        "url": "https://open.fda.gov/fields/druglabel.yaml",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    },
+    "_fields_drugevent.yaml": {
+        "url": "https://open.fda.gov/fields/drugevent.yaml",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    }
+}

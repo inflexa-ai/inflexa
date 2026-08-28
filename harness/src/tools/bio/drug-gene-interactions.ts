@@ -35,9 +35,6 @@ const MAX_LIMIT = 200;
 const MAX_INPUTS = 25;
 /** Prose kept per DrugBank field when the full record is not requested. */
 const PROSE_PREVIEW_CHARS = 200;
-/** Targets and interactions kept per DrugBank record. */
-const MAX_DRUG_TARGETS = 10;
-const MAX_DRUG_INTERACTIONS = 10;
 
 interface SourceOutcome {
     source: Source;
@@ -48,26 +45,15 @@ interface SourceOutcome {
 
 /**
  * A DrugBank record projected for context. `includeDrugRecord` decides whether
- * the five prose fields arrive whole or as previews — five 500-character fields
- * across ten records is 25k characters of narrative that a drug-vs-gene
- * question rarely needs.
+ * the description arrives whole or as a preview — a 500-character field across
+ * ten records is narrative that a drug-vs-gene question rarely needs.
  */
 interface ProjectedDrug {
     drugbankId: string;
     name: string;
     type: string;
     groups: string[];
-    categories: string[];
-    halfLife: string;
-    targets: DrugResult["targets"];
-    targetCount: number;
-    interactions: DrugResult["interactions"];
-    interactionCount: number;
     description: string;
-    indication: string;
-    pharmacodynamics: string;
-    mechanismOfAction: string;
-    toxicity: string;
     proseTruncated: boolean;
 }
 
@@ -91,7 +77,8 @@ const inputSchema = z.object({
         .describe(
             "Corpora to query in parallel. Default ['dgidb'] ALONE — it aggregates the other two, so add them only for what they uniquely hold. " +
                 "'dgidb': 30+ aggregated sources, per-interaction source count as confidence; the only one that batches. " +
-                "'drugbank': the curated drug RECORD (indication, pharmacodynamics, mechanism, toxicity, half-life, DDIs); needs DRUGBANK_API_KEY. " +
+                "'drugbank': the curated drug RECORD of the Discovery API (name, description, modality type, approval groups); it carries no indication, " +
+                "pharmacodynamics, mechanism, toxicity, half-life or drug-drug interaction, because that API serves none of them. Needs DRUGBANK_API_KEY. " +
                 "'pharmgkb': pharmacogenomic annotations graded 1A…4 (1A guideline-backed); exact match only — 'CYP2D6' resolves, 'cytochrome P450 2D6' does not.",
         ),
     limit: z
@@ -117,7 +104,7 @@ const inputSchema = z.object({
         .boolean()
         .optional()
         .describe(
-            `'drugbank' only. Default FALSE — the five prose fields come back as ${PROSE_PREVIEW_CHARS}-char previews with proseTruncated: true. ` +
+            `'drugbank' only. Default FALSE — the description comes back as a ${PROSE_PREVIEW_CHARS}-char preview with proseTruncated: true. ` +
                 "True for full text; narrow `limit` when you do.",
         ),
 });
@@ -131,23 +118,12 @@ interface DrugGeneOutput {
 }
 
 function projectDrug(drug: DrugResult, includeFullProse: boolean): ProjectedDrug {
-    const prose = (value: string): string => (includeFullProse ? value : value.slice(0, PROSE_PREVIEW_CHARS));
     return {
         drugbankId: drug.drugbankId,
         name: drug.name,
         type: drug.type,
         groups: drug.groups,
-        categories: drug.categories,
-        halfLife: drug.halfLife,
-        targets: drug.targets.slice(0, MAX_DRUG_TARGETS),
-        targetCount: drug.targets.length,
-        interactions: drug.interactions.slice(0, MAX_DRUG_INTERACTIONS),
-        interactionCount: drug.interactions.length,
-        description: prose(drug.description),
-        indication: prose(drug.indication),
-        pharmacodynamics: prose(drug.pharmacodynamics),
-        mechanismOfAction: prose(drug.mechanismOfAction),
-        toxicity: prose(drug.toxicity),
+        description: includeFullProse ? drug.description : drug.description.slice(0, PROSE_PREVIEW_CHARS),
         proseTruncated: !includeFullProse,
     };
 }
@@ -155,6 +131,11 @@ function projectDrug(drug: DrugResult, includeFullProse: boolean): ProjectedDrug
 /**
  * Run one corpus, folding its failure into an `unavailable` outcome so a dead
  * or unkeyed source cannot take down a call the others could answer.
+ *
+ * `unavailable` reports that the corpus was not reached. An empty result is a
+ * complete answer, thus it reports `no_data`. ClinPGx encodes "no annotation" as
+ * an HTTP 404, and its client maps that miss to an empty list before it arrives
+ * here. As a result an unannotated gene reads as `no_data`, not as an outage.
  */
 async function runSource<T>(source: Source, fetch: () => Promise<T[]>): Promise<{ outcome: SourceOutcome; records: T[] }> {
     try {
