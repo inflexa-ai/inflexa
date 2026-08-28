@@ -403,6 +403,11 @@ async function runProfileLadder(
             return { kind: "triggered", restarted: result === "restarted", materialized: true };
         case "already_running":
             return { kind: "already_running", materialized: true };
+        case "completed":
+            // The trigger completes a row at once only for an empty manifest, and the ladder settles an
+            // empty input set before it seeds. A completed profile covers the dispatched set, so the
+            // outcome is the one a completed row at parity reports.
+            return { kind: "already_profiled", materialized: true };
         case "failed":
             // A `failed` ledger row took the retry-claim route above, so reaching here means the trigger
             // itself faulted — report it so the UI surfaces it and the user can re-open or run
@@ -491,6 +496,10 @@ export async function forceReprofile(runtime: HarnessRuntime, analysis: Analysis
             return { kind: "triggered", restarted: result === "restarted", materialized: true };
         case "already_running":
             return { kind: "already_running", materialized: true };
+        case "completed":
+            // The same type obligation as the parity ladder: force settles an empty input set as `no_inputs`
+            // before it triggers, so the trigger's empty-manifest completion is not reachable here.
+            return { kind: "already_profiled", materialized: true };
         case "failed":
             // The trigger's CAS claims only pending/completed rows; a `failed` row needs the retry claim.
             // Force is deliberate, so unlike parity it resurrects a failure whose input set is unchanged.
