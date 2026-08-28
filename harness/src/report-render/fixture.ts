@@ -310,18 +310,55 @@ export const FIXTURE_VALUES: RenderValues = {
     "figure-volcano": { type: "figure", src: VOLCANO_SOURCE },
 };
 
-/** The raw input of the fixture chain. The command reads these bytes, and no block of the report pins them. */
-const COUNTS_PATH = "data/inputs/counts.csv";
+/** The raw inputs of the fixture chain. The preprocess command reads these bytes, and no block pins them. */
+const RAW_COUNTS_PATH = "data/inputs/GSE78220-counts.txt";
+const RAW_SAMPLES_PATH = "data/inputs/GSE78220-samples.csv";
+
+/**
+ * The annotation pair of the cohort: the table, and the schema that describes its columns.
+ *
+ * The two names differ in their extension alone, and each one overflows the row of the panel. Thus the
+ * fixture page carries the middle cut of a name, and a person sees that the two rows still read apart.
+ */
+const RAW_ANNOTATION_TABLE_PATH = "data/inputs/GSE78220-hypoxia-versus-normoxia-sample-annotations.csv";
+const RAW_ANNOTATION_SCHEMA_PATH = "data/inputs/GSE78220-hypoxia-versus-normoxia-sample-annotations.json";
+
+/** The two intermediate artifacts. The preprocess command writes them, and the model command reads them. */
+const CLEAN_COUNTS_PATH = "runs/run-2f1c/qc/counts-clean.csv";
+const SAMPLE_TABLE_PATH = "runs/run-2f1c/qc/sample-table.csv";
+
+/** The two scripts. Each command names its own script in the argument vector, thus each producer row shows it. */
+const CLEAN_SCRIPT_PATH = "runs/run-2f1c/qc/scripts/01-clean-counts.R";
+const MODEL_SCRIPT_PATH = "runs/run-2f1c/de/scripts/02-deseq2.R";
+
+/** The figure that the figure block pins. The model command writes it beside the result table. */
+const VOLCANO_PATH = "runs/run-2f1c/de/volcano.svg";
+
+/** One file entity of the document: the dialect type, the path, and the hash of the bytes. */
+function fileEntity(path: string, hash: string): Record<string, string> {
+    return { "prov:type": "inflexa:File", "inflexa:path": path, "inflexa:hash": hash, "inflexa:producer": "command" };
+}
 
 /**
  * The provenance of the fixture: one document, and the attestation over it.
  *
  * The renderer moves the two texts into script assets and it parses no byte of them. The page-side library
- * parses the document, thus the fixture holds one real chain: the raw counts, the command that read them,
- * and the result table that the table block, the chart block, and one claim all pin.
+ * parses the document, thus the fixture holds one real chain of two commands: the raw reads, the command
+ * that cleaned them, the two artifacts that it wrote, the command that modeled them, and the result table
+ * that the table block, the chart block, and one claim all pin.
  *
- * The chain is the smallest one that a walk can show. A pin of the report that this document holds no
- * entity for opens the same panel under the absence note, thus one fixture page shows both forms.
+ * The document also carries the bookkeeping that a real export carries: a run, a step for each command, the
+ * analysis entity, and the coarse derivation edge onto it. None of them is an execution, thus none of them
+ * becomes a row and the fixture proves it.
+ *
+ * The model command writes three more files that no block pins. Thus the panel of the result table shows
+ * the count row, and a person examines that form on the fixture page.
+ *
+ * The preprocess command reads an annotation pair whose two names differ in their extension alone. Both
+ * names overflow the row, thus the panel shows the middle cut of a name and the two rows still read apart.
+ *
+ * A pin of the report that this document holds no entity for opens the same panel under the absence note,
+ * thus one fixture page shows both forms.
  *
  * The attestation is opaque. Nothing on the page parses it, thus one literal serves.
  */
@@ -329,17 +366,62 @@ export const FIXTURE_PROVENANCE: ProvenanceExport = {
     document: JSON.stringify({
         prefix: { inflexa: "https://inflexa.ai/prov#" },
         entity: {
-            "inflexa:file-counts": { "inflexa:path": COUNTS_PATH, "inflexa:hash": "sha256:6d2a83f5c419", "inflexa:source": "data" },
-            "inflexa:file-results": {
-                "prov:type": "inflexa:File",
-                "inflexa:path": RESULTS_PATH,
-                "inflexa:hash": "sha256:4e7c02b8d135",
-                "inflexa:producer": "command",
+            "inflexa:analysis-2f1c": { "prov:type": "inflexa:Analysis" },
+            "inflexa:file-raw-counts": { "inflexa:path": RAW_COUNTS_PATH, "inflexa:hash": "sha256:7d161f43ab08", "inflexa:source": "data" },
+            "inflexa:file-raw-samples": { "inflexa:path": RAW_SAMPLES_PATH, "inflexa:hash": "sha256:bd0fbbe62c17", "inflexa:source": "data" },
+            "inflexa:file-raw-annotations": { "inflexa:path": RAW_ANNOTATION_TABLE_PATH, "inflexa:hash": "sha256:1f9a7c05de62", "inflexa:source": "data" },
+            "inflexa:file-raw-schema": { "inflexa:path": RAW_ANNOTATION_SCHEMA_PATH, "inflexa:hash": "sha256:6c3ad84b90f1", "inflexa:source": "data" },
+            "inflexa:file-clean-script": fileEntity(CLEAN_SCRIPT_PATH, "sha256:8be4eba4f7d0"),
+            "inflexa:file-model-script": fileEntity(MODEL_SCRIPT_PATH, "sha256:55db18aa9e31"),
+            "inflexa:file-clean-counts": fileEntity(CLEAN_COUNTS_PATH, "sha256:ce4202f81b6d"),
+            "inflexa:file-sample-table": fileEntity(SAMPLE_TABLE_PATH, "sha256:e474bb745a92"),
+            "inflexa:file-results": fileEntity(RESULTS_PATH, "sha256:4e7c02b8d135"),
+            "inflexa:file-volcano": fileEntity(VOLCANO_PATH, "sha256:a70f3b19cc84"),
+            "inflexa:file-dispersion": fileEntity("runs/run-2f1c/de/dispersion.png", "sha256:31c9d0e4aa76"),
+            "inflexa:file-normalized": fileEntity("runs/run-2f1c/de/normalized-counts.csv", "sha256:0a5f77c1e3b8"),
+            "inflexa:file-session": fileEntity("runs/run-2f1c/de/session-info.txt", "sha256:c2b6118d40fe"),
+        },
+        activity: {
+            "inflexa:run-2f1c": { "prov:type": "inflexa:Run", "inflexa:runId": "run-2f1c" },
+            "inflexa:step-qc": { "prov:type": "inflexa:Step", "inflexa:runId": "run-2f1c", "inflexa:stepId": "qc-clean" },
+            "inflexa:step-de": { "prov:type": "inflexa:Step", "inflexa:runId": "run-2f1c", "inflexa:stepId": "de-primary" },
+            "inflexa:cmd-qc": { "prov:type": "inflexa:Command", "inflexa:command": "Rscript", "inflexa:args": CLEAN_SCRIPT_PATH, "inflexa:exitCode": 0 },
+            "inflexa:cmd-de": {
+                "prov:type": "inflexa:Command",
+                "inflexa:command": "Rscript",
+                "inflexa:args": `${MODEL_SCRIPT_PATH} --fdr 0.05`,
+                "inflexa:exitCode": 0,
             },
         },
-        activity: { "inflexa:cmd-run-2f1c-de": { "prov:type": "inflexa:Command", "inflexa:command": "Rscript deseq2.R" } },
-        wasGeneratedBy: { "inflexa:gen-results": { "prov:entity": "inflexa:file-results", "prov:activity": "inflexa:cmd-run-2f1c-de" } },
-        used: { "inflexa:used-cmd-counts": { "prov:activity": "inflexa:cmd-run-2f1c-de", "prov:entity": "inflexa:file-counts" } },
+        wasGeneratedBy: {
+            "inflexa:gen-clean-counts": { "prov:entity": "inflexa:file-clean-counts", "prov:activity": "inflexa:cmd-qc" },
+            "inflexa:gen-sample-table": { "prov:entity": "inflexa:file-sample-table", "prov:activity": "inflexa:cmd-qc" },
+            "inflexa:gen-results": { "prov:entity": "inflexa:file-results", "prov:activity": "inflexa:cmd-de" },
+            "inflexa:gen-volcano": { "prov:entity": "inflexa:file-volcano", "prov:activity": "inflexa:cmd-de" },
+            "inflexa:gen-dispersion": { "prov:entity": "inflexa:file-dispersion", "prov:activity": "inflexa:cmd-de" },
+            "inflexa:gen-normalized": { "prov:entity": "inflexa:file-normalized", "prov:activity": "inflexa:cmd-de" },
+            "inflexa:gen-session": { "prov:entity": "inflexa:file-session", "prov:activity": "inflexa:cmd-de" },
+        },
+        used: {
+            "inflexa:used-qc-raw-counts": { "prov:activity": "inflexa:cmd-qc", "prov:entity": "inflexa:file-raw-counts" },
+            "inflexa:used-qc-raw-samples": { "prov:activity": "inflexa:cmd-qc", "prov:entity": "inflexa:file-raw-samples" },
+            "inflexa:used-qc-annotations": { "prov:activity": "inflexa:cmd-qc", "prov:entity": "inflexa:file-raw-annotations" },
+            "inflexa:used-qc-schema": { "prov:activity": "inflexa:cmd-qc", "prov:entity": "inflexa:file-raw-schema" },
+            "inflexa:used-qc-script": { "prov:activity": "inflexa:cmd-qc", "prov:entity": "inflexa:file-clean-script" },
+            "inflexa:used-de-clean-counts": { "prov:activity": "inflexa:cmd-de", "prov:entity": "inflexa:file-clean-counts" },
+            "inflexa:used-de-sample-table": { "prov:activity": "inflexa:cmd-de", "prov:entity": "inflexa:file-sample-table" },
+            "inflexa:used-de-script": { "prov:activity": "inflexa:cmd-de", "prov:entity": "inflexa:file-model-script" },
+            "inflexa:used-run-analysis": { "prov:activity": "inflexa:run-2f1c", "prov:entity": "inflexa:analysis-2f1c" },
+        },
+        wasInformedBy: {
+            "inflexa:informed-cmd-qc": { "prov:informed": "inflexa:cmd-qc", "prov:informant": "inflexa:step-qc" },
+            "inflexa:informed-cmd-de": { "prov:informed": "inflexa:cmd-de", "prov:informant": "inflexa:step-de" },
+            "inflexa:informed-step-qc": { "prov:informed": "inflexa:step-qc", "prov:informant": "inflexa:run-2f1c" },
+            "inflexa:informed-step-de": { "prov:informed": "inflexa:step-de", "prov:informant": "inflexa:run-2f1c" },
+        },
+        wasDerivedFrom: {
+            "inflexa:deriv-results": { "prov:generatedEntity": "inflexa:file-results", "prov:usedEntity": "inflexa:analysis-2f1c" },
+        },
     }),
     attestation: JSON.stringify({ alg: "ed25519", signature: "Zml4dHVyZS1zaWduYXR1cmU" }),
 };

@@ -927,22 +927,36 @@ export const GRID_BOOTSTRAP = `(function () {
 export const TSPROV_GLOBAL = "tsprov";
 
 /**
- * The attribute names of the dialect that the walk reads.
+ * The attribute names of the dialect that the rail reads.
  *
- * The writer of the document stamps these names on a file entity and on an activity. The popover reads
- * them and nothing else of the document, thus a pin resolves to one node and a hop reads as the appendix
- * entry of the same artifact reads.
+ * The writer of the document stamps these names, and the popover reads them and nothing else. A file
+ * entity carries the path and the hash. A command activity carries the command line, the argument
+ * vector, and the path of a script that bound to no bytes. A step activity carries the step id.
  *
- * The label names are in the order of preference. An activity carries the first of them that fits its own
- * kind, and a file entity carries none of them, because the path already names it.
+ * A command activity carries no step id of its own. It names its step through the `wasInformedBy` edge
+ * that the writer stamps beside it, thus the rail reads the step from the activity at the end of that
+ * edge and never from the identifier of the command.
  */
 const PIN_PATH_ATTRIBUTE = "inflexa:path";
 const PIN_HASH_ATTRIBUTE = "inflexa:hash";
-const DIALECT_TYPE_PREFIX = "inflexa:";
-const DIALECT_FILE_TYPE = "File";
-const HOP_LABEL_ATTRIBUTES = ["inflexa:command", "inflexa:tool", "inflexa:stepId", "inflexa:runId", "inflexa:name", "prov:label"];
+const COMMAND_ATTRIBUTE = "inflexa:command";
+const COMMAND_ARGS_ATTRIBUTE = "inflexa:args";
+const UNRESOLVED_SCRIPT_ATTRIBUTE = "inflexa:unresolvedScript";
+const TOOL_ATTRIBUTE = "inflexa:tool";
+const STEP_ID_ATTRIBUTE = "inflexa:stepId";
 
-/** The heading of the popover. It names what the panel holds, above the hops. */
+/**
+ * The dialect types that name an execution.
+ *
+ * A command runs a script, and a file tool writes content that an agent authored. Every other activity of
+ * the document is bookkeeping: a step, a run, and a lifecycle action. Thus the rail expands these two
+ * types alone, and no bookkeeping node becomes a row.
+ */
+const DIALECT_TYPE_PREFIX = "inflexa:";
+const DIALECT_COMMAND_TYPE = "Command";
+const DIALECT_FILE_TOOL_TYPE = "FileToolWrite";
+
+/** The heading of the popover. It names what the panel holds, above the rail. */
 const LINEAGE_TITLE_TEXT = "Lineage";
 
 /** The note of a page that carries no lineage library. The chain then stops at the pin of the block. */
@@ -957,29 +971,112 @@ export const LINEAGE_NO_NODE_NOTE = "The document holds no node for this pin. Th
 /** The note of a chain that the library cut at its own depth bound. */
 export const LINEAGE_TRUNCATED_NOTE = "The library cut this chain at its depth bound. Thus the chain continues past the last hop.";
 
-/** The kind tag of the pin hop that the page names on its own, without the library. */
-const LINEAGE_ARTIFACT_KIND = "Artifact";
+/** The note of an external record. A paper is no artifact, thus no data chain reaches it. */
+export const LINEAGE_RECORD_NOTE = "An external record has no data chain. Thus this reference ends at the record.";
 
-/** The kind tag of a hop that names an operation and carries no dialect type of its own. */
-const LINEAGE_OPERATION_KIND = "Activity";
+/**
+ * The footer note of a chain that reached the raw data.
+ *
+ * The signed form states the attestation, and the page carries one only where the source held one. Thus
+ * the footer never claims a signature that the page does not hold.
+ */
+export const LINEAGE_COMPLETE_NOTE = "The chain is complete · each hop is content-addressed";
+export const LINEAGE_SIGNED_NOTE = "The chain is complete · each hop is content-addressed · an attestation covers it";
 
-/** The kind tag of the one hop of an external record. */
-const LINEAGE_RECORD_KIND = "Citation";
+/**
+ * The tag of each row form.
+ *
+ * The pinned row takes a neutral tag and never the kind of its block. One marker of a claim can pin a
+ * table that sits in a different section, thus a tag such as "THIS TABLE" would name the wrong element of
+ * the page. "PINNED" names the one relation that always holds: the marker pins these bytes.
+ *
+ * A file takes the raw tag where the rail found no command that made it. That is what ends a branch, thus
+ * the tag and the terminal tint state the same fact.
+ */
+const LINEAGE_PIN_TAG = "PINNED";
+const LINEAGE_ARTIFACT_TAG = "ARTIFACT";
+const LINEAGE_RAW_TAG = "RAW INPUT";
+const LINEAGE_RECORD_TAG = "CITATION";
+
+/** The connector label above a producer row. */
+const LINEAGE_MADE_BY_LABEL = "MADE BY";
+
+/** The name of the close control for a reader who hears the page instead of seeing it. */
+const LINEAGE_CLOSE_LABEL = "Close the lineage panel";
+
+/** The glyph of the close control. */
+const LINEAGE_CLOSE_GLYPH = "✕";
 
 /**
  * The classes of the popover. The script emits each one, and the design sheet holds the matching rule.
  *
- * The hop reuses the appendix vocabulary for the kind tag, the path, the detail, and the hash head. Thus
- * one reference reads alike in the appendix and in the popover, and the sheet styles both from one rule.
+ * The rail carries three row forms over one base row: the pinned artifact, a producer, and a raw input.
+ * A row that carries no modifier is an artifact that the rail continues past, thus the base rule is the
+ * form that the panel shows most.
  */
 const LINEAGE_PANEL_CLASS = "report-lineage-popover";
+const LINEAGE_HEADER_CLASS = "report-lineage-header";
 const LINEAGE_PANEL_TITLE_CLASS = "report-lineage-title";
-const LINEAGE_HOPS_CLASS = "report-lineage-hops";
-const LINEAGE_HOP_CLASS = "report-lineage-hop";
+const LINEAGE_COUNT_CLASS = "report-lineage-count";
+const LINEAGE_CLOSE_CLASS = "report-lineage-close";
+const LINEAGE_BODY_CLASS = "report-lineage-body";
+const LINEAGE_ROW_CLASS = "report-lineage-row";
+const LINEAGE_ROW_PIN_CLASS = "report-lineage-row-pin";
+const LINEAGE_ROW_PRODUCER_CLASS = "report-lineage-row-producer";
+const LINEAGE_ROW_RAW_CLASS = "report-lineage-row-raw";
+const LINEAGE_TAG_CLASS = "report-lineage-tag";
+const LINEAGE_TAG_PIN_CLASS = "report-lineage-tag-pin";
+const LINEAGE_TAG_RAW_CLASS = "report-lineage-tag-raw";
+const LINEAGE_PATH_CLASS = "report-lineage-path";
+const LINEAGE_DIR_CLASS = "report-lineage-dir";
+const LINEAGE_HASH_CLASS = "report-lineage-hash";
+const LINEAGE_PROMPT_CLASS = "report-lineage-prompt";
+const LINEAGE_SCRIPT_CLASS = "report-lineage-script";
+const LINEAGE_META_CLASS = "report-lineage-meta";
+const LINEAGE_LINK_CLASS = "report-lineage-link";
+const LINEAGE_RAIL_CLASS = "report-lineage-rail";
+const LINEAGE_RAIL_PIN_CLASS = "report-lineage-rail-pin";
+const LINEAGE_LINK_LABEL_CLASS = "report-lineage-link-label";
+const LINEAGE_MORE_CLASS = "report-lineage-more";
+const LINEAGE_FOOTER_CLASS = "report-lineage-footer";
+const LINEAGE_CHECK_CLASS = "report-lineage-check";
 const LINEAGE_NOTE_CLASS = "report-lineage-note";
 
-/** The space between the control and the panel, and between the panel and the edge of the viewport, in pixels. */
+/** The space between the control and the panel, and between the panel and the top and bottom edges, in pixels. */
 const LINEAGE_PANEL_GAP_PX = 8;
+
+/** The space between the panel and the left and right edges of the viewport, in pixels. */
+const LINEAGE_PANEL_MARGIN_PX = 12;
+
+/** The head of the run directory of the storage layout. A path under it carries the run id in its next segment. */
+const RUN_DIRECTORY_HEAD = "runs/";
+
+/**
+ * The head of a path that the row shows in place of the segments that it cut.
+ *
+ * The cut takes whole segments off the front, thus the mark stands where a directory stood and the reader
+ * sees that the row shows a tail. The hover then gives the whole path.
+ */
+const LINEAGE_CUT_MARK = "…";
+
+/**
+ * The longest tail that reads as an extension, and the tail of a name that carries none, in characters.
+ *
+ * The extension states the kind of the file, thus it is the part of a cut name that must survive. A dot far
+ * from the end belongs to the name itself, and a tail from that dot would leave no start. Thus a tail longer
+ * than the bound falls back to a fixed count of characters, and the cut still reads from both ends.
+ */
+const LINEAGE_EXTENSION_MAX_CHARS = 8;
+const LINEAGE_NAME_TAIL_CHARS = 4;
+
+/**
+ * The indent of one rail level, and the inset of a connector, in pixels.
+ *
+ * A row of one level sits at its own indent, and the connector above it sits between the two levels. Thus
+ * the rail of a connector reads as the line that joins the row above to the rows below.
+ */
+const LINEAGE_INDENT_PX = 24;
+const LINEAGE_RAIL_INSET_PX = 14;
 
 /**
  * The page-side script of the lineage popover.
@@ -994,22 +1091,37 @@ const LINEAGE_PANEL_GAP_PX = 8;
  * control.
  *
  * The panel is a child of the body, positioned against the document. A card clips its own overflow, thus a
- * panel inside a card would show as a strip. The position reads the box of the control at click time, and
- * it holds the panel inside the viewport on both sides. A resize invalidates that measure, thus a resize
- * closes the panel.
+ * panel inside a card would show as a strip. The position reads the box of the control, and it holds the
+ * panel inside the viewport on each side. The panel opens under the control, and it opens over the control
+ * where the space under it is short. It never covers the control that opened it: where neither side holds
+ * the whole panel, the body shrinks instead. A resize invalidates the measure, thus a resize places the
+ * open panel again.
  *
- * The script builds each node and it writes each string as text. Thus a hostile path, a hostile label, and
- * a hostile hop of the document reach the panel as text and never as markup.
+ * The rail comes from the edges of the walk and never from its node set. A `generated` edge binds an
+ * artifact to the command that made it, and a `used` edge binds that command to a file that it read. Each
+ * input file continues the rail with its own producer, down to a file that no command made. Thus the panel
+ * shows the chain and it shows nothing else: a sibling output collapses behind one count row, and a step,
+ * a run, and an agent never become a row.
+ *
+ * The panel takes the width of its longest row, up to the cap of the sheet. Thus a normal window shows each
+ * name whole, and the cut answers a window too narrow for the row. The fit measures against the width of the
+ * laid-out panel, which the open pins before the first cut. Without the pin a cut would shrink the panel and
+ * the next measure would read a narrower box, thus the rows would cut each other down.
+ *
+ * The hover of a row gives the whole path, and it answers for the run prefix and for a cut alike.
+ *
+ * The script builds each node and it writes each string as text. Thus a hostile path, a hostile command,
+ * and a hostile step of the document reach the panel as text and never as markup.
  *
  * The page makes no request. The document rides the page already, and the library reads it in memory. The
  * graph builds one time, on the first click, thus a reader who opens no panel pays nothing for the parse.
  */
 export const LINEAGE_POPOVER = `(function () {
+  var SVG_NAMESPACE = "http://www.w3.org/2000/svg";
   var openPanel = null;
   var openControl = null;
   var graph = null;
   var graphFailed = false;
-  var labelNames = ${JSON.stringify(HOP_LABEL_ATTRIBUTES)};
   function elementOf(node) {
     while (node && node.nodeType !== 1) {
       node = node.parentNode;
@@ -1053,6 +1165,13 @@ export const LINEAGE_POPOVER = `(function () {
     }
     return keys[place];
   }
+  function markerOf(control) {
+    // The control sits inside the marker, beside the link that carries the shown number. Thus the header
+    // names the number that the reader clicked, and no attribute of the markup repeats it.
+    var marker = control.parentElement;
+    var link = marker ? marker.querySelector("a") : null;
+    return link ? String(link.textContent || "") : "";
+  }
   function graphOf(library, text) {
     if (graph === null && !graphFailed) {
       try {
@@ -1084,40 +1203,182 @@ export const LINEAGE_POPOVER = `(function () {
     }
     return "";
   }
-  function labelOf(record) {
-    for (var i = 0; i < labelNames.length; i++) {
-      var text = attrText(record, labelNames[i]);
-      if (text !== "") {
-        return text;
+  function chainOf(library, built, walked, key) {
+    var made = Object.create(null);
+    var read = Object.create(null);
+    var ranIn = Object.create(null);
+    var cut = Object.create(null);
+    for (var e = 0; e < walked.edges.length; e++) {
+      var edge = walked.edges[e];
+      // A generation edge runs from the artifact to its command, a usage edge from a command to a file
+      // that it read, and a communication edge from a command to its step. The three classes carry the
+      // whole rail, thus every other traversed edge stays out of it.
+      if (edge.relation instanceof library.ProvGeneration) {
+        made[edge.from] = edge.to;
+      } else if (edge.relation instanceof library.ProvUsage) {
+        if (read[edge.from] === undefined) {
+          read[edge.from] = [];
+        }
+        read[edge.from].push(edge.to);
+      } else if (edge.relation instanceof library.ProvCommunication) {
+        ranIn[edge.from] = edge.to;
       }
     }
-    return "";
-  }
-  function hopOf(library, node) {
-    var element = node.element;
-    var type = dialectType(element);
-    // A read of raw data carries no dialect type, and the walk still reaches it. Thus the fallback reads
-    // the record class, and a file of that kind names itself the same as the pin of a block does.
-    var named = type !== "" && type !== "${DIALECT_FILE_TYPE}";
-    var artifact = element instanceof library.ProvEntity;
-    return {
-      kind: named ? type : artifact ? "${LINEAGE_ARTIFACT_KIND}" : "${LINEAGE_OPERATION_KIND}",
-      label: labelOf(element),
-      path: attrText(element, "${PIN_PATH_ATTRIBUTE}"),
-      hash: attrText(element, "${PIN_HASH_ATTRIBUTE}")
-    };
+    for (var f = 0; f < walked.frontier.length; f++) {
+      cut[walked.frontier[f].uri] = true;
+    }
+    function fileParts(uri) {
+      var node = built.getNode(uri);
+      if (!node) {
+        return { path: "", hash: "" };
+      }
+      return { path: attrText(node.element, "${PIN_PATH_ATTRIBUTE}"), hash: attrText(node.element, "${PIN_HASH_ATTRIBUTE}") };
+    }
+    function commandOf(uri) {
+      var node = built.getNode(uri);
+      if (!node) {
+        return null;
+      }
+      var type = dialectType(node.element);
+      if (type !== "${DIALECT_COMMAND_TYPE}" && type !== "${DIALECT_FILE_TOOL_TYPE}") {
+        return null;
+      }
+      var stepUri = ranIn[uri];
+      var stepNode = stepUri === undefined ? undefined : built.getNode(stepUri);
+      return {
+        label: type === "${DIALECT_COMMAND_TYPE}" ? attrText(node.element, "${COMMAND_ATTRIBUTE}") : attrText(node.element, "${TOOL_ATTRIBUTE}"),
+        args: attrText(node.element, "${COMMAND_ARGS_ATTRIBUTE}"),
+        unresolved: attrText(node.element, "${UNRESOLVED_SCRIPT_ATTRIBUTE}"),
+        step: stepNode ? attrText(stepNode.element, "${STEP_ID_ATTRIBUTE}") : ""
+      };
+    }
+    function producerOf(uri) {
+      // A file that a step generated names no execution, thus the rail treats it the same as a file that
+      // the document never generated: the branch ends there.
+      var commandUri = made[uri];
+      if (commandUri === undefined || commandOf(commandUri) === null) {
+        return null;
+      }
+      return commandUri;
+    }
+    function scriptOf(command, inputs) {
+      // The writer bound the script by an exact match of one path against the command line and its
+      // arguments. The panel repeats that match, thus the row that names the script and the row that
+      // names a data input never swap.
+      var tokens = (command.label + " " + command.args).split(/\\s+/);
+      for (var i = 0; i < inputs.length; i++) {
+        var parts = fileParts(inputs[i]);
+        for (var t = 0; t < tokens.length; t++) {
+          if (parts.path !== "" && tokens[t] === parts.path) {
+            return { uri: inputs[i], path: parts.path, hash: parts.hash };
+          }
+        }
+      }
+      // A script that bound to no bytes rides the activity by its path alone. Thus the row still names it,
+      // and it carries no hash because the document holds none.
+      return command.unresolved === "" ? null : { uri: "", path: command.unresolved, hash: "" };
+    }
+    function otherOutputs(commandUri, onRail) {
+      // The walk runs backward, thus it never traverses the generation edge of a sibling output. The graph
+      // holds every one of them, and the count states what the rail leaves out.
+      var into = built.inEdges(commandUri);
+      var total = 0;
+      for (var i = 0; i < into.length; i++) {
+        if (into[i].relation instanceof library.ProvGeneration) {
+          total += 1;
+        }
+      }
+      return total - onRail;
+    }
+    var rows = [{ form: "pin", level: 0, path: String(key.path), hash: String(key.hash) }];
+    var seenFile = Object.create(null);
+    var seenCommand = Object.create(null);
+    var deepest = 0;
+    function expand(uris, level) {
+      var order = [];
+      var onRail = Object.create(null);
+      for (var u = 0; u < uris.length; u++) {
+        var producerUri = producerOf(uris[u]);
+        if (producerUri === null) {
+          continue;
+        }
+        if (onRail[producerUri] === undefined) {
+          onRail[producerUri] = 0;
+          order.push(producerUri);
+        }
+        onRail[producerUri] += 1;
+      }
+      for (var c = 0; c < order.length; c++) {
+        var commandUri = order[c];
+        // The visited set bounds a document whose edges lead back to a command that the rail already
+        // showed. Without it such a document would build rows forever.
+        if (seenCommand[commandUri]) {
+          continue;
+        }
+        seenCommand[commandUri] = true;
+        var command = commandOf(commandUri);
+        var inputs = read[commandUri] === undefined ? [] : read[commandUri];
+        var script = scriptOf(command, inputs);
+        rows.push({ form: "link", level: level, label: ${JSON.stringify(LINEAGE_MADE_BY_LABEL)}, pin: level === 0 });
+        rows.push({
+          form: "producer",
+          level: level,
+          name: baseName(script === null ? command.label : script.path),
+          hash: script === null ? "" : script.hash,
+          command: script === null ? "" : command.label,
+          step: command.step
+        });
+        var next = [];
+        for (var i = 0; i < inputs.length; i++) {
+          if (script !== null && inputs[i] === script.uri) {
+            continue;
+          }
+          if (seenFile[inputs[i]]) {
+            continue;
+          }
+          seenFile[inputs[i]] = true;
+          next.push(inputs[i]);
+        }
+        if (next.length > 0) {
+          rows.push({ form: "link", level: level, label: readLabel(next.length), pin: false });
+          deepest = level + 1 > deepest ? level + 1 : deepest;
+        }
+        for (var n = 0; n < next.length; n++) {
+          var parts = fileParts(next[n]);
+          rows.push({
+            form: "file",
+            level: level + 1,
+            path: parts.path,
+            hash: parts.hash,
+            raw: producerOf(next[n]) === null && cut[next[n]] !== true
+          });
+        }
+        var others = otherOutputs(commandUri, onRail[commandUri]);
+        if (others > 0) {
+          rows.push({ form: "more", level: level + 1, count: others, step: command.step });
+        }
+        expand(next, level + 1);
+      }
+    }
+    var root = walked.roots.length > 0 ? walked.roots[0] : null;
+    if (root === null) {
+      return { rows: [], note: ${JSON.stringify(LINEAGE_NO_NODE_NOTE)}, hops: 1 };
+    }
+    seenFile[root] = true;
+    expand([root], 0);
+    return { rows: rows, note: walked.frontier.length > 0 ? ${JSON.stringify(LINEAGE_TRUNCATED_NOTE)} : "", hops: deepest + 1 };
   }
   function walk(key) {
     var library = window.${TSPROV_GLOBAL};
     var carrier = window.${REPORT_PROVENANCE_GLOBAL};
     if (!library || typeof library.lineage !== "function" || !carrier || typeof carrier.document !== "string") {
-      return { hops: [], note: ${JSON.stringify(LINEAGE_NO_LIBRARY_NOTE)} };
+      return { rows: [], note: ${JSON.stringify(LINEAGE_NO_LIBRARY_NOTE)}, hops: 1 };
     }
     var built = graphOf(library, carrier.document);
     if (!built) {
       // A document that the library refuses is exactly the fault that a look must diagnose, thus it must
       // never leave the reader with a control that does nothing.
-      return { hops: [], note: ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)} };
+      return { rows: [], note: ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)}, hops: 1 };
     }
     var walked = null;
     var found = null;
@@ -1133,17 +1394,13 @@ export const LINEAGE_POPOVER = `(function () {
         walked = library.lineage(built, found.record, { direction: "backward", relations: "dataflow" });
       }
     } catch (cause) {
-      return { hops: [], note: ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)} };
+      return { rows: [], note: ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)}, hops: 1 };
     }
     if (walked === null) {
       // Two nodes of one pin answer no better than none: the page cannot state which chain it shows.
-      return { hops: [], note: found.kind === "ambiguous" ? ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)} : ${JSON.stringify(LINEAGE_NO_NODE_NOTE)} };
+      return { rows: [], note: found.kind === "ambiguous" ? ${JSON.stringify(LINEAGE_NO_ANSWER_NOTE)} : ${JSON.stringify(LINEAGE_NO_NODE_NOTE)}, hops: 1 };
     }
-    var hops = [];
-    for (var i = 0; i < walked.nodes.length; i++) {
-      hops.push(hopOf(library, walked.nodes[i]));
-    }
-    return { hops: hops, note: walked.frontier.length > 0 ? ${JSON.stringify(LINEAGE_TRUNCATED_NOTE)} : "" };
+    return chainOf(library, built, walked, key);
   }
   function part(tag, className, text) {
     var node = document.createElement(tag);
@@ -1151,71 +1408,248 @@ export const LINEAGE_POPOVER = `(function () {
     node.textContent = text;
     return node;
   }
+  function boxed(tag, base, extra) {
+    var node = document.createElement(tag);
+    node.className = extra === "" ? base : base + " " + extra;
+    return node;
+  }
+  function glyph(className, size, width, paths) {
+    // A stroke drawing takes the current color, thus one rule of the sheet colors the glyph and its row.
+    var svg = document.createElementNS(SVG_NAMESPACE, "svg");
+    svg.setAttribute("class", className);
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", width);
+    svg.setAttribute("aria-hidden", "true");
+    for (var i = 0; i < paths.length; i++) {
+      var path = document.createElementNS(SVG_NAMESPACE, "path");
+      path.setAttribute("d", paths[i]);
+      svg.appendChild(path);
+    }
+    return svg;
+  }
   function hashHead(hash) {
     return hash.slice(hash.lastIndexOf(":") + 1).slice(0, ${CHAIN_HASH_CHARS});
   }
-  function detail(item, tag, className, text) {
-    item.appendChild(document.createTextNode(" "));
-    item.appendChild(part(tag, className, text));
+  function baseName(path) {
+    return path.slice(path.lastIndexOf("/") + 1);
   }
-  function hopItem(hop) {
-    var item = document.createElement("li");
-    item.className = "${LINEAGE_HOP_CLASS}";
-    item.appendChild(part("span", "report-ref-kind", String(hop.kind === undefined ? "" : hop.kind)));
-    if (hop.label) {
-      detail(item, "span", "report-ref-detail", String(hop.label));
+  function readLabel(count) {
+    return count === 1 ? "READ 1 FILE" : "READ " + count + " FILES";
+  }
+  function moreText(count, step) {
+    var files = count === 1 ? "1 other file" : count + " other files";
+    var origin = step === "" ? "the same command" : "Step " + step;
+    return "▸ " + files + " came from " + origin + " — not on this chain";
+  }
+  function metaText(row) {
+    var parts = [];
+    if (row.hash !== "") {
+      parts.push(hashHead(row.hash));
     }
-    if (hop.path) {
-      detail(item, "code", "report-ref-path", String(hop.path));
+    if (row.command !== "") {
+      parts.push(row.command);
     }
-    if (hop.hash) {
-      detail(item, "code", "report-ref-hash", hashHead(String(hop.hash)));
+    if (row.step !== "") {
+      parts.push("Step " + row.step);
     }
-    return item;
+    return parts.join(" · ");
+  }
+  function countText(marker, hops, complete) {
+    var text = (hops === 1 ? "1 hop" : hops + " hops") + (complete ? " to the raw data" : "");
+    return marker === "" ? text : marker + " · " + text;
+  }
+  function completeNote() {
+    var carrier = window.${REPORT_PROVENANCE_GLOBAL};
+    var signed = carrier && typeof carrier.attestation === "string";
+    return signed ? ${JSON.stringify(LINEAGE_SIGNED_NOTE)} : ${JSON.stringify(LINEAGE_COMPLETE_NOTE)};
+  }
+  function runPrefix(path) {
+    // Every hop of one chain sits under the run directory of the pinned artifact. The head repeats on each
+    // row and the tail holds the meaning, thus the rows drop the head. A path outside the run, for example
+    // a raw input under the data directory, matches no prefix and keeps its whole form.
+    if (path.indexOf("${RUN_DIRECTORY_HEAD}") !== 0) {
+      return "";
+    }
+    var cut = path.indexOf("/", ${RUN_DIRECTORY_HEAD.length});
+    return cut < 0 ? "" : path.slice(0, cut + 1);
+  }
+  function shownPath(path, prefix) {
+    return prefix !== "" && path.indexOf(prefix) === 0 ? path.slice(prefix.length) : path;
+  }
+  function writePath(node, shown) {
+    // The directory prefix dims, thus the file name reads first and the whole tail stays on the row. The fit
+    // writes the same node again with fewer segments, thus the write clears what stands there.
+    while (node.firstChild) {
+      node.removeChild(node.firstChild);
+    }
+    var cut = shown.lastIndexOf("/");
+    if (cut >= 0) {
+      node.appendChild(part("span", "${LINEAGE_DIR_CLASS}", shown.slice(0, cut + 1)));
+    }
+    node.appendChild(document.createTextNode(shown.slice(cut + 1)));
+  }
+  function pathNode(shown, full) {
+    var node = document.createElement("span");
+    node.className = "${LINEAGE_PATH_CLASS}";
+    // The title carries the whole path on each row, cut or not. Thus the hover answers for the run prefix
+    // that the row drops and for a segment that the fit cuts.
+    node.setAttribute("title", full);
+    writePath(node, shown);
+    return node;
+  }
+  function nameTail(name) {
+    // The extension states the kind of the file, thus the tail starts at the last dot. A dot far from the
+    // end belongs to the name, and a tail from there would leave no start, thus the fixed count answers.
+    var dot = name.lastIndexOf(".");
+    var extension = dot > 0 ? name.length - dot : 0;
+    return name.slice(name.length - (extension > 0 && extension <= ${LINEAGE_EXTENSION_MAX_CHARS} ? extension : ${LINEAGE_NAME_TAIL_CHARS}));
+  }
+  function fitName(node, head, name) {
+    // One name that overflows the row on its own has no segment left to cut. The start names the file and
+    // the tail carries the extension, thus the mark stands between them and both ends stay on the row. Two
+    // siblings that differ in their extension alone then read apart.
+    var tail = nameTail(name);
+    var keep = name.length - tail.length;
+    while (keep > 1 && node.scrollWidth > node.clientWidth) {
+      keep -= 1;
+      writePath(node, head + name.slice(0, keep) + ${JSON.stringify(LINEAGE_CUT_MARK)} + tail);
+    }
+  }
+  function fitPath(node) {
+    // A row holds one line. A cut at the end would take the file name, which is the part that names the
+    // file, thus the cut takes whole segments off the front and the end stays. The measure needs a laid-out
+    // row, thus the fit runs after the panel joins the document.
+    var parts = String(node.textContent || "").split("/");
+    var whole = parts.length;
+    while (parts.length > 1 && node.scrollWidth > node.clientWidth) {
+      parts.shift();
+      writePath(node, ${JSON.stringify(`${LINEAGE_CUT_MARK}/`)} + parts.join("/"));
+    }
+    if (parts.length === 1) {
+      // The segments are gone and the row can still overflow. The mark of the segment cut stands where the
+      // directories stood, thus the name cut writes it again in front of the name that it cuts.
+      fitName(node, whole > 1 ? ${JSON.stringify(`${LINEAGE_CUT_MARK}/`)} : "", parts[0]);
+    }
+  }
+  function fitPaths(panel) {
+    var nodes = panel.querySelectorAll(".${LINEAGE_PATH_CLASS}");
+    for (var i = 0; i < nodes.length; i++) {
+      fitPath(nodes[i]);
+    }
+  }
+  function fileRow(row, prefix) {
+    var kind = row.form === "pin" ? "${LINEAGE_ROW_PIN_CLASS}" : row.raw ? "${LINEAGE_ROW_RAW_CLASS}" : "";
+    var node = boxed("div", "${LINEAGE_ROW_CLASS}", kind);
+    node.style.marginLeft = row.level * ${LINEAGE_INDENT_PX} + "px";
+    var tag = row.form === "pin" ? "${LINEAGE_TAG_PIN_CLASS}" : row.raw ? "${LINEAGE_TAG_RAW_CLASS}" : "";
+    var text = row.form === "record" ? ${JSON.stringify(LINEAGE_RECORD_TAG)} : row.form === "pin" ? ${JSON.stringify(LINEAGE_PIN_TAG)} : row.raw ? ${JSON.stringify(LINEAGE_RAW_TAG)} : ${JSON.stringify(LINEAGE_ARTIFACT_TAG)};
+    node.appendChild(part("span", tag === "" ? "${LINEAGE_TAG_CLASS}" : "${LINEAGE_TAG_CLASS}" + " " + tag, text));
+    node.appendChild(pathNode(shownPath(row.path, prefix), row.path));
+    if (row.hash !== "") {
+      node.appendChild(part("code", "${LINEAGE_HASH_CLASS}", hashHead(row.hash)));
+    }
+    return node;
+  }
+  function rowNode(row, prefix) {
+    if (row.form === "link") {
+      var link = boxed("div", "${LINEAGE_LINK_CLASS}", "");
+      link.style.paddingLeft = ${LINEAGE_RAIL_INSET_PX} + row.level * ${LINEAGE_INDENT_PX} + "px";
+      link.appendChild(boxed("div", "${LINEAGE_RAIL_CLASS}", row.pin ? "${LINEAGE_RAIL_PIN_CLASS}" : ""));
+      link.appendChild(part("span", "${LINEAGE_LINK_LABEL_CLASS}", row.label));
+      return link;
+    }
+    if (row.form === "more") {
+      var more = part("div", "${LINEAGE_MORE_CLASS}", moreText(row.count, row.step));
+      more.style.marginLeft = row.level * ${LINEAGE_INDENT_PX} + "px";
+      return more;
+    }
+    if (row.form === "producer") {
+      var producer = boxed("div", "${LINEAGE_ROW_CLASS}", "${LINEAGE_ROW_PRODUCER_CLASS}");
+      producer.style.marginLeft = row.level * ${LINEAGE_INDENT_PX} + "px";
+      producer.appendChild(glyph("${LINEAGE_PROMPT_CLASS}", "14", "1.5", ["M4 3l4 5-4 5", "M9 13h4"]));
+      producer.appendChild(part("span", "${LINEAGE_SCRIPT_CLASS}", row.name));
+      producer.appendChild(part("span", "${LINEAGE_META_CLASS}", metaText(row)));
+      return producer;
+    }
+    return fileRow(row, prefix);
   }
   function recordName(key) {
     return String(key.idKind) + ":" + String(key.id);
   }
-  function panelOf(key) {
+  function panelOf(key, marker) {
     var pinned = typeof key.path === "string";
-    var walked = pinned ? walk(key) : { hops: [], note: "" };
-    var hops = walked.hops.slice();
+    var walked = pinned ? walk(key) : { rows: [], note: ${JSON.stringify(LINEAGE_RECORD_NOTE)}, hops: 1 };
+    var rows = walked.rows;
     if (!pinned) {
-      hops.push({ kind: "${LINEAGE_RECORD_KIND}", label: recordName(key) });
-    } else if (hops.length === 0) {
+      rows = [{ form: "record", level: 0, path: recordName(key), hash: "" }];
+    } else if (rows.length === 0) {
       // The pin is the last hop that the page knows on its own. A walk that gave nothing still names it,
       // thus the reader sees what the block binds and reads the note against it.
-      hops.push({ kind: "${LINEAGE_ARTIFACT_KIND}", path: key.path, hash: key.hash });
+      rows = [{ form: "pin", level: 0, path: String(key.path), hash: String(key.hash) }];
     }
     var panel = document.createElement("div");
     panel.className = "${LINEAGE_PANEL_CLASS}";
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-label", pinned ? String(key.path) : recordName(key));
-    panel.appendChild(part("div", "${LINEAGE_PANEL_TITLE_CLASS}", ${JSON.stringify(LINEAGE_TITLE_TEXT)}));
-    var list = document.createElement("ol");
-    list.className = "${LINEAGE_HOPS_CLASS}";
-    for (var i = 0; i < hops.length; i++) {
-      list.appendChild(hopItem(hops[i]));
+    var header = boxed("div", "${LINEAGE_HEADER_CLASS}", "");
+    header.appendChild(part("span", "${LINEAGE_PANEL_TITLE_CLASS}", ${JSON.stringify(LINEAGE_TITLE_TEXT)}));
+    header.appendChild(part("span", "${LINEAGE_COUNT_CLASS}", countText(marker, walked.hops, walked.note === "")));
+    var closer = part("button", "${LINEAGE_CLOSE_CLASS}", ${JSON.stringify(LINEAGE_CLOSE_GLYPH)});
+    closer.setAttribute("type", "button");
+    closer.setAttribute("aria-label", ${JSON.stringify(LINEAGE_CLOSE_LABEL)});
+    closer.addEventListener("click", close);
+    header.appendChild(closer);
+    panel.appendChild(header);
+    var body = boxed("div", "${LINEAGE_BODY_CLASS}", "");
+    // The pinned artifact names the run of the whole chain. Thus one prefix serves each row, and a chain
+    // that the pin does not root under a run keeps each path whole.
+    var prefix = pinned ? runPrefix(String(key.path)) : "";
+    for (var i = 0; i < rows.length; i++) {
+      body.appendChild(rowNode(rows[i], prefix));
     }
-    panel.appendChild(list);
-    if (walked.note) {
-      panel.appendChild(part("div", "${LINEAGE_NOTE_CLASS}", walked.note));
+    panel.appendChild(body);
+    var footer = boxed("div", "${LINEAGE_FOOTER_CLASS}", "");
+    if (walked.note === "") {
+      footer.appendChild(glyph("${LINEAGE_CHECK_CLASS}", "12", "1.8", ["M2 8l4 4 8-9"]));
     }
+    footer.appendChild(part("span", "${LINEAGE_NOTE_CLASS}", walked.note === "" ? completeNote() : walked.note));
+    panel.appendChild(footer);
     return panel;
   }
   function place(panel, control) {
     var box = control.getBoundingClientRect();
-    var width = document.documentElement.clientWidth;
+    var root = document.documentElement;
+    var body = panel.querySelector(".${LINEAGE_BODY_CLASS}");
+    // A prior placement can hold a cap of its own. The reset measures the natural height again, thus a
+    // resize into a taller window never keeps a cap that the new viewport does not need.
+    body.style.maxHeight = "";
     var left = box.left;
-    var last = width - panel.offsetWidth - ${LINEAGE_PANEL_GAP_PX};
+    var last = root.clientWidth - panel.offsetWidth - ${LINEAGE_PANEL_MARGIN_PX};
     if (left > last) {
       left = last;
     }
-    if (left < ${LINEAGE_PANEL_GAP_PX}) {
-      left = ${LINEAGE_PANEL_GAP_PX};
+    if (left < ${LINEAGE_PANEL_MARGIN_PX}) {
+      left = ${LINEAGE_PANEL_MARGIN_PX};
     }
+    // The panel opens under the control, because a reader reads down from what was clicked. It opens over
+    // the control where the space under it is short and the space over it is larger.
+    var below = root.clientHeight - box.bottom - ${LINEAGE_PANEL_GAP_PX} * 2;
+    var above = box.top - ${LINEAGE_PANEL_GAP_PX} * 2;
+    var over = panel.offsetHeight > below && above > below;
+    var room = over ? above : below;
+    if (panel.offsetHeight > room) {
+      // Neither side holds the whole panel. The body scrolls already, thus the cap shrinks the body to the
+      // larger side. An overlap would hide the control that the reader clicked, and the shrink prevents it.
+      var chrome = panel.offsetHeight - body.offsetHeight;
+      body.style.maxHeight = (room - chrome > 0 ? room - chrome : 0) + "px";
+    }
+    var top = over ? box.top - panel.offsetHeight - ${LINEAGE_PANEL_GAP_PX} : box.bottom + ${LINEAGE_PANEL_GAP_PX};
     panel.style.left = left + window.pageXOffset + "px";
-    panel.style.top = box.bottom + window.pageYOffset + ${LINEAGE_PANEL_GAP_PX} + "px";
+    panel.style.top = top + window.pageYOffset + "px";
   }
   function close() {
     if (openPanel && openPanel.parentNode) {
@@ -1232,8 +1666,15 @@ export const LINEAGE_POPOVER = `(function () {
     if (!key) {
       return;
     }
-    var panel = panelOf(key);
+    var panel = panelOf(key, markerOf(control));
     document.body.appendChild(panel);
+    // The sheet sizes the panel to its longest row, up to a cap. A cut shortens that row, thus the panel
+    // would shrink under the fit and each row would then measure against a narrower box. The pin holds the
+    // resolved width of the laid-out panel, and the cap of the sheet still bounds it in a narrow window.
+    panel.style.width = panel.getBoundingClientRect().width + "px";
+    // The fit measures a row against its width, thus it runs on the panel that stands in the document. It
+    // runs before the place, because a cut row can change the height that the place reads.
+    fitPaths(panel);
     place(panel, control);
     control.setAttribute("aria-expanded", "true");
     openPanel = panel;
@@ -1268,5 +1709,11 @@ export const LINEAGE_POPOVER = `(function () {
       close();
     }
   });
-  window.addEventListener("resize", close);
+  window.addEventListener("resize", function () {
+    if (openPanel !== null && openControl !== null) {
+      // The place reads the box of the control, and a resize moves that box. Thus the panel follows the
+      // control instead of standing where the control was.
+      place(openPanel, openControl);
+    }
+  });
 })();`;

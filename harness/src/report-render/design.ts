@@ -120,6 +120,7 @@ export const DESIGN_CSS = `${FONT_FACES}
 
   /* Semantic tags */
   --color-high-bg:     #f0fdf4;
+  --color-high-border: #bbf7d0;
   --color-high-text:   #15803d;
   --color-medium-bg:   #fffbeb;
   --color-medium-text: #b45309;
@@ -383,15 +384,16 @@ img {
 }
 
 /* ── Lineage control and popover ──────────────────────── */
-/* The control sits beside the bracket marker. It reads as a quiet disclosure and never as a second marker,
-   thus it takes the muted color until a hover. The button carries no browser chrome, because a chrome box
-   inside a line of prose would break the line. */
+/* The control sits beside the bracket marker. It reads as a quiet branch glyph and never as a second
+   marker, thus it takes the muted color until a hover. The button carries no browser chrome, because a
+   chrome box inside a line of prose would break the line. */
 .report-lineage {
+  display: inline-flex;
+  align-items: center;
   margin-left: 2px;
   padding: 0;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 1;
+  line-height: 0;
+  vertical-align: -2px;
   color: var(--color-text-muted);
   background: none;
   border: 0;
@@ -400,47 +402,220 @@ img {
 .report-lineage:hover {
   color: var(--color-primary-500);
 }
+/* The drawing strokes in the current color, thus the two color rules above reach it and the sheet holds one
+   color for the two states. */
+.report-lineage-glyph {
+  display: block;
+}
 /* The panel floats over the page. A data card clips its own overflow, thus the page script places the panel
-   against the document and no card cuts it. The measure holds a path and its hash head on one line. */
+   against the document and no card cuts it. The panel takes the width of its longest row, thus a name reads
+   whole and a cut is the exception. The cap bounds it against the design and against the viewport, and the
+   viewport half holds the same margin at each side as the clamp of the script. Thus a narrow window shows
+   the panel between the two margins. */
 .report-lineage-popover {
   position: absolute;
   z-index: 50;
-  max-width: 32rem;
-  padding: 12px 16px;
+  width: max-content;
+  max-width: min(48rem, calc(100vw - 24px));
   background: var(--color-card);
   border: 1px solid var(--color-border);
-  box-shadow: 0 4px 12px -4px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 12px 32px -12px rgba(15, 23, 42, 0.18);
   animation: report-lineage-open 0.12s ease-out;
 }
+.report-lineage-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
 .report-lineage-title {
-  margin-bottom: 6px;
   font-family: var(--font-mono);
   font-size: 10px;
-  letter-spacing: 0.06em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--color-text-muted);
 }
-/* The hops read in walk order, thus the list numbers them. The type matches the appendix, because a hop and
-   an appendix entry answer the same question about one reference. */
-.report-lineage-hops {
-  margin: 0;
-  padding-left: 24px;
-  list-style: decimal;
-  color: var(--color-text-muted);
-}
-.report-lineage-hop {
-  margin-bottom: 4px;
-  font-size: 13px;
-  line-height: 1.5;
+/* The header names the marker that opened the panel and the depth of the chain under it. Thus the reader
+   reads the size of the chain before the body scrolls. */
+.report-lineage-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
   color: var(--color-text-secondary);
 }
-/* The note states an absence or a truncation. A reader must read the chain against what it does not hold,
-   thus the note sits under the hops and never beside one. */
-.report-lineage-note {
-  margin-top: 8px;
-  font-size: 12px;
-  line-height: 1.5;
+.report-lineage-close {
+  margin-left: auto;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
   color: var(--color-text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.report-lineage-close:hover {
+  color: var(--color-heading);
+}
+/* A deep pipeline builds more rows than a window holds. The cap reads against the viewport, thus the body
+   scrolls inside the panel and the panel never grows the page. */
+.report-lineage-body {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 16px 16px 8px;
+}
+/* One base row carries each file of the rail. A modifier marks the pinned artifact and a raw input, and a
+   row with no modifier is an artifact that the rail continues past. */
+.report-lineage-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--color-bg-alt);
+  border: 1px solid var(--color-border-subtle);
+}
+.report-lineage-row + .report-lineage-row {
+  margin-top: 4px;
+}
+.report-lineage-row-pin {
+  padding: 8px 10px;
+  background: var(--color-primary-50);
+  border-color: var(--color-primary-100);
+}
+.report-lineage-row-producer {
+  padding: 8px 10px;
+  background: var(--color-card);
+  border-color: var(--color-border);
+}
+/* The terminal tint marks a file that no command of this analysis made. It is where a branch ends, thus the
+   tint and the tag of the row state the same fact. */
+.report-lineage-row-raw {
+  background: var(--color-high-bg);
+  border-color: var(--color-high-border);
+}
+.report-lineage-tag {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+  background: var(--color-border);
+}
+.report-lineage-tag-pin {
+  font-weight: 600;
+  color: var(--color-card);
+  background: var(--color-primary-500);
+}
+.report-lineage-tag-raw {
+  font-weight: 600;
+  color: var(--color-card);
+  background: var(--color-high-text);
+}
+/* The path takes the whole free width of the row, and it never wraps the row into two lines. The panel grows
+   to the longest path, thus a window that gives the panel its cap needs no cut. In a narrow window the page
+   script cuts a long path at its start, and it cuts an over-long file name in the middle of that name. Thus
+   the ellipsis of this rule is the last guard, for a row too narrow to hold even a cut name. */
+.report-lineage-path {
+  flex: 1;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.report-lineage-row-pin .report-lineage-path,
+.report-lineage-row-raw .report-lineage-path {
+  color: var(--color-text-strong);
+}
+/* The directory prefix dims, thus the file name reads first inside a long path. */
+.report-lineage-dir {
+  color: var(--color-text-muted);
+}
+.report-lineage-hash {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.report-lineage-prompt {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+.report-lineage-script {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.report-lineage-meta {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+/* The connector sits between two levels of the rail. The page script gives it the indent of its level, thus
+   one rule serves each depth. */
+.report-lineage-link {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+}
+.report-lineage-rail {
+  width: 1px;
+  background: var(--color-border);
+}
+.report-lineage-rail-pin {
+  background: var(--color-primary-100);
+}
+.report-lineage-link-label {
+  padding: 6px 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+/* The dashed edge marks a row that names files and shows none of them. Thus a count row never reads as one
+   more hop of the chain. */
+.report-lineage-more {
+  margin-top: 4px;
+  padding: 5px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  /* One line always: a wrapped count row breaks the rail rhythm in a narrow
+     window, and a cut count loses nothing that the rows above do not show. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px dashed var(--color-border);
+}
+.report-lineage-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--color-bg-alt);
+  border-top: 1px solid var(--color-border-subtle);
+}
+.report-lineage-check {
+  flex-shrink: 0;
+  color: var(--color-high-text);
+}
+/* The footer states that the chain is complete, or it states the absence or the truncation that stopped it.
+   A reader must read the rail against what it does not hold, thus the note sits under the rail and never
+   beside one row of it. */
+.report-lineage-note {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
 }
 @keyframes report-lineage-open {
   from {
