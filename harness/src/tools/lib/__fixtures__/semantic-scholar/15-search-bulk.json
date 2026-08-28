@@ -1,0 +1,168 @@
+{
+    "total": 339360,
+    "token": "PCOKWVSKJJGM4TWNJNI3EUSQJIWVNUSRKBFEYK2JFUBHFI4VBQGJETETZTJMZTCN2OGBGU4NBUJU3EWTCIWQZDCNKNJU2UZMJUWQYEQNFVJM3DENSRRGWAPZSAKF6",
+    "data": [
+        {
+            "paperId": "0000796852989039861ba3e5fb3917cbd37bcc84",
+            "externalIds": {
+                "DOI": "10.1002/cm.21804",
+                "CorpusId": 265032769,
+                "PubMed": "37929797"
+            },
+            "url": "https://www.semanticscholar.org/paper/0000796852989039861ba3e5fb3917cbd37bcc84",
+            "title": "Regulation of mitochondrial structure by the actin cytoskeleton",
+            "venue": "Cytoskeleton",
+            "year": 2023,
+            "citationCount": 6,
+            "openAccessPdf": {
+                "url": "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1002/cm.21804",
+                "status": "BRONZE",
+                "license": null,
+                "disclaimer": "Notice: Paper or abstract available at https://api.unpaywall.org/v2/10.1002/cm.21804?email=<INSERT_YOUR_EMAIL> or https://doi.org/10.1002/cm.21804, which is subject to the license by the author or copyright owner provided with this content. Please go to the source to verify the license and copyright information for your use."
+            },
+            "authors": [
+                {
+                    "authorId": "50118756",
+                    "name": "Yihe Wu"
+                },
+                {
+                    "authorId": "2265488692",
+                    "name": "X. Ren"
+                },
+                {
+                    "authorId": "153125827",
+                    "name": "P. Shi"
+                },
+                {
+                    "authorId": "2265527551",
+                    "name": "Congying Wu"
+                }
+            ],
+            "abstract": "Mitochondria are the powerhouse of the cell and play important roles in multiple cellular processes including cell metabolism, proliferation, and programmed cell death. Mitochondria are double‐membrane organelles with the inner membrane folding inward to form cristae. Mitochondria networks undergo dynamic fission and fusion. Deregulation of mitochondrial structure has been linked to perturbed mitochondrial membrane potential and disrupted metabolism, as evidenced in tumorigenesis, neurodegenerative diseases, etc. Actin and its motors‐myosins have long been known to generate mechanical forces and participate in short‐distance cargo transport. Accumulating knowledge from biochemistry and live cell/electron microscope imaging has demonstrated the role of actin filaments in pre‐constricting the mitochondria during fission. Recent studies have suggested the involvement of myosins in cristae maintenance and mitochondria quality control. Here, we review current findings and discuss future directions in the emerging fields of cytoskeletal regulation in cristae formation, mitochondrial dynamics, intracellular transport, and mitocytosis, with focus on the actin cytoskeleton and its motor proteins."
+        },
+        {
+            "paperId": "0000c1218d994010bb61f4fe88159f5af54f751f",
+            "externalIds": {
+                "CorpusId": 278860406
+            },
+            "url": "https://www.semanticscholar.org/paper/0000c1218d994010bb61f4fe88159f5af54f751f",
+            "title": "Flexible Docking via Unbalanced Flow Matching",
+            "venue": "",
+            "year": null,
+            "citationCount": 6,
+            "openAccessPdf": {
+                "url": "",
+                "status": null,
+                "license": null,
+                "disclaimer": "Notice: The following paper fields have been elided by the publisher: {'abstract'}. Paper or abstract available at https://openreview.net/pdf?id=TYta9svB0R, which is subject to the license by the author or copyright owner provided with this content. Please go to the source to verify the license and copyright information for your use."
+            },
+            "authors": [
+                {
+                    "authorId": "1630330616",
+                    "name": "Gabriele Corso"
+                },
+                {
+                    "authorId": "1380642733",
+                    "name": "Vignesh Ram Somnath"
+                },
+                {
+                    "authorId": "2354582282",
+                    "name": "Noah Getz"
+                },
+                {
+                    "authorId": "2254308896",
+                    "name": "R. Barzilay"
+                },
+                {
+                    "authorId": "35132120",
+                    "name": "T. Jaakkola"
+                },
+                {
+                    "authorId": "2354575534",
+                    "name": "Andreas Krause"
+                }
+            ],
+            "abstract": null
+        },
+        {
+            "paperId": "0000e38e948af21b98f67cfb5084d72f8e78a749",
+            "externalIds": {
+                "MAG": "2606254530",
+                "DOI": "10.1139/cjm-2016-0764",
+                "CorpusId": 24571401,
+                "PubMed": "28414919"
+            },
+            "url": "https://www.semanticscholar.org/paper/0000e38e948af21b98f67cfb5084d72f8e78a749",
+            "title": "Functional characterization of an N-terminally-truncated mitochondrial porin expressed in Neurospora crassa.",
+            "venue": "Canadian Journal of Microbiology (print)",
+            "year": 2017,
+            "citationCount": 10,
+            "openAccessPdf": {
+                "url": "https://utoronto.scholaris.ca/bitstreams/dc94cedd-f77d-46b9-b41b-487fa822e792/download",
+                "status": "GREEN",
+                "license": null,
+                "disclaimer": "Notice: The following paper fields have been elided by the publisher: {'abstract'}. Paper or abstract available at https://api.unpaywall.org/v2/10.1139/cjm-2016-0764?email=<INSERT_YOUR_EMAIL> or https://doi.org/10.1139/cjm-2016-0764, which is subject to the license by the author or copyright owner provided with this content. Please go to the source to verify the license and copyright information for your use."
+            },
+            "authors": [
+                {
+                    "authorId": "4472196",
+                    "name": "Sabbir R. Shuvo"
+                },
+                {
+                    "authorId": "15176162",
+                    "name": "U. Kovaltchouk"
+                },
+                {
+                    "authorId": "4457343",
+                    "name": "A. Zubaer"
+                },
+                {
+                    "authorId": "2109263447",
+                    "name": "Ayush Kumar"
+                },
+                {
+                    "authorId": "40450989",
+                    "name": "W. Summers"
+                },
+                {
+                    "authorId": "3697235",
+                    "name": "L. Donald"
+                },
+                {
+                    "authorId": "6710385",
+                    "name": "G. Hausner"
+                },
+                {
+                    "authorId": "151506711",
+                    "name": "D. A. Court"
+                }
+            ],
+            "abstract": null
+        },
+        {
+            "paperId": "0003d0aab43c01917e746ce673a65eeccc34189d",
+            "externalIds": {
+                "DOI": "10.54014/714v-x609",
+                "CorpusId": 254683226
+            },
+            "url": "https://www.semanticscholar.org/paper/0003d0aab43c01917e746ce673a65eeccc34189d",
+            "title": "Potentially Cis-Acting Super-enhancer long noncoding RNAs as Biomarkers in Triple Negative Breast Cancer Progression",
+            "venue": "",
+            "year": 2022,
+            "citationCount": 0,
+            "openAccessPdf": {
+                "url": "https://scholarsarchive.library.albany.edu/cgi/viewcontent.cgi?article=1082&context=honorscollege_biology",
+                "status": "GOLD",
+                "license": "CCBY",
+                "disclaimer": "Notice: Paper or abstract available at https://api.unpaywall.org/v2/10.54014/714v-x609?email=<INSERT_YOUR_EMAIL> or https://doi.org/10.54014/714v-x609, which is subject to the license by the author or copyright owner provided with this content. Please go to the source to verify the license and copyright information for your use."
+            },
+            "authors": [
+                {
+                    "authorId": "2348345396",
+                    "name": "Kavipriya Kovai Palanivel"
+                }
+            ],
+            "abstract": "Triple negative breast cancer (TNBC) is defined by the lack of estrogen receptors (ER), the lack of progesterone receptors (PR), and normal human epidermal growth factor 2 (HER2) protein levels in breast tumors. Therefore, TNBC is an aggressive type of breast cancer due to limited treatment options for patients. Determining genes that regulate the progression of tumors to TNBC may help develop new therapeutic techniques. Many super-enhancer long noncoding RNAs (SE-lncRNAs) are found to be differentially expressed in cancer cells. Super-enhancer activity heavily influences target gene transcription and is often augmented through cis -acting SE-lncRNA activity. Therefore, we hypothesize cis -acting SE-lncRNAs may be significant in controlling the expression of neighboring genes with implications in triple negative breast cancer progression. To determine SE-lncRNAs with potential cis -acting mechanisms in controlling target gene expression and influencing progression, differential gene expression analysis of RNA-Seq data from 42 TNBC and 21 paired normal patient samples was performed. SE-lncRNAs with |log 2 fold changes| ≥ 2 and adjusted p-values ≤ 0.05 were considered to be significantly differentially expressed. Furthermore, the genomic regions of the SE-lncRNAs were intersected with the genomic coordinates of super-enhancers classified in breast cancer progression: from normal to atypical ductal hyperplasia (AT1), ductal carcinoma in situ (DCIS), and finally, invasive ductal carcinoma (CA1). Six SE-lncRNAs; RBMS3-AS3, AL121906.1, SLC2A1-AS1, AC126696.3, AC126696.1, and TFAP2A-AS1; were selected as the top candidate cis -acting SE-lncRNAs with neighboring genes having implications in breast cancer. The neighboring genes have roles in regulating different canonical cancer pathways, such as the cell cycle, apoptosis, glucose transport, and amino acid transport. These SE-lncRNAs may serve as biomarkers and potential therapeutic targets against breast tumor progression, specifically for TNBC. Here, we knockdown two SE-lncRNAs, SLC2A1-AS1 and TFAP2A-AS1, in the MCF10A-CA1 (CA1) cell line to determine the effects on neighboring protein-coding genes, SLC2A1 and TFAP2A, respectively"
+        }
+    ]
+}

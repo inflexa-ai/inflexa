@@ -1,0 +1,143 @@
+{
+    "snippets": [
+        {
+            "codeTitle": "sc.get.rank_genes_groups_df",
+            "codeDescription": "Retrieves ranked gene groups results from an AnnData object as a DataFrame.",
+            "codeLanguage": "APIDOC",
+            "codeTokens": 57,
+            "codeId": "https://github.com/scverse/scanpy/blob/main/docs/api/get.md#_snippet_3",
+            "pageTitle": "Unknown",
+            "codeList": [
+                {
+                    "language": "APIDOC",
+                    "code": "## sc.get.rank_genes_groups_df\n\n### Description\nRetrieves ranked gene groups results from an AnnData object as a DataFrame."
+                }
+            ],
+            "relevance": 0.016666668,
+            "generationDate": "2026-08-21T21:09:48.617Z",
+            "model": "gemini-3.1-flash-lite"
+        },
+        {
+            "codeTitle": "Rank Marker Genes",
+            "codeDescription": "Ranks genes by differential expression using various statistical methods.",
+            "codeLanguage": "Python",
+            "codeTokens": 185,
+            "codeId": "https://github.com/scverse/scanpy/blob/main/docs/tutorials/basics/clustering-2017.ipynb#_snippet_24",
+            "pageTitle": "Unknown",
+            "codeList": [
+                {
+                    "language": "Python",
+                    "code": "sc.tl.rank_genes_groups(adata, \"leiden\", mask_var=\"highly_variable\", method=\"t-test\")\nsc.pl.rank_genes_groups(adata, n_genes=25, sharey=False)"
+                },
+                {
+                    "language": "Python",
+                    "code": "sc.settings.verbosity = 2  # reduce the verbosity"
+                },
+                {
+                    "language": "Python",
+                    "code": "sc.tl.rank_genes_groups(adata, \"leiden\", mask_var=\"highly_variable\", method=\"wilcoxon\")\nsc.pl.rank_genes_groups(adata, n_genes=25, sharey=False)"
+                },
+                {
+                    "language": "Python",
+                    "code": "sc.tl.rank_genes_groups(\n    adata, \"leiden\", mask_var=\"highly_variable\", method=\"logreg\", max_iter=1000\n)\nsc.pl.rank_genes_groups(adata, n_genes=25, sharey=False)"
+                }
+            ],
+            "relevance": 0.015873017,
+            "generationDate": "2026-08-21T21:16:26.188Z",
+            "model": "gemini-3.1-flash-lite"
+        },
+        {
+            "codeTitle": "Rank Genes per Cluster",
+            "codeDescription": "Displays the top 5 ranked genes for each cluster in a pandas DataFrame.",
+            "codeLanguage": "python",
+            "codeTokens": 43,
+            "codeId": "https://github.com/scverse/scanpy/blob/main/docs/tutorials/basics/clustering-2017.ipynb#_snippet_28",
+            "pageTitle": "Unknown",
+            "codeList": [
+                {
+                    "language": "python",
+                    "code": "pd.DataFrame(adata.uns[\"rank_genes_groups\"][\"names\"]).head(5)"
+                }
+            ],
+            "relevance": 0.016393442,
+            "generationDate": "2026-08-21T21:16:26.188Z",
+            "model": "gemini-3.1-flash-lite"
+        },
+        {
+            "codeTitle": "Extract Ranked Genes Table",
+            "codeDescription": "Creates a detailed DataFrame containing both gene names and p-values for ranked groups.",
+            "codeLanguage": "python",
+            "codeTokens": 86,
+            "codeId": "https://github.com/scverse/scanpy/blob/main/docs/tutorials/basics/clustering-2017.ipynb#_snippet_29",
+            "pageTitle": "Unknown",
+            "codeList": [
+                {
+                    "language": "python",
+                    "code": "result = adata.uns[\"rank_genes_groups\"]\ngroups = result[\"names\"].dtype.names\npd.DataFrame({\n    f\"{group}_{key[:1]}\": result[key][group]\n    for group in groups\n    for key in [\"names\", \"pvals\"]\n}).head(5)"
+                }
+            ],
+            "relevance": 0.016129032,
+            "generationDate": "2026-08-21T21:16:26.188Z",
+            "model": "gemini-3.1-flash-lite"
+        },
+        {
+            "codeTitle": "Plot marker genes with split violin plots",
+            "codeDescription": "Uses the rank_genes_groups_violin function to visualize marker genes. The figure size is adjusted using rc_context.",
+            "codeLanguage": "python",
+            "codeTokens": 73,
+            "codeId": "https://github.com/scverse/scanpy/blob/main/docs/tutorials/plotting/core.ipynb#_snippet_27",
+            "pageTitle": "Unknown",
+            "codeList": [
+                {
+                    "language": "python",
+                    "code": "with rc_context({\"figure.figsize\": (9, 1.5)}):\n    sc.pl.rank_genes_groups_violin(pbmc, n_genes=20, jitter=False)"
+                }
+            ],
+            "relevance": 0.015625,
+            "generationDate": "2026-08-21T21:17:11.052Z",
+            "model": "gemini-3.1-flash-lite"
+        },
+        {
+            "codeTitle": "Extract marker genes as a DataFrame",
+            "codeDescription": "Retrieves the top differentially expressed genes for a specific cluster in a tabular format.",
+            "codeLanguage": "python",
+            "codeTokens": 48,
+            "codeId": "https://github.com/scverse/scanpy/blob/main/docs/tutorials/basics/clustering.ipynb#_snippet_31",
+            "pageTitle": "Unknown",
+            "codeList": [
+                {
+                    "language": "python",
+                    "code": "sc.get.rank_genes_groups_df(adata, group=\"7\").head(5)"
+                }
+            ],
+            "relevance": 0.015384615,
+            "generationDate": "2026-08-21T21:16:17.542Z",
+            "model": "gemini-3.1-flash-lite"
+        },
+        {
+            "codeTitle": "Visualize marker genes with dotplots",
+            "codeDescription": "Displays top scoring genes as a dotplot, with options to plot log fold changes and filter by specific groups.",
+            "codeLanguage": "python",
+            "codeTokens": 172,
+            "codeId": "https://github.com/scverse/scanpy/blob/main/docs/tutorials/plotting/core.ipynb#_snippet_22",
+            "pageTitle": "Unknown",
+            "codeList": [
+                {
+                    "language": "python",
+                    "code": "sc.pl.rank_genes_groups_dotplot(pbmc, n_genes=4)"
+                },
+                {
+                    "language": "python",
+                    "code": "sc.pl.rank_genes_groups_dotplot(\n    pbmc,\n    n_genes=4,\n    values_to_plot=\"logfoldchanges\",\n    min_logfoldchange=3,\n    vmax=7,\n    vmin=-7,\n    cmap=\"bwr\",\n)"
+                },
+                {
+                    "language": "python",
+                    "code": "sc.pl.rank_genes_groups_dotplot(\n    pbmc,\n    n_genes=30,\n    values_to_plot=\"logfoldchanges\",\n    min_logfoldchange=4,\n    vmax=7,\n    vmin=-7,\n    cmap=\"bwr\",\n    groups=[\"3\", \"7\"],\n)"
+                }
+            ],
+            "relevance": 0.015151516,
+            "generationDate": "2026-08-21T21:17:11.052Z",
+            "model": "gemini-3.1-flash-lite"
+        }
+    ]
+}

@@ -1,0 +1,61 @@
+{
+    "responseHeader": {
+        "status": 0,
+        "QTime": 1
+    },
+    "response": {
+        "numFound": 1,
+        "start": 0,
+        "numFoundExact": true,
+        "docs": [
+            {
+                "pubmed_id": [
+                    12477932
+                ],
+                "ensembl_gene_id": "ENSG00000225880",
+                "location": "1p36.33",
+                "agr": "HGNC:26211",
+                "date_approved_reserved": "2008-09-12T00:00:00Z",
+                "gene_group_id": [
+                    1986
+                ],
+                "gene_group": [
+                    "Long independently transcribed non-coding RNAs"
+                ],
+                "symbol": "LINC00115",
+                "refseq_accession": [
+                    "XR_017693"
+                ],
+                "entrez_id": "79854",
+                "prev_symbol": [
+                    "NCRNA00115"
+                ],
+                "prev_name": [
+                    "long intergenic non-protein coding RNA 115",
+                    "non-protein coding RNA 115"
+                ],
+                "date_modified": "2026-06-11T00:00:00Z",
+                "locus_type": "RNA, long non-coding",
+                "name": "long independently transcribed non-coding RNA 115",
+                "date_symbol_changed": "2011-08-11T00:00:00Z",
+                "status": "Approved",
+                "vega_id": "OTTHUMG00000141258",
+                "alias_symbol": [
+                    "FLJ22639"
+                ],
+                "ucsc_id": "uc010nxx.3",
+                "ena": [
+                    "BC017762"
+                ],
+                "uuid": "8e204081-d53c-4484-8a36-1857c517fef1",
+                "date_name_changed": "2026-06-11T00:00:00Z",
+                "lncipedia": "LINC00115",
+                "rna_central_id": [
+                    "URS00025F537D"
+                ],
+                "hgnc_id": "HGNC:26211",
+                "locus_group": "non-coding RNA"
+            }
+        ]
+    }
+}

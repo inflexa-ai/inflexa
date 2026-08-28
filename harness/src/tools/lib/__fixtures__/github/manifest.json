@@ -1,0 +1,33 @@
+{
+    "01-new-repos-nodesc.json": {
+        "url": "https://api.github.com/search/repositories",
+        "params": {
+            "q": "created:>2026-08-25",
+            "per_page": "100",
+            "sort": "updated",
+            "order": "desc"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "total_count",
+            "items.*.updated_at"
+        ],
+        "replay": false
+    },
+    "05-zero-results.json": {
+        "url": "https://api.github.com/search/repositories",
+        "params": {
+            "q": "zzqqxxnosuchrepositoryname12345 in:name",
+            "per_page": "10",
+            "sort": "stars",
+            "order": "desc"
+        },
+        "capturedAt": "2026-08-28"
+    },
+    "github-search-repositories-schema.json": {
+        "url": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true,
+        "replay": false
+    }
+}
