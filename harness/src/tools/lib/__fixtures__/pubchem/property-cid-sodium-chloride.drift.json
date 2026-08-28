@@ -1,0 +1,20 @@
+{
+    "PropertyTable": {
+        "Properties": [
+            {
+                "CID": 5234,
+                "MolecularFormula": "ClNa",
+                "MolecularWeight": "58.44",
+                "ConnectivitySMILES": "[Na+].[Cl-]",
+                "InChI": "InChI=1S/ClH.Na/h1H;/q;+1/p-1",
+                "InChIKey": "FAPWRFPIFSIZLT-UHFFFAOYSA-M",
+                "IUPACName": "sodium chloride",
+                "TPSA": "0",
+                "Complexity": 2,
+                "HBondDonorCount": 0,
+                "HBondAcceptorCount": 1,
+                "RotatableBondCount": 0
+            }
+        ]
+    }
+}

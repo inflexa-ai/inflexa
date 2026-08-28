@@ -7,11 +7,15 @@
  * exposes molecular weight + SMILES + InChI properties that let us
  * heuristically classify peptides, small molecules, and proteins without a
  * hand-curated override table.
+ *
+ * Absence policy: PubChem omits the key of an absent value, per `minOccurs=0`
+ * in its XSD, and it never sends an explicit `null`. Thus a maybe-absent field
+ * carries `.optional()`, not `.nullable()`.
  */
 
 import { z } from "zod";
 
-import { apiFetchValidated, describeApiError } from "./api-utils.js";
+import { apiFetchValidated, describeApiError, zWireNumber } from "./api-utils.js";
 import { PUBCHEM_BASE, PUBCHEM_HEADERS } from "./pubchem-config.js";
 
 export interface PubChemCompoundProperties {
@@ -26,58 +30,57 @@ export interface PubChemCompoundProperties {
 const PROPERTY_FIELDS = [
     "MolecularWeight",
     "InChIKey",
-    // The PUG-REST schema renamed the small-molecule SMILES field to
-    // ConnectivitySMILES in late 2024; CanonicalSMILES still works but is
-    // deprecated. We request both and fall back through them.
+    // PubChem retired the response key `CanonicalSMILES`, and it answers a request
+    // for that name with `ConnectivitySMILES`. Thus the request names the live key.
     "ConnectivitySMILES",
-    "CanonicalSMILES",
     "HBondDonorCount",
     "HBondAcceptorCount",
 ].join(",");
 
 // A single record from the PUG-REST `PropertyTable.Properties` array, validated
-// at the fetch boundary. Every field is optional — PubChem omits absent
-// properties, and a row missing `CID` is handled gracefully by the caller's
-// guard (returns null) rather than being a contract break.
+// at the fetch boundary. PubChem omits an absent property and it never sends
+// `null`, thus each property carries `.optional()` and a declared type. Under
+// zod 4 a bare `z.unknown()` is required, which rejects an omission.
 const RawPubChemPropertySchema = z.object({
     CID: z.number().optional(),
-    MolecularWeight: z.unknown(),
-    InChIKey: z.unknown(),
-    ConnectivitySMILES: z.unknown(),
-    CanonicalSMILES: z.unknown(),
-    HBondDonorCount: z.unknown(),
-    HBondAcceptorCount: z.unknown(),
+    // PUG-REST serializes MolecularWeight as a string (e.g. "180.16") to
+    // preserve significant figures, thus it reads through the wire-number helper.
+    MolecularWeight: zWireNumber.optional(),
+    InChIKey: z.string().optional(),
+    ConnectivitySMILES: z.string().optional(),
+    HBondDonorCount: z.number().optional(),
+    HBondAcceptorCount: z.number().optional(),
 });
 type RawPubChemProperty = z.infer<typeof RawPubChemPropertySchema>;
 
-const PubChemPropertyResponseSchema = z.object({
+export const PubChemPropertyResponseSchema = z.object({
     PropertyTable: z.object({ Properties: z.array(RawPubChemPropertySchema).optional() }).optional(),
 });
 
-const PubChemCidListResponseSchema = z.object({
+export const PubChemCidListResponseSchema = z.object({
     IdentifierList: z.object({ CID: z.array(z.number()).optional() }).optional(),
 });
-
-function parseNumber(value: unknown): number | null {
-    if (value == null) return null;
-    if (typeof value === "number") return Number.isFinite(value) ? value : null;
-    if (typeof value === "string") {
-        const n = parseFloat(value);
-        return Number.isFinite(n) ? n : null;
-    }
-    return null;
-}
 
 function mapProps(raw: RawPubChemProperty): PubChemCompoundProperties {
     return {
         cid: raw.CID ?? 0,
-        molecularWeight: parseNumber(raw.MolecularWeight),
-        inchiKey: typeof raw.InChIKey === "string" ? raw.InChIKey : null,
-        canonicalSmiles:
-            typeof raw.ConnectivitySMILES === "string" ? raw.ConnectivitySMILES : typeof raw.CanonicalSMILES === "string" ? raw.CanonicalSMILES : null,
-        hBondDonorCount: typeof raw.HBondDonorCount === "number" ? raw.HBondDonorCount : parseNumber(raw.HBondDonorCount),
-        hBondAcceptorCount: typeof raw.HBondAcceptorCount === "number" ? raw.HBondAcceptorCount : parseNumber(raw.HBondAcceptorCount),
+        molecularWeight: raw.MolecularWeight ?? null,
+        inchiKey: raw.InChIKey ?? null,
+        canonicalSmiles: raw.ConnectivitySMILES ?? null,
+        hBondDonorCount: raw.HBondDonorCount ?? null,
+        hBondAcceptorCount: raw.HBondAcceptorCount ?? null,
     };
+}
+
+/**
+ * Does the record hold a property?
+ *
+ * PubChem answers HTTP 200 for a CID that does not exist, with one row that
+ * carries the `CID` alone. Thus a record with no property is an absence, and a
+ * caller must not read it as a compound.
+ */
+function carriesProperties(props: PubChemCompoundProperties): boolean {
+    return Object.entries(props).some(([key, value]) => key !== "cid" && value !== null);
 }
 
 export async function getCompoundPropertiesByCID(cid: number): Promise<PubChemCompoundProperties | null> {
@@ -91,7 +94,8 @@ export async function getCompoundPropertiesByCID(cid: number): Promise<PubChemCo
     }
     const props = res.value.PropertyTable?.Properties?.[0];
     if (!props || typeof props.CID !== "number") return null;
-    return mapProps(props);
+    const mapped = mapProps(props);
+    return carriesProperties(mapped) ? mapped : null;
 }
 
 /**

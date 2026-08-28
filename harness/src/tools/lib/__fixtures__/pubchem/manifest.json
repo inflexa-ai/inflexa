@@ -1,0 +1,33 @@
+{
+    "assaysummary-cid-2244.json": {
+        "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2244/assaysummary/JSON",
+        "capturedAt": "2026-08-28",
+        "ignorePaths": ["Table.Row"]
+    },
+    "client-property-cid-2244.json": {
+        "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2244/property/MolecularWeight,InChIKey,ConnectivitySMILES,HBondDonorCount,HBondAcceptorCount/JSON",
+        "capturedAt": "2026-08-28"
+    },
+    "property-cid-nonexistent.json": {
+        "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/999999999/property/MolecularFormula,MolecularWeight,ConnectivitySMILES,InChI,InChIKey,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount,Complexity/JSON",
+        "capturedAt": "2026-08-28"
+    },
+    "property-cid-sodium-chloride.json": {
+        "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/5234/property/MolecularFormula,MolecularWeight,ConnectivitySMILES,InChI,InChIKey,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount,Complexity/JSON",
+        "capturedAt": "2026-08-28"
+    },
+    "property-name-aspirin.json": {
+        "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/aspirin/property/MolecularFormula,MolecularWeight,ConnectivitySMILES,InChI,InChIKey,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount,Complexity/JSON",
+        "capturedAt": "2026-08-28"
+    },
+    "pug_rest.xsd": {
+        "url": "https://pubchem.ncbi.nlm.nih.gov/pug_rest/pug_rest.xsd",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    },
+    "xrefs-cid-2244.json": {
+        "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2244/xrefs/RegistryID/JSON",
+        "capturedAt": "2026-08-28",
+        "ignorePaths": ["InformationList.Information.*.RegistryID"]
+    }
+}

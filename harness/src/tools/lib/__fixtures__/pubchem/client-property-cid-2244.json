@@ -1,0 +1,14 @@
+{
+    "PropertyTable": {
+        "Properties": [
+            {
+                "CID": 2244,
+                "MolecularWeight": "180.16",
+                "ConnectivitySMILES": "CC(=O)OC1=CC=CC=C1C(=O)O",
+                "InChIKey": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
+                "HBondDonorCount": 1,
+                "HBondAcceptorCount": 4
+            }
+        ]
+    }
+}
