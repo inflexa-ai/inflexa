@@ -39,7 +39,7 @@
  */
 
 import { existsSync, lstatSync, statSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import Docker from "dockerode";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
@@ -49,7 +49,7 @@ import type { Logger } from "../lib/logger.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan, sandboxWriteTail } from "./mount-plan.js";
-import { cpuFiles } from "./cpu-files.js";
+import { CPU_ONLINE_PATH, CPUINFO_PATH, cpuFiles, readHostCpuinfoOnce } from "./cpu-files.js";
 import { threadLimitEnv } from "./thread-env.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
@@ -82,9 +82,6 @@ const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
 const RUN_ID_LABEL = "cortex/run-id";
 const STEP_ID_LABEL = "cortex/step-id";
 
-/** The two container paths that the cpu files cover. */
-const CPU_ONLINE_PATH = "/sys/devices/system/cpu/online";
-const CPUINFO_PATH = "/proc/cpuinfo";
 /** The directory next to the workspace root that holds the cpu files of each sandbox. */
 const CPU_FILES_DIR = ".cpu";
 
@@ -180,17 +177,6 @@ function refStoreUsable(refStorePath: string): boolean {
     } catch {
         return false;
     }
-}
-
-/**
- * The `/proc/cpuinfo` of the harness host, read once per process. The content
- * does not change while the process runs. A host with no such file, for
- * example macOS, gives `undefined`, and the caller binds only `online`.
- */
-let hostCpuinfo: Promise<string | undefined> | undefined;
-function readHostCpuinfoOnce(): Promise<string | undefined> {
-    hostCpuinfo ??= readFile(CPUINFO_PATH, "utf8").catch(() => undefined);
-    return hostCpuinfo;
 }
 
 /**

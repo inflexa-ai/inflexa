@@ -8,9 +8,28 @@
  * describe the host, not the cgroup. A read-only bind of a small file over each
  * path makes both calls report the quota.
  *
- * This module makes the content of the two files. It touches no file system.
- * The Docker backend writes the content to the host and binds it.
+ * This module makes the content of the two files, and it reads the
+ * `/proc/cpuinfo` of the harness host that the content is cut from. The Docker
+ * backend writes the content to the host and binds it. The K8s backend puts
+ * the content in a ConfigMap and mounts each key with `subPath`.
  */
+
+import { readFile } from "node:fs/promises";
+
+/** The two container paths that the cpu files cover. */
+export const CPU_ONLINE_PATH = "/sys/devices/system/cpu/online";
+export const CPUINFO_PATH = "/proc/cpuinfo";
+
+/**
+ * The `/proc/cpuinfo` of the harness host, read once per process. The content
+ * does not change while the process runs. A host with no such file, for
+ * example macOS, gives `undefined`, and the caller covers only `online`.
+ */
+let hostCpuinfo: Promise<string | undefined> | undefined;
+export function readHostCpuinfoOnce(): Promise<string | undefined> {
+    hostCpuinfo ??= readFile(CPUINFO_PATH, "utf8").catch(() => undefined);
+    return hostCpuinfo;
+}
 
 export interface CpuFiles {
     /** Content of `/sys/devices/system/cpu/online`: `0` for one thread, else the range `0-<n-1>`. */
