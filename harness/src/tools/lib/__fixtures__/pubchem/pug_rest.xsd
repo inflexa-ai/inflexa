@@ -1,0 +1,586 @@
+<?xml version="1.0" ?>
+<xs:schema
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  xmlns="http://pubchem.ncbi.nlm.nih.gov/pug_rest"
+  targetNamespace="http://pubchem.ncbi.nlm.nih.gov/pug_rest"
+  elementFormDefault="qualified"
+  attributeFormDefault="unqualified">
+
+<!--
+ $Id: prws_response.xsd 710071 2026-04-23 12:03:12Z thiessen $
+ ===========================================================================
+
+                            PUBLIC DOMAIN NOTICE
+               National Center for Biotechnology Information
+
+  This software/database is a "United States Government Work" under the
+  terms of the United States Copyright Act.  It was written as part of
+  the author's official duties as a United States Government employee and
+  thus cannot be copyrighted.  This software/database is freely available
+  to the public for use. The National Library of Medicine and the U.S.
+  Government have not placed any restriction on its use or reproduction.
+
+  Although all reasonable efforts have been taken to ensure the accuracy
+  and reliability of the software and data, the NLM and the U.S.
+  Government do not and cannot warrant the performance or results that
+  may be obtained by using this software or data. The NLM and the U.S.
+  Government disclaim all warranties, express or implied, including
+  warranties of performance, merchantability or fitness for any particular
+  purpose.
+
+  Please cite the author in any work or product based on this material.
+
+ ===========================================================================
+
+  Schema for PubChem PUG REST response
+
+  by NCBI PubChem Group
+
+  National Center for Biotechnology Information
+  National Institutes of Health
+  Bethesda, MD 20894 USA
+
+ ===========================================================================
+-->
+
+<xs:element name="Fault">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="Code" type="xs:string"/>
+      <xs:element name="Message" type="xs:string"/>
+      <xs:element name="Details" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="Waiting">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="ListKey" type="xs:string"/>
+      <xs:element name="Message" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="PropertyTable">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="Properties" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="CID" type="xs:int"/>
+            <xs:element name="MolecularFormula" type="xs:string" minOccurs="0"/>
+            <xs:element name="MolecularFormulaNoCharge" type="xs:string" minOccurs="0"/>
+            <xs:element name="MolecularWeight" type="xs:string" minOccurs="0"/>
+            <xs:element name="SMILES" type="xs:string" minOccurs="0"/>
+            <xs:element name="ConnectivitySMILES" type="xs:string" minOccurs="0"/>
+            <xs:element name="InChI" type="xs:string" minOccurs="0"/>
+            <xs:element name="InChIKey" type="xs:string" minOccurs="0"/>
+            <xs:element name="IUPACName" type="xs:string" minOccurs="0"/>
+            <xs:element name="XLogP" type="xs:double" minOccurs="0"/>
+            <xs:element name="ExactMass" type="xs:string" minOccurs="0"/>
+            <xs:element name="MonoisotopicMass" type="xs:string" minOccurs="0"/>
+            <xs:element name="TPSA" type="xs:double" minOccurs="0"/>
+            <xs:element name="Complexity" type="xs:int" minOccurs="0"/>
+            <xs:element name="Charge" type="xs:int" minOccurs="0"/>
+            <xs:element name="HBondDonorCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="HBondAcceptorCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="RotatableBondCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="HeavyAtomCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="IsotopeAtomCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="AtomStereoCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="DefinedAtomStereoCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="UndefinedAtomStereoCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="BondStereoCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="DefinedBondStereoCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="UndefinedBondStereoCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="CovalentUnitCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="Volume3D" type="xs:double" minOccurs="0"/>
+            <xs:element name="XStericQuadrupole3D" type="xs:double" minOccurs="0"/>
+            <xs:element name="YStericQuadrupole3D" type="xs:double" minOccurs="0"/>
+            <xs:element name="ZStericQuadrupole3D" type="xs:double" minOccurs="0"/>
+            <xs:element name="FeatureCount3D" type="xs:int" minOccurs="0"/>
+            <xs:element name="FeatureAcceptorCount3D" type="xs:int" minOccurs="0"/>
+            <xs:element name="FeatureDonorCount3D" type="xs:int" minOccurs="0"/>
+            <xs:element name="FeatureAnionCount3D" type="xs:int" minOccurs="0"/>
+            <xs:element name="FeatureCationCount3D" type="xs:int" minOccurs="0"/>
+            <xs:element name="FeatureRingCount3D" type="xs:int" minOccurs="0"/>
+            <xs:element name="FeatureHydrophobeCount3D" type="xs:int" minOccurs="0"/>
+            <xs:element name="ConformerModelRMSD3D" type="xs:double" minOccurs="0"/>
+            <xs:element name="EffectiveRotorCount3D" type="xs:double" minOccurs="0"/>
+            <xs:element name="ConformerCount3D" type="xs:int" minOccurs="0"/>
+            <xs:element name="Fingerprint2D" type="xs:base64Binary" minOccurs="0"/>
+            <xs:element name="Title" type="xs:string" minOccurs="0"/>
+            <xs:element name="PatentCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="PatentFamilyCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="LiteratureCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="AnnotationTypes" type="xs:string" minOccurs="0"/>
+            <xs:element name="AnnotationTypeCount" type="xs:int" minOccurs="0"/>
+            <xs:element name="SourceCategories" type="xs:string" minOccurs="0"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="InformationList">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="Information" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:choice>
+              <xs:element name="CID" type="xs:int"/>
+              <xs:element name="SID" type="xs:int"/>
+              <xs:element name="AID" type="xs:int"/>
+              <xs:element name="GeneID" type="xs:int"/>
+              <xs:element name="ProteinAccession" type="xs:string"/>
+              <xs:element name="PathwayAccession" type="xs:string"/>
+              <xs:element name="TaxonomyID" type="xs:int"/>
+              <xs:element name="CellAccession" type="xs:string"/>
+              <xs:element name="DiseaseAccession" type="xs:string"/>
+            </xs:choice>
+            <xs:element name="Synonym" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="CID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="SID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="AID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="GI" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="GeneID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="DepositionDate" type="DateTime" minOccurs="0"/>
+            <xs:element name="ModificationDate" type="DateTime" minOccurs="0"/>
+            <xs:element name="CreationDate" type="DateTime" minOccurs="0"/>
+            <xs:element name="HoldDate" type="DateTime" minOccurs="0"/>
+            <xs:element name="RegistryID" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="RN" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="PubMedID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="MMDBID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="DBURL" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="SBURL" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="ProteinGI" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="NucleotideGI" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="TaxonomyID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="MIMID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="ProbeID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="PatentID" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="ProteinName" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="GeneSymbol" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="SourceName" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="SourceCategory" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="Title" type="xs:string" minOccurs="0"/>
+            <xs:element name="Description" type="xs:string" minOccurs="0"/>
+            <xs:element name="DescriptionSourceName" type="xs:string" minOccurs="0"/>
+            <xs:element name="DescriptionURL" type="xs:string" minOccurs="0"/>
+            <xs:element name="ConformerID" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="ProteinAccession" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="PathwayAccession" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="Identifiers" minOccurs="0" maxOccurs="unbounded">
+              <xs:complexType>
+                <xs:sequence>
+                  <xs:element name="Type" type="xs:string"/>
+                  <xs:element name="Identifier" type="xs:string"/>
+                </xs:sequence>
+              </xs:complexType>
+            </xs:element>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="SourceName" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="Annotation" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Heading" type="xs:string"/>
+            <xs:element name="Type" type="xs:string"/>
+            <xs:element name="Description" type="xs:string" minOccurs="0"/>
+            <xs:element name="Count" type="xs:int" minOccurs="0"/>
+          </xs:sequence>
+        </xs:complexType>
+			</xs:element>
+      <xs:element name="IdentifierType" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:complexType name="DateTime">
+  <xs:sequence>
+    <xs:element name="Year" type="xs:int" minOccurs="0"/>
+    <xs:element name="Month" type="xs:int" minOccurs="0"/>
+    <xs:element name="Day" type="xs:int" minOccurs="0"/>
+    <xs:element name="Hour" type="xs:int" minOccurs="0"/>
+    <xs:element name="Minute" type="xs:int" minOccurs="0"/>
+    <xs:element name="Second" type="xs:int" minOccurs="0"/>
+  </xs:sequence>
+</xs:complexType>
+
+<xs:element name="IdentifierList">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="CID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="SID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="AID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="ListKey" type="xs:string" minOccurs="0"/>
+      <xs:element name="Size" type="xs:int" minOccurs="0"/>
+      <xs:element name="EntrezDB" type="xs:string" minOccurs="0"/>
+      <xs:element name="EntrezWebEnv" type="xs:string" minOccurs="0"/>
+      <xs:element name="EntrezQueryKey" type="xs:int" minOccurs="0"/>
+      <xs:element name="EntrezURL" type="xs:string" minOccurs="0"/>
+      <xs:element name="CacheKey" type="xs:string" minOccurs="0"/>
+      <xs:element name="PubMedID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="GeneID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="ProteinAccession" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="PathwayID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="TaxonomyID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="CellID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="DiseaseID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="PublicationNumber" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="DOI" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="Table">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="Columns">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Column" type="xs:string" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="Row" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Cell" type="xs:string" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="TableSummary">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="NumberOfRows" type="xs:int"/>
+      <xs:element name="ColumnValues" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="ColumnName" type="xs:string"/>
+            <xs:element name="Item" maxOccurs="unbounded">
+              <xs:complexType>
+                <xs:sequence>
+                  <xs:element name="Value" type="xs:string"/>
+                  <xs:element name="Count" type="xs:int"/>
+                </xs:sequence>
+              </xs:complexType>
+            </xs:element>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="ConceptsAndCIDs">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="Concept" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="ConceptName" type="xs:string"/>
+            <xs:element name="ConceptID" type="xs:int"/>
+            <xs:element name="Score" type="xs:double"/>
+            <xs:element name="PreferredCID" type="xs:int" minOccurs="0"/>
+            <xs:element name="Description" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="URL" type="xs:string" minOccurs="0"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="CID" type="xs:int" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="Element" minOccurs="0">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="AtomicNumber" type="xs:int"/>
+            <xs:element name="Name" type="xs:string"/>
+            <xs:element name="Symbol" type="xs:string"/>
+            <xs:element name="RepresentativeCID" type="xs:int" minOccurs="0"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="Disambiguation">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="Record" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="RecordType" type="xs:string"/>
+            <xs:element name="IDType" type="xs:string"/>
+            <xs:element name="IntID" type="xs:int" minOccurs="0"/>
+            <xs:element name="StringID" type="xs:string" minOccurs="0"/>
+            <xs:element name="Score" type="xs:double" minOccurs="0"/>
+            <xs:element name="Name" type="xs:string" minOccurs="0"/>
+            <xs:element name="Description" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:element name="URL" type="xs:string" minOccurs="0"/>
+            <xs:element name="Related" minOccurs="0" maxOccurs="unbounded">
+        			<xs:complexType>
+          			<xs:sequence>
+            			<xs:element name="IDType" type="xs:string"/>
+            			<xs:element name="IntID" type="xs:int" minOccurs="0"/>
+            			<xs:element name="StringID" type="xs:string" minOccurs="0"/>
+          			</xs:sequence>
+        			</xs:complexType>
+      			</xs:element>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+			<xs:element name="Validity" minOccurs="0" maxOccurs="unbounded">
+  			<xs:complexType>
+    			<xs:sequence>
+    				<xs:element name="Type" type="xs:string"/>
+    				<xs:element name="IsValid" type="xs:boolean"/>
+    				<xs:element name="CacheIDType" type="xs:string" minOccurs="0"/>
+    				<xs:element name="CacheSize" type="xs:int" minOccurs="0"/>
+    			</xs:sequence>
+  			</xs:complexType>
+			</xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+			
+<xs:element name="AssaySummary">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="AID"                    type="xs:int"                                               />
+      <xs:element name="SourceName"             type="xs:string"                                            />
+      <xs:element name="SourceID"               type="xs:string"                                            />
+      <xs:element name="Name"                   type="xs:string"                                            />
+      <xs:element name="Description"            type="xs:string"    minOccurs="0"   maxOccurs="unbounded"   />
+      <xs:element name="Protocol"               type="xs:string"    minOccurs="0"   maxOccurs="unbounded"   />
+      <xs:element name="Comment"                type="xs:string"    minOccurs="0"   maxOccurs="unbounded"   />
+      <xs:element name="NumberOfTIDs"           type="xs:int"                                               />
+      <xs:element name="HasScore"               type="xs:boolean"                                           />
+      <xs:element name="Method"                 type="xs:string"    minOccurs="0"                           />
+      <xs:element name="Target"                                     minOccurs="0"   maxOccurs="unbounded"    >
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Accession"        type="xs:string"                                            />
+            <xs:element name="Name"             type="xs:string"    minOccurs="0"                           />
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="Version"                type="xs:int"                                               />
+      <xs:element name="Revision"               type="xs:int"                                               />
+      <xs:element name="LastDataChange"         type="DateTime"                                             />
+      <xs:element name="SIDCountAll"            type="xs:int"                                               />
+      <xs:element name="SIDCountActive"         type="xs:int"                                               />
+      <xs:element name="SIDCountInactive"       type="xs:int"                                               />
+      <xs:element name="SIDCountInconclusive"   type="xs:int"                                               />
+      <xs:element name="SIDCountUnspecified"    type="xs:int"                                               />
+      <xs:element name="SIDCountProbe"          type="xs:int"                                               />
+      <xs:element name="CIDCountAll"            type="xs:int"                                               />
+      <xs:element name="CIDCountActive"         type="xs:int"                                               />
+      <xs:element name="CIDCountInactive"       type="xs:int"                                               />
+      <xs:element name="CIDCountInconclusive"   type="xs:int"                                               />
+      <xs:element name="CIDCountUnspecified"    type="xs:int"                                               />
+      <xs:element name="CIDCountProbe"          type="xs:int"                                               />
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="AssaySummaries">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element ref="AssaySummary" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="TextMineMatches">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="TextMineMatch" maxOccurs="unbounded">
+  			<xs:complexType>
+    			<xs:sequence>
+      			<xs:element name="CID" type="xs:int"/>
+      			<xs:element name="PMID" type="xs:int"/>
+      			<xs:element name="Title" type="xs:string" minOccurs="0"/>
+						<xs:element name="TitleMatches" minOccurs="0" maxOccurs="unbounded">
+  						<xs:complexType>
+    						<xs:sequence>
+      						<xs:element name="StartPos" type="xs:int"/>
+      						<xs:element name="Length" type="xs:int"/>
+    						</xs:sequence>
+  						</xs:complexType>
+						</xs:element>
+      			<xs:element name="Abstract" type="xs:string" minOccurs="0"/>
+						<xs:element name="AbstractMatches" minOccurs="0" maxOccurs="unbounded">
+  						<xs:complexType>
+    						<xs:sequence>
+      						<xs:element name="StartPos" type="xs:int"/>
+      						<xs:element name="Length" type="xs:int"/>
+    						</xs:sequence>
+  						</xs:complexType>
+						</xs:element>
+    			</xs:sequence>
+  			</xs:complexType>
+			</xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="GeneSummaries">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="GeneSummary" maxOccurs="unbounded">
+  			<xs:complexType>
+    			<xs:sequence>
+      			<xs:element name="GeneID" type="xs:int"/>
+      			<xs:element name="Symbol" type="xs:string"/>
+      			<xs:element name="Name" type="xs:string"/>
+      			<xs:element name="TaxonomyID" type="xs:int"/>
+      			<xs:element name="Taxonomy" type="xs:string"/>
+      			<xs:element name="Description" type="xs:string" minOccurs="0"/>
+						<xs:element name="Synonym" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+    			</xs:sequence>
+  			</xs:complexType>
+			</xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="ProteinSummaries">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="ProteinSummary" maxOccurs="unbounded">
+  			<xs:complexType>
+    			<xs:sequence>
+      			<xs:element name="ProteinAccession" type="xs:string"/>
+      			<xs:element name="Name" type="xs:string"/>
+      			<xs:element name="TaxonomyID" type="xs:int"/>
+      			<xs:element name="Taxonomy" type="xs:string"/>
+      			<xs:element name="Description" type="xs:string" minOccurs="0"/>
+						<xs:element name="Synonym" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+    			</xs:sequence>
+  			</xs:complexType>
+			</xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="PathwaySummaries">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="PathwaySummary" maxOccurs="unbounded">
+  			<xs:complexType>
+    			<xs:sequence>
+      			<xs:element name="PathwayAccession" type="xs:string"/>
+      			<xs:element name="SourceName" type="xs:string"/>
+      			<xs:element name="SourceID" type="xs:string"/>
+      			<xs:element name="SourceURL" type="xs:string" minOccurs="0"/>
+      			<xs:element name="Name" type="xs:string"/>
+      			<xs:element name="Type" type="xs:string" minOccurs="0"/>
+      			<xs:element name="Category" type="xs:string" minOccurs="0"/>
+      			<xs:element name="Description" type="xs:string" minOccurs="0"/>
+      			<xs:element name="TaxonomyID" type="xs:int" minOccurs="0"/>
+      			<xs:element name="Taxonomy" type="xs:string" minOccurs="0"/>
+    			</xs:sequence>
+  			</xs:complexType>
+			</xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="TaxonomySummaries">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="TaxonomySummary" maxOccurs="unbounded">
+  			<xs:complexType>
+    			<xs:sequence>
+      			<xs:element name="TaxonomyID" type="xs:int"/>
+      			<xs:element name="ScientificName" type="xs:string"/>
+      			<xs:element name="CommonName" type="xs:string" minOccurs="0"/>
+      			<xs:element name="Rank" type="xs:string" minOccurs="0"/>
+      			<xs:element name="RankedLineage" minOccurs="0">
+              <xs:complexType>
+                <xs:sequence>
+                  <xs:element name="Species" type="xs:string"/>
+                  <xs:element name="Genus" type="xs:string"/>
+                  <xs:element name="Family" type="xs:string"/>
+                  <xs:element name="Order" type="xs:string"/>
+                  <xs:element name="Class" type="xs:string"/>
+                  <xs:element name="Phylum" type="xs:string"/>
+                  <xs:element name="Kingdom" type="xs:string"/>
+                  <xs:element name="Superkingdom" type="xs:string"/>
+                </xs:sequence>
+              </xs:complexType>
+            </xs:element>
+						<xs:element name="Synonym" type="xs:string" minOccurs="0" maxOccurs="unbounded" />
+    			</xs:sequence>
+  			</xs:complexType>
+			</xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="CellSummaries">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="CellSummary" maxOccurs="unbounded">
+  			<xs:complexType>
+    			<xs:sequence>
+      			<xs:element name="CellAccession" type="xs:string"/>
+      			<xs:element name="Name" type="xs:string"/>
+      			<xs:element name="Sex" type="xs:string" minOccurs="0"/>
+      			<xs:element name="Category" type="xs:string" minOccurs="0"/>
+      			<xs:element name="SourceTissue" type="xs:string" minOccurs="0"/>
+      			<xs:element name="SourceTaxonomyID" type="xs:int" minOccurs="0"/>
+      			<xs:element name="SourceOrganism" type="xs:string" minOccurs="0"/>
+          	<xs:element name="Synonym" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+    			</xs:sequence>
+  			</xs:complexType>
+			</xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+<xs:element name="DiseaseSummaries">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="DiseaseSummary" maxOccurs="unbounded">
+  			<xs:complexType>
+    			<xs:sequence>
+      			<xs:element name="DiseaseAccession" type="xs:string"/>
+      			<xs:element name="Name" type="xs:string"/>
+      			<xs:element name="Description" type="xs:string" minOccurs="0"/>
+            <xs:element name="Synonym" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+						<xs:element name="CloseMatch" minOccurs="0" maxOccurs="unbounded">
+  						<xs:complexType>
+    						<xs:sequence>
+      						<xs:element name="SourceName" type="xs:string"/>
+      						<xs:element name="SourceID" type="xs:string"/>
+      						<xs:element name="SourceURL" type="xs:string" minOccurs="0"/>
+    						</xs:sequence>
+  						</xs:complexType>
+						</xs:element>
+						<xs:element name="RelatedMatch" minOccurs="0" maxOccurs="unbounded">
+  						<xs:complexType>
+    						<xs:sequence>
+      						<xs:element name="SourceName" type="xs:string"/>
+      						<xs:element name="SourceID" type="xs:string"/>
+      						<xs:element name="SourceURL" type="xs:string" minOccurs="0"/>
+    						</xs:sequence>
+  						</xs:complexType>
+						</xs:element>
+    			</xs:sequence>
+  			</xs:complexType>
+			</xs:element>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+</xs:schema>

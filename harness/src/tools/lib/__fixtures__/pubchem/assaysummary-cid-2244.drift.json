@@ -1,0 +1,389 @@
+{
+    "Table": {
+        "Columns": {
+            "Column": [
+                "AID",
+                "Panel Member ID",
+                "SID",
+                "CID",
+                "Activity Outcome",
+                "Target Accession",
+                "Target GeneID",
+                "Activity Value [uM]",
+                "Activity Name",
+                "Assay Name",
+                "Assay Type",
+                "PubMed ID",
+                "RNAi"
+            ]
+        },
+        "Row": [
+            {
+                "Cell": [
+                    92967,
+                    "",
+                    "103164874",
+                    "2244",
+                    "Active",
+                    "P05106",
+                    "3690",
+                    "5",
+                    "IC50",
+                    "Inhibition of arachidonic acid-induced platelet aggregation",
+                    "Confirmatory",
+                    "7837237",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "92967",
+                    "",
+                    "103164874",
+                    "2244",
+                    "Active",
+                    "P08514",
+                    "3674",
+                    "5",
+                    "IC50",
+                    "Inhibition of arachidonic acid-induced platelet aggregation",
+                    "Confirmatory",
+                    "7837237",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "240795",
+                    "",
+                    "103164874",
+                    "2244",
+                    "Active",
+                    "P05979",
+                    "443551",
+                    "0.3",
+                    "IC50",
+                    "In vitro inhibitory concentration against COX-1 enzyme",
+                    "Confirmatory",
+                    "15943479",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "240796",
+                    "",
+                    "103164874",
+                    "2244",
+                    "Active",
+                    "P79208",
+                    "443460",
+                    "2.4",
+                    "IC50",
+                    "In vitro inhibitory concentration against COX-2 enzyme",
+                    "Confirmatory",
+                    "15943479",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "241382",
+                    "",
+                    "103164874",
+                    "2244",
+                    "Active",
+                    "P05979",
+                    "443551",
+                    "0.35",
+                    "IC50",
+                    "In vitro inhibition of ovine prostaglandin G/H synthase 1",
+                    "Confirmatory",
+                    "15537365",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "241383",
+                    "",
+                    "103164874",
+                    "2244",
+                    "Active",
+                    "P79208",
+                    "443460",
+                    "2.4",
+                    "IC50",
+                    "In vitro inhibition of ovine prostaglandin G/H synthase 2",
+                    "Confirmatory",
+                    "15537365",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "1195",
+                    "",
+                    "48415582",
+                    "2244",
+                    "Active",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "DSSTox (FDAMDD) FDA Maximum (Recommended) Daily Dose Database",
+                    "Other",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "1811",
+                    "",
+                    "46392828",
+                    "2244",
+                    "Active",
+                    "1OXR_A",
+                    "",
+                    "",
+                    "",
+                    "Experimentally measured binding affinity data derived from PDB",
+                    "Other",
+                    "15823962",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "261404",
+                    "",
+                    "103164874",
+                    "2244",
+                    "Active",
+                    "P05979",
+                    "443551",
+                    "0.35",
+                    "IC50",
+                    "Inhibitory activity against ovine COX1",
+                    "Confirmatory",
+                    "16509583",
+                    ""
+                ]
+            },
+            {
+                "Cell": ["410", "", "11110749", "2244", "Inactive", "NP_000752", "1544", "", "", "p450-cyp1a2", "Confirmatory", "", ""]
+            },
+            {
+                "Cell": [
+                    "411",
+                    "",
+                    "11110749",
+                    "2244",
+                    "Inactive",
+                    "AAA29795",
+                    "116160065",
+                    "",
+                    "Potency",
+                    "qHTS Assay for Inhibitors of Firefly Luciferase",
+                    "Confirmatory",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "422",
+                    "",
+                    "17404602",
+                    "2244",
+                    "Inactive",
+                    "NP_036611",
+                    "7532",
+                    "",
+                    "",
+                    "HTS for 14-3-3 protein interaction modulators",
+                    "Screening",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": ["429", "", "17404602", "2244", "Inactive", "AAD14062", "3326", "", "", "HTS for Tumor Hsp90 Inhibitors", "Screening", "", ""]
+            },
+            {
+                "Cell": [
+                    "194",
+                    "",
+                    "87798",
+                    "2244",
+                    "Inconclusive",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "NCI In Vivo Anticancer Drug Screen. Data for tumor model  B16 Melanoma (subcutaneous) in B6D2F1 (BDF1) mice",
+                    "Other",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "212",
+                    "",
+                    "87798",
+                    "2244",
+                    "Inconclusive",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "NCI In Vivo Anticancer Drug Screen. Data for tumor model  Colon Carcinoma 38 (subcutaneous) in B6D2F1 (BDF1) mice",
+                    "Other",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": ["447", "", "11110749", "2244", "Inconclusive", "", "", "", "", "O-Glc NAc Transferase (sOGT)", "Confirmatory", "", ""]
+            },
+            {
+                "Cell": [
+                    "1583",
+                    "",
+                    "8149208",
+                    "2244",
+                    "Unspecified",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "Assay to identify inhibitors of polyglutamine-induced caspase-3 activation (CASP3)",
+                    "Other",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "1593",
+                    "",
+                    "8149208",
+                    "2244",
+                    "Unspecified",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "Yeast cell-based screen for compounds that suppress polyglutamine aggregation in vivo (75Q-TubU)",
+                    "Other",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "1599",
+                    "",
+                    "8149208",
+                    "2244",
+                    "Unspecified",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "Screen for compounds that correct neuronal dysfunction without cell death as induced by the expression of polyglutamine-expanded, N-terminal huntingtin in C. elegans mechanosensory neurons (HDELENEU)",
+                    "Other",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "1",
+                    "",
+                    "87798",
+                    "2244",
+                    "Inactive",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "NCI human tumor cell line growth inhibition assay. Data for the NCI-H23 Non-Small Cell Lung cell line",
+                    "Confirmatory",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "3",
+                    "",
+                    "87798",
+                    "2244",
+                    "Inactive",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "NCI human tumor cell line growth inhibition assay. Data for the NCI-H226 Non-Small Cell Lung cell line",
+                    "Confirmatory",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "9",
+                    "",
+                    "87798",
+                    "2244",
+                    "Inactive",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "NCI human tumor cell line growth inhibition assay. Data for the HOP-62 Non-Small Cell Lung cell line",
+                    "Confirmatory",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "15",
+                    "",
+                    "87798",
+                    "2244",
+                    "Inactive",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "NCI human tumor cell line growth inhibition assay. Data for the NCI-H522 Non-Small Cell Lung cell line",
+                    "Confirmatory",
+                    "",
+                    ""
+                ]
+            },
+            {
+                "Cell": [
+                    "19",
+                    "",
+                    "87798",
+                    "2244",
+                    "Inactive",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "NCI human tumor cell line growth inhibition assay. Data for the A549/ATCC Non-Small Cell Lung cell line",
+                    "Confirmatory",
+                    "",
+                    ""
+                ]
+            }
+        ]
+    }
+}
