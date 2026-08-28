@@ -1,0 +1,75 @@
+[
+  {
+    "peDbId": 9975784,
+    "displayName": "p-T389/412-RPS6KB1 [cytosol]",
+    "schemaClass": "DefinedSet",
+    "refEntities": [
+      {
+        "dbId": 403373,
+        "stId": "uniprot:P23443-1",
+        "identifier": 23443,
+        "schemaClass": "ReferenceIsoform",
+        "displayName": "UniProt:P23443-1 RPS6KB1",
+        "icon": "EntityWithAccessionedSequence",
+        "url": "http://purl.uniprot.org/uniprot/P23443-1"
+      },
+      {
+        "dbId": 234671,
+        "stId": "uniprot:P23443-2",
+        "identifier": "P23443-2",
+        "schemaClass": "ReferenceIsoform",
+        "displayName": "UniProt:P23443-2 RPS6KB1",
+        "icon": "EntityWithAccessionedSequence",
+        "url": "http://purl.uniprot.org/uniprot/P23443-2"
+      }
+    ]
+  },
+  {
+    "peDbId": 113592,
+    "displayName": "ATP [cytosol]",
+    "schemaClass": "SimpleEntity",
+    "refEntities": [
+      {
+        "dbId": 8869364,
+        "stId": "chebi:30616",
+        "identifier": "30616",
+        "schemaClass": "ReferenceMolecule",
+        "displayName": "ATP(4-) [ChEBI:30616]",
+        "icon": "SimpleEntity",
+        "url": "https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:30616"
+      }
+    ]
+  },
+  {
+    "peDbId": 72589,
+    "displayName": "EIF4B [cytosol]",
+    "schemaClass": "EntityWithAccessionedSequence",
+    "refEntities": [
+      {
+        "dbId": 72588,
+        "stId": "uniprot:P23588",
+        "identifier": "P23588",
+        "schemaClass": "ReferenceGeneProduct",
+        "displayName": "UniProt:P23588 EIF4B",
+        "icon": "EntityWithAccessionedSequence",
+        "url": "http://purl.uniprot.org/uniprot/P23588"
+      }
+    ]
+  },
+  {
+    "peDbId": 29370,
+    "displayName": "ADP [cytosol]",
+    "schemaClass": "SimpleEntity",
+    "refEntities": [
+      {
+        "dbId": 8869367,
+        "stId": "chebi:456216",
+        "identifier": "456216",
+        "schemaClass": "ReferenceMolecule",
+        "displayName": "ADP(3-) [ChEBI:456216]",
+        "icon": "SimpleEntity",
+        "url": "https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:456216"
+      }
+    ]
+  }
+]

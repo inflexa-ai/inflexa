@@ -1,0 +1,12 @@
+{
+  "v1-public-version.json": {
+    "url": "https://api.disgenet.com/api/v1/public/version",
+    "capturedAt": "2026-08-28",
+    "ignorePaths": [
+      "payload.apiVersion",
+      "payload.dataVersion",
+      "payload.lastUpdate",
+      "payload.version"
+    ]
+  }
+}

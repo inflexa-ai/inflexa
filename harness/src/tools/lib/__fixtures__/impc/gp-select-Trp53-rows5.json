@@ -1,0 +1,220 @@
+{
+  "responseHeader": {
+    "status": 0,
+    "QTime": 0,
+    "params": {
+      "q": "marker_symbol:Trp53",
+      "rows": "5",
+      "wt": "json"
+    }
+  },
+  "response": {
+    "numFound": 6,
+    "start": 0,
+    "docs": [
+      {
+        "allele_accession_id": "MGI:6120822",
+        "allele_name": "targeted mutation 1b, Helmholtz Zentrum Muenchen GmbH",
+        "allele_symbol": "Trp53<tm1b(EUCOMM)Hmgu>",
+        "assertion_type": "automatic",
+        "assertion_type_id": "ECO:0000203",
+        "colony_id": "H-Trp53-G11-TM1B",
+        "doc_id": "472446402654",
+        "intermediate_mp_term_id": [
+          "MP:0001286",
+          "MP:0002092",
+          "MP:0000001",
+          "MP:0002699",
+          "MP:0005195"
+        ],
+        "intermediate_mp_term_name": [
+          "abnormal eye development",
+          "abnormal eye morphology",
+          "mammalian phenotype",
+          "abnormal vitreous body morphology",
+          "abnormal posterior eye segment morphology"
+        ],
+        "life_stage_acc": "IMPCLS:0005",
+        "life_stage_name": "Early adult",
+        "marker_accession_id": "MGI:98834",
+        "marker_symbol": "Trp53",
+        "mp_term_id": "MP:0001289",
+        "mp_term_name": "persistence of hyaloid vascular system",
+        "p_value": 1.23720855826527e-05,
+        "parameter_name": "Persistence of hyaloid vascular system",
+        "parameter_stable_id": "IMPC_EYE_027_001",
+        "parameter_stable_key": [
+          "20405"
+        ],
+        "phenotyping_center": "MRC Harwell",
+        "pipeline_name": "Harwell",
+        "pipeline_stable_id": "HRWL_001",
+        "pipeline_stable_key": "8",
+        "procedure_name": "Eye Morphology",
+        "procedure_stable_id": [
+          "IMPC_EYE_001"
+        ],
+        "procedure_stable_key": [
+          "565"
+        ],
+        "project_name": [
+          "BaSH"
+        ],
+        "resource_name": "IMPC",
+        "sex": "male",
+        "statistical_method": "Fisher Exact Test framework",
+        "strain_accession_id": "MGI:2164831",
+        "strain_name": "C57BL/6NTac",
+        "top_level_mp_term_id": [
+          "MP:0005391"
+        ],
+        "top_level_mp_term_name": [
+          "vision/eye phenotype"
+        ],
+        "zygosity": "homozygote",
+        "_version_": 1859321030839894020
+      },
+      {
+        "allele_accession_id": "MGI:6120822",
+        "allele_name": "targeted mutation 1b, Helmholtz Zentrum Muenchen GmbH",
+        "allele_symbol": "Trp53<tm1b(EUCOMM)Hmgu>",
+        "assertion_type": "automatic",
+        "assertion_type_id": "ECO:0000203",
+        "colony_id": "H-Trp53-G11-TM1B",
+        "doc_id": "738734375091",
+        "effect_size": -220.942646951095,
+        "intermediate_mp_term_id": [
+          "MP:0010089",
+          "MP:0001570",
+          "MP:0005319",
+          "MP:0001764",
+          "MP:0000001",
+          "MP:0005416",
+          "MP:0008469",
+          "MP:0009642",
+          "MP:0020279",
+          "MP:0014451",
+          "MP:0014449",
+          "MP:0014502",
+          "MP:0014788",
+          "MP:0020281"
+        ],
+        "intermediate_mp_term_name": [
+          "abnormal circulating creatine kinase level",
+          "abnormal circulating enzyme level",
+          "abnormal enzyme/coenzyme level",
+          "abnormal homeostasis",
+          "mammalian phenotype",
+          "abnormal circulating protein level",
+          "abnormal protein level",
+          "abnormal blood homeostasis",
+          "abnormal creatine kinase level",
+          "decreased circulating enzyme level",
+          "decreased enzyme/coenzyme level",
+          "decreased circulating protein level",
+          "decreased protein level",
+          "decreased creatine kinase level"
+        ],
+        "life_stage_acc": "IMPCLS:0005",
+        "life_stage_name": "Early adult",
+        "marker_accession_id": "MGI:98834",
+        "marker_symbol": "Trp53",
+        "mp_term_id": "MP:0010091",
+        "mp_term_name": "decreased circulating creatine kinase level",
+        "p_value": 6.02229433298369e-05,
+        "parameter_name": "Creatine kinase",
+        "parameter_stable_id": "IMPC_CBC_028_001",
+        "parameter_stable_key": [
+          "30368"
+        ],
+        "percentage_change": "-52.4442028784184",
+        "phenotyping_center": "MRC Harwell",
+        "pipeline_name": "Harwell",
+        "pipeline_stable_id": "HRWL_001",
+        "pipeline_stable_key": "8",
+        "procedure_name": "Clinical Chemistry",
+        "procedure_stable_id": [
+          "IMPC_CBC_002"
+        ],
+        "procedure_stable_key": [
+          "683"
+        ],
+        "project_name": [
+          "BaSH"
+        ],
+        "resource_name": "IMPC",
+        "sex": "female",
+        "statistical_method": "Linear Mixed Model framework, LME, including Weight",
+        "strain_accession_id": "MGI:2164831",
+        "strain_name": "C57BL/6NTac",
+        "top_level_mp_term_id": [
+          "MP:0005376"
+        ],
+        "top_level_mp_term_name": [
+          "homeostasis/metabolism phenotype"
+        ],
+        "zygosity": "heterozygote",
+        "_version_": 1859320963303211009
+      },
+      {
+        "allele_accession_id": "MGI:6120822",
+        "allele_name": "targeted mutation 1b, Helmholtz Zentrum Muenchen GmbH",
+        "allele_symbol": "Trp53<tm1b(EUCOMM)Hmgu>",
+        "assertion_type": "manual",
+        "assertion_type_id": "ECO:0000218",
+        "colony_id": "H-Trp53-G11-TM1B",
+        "doc_id": "111669149807",
+        "effect_size": 1.0,
+        "intermediate_mp_term_id": [
+          "MP:0010770",
+          "MP:0010769",
+          "MP:0000001"
+        ],
+        "intermediate_mp_term_name": [
+          "preweaning lethality",
+          "abnormal survival",
+          "mammalian phenotype"
+        ],
+        "life_stage_acc": "IMPCLS:0005",
+        "life_stage_name": "Early adult",
+        "marker_accession_id": "MGI:98834",
+        "marker_symbol": "Trp53",
+        "mp_term_id": "MP:0011110",
+        "mp_term_name": "preweaning lethality, incomplete penetrance",
+        "p_value": 0.0,
+        "parameter_name": "Viability Outcome",
+        "parameter_stable_id": "IMPC_VIA_001_001",
+        "parameter_stable_key": [
+          "31440"
+        ],
+        "phenotyping_center": "MRC Harwell",
+        "pipeline_name": "Harwell",
+        "pipeline_stable_id": "HRWL_001",
+        "pipeline_stable_key": "8",
+        "procedure_name": "Viability Primary Screen",
+        "procedure_stable_id": [
+          "IMPC_VIA_001"
+        ],
+        "procedure_stable_key": [
+          "704"
+        ],
+        "project_name": [
+          "BaSH"
+        ],
+        "resource_name": "IMPC",
+        "sex": "not_considered",
+        "statistical_method": "Supplied as data",
+        "strain_accession_id": "MGI:2164831",
+        "strain_name": "C57BL/6NTac",
+        "top_level_mp_term_id": [
+          "MP:0010768"
+        ],
+        "top_level_mp_term_name": [
+          "mortality/aging"
+        ],
+        "zygosity": "homozygote",
+        "_version_": 1859321076643790848
+      }
+    ]
+  }
+}

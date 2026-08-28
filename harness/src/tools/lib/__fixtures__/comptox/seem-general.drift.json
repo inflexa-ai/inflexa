@@ -1,0 +1,12 @@
+[
+  {
+    "dtxsid": "DTXSID7020182",
+    "productionVolume": 2780000,
+    "units": "kg/day",
+    "stockholmConvention": 0,
+    "probabilityDietary": 1.0,
+    "probabilityResidential": 1.0,
+    "probabilityPesticde": "0.0000",
+    "probabilityIndustrial": 0.0
+  }
+]

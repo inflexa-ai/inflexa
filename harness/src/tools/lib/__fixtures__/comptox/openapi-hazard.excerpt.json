@@ -1,0 +1,471 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Computational Toxicology and Exposure (CTX) APIs - CTX Hazard API",
+    "description": "The CTX Hazard API is part of US EPA's Computational Toxicology and Exposure APIs. The CTX Hazard API provides programmtic access to hazard data through a set of endpoints.",
+    "version": "1.1.1"
+  },
+  "components": {
+    "schemas": {
+      "GenetoxSummary": {
+        "type": "object",
+        "description": "Description: Genotoxicity testing, also known as short-term assays, is used to evaluate the potential adverse effects of chemicals on human health. These tests can help identify carcinogens, as about 80% of known human carcinogens are genotoxic. The results of genotoxicity tests are important because of the irreversible nature and severity of the health effects that may result from genotoxic events. There are many different techniques that can be used for genotoxicity testing, notably including Ames test (comparative genetic analysis using multiple bacterial strains of Salmonella typhimurium), Comet assay (measurement DNA strand breaks), micronucleus test (cytogenetic assay that uses fluorescence in situ hybridization and chromosome painting) and chromosomal aberration test (cytogenetic assay that examines in vivo tissues to reflect how chemicals are absorbed, excreted, distributed, and metabolized). This endpoint provides summary-level genotoxicity data associated to a chemical.",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ames": {
+            "type": "string",
+            "description": "Average result in AMES test",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "clowderDocId": {
+            "type": "string",
+            "maxLength": 65,
+            "minLength": 0
+          },
+          "dtxsid": {
+            "type": "string",
+            "description": "Distributed Structure-Searchable Toxicity (DSSTox) id",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "genetoxCall": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "genetoxSummaryId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "micronucleus": {
+            "type": "string",
+            "description": "Average result in Micronucleus test",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "reportsNegative": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Count of genetox records reporting negative results"
+          },
+          "reportsOther": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Count of genetox records reporting \u2018other\u2019 in results"
+          },
+          "reportsPositive": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Count of genetox records reporting positive results"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "CancerSummary": {
+        "type": "object",
+        "description": "A carcinogen is a substance that may cause cancer and pose a health hazard. Carcinogens are subject to specific controls and regulations. National and international health agencies evaluate new and existing chemicals to determine if they are likely to be carcinogens through a process called cancer hazard identification. This process combines human and animal data with supporting evidence to characterize the weight-of-evidence (WOE) regarding the agent's potential as a human carcinogen. The general categories recognized by the guidelines are carcinogenic to humans, likely to be carcinogenic to humans, and suggestive evidence of carcinogenic potential. This endpoint provides summary-level cancer data associated to a chemical.",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "dtxsid": {
+            "type": "string",
+            "description": "Distributed Structure-Searchable Toxicity (DSSTox) id",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "source": {
+            "type": "string",
+            "description": "Originator of source data",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "exposureRoute": {
+            "type": "string",
+            "description": "Path by which test substance was administered to animal. Options include oral, dermal, inhalation, injection, or other",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "cancerCall": {
+            "type": "string",
+            "description": "Annotation indicating level of carcinogenicity",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "url": {
+            "type": "string",
+            "description": "URL for source data",
+            "maxLength": 255,
+            "minLength": 0
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "ToxValDb": {
+        "type": "object",
+        "description": "The Toxicity Values Database (ToxValDB) is a compilation of toxicity information from world-wide sites, databases, and sources, which can save the user time by providing information in one location. The data are largely limited to summary values from individual studies or chemical-level assessments, and is focused on quantitative values such as LOAELs, NOAELs, BMDs, LD50s and RfDs. The user must apply judgment in use of the information and should consult the original scientific paper or data source, if possible, to ensure an understanding of the context of the data. The ToxValDB SQL download is available at https://www.epa.gov/comptox-tools/downloadable-computational-toxicology-data#AT .",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "dtxsid": {
+            "type": "string",
+            "description": "Distributed Structure-Searchable Toxicity (DSSTox) id",
+            "maxLength": 45,
+            "minLength": 0
+          },
+          "casrn": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Originator of source data",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "subsource": {
+            "type": "string",
+            "description": "Additional source reference",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "toxvalType": {
+            "type": "string",
+            "description": "Categorization of records based on POD or effect level. Categories include: Point of Departure (The quantitative result of an in vivo repeat dose study, such as a LOAEL, NOAEL or BMDL), Lethality Effect Level (The quantitative result of an in vivo acute study, such as a LD50 or LC50), Toxicity Value (A risk assessment summary value for a chemical, such as an RFD or cancer slope factor), Screening Level (An environmentally safe concentration, primarily EPA Regional Screening levels), Exposure Limit (Exposure levels of concern in air, water, or other media), Effect Time (A time when an effect is seen for a fixed concentration. These values all come from the ECOTOX Knowledgebase), Effect Level (A value similar to a Point of Departure, but not linked to a critical effect), Effect Dose (Similar to a Lethality Effect Level but for non-lethal ecotoxicology endpoints in acute studies), Inhibition Concentration (Similar to a Lethality Effect Level but for non-lethal ecotoxicology endpoints, focused on inhibition of growth), Other (Other uncharacterized classes of records)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "toxvalTypeDefinition": {
+            "type": "string"
+          },
+          "toxvalSubtype": {
+            "type": "string",
+            "description": "Effect subtype or value subtype",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "toxvalTypeSuperCategory": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "qualifier": {
+            "type": "string",
+            "description": "Operators (<, <=, >, >=, =) to contextualize level of certainty in estimates",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "toxvalNumeric": {
+            "type": "number",
+            "format": "double",
+            "description": "Concentration of a test chemical, typically reported in ppm within the exposure matrix (e.g., feed or water), or the an adjusted amount of the chemical administered in mg/kg of body weight/day (mg/kg/day)"
+          },
+          "toxvalUnits": {
+            "type": "string",
+            "description": "Unit associated with the concentration or adjusted dose of a chemical",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "riskAssessmentClass": {
+            "type": "string",
+            "description": "Designation of cancer or non-cancer for toxicity values or media associated with exposure guideline values",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "humanEco": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "studyType": {
+            "type": "string",
+            "description": "Classification to describe toxicity testing that was conducted",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "studyDurationClass": {
+            "type": "string",
+            "description": "Categorical description of exposure duration ",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "studyDurationValue": {
+            "type": "number",
+            "format": "double",
+            "description": "Amount of time a group is dosed. This varies within studies depending on the dose period of a particular treatment group"
+          },
+          "studyDurationUnits": {
+            "type": "string",
+            "description": "Unit of time associated with the dose duration. Typically in days or months",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "speciesCommon": {
+            "type": "string",
+            "description": "Species of the animal test subject used in a study",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "strain": {
+            "type": "string",
+            "description": "Intraspecific description of group of animals used in a study; generally, a stock of animals that share a uniform morphological or physiological character, or group that is genetically uniform",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "latinName": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "speciesSupercategory": {
+            "type": "string",
+            "description": "Categorization of effect or value type into one of five categories, including dose response summary value, mortality response summary value, toxicity value, media exposure guidelines, or acute exposure guidelines",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "sex": {
+            "type": "string",
+            "description": "Gender of a test animal. The gender of fetal groups is denoted as MF for both males and females",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "generation": {
+            "type": "string",
+            "description": "Generation a test animal belongs to",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "lifestage": {
+            "type": "string",
+            "description": "Stage of life that a measurement was taken",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "exposureRoute": {
+            "type": "string",
+            "description": "Path by which test substance was administered to animal. Options include oral, dermal, inhalation, injection, or other",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "exposureMethod": {
+            "type": "string",
+            "description": "Specific path by which the test substance was administered via the administration route. Examples include capsule, diet, gavage, or topical",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "exposureForm": {
+            "type": "string",
+            "description": "The vehicle used in administration of the chemical",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "media": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "toxicologicalEffect": {
+            "type": "string",
+            "description": "Treatment-associated effect "
+          },
+          "experimentalRecord": {
+            "type": "string"
+          },
+          "studyGroup": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "longRef": {
+            "type": "string"
+          },
+          "doi": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "year": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "guideline": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "quality": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "qcCategory": {
+            "type": "string"
+          },
+          "sourceHash": {
+            "type": "string",
+            "maxLength": 45,
+            "minLength": 0
+          },
+          "externalSourceId": {
+            "type": "string"
+          },
+          "externalSourceIdDesc": {
+            "type": "string"
+          },
+          "sourceUrl": {
+            "type": "string",
+            "description": "URL for source data",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "subsourceUrl": {
+            "type": "string",
+            "description": "Additional URL reference for source data",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "storedSourceRecord": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "toxvalTypeOriginal": {
+            "type": "string",
+            "description": "Categorization of records based on POD or effect level. Categories include: Point of Departure (The quantitative result of an in vivo repeat dose study, such as a LOAEL, NOAEL or BMDL), Lethality Effect Level (The quantitative result of an in vivo acute study, such as a LD50 or LC50), Toxicity Value (A risk assessment summary value for a chemical, such as an RFD or cancer slope factor), Screening Level (An environmentally safe concentration, primarily EPA Regional Screening levels), Exposure Limit (Exposure levels of concern in air, water, or other media), Effect Time (A time when an effect is seen for a fixed concentration. These values all come from the ECOTOX Knowledgebase), Effect Level (A value similar to a Point of Departure, but not linked to a critical effect), Effect Dose (Similar to a Lethality Effect Level but for non-lethal ecotoxicology endpoints in acute studies), Inhibition Concentration (Similar to a Lethality Effect Level but for non-lethal ecotoxicology endpoints, focused on inhibition of growth), Other (Other uncharacterized classes of records) (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "toxvalSubtypeOriginal": {
+            "type": "string",
+            "description": "Effect subtype or value subtype (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "toxvalNumericOriginal": {
+            "type": "number",
+            "format": "double",
+            "description": "Concentration of a test chemical, typically reported in ppm within the exposure matrix (e.g., feed or water), or the an adjusted amount of the chemical administered in mg/kg of body weight/day (mg/kg/day) (original)",
+            "maximum": 255,
+            "minimum": 0
+          },
+          "toxvalUnitsOriginal": {
+            "type": "string",
+            "description": "Unit associated with the concentration or adjusted dose of a chemical (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "studyTypeOriginal": {
+            "type": "string",
+            "description": "Classification to describe toxicity testing that was conducted (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "studyDurationClassOriginal": {
+            "type": "string",
+            "description": "Categorical description of exposure duration (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "studyDurationValueOriginal": {
+            "type": "string",
+            "description": "Amount of time a group is dosed. This varies within studies depending on the dose period of a particular treatment group (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "studyDurationUnitsOriginal": {
+            "type": "string",
+            "description": "Unit of time associated with the dose duration. Typically in days or months (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "speciesOriginal": {
+            "type": "string",
+            "description": "Species of the animal test subject used in a study (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "strainOriginal": {
+            "type": "string",
+            "description": "Intraspecific description of group of animals used in a study; generally, a stock of animals that share a uniform morphological or physiological character, or group that is genetically uniform (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "sexOriginal": {
+            "type": "string",
+            "description": "Gender of a test animal. The gender of fetal groups is denoted as MF for both males and females (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "generationOriginal": {
+            "type": "string",
+            "description": "Generation a test animal belongs to (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "lifestageOriginal": {
+            "type": "string",
+            "description": "Stage of life that a measurement was taken (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "exposureRouteOriginal": {
+            "type": "string",
+            "description": "Path by which test substance was administered to animal. Options include oral, dermal, inhalation, injection, or other (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "exposureMethodOriginal": {
+            "type": "string",
+            "description": "Specific path by which the test substance was administered via the administration route. Examples include capsule, diet, gavage, or topical (original",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "exposureFormOriginal": {
+            "type": "string",
+            "description": "The vehicle used in administration of the chemical (original)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "mediaOriginal": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "toxicologicalEffectOriginal": {
+            "type": "string",
+            "description": "Treatment-associated effect (original)"
+          },
+          "originalYear": {
+            "type": "string",
+            "description": "Year in which the study was reported as finished",
+            "maxLength": 255,
+            "minLength": 0
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  }
+}

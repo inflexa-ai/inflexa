@@ -1,0 +1,57 @@
+{
+    "chemical-search-equal.json": {
+        "url": "https://comptox.epa.gov/ctx-api/chemical/search/equal/Bisphenol%20A",
+        "capturedAt": "2026-08-28"
+    },
+    "genetox-summary.json": {
+        "url": "https://comptox.epa.gov/ctx-api/hazard/genetox/summary/search/by-dtxsid/DTXSID7020182",
+        "capturedAt": "2026-08-28"
+    },
+    "chemical-detail.json": {
+        "url": "https://comptox.epa.gov/ctx-api/chemical/detail/search/by-dtxsid/DTXSID7020182",
+        "params": {
+            "projection": "chemicaldetailstandard"
+        },
+        "capturedAt": "2026-08-28"
+    },
+    "seem-general.json": {
+        "url": "https://comptox.epa.gov/ctx-api/exposure/seem/general/search/by-dtxsid/DTXSID7020182",
+        "capturedAt": "2026-08-28"
+    },
+    "toxval.json": {
+        "url": "https://comptox.epa.gov/ctx-api/hazard/toxval/search/by-dtxsid/DTXSID7020182",
+        "capturedAt": "2026-08-28"
+    },
+    "httk.json": {
+        "url": "https://comptox.epa.gov/ctx-api/exposure/httk/search/by-dtxsid/DTXSID7020182",
+        "capturedAt": "2026-08-28"
+    },
+    "functional-use.json": {
+        "url": "https://comptox.epa.gov/ctx-api/exposure/functional-use/search/by-dtxsid/DTXSID7020182",
+        "capturedAt": "2026-08-28"
+    },
+    "openapi-chemical.excerpt.json": {
+        "url": "https://comptox.epa.gov/ctx-api/docs/chemical.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true,
+        "replay": false
+    },
+    "openapi-hazard.excerpt.json": {
+        "url": "https://comptox.epa.gov/ctx-api/docs/hazard.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true,
+        "replay": false
+    },
+    "openapi-exposure.excerpt.json": {
+        "url": "https://comptox.epa.gov/ctx-api/docs/exposure.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true,
+        "replay": false
+    },
+    "openapi-bioactivity.excerpt.json": {
+        "url": "https://comptox.epa.gov/ctx-api/docs/bioactivity.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true,
+        "replay": false
+    }
+}

@@ -100,20 +100,23 @@ describe("geneDiseaseEvidence — GWAS Catalog corpus", () => {
 describe("geneDiseaseEvidence — DisGeNET corpus", () => {
     it("normalizes GDA records to camelCase", async () => {
         stubFetch(() =>
-            json([
-                {
-                    gene_symbol: "PCSK9",
-                    gene_name: "proprotein convertase subtilisin/kexin type 9",
-                    geneid: 255738,
-                    disease_name: "Hypercholesterolemia",
-                    diseaseid: "C0020443",
-                    disease_type: "disease",
-                    score: 0.8,
-                    ei: 1,
-                    pmid_count: 42,
-                    source: "CURATED",
-                },
-            ]),
+            json({
+                status: "OK",
+                payload: [
+                    {
+                        symbolOfGene: "PCSK9",
+                        geneNcbiID: 255738,
+                        diseaseName: "Hypercholesterolemia",
+                        diseaseUMLSCUI: "C0020443",
+                        diseaseType: "disease",
+                        score: 0.8,
+                        ei: 1,
+                        numPMIDs: 42,
+                    },
+                ],
+                paging: { currentPageNumber: 0, pageSize: 100, totalElements: 137, totalElementsInPage: 1 },
+                httpStatus: 200,
+            }),
         );
 
         const { ctx } = makeToolContext();
@@ -121,6 +124,18 @@ describe("geneDiseaseEvidence — DisGeNET corpus", () => {
 
         expect(result.disgenet).toHaveLength(1);
         expect(result.disgenet![0]).toMatchObject({ geneSymbol: "PCSK9", diseaseId: "C0020443", score: 0.8, evidenceIndex: 1, nPmids: 42 });
+        expect(outcome(result.perSource, "disgenet")).toMatchObject({ status: "ok", totalFound: 137 });
+    });
+
+    // A free academic key serves the curated sources only. A gated answer is an
+    // expected empty outcome, not a transport failure.
+    it("reads a gated answer as no_data, not as unavailable", async () => {
+        stubFetch(() => json({ status: "ERROR", error: { message: "Access denied", details: "The plan does not cover this source" }, httpStatus: 403 }));
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ query: "PCSK9", queryType: "gene", sources: ["disgenet"] }, ctx))._unsafeUnwrap();
+
+        expect(outcome(result.perSource, "disgenet")).toMatchObject({ status: "no_data", returned: 0 });
     });
 
     it("degrades to 'unavailable' when the key is absent, without an HTTP call", async () => {
@@ -197,7 +212,7 @@ describe("geneDiseaseEvidence — fan-out", () => {
         const seen: string[] = [];
         stubFetch((url) => {
             seen.push(url);
-            if (url.includes("disgenet")) return json([]);
+            if (url.includes("disgenet")) return json({ status: "OK", payload: [], paging: { totalElements: 0 } });
             if (url.includes("esearch")) return json({ esearchresult: { idlist: [], count: "0" } });
             return json({ _embedded: { singleNucleotidePolymorphisms: [] } });
         });
@@ -213,7 +228,11 @@ describe("geneDiseaseEvidence — fan-out", () => {
     it("does not let one failing corpus fail the call", async () => {
         stubFetch((url) => {
             if (url.includes("gwas")) return new Response("upstream down", { status: 500 });
-            return json([{ gene_symbol: "PCSK9", disease_name: "Hypercholesterolemia", diseaseid: "C0020443", score: 0.8 }]);
+            return json({
+                status: "OK",
+                payload: [{ symbolOfGene: "PCSK9", diseaseName: "Hypercholesterolemia", diseaseUMLSCUI: "C0020443", score: 0.8 }],
+                paging: { totalElements: 1 },
+            });
         });
 
         const { ctx } = makeToolContext();
@@ -230,7 +249,7 @@ describe("geneDiseaseEvidence — fan-out", () => {
 
     it("keeps cbioportal out of the default set — it scans every curated study", async () => {
         stubFetch((url) => {
-            if (url.includes("disgenet")) return json([]);
+            if (url.includes("disgenet")) return json({ status: "OK", payload: [], paging: { totalElements: 0 } });
             if (url.includes("esearch")) return json({ esearchresult: { idlist: [], count: "0" } });
             return json({ _embedded: { singleNucleotidePolymorphisms: [] } });
         });

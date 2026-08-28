@@ -1,0 +1,10 @@
+{
+  "status": "OK",
+  "payload": {
+    "apiVersion": "1.9.5",
+    "dataVersion": "DISGENET v26.2",
+    "lastUpdate": "June 08 2026",
+    "version": "DISGENET v26.2"
+  },
+  "httpStatus": 200
+}

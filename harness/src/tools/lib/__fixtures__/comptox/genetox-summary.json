@@ -1,0 +1,14 @@
+[
+  {
+    "id": 9861,
+    "ames": "negative",
+    "clowderDocId": "https://clowder.edap-cluster.com/files/680b9b14e4b096bca880a4c7",
+    "dtxsid": "DTXSID7020182",
+    "genetoxCall": "negative",
+    "genetoxSummaryId": 9861,
+    "micronucleus": "negative",
+    "reportsNegative": 3,
+    "reportsOther": 0,
+    "reportsPositive": 0
+  }
+]

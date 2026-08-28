@@ -1,0 +1,633 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Computational Toxicology and Exposure (CTX) APIs - CTX Bioactivity API",
+    "description": "The CTX Bioactivity API is part of US EPA's Computational Toxicology and Exposure APIs. The CTX Bioactivity API provides programmtic access to bioactivity data through a set of endpoints.",
+    "version": "1.1.1"
+  },
+  "components": {
+    "schemas": {
+      "BioactivityDataAll": {
+        "type": "object",
+        "properties": {
+          "chnm": {
+            "type": "string"
+          },
+          "dtxsid": {
+            "type": "string"
+          },
+          "spid": {
+            "type": "string"
+          },
+          "stkc": {
+            "type": "number",
+            "format": "double"
+          },
+          "respMin": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxMean": {
+            "type": "number",
+            "format": "double"
+          },
+          "nrep": {
+            "type": "number",
+            "format": "double"
+          },
+          "nconc": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "fitc": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "actp": {
+            "type": "number",
+            "format": "double"
+          },
+          "m4id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "concMin": {
+            "type": "number",
+            "format": "double"
+          },
+          "bmad": {
+            "type": "number",
+            "format": "double"
+          },
+          "npts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "chid": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "casn": {
+            "type": "string"
+          },
+          "maxMed": {
+            "type": "number",
+            "format": "double"
+          },
+          "chidRep": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hitc": {
+            "type": "number",
+            "format": "double"
+          },
+          "concMax": {
+            "type": "number",
+            "format": "double"
+          },
+          "modl": {
+            "type": "string"
+          },
+          "coff": {
+            "type": "number",
+            "format": "double"
+          },
+          "respMax": {
+            "type": "number",
+            "format": "double"
+          },
+          "m5id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "aeid": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "maxMeanConc": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxMedConc": {
+            "type": "number",
+            "format": "double"
+          },
+          "nmedGtblPos": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "nmedGtblNeg": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "modelType": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "mc4Param": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "stkcUnit": {
+            "type": "string"
+          },
+          "mc6Param": {
+            "$ref": "#/components/schemas/Mc6Param"
+          },
+          "mc5Param": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "mc3Param": {
+            "$ref": "#/components/schemas/Mc3Param"
+          },
+          "testedConcUnit": {
+            "type": "string"
+          }
+        }
+      },
+      "ChemicalAgg": {
+        "type": "object",
+        "properties": {
+          "dtxsid": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "activeMc": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalMc": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "activeSc": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalSc": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cytotoxMedianRaw": {
+            "type": "number",
+            "format": "float"
+          },
+          "cytotoxMad": {
+            "type": "number",
+            "format": "float"
+          },
+          "globalMad": {
+            "type": "number",
+            "format": "float"
+          },
+          "cytotoxMedianLog": {
+            "type": "number",
+            "format": "float"
+          },
+          "cytotoxMedianUm": {
+            "type": "number",
+            "format": "float"
+          },
+          "cytotoxLowerUm": {
+            "type": "number",
+            "format": "float"
+          },
+          "cytotoxLowerLog": {
+            "type": "number",
+            "format": "float"
+          },
+          "ntested": {
+            "type": "number",
+            "format": "float"
+          },
+          "nhit": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "AssayAnnotation": {
+        "type": "object",
+        "description": "US EPA's Toxicity Forecaster (ToxCast) program makes invitro medium- and high-throughput screening assay data publicly available for prioritization and hazard characterization. Given ToxCast includes a heterogeneous set of assays across a diverse biological space, annotations in the database help flexibly aggregate and differentiate processed data. The definition of an \u201cassay\u201d is, in ToxCast, broken into 4 assay elements: assay source: the vendor/origination of the data, assay: the procedure to generate the component data, assay component: the raw data readout(s), assay component endpoint: the normalized component data. The assay element annotations are often short in a standardized format or use a controlled term list. Assay\u201d resource endpoints provide assay metadata for specific or all invitrodb \u2018aeids\u2019 (assay endpoint ids). These include annotations from invitrodb\u2019s assay, assay_component, assay_component_endpoint, assay_list, assay_source, and gene tables, all returned in a by-aeid format. Regular ToxCast/invitrodb users may find it easier to use the tcpl R package, which has integrated to make API data retrievable in a familiar format. See the tcpl vignette regarding data retrieval via API for more information.",
+        "properties": {
+          "aeid": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Assay component endpoint ID"
+          },
+          "assayComponentEndpointName": {
+            "type": "string",
+            "description": "Assay component endpoint name (abbreviated 'aenm' within the package)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assayComponentEndpointDesc": {
+            "type": "string",
+            "description": "Assay component endpoint description"
+          },
+          "assayFunctionType": {
+            "type": "string",
+            "description": "Description of targeted mechanism and the purpose of the analyzed readout in relation to others from the same assay",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "normalizedDataType": {
+            "type": "string",
+            "description": "Normalization approach for which the data is displayed",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "burstAssay": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Indicator if endpoint is included in the burst distribution (1) or not (0); Burst phenomenon can describe confounding activity, such as cytotoxicity due to non-specific activation of many targets at certain concentrations"
+          },
+          "keyPositiveControl": {
+            "type": "string",
+            "description": "Tested chemical sample expected to produce activity; Used to assess assay validity",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "signalDirection": {
+            "type": "string",
+            "description": "Directionality of raw data signals from assay (gain or loss); Defines analysis direction",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "intendedTargetType": {
+            "type": "string",
+            "description": "General group of intended targets measured",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "intendedTargetTypeSub": {
+            "type": "string",
+            "description": "Specific subgroup of intended targets measured",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "intendedTargetFamily": {
+            "type": "string",
+            "description": "Family of intended target measured; Populated on ToxCast chemical activity plot within CompTox dashboard",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "intendedTargetFamilySub": {
+            "type": "string",
+            "description": "Specific subfamily of intended target measured",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "cellViabilityAssay": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Indicator of the impact of cytotoxicity in confounding (1) or no cytotoxic impact (0)"
+          },
+          "acid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Assay component ID"
+          },
+          "assayComponentName": {
+            "type": "string",
+            "description": "Assay component name (abbreviated 'acnm' within the package)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assayComponentDesc": {
+            "type": "string",
+            "description": "Assay component description"
+          },
+          "assayComponentTargetDesc": {
+            "type": "string",
+            "description": "Assay component target description. Generally includes information about mechanism of action with assay target, how disruption is detected, or significance of target disruption."
+          },
+          "parameterReadoutType": {
+            "type": "string",
+            "description": "Description of parameters measured",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assayDesignType": {
+            "type": "string",
+            "description": "General description of the biological or physical process is translated into a detectable signal by assay mechanism",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assayDesignTypeSub": {
+            "type": "string",
+            "description": "Specific description of method through which a biological or physical process is translated into a detectable signal measured",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "biologicalProcessTarget": {
+            "type": "string",
+            "description": "General biological process being chemically disrupted",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "detectionTechnologyType": {
+            "type": "string",
+            "description": "General description of assay platform or detection signals measured",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "detectionTechnologyTypeSub": {
+            "type": "string",
+            "description": "Description of signals measured in assay platform",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "detectionTechnology": {
+            "type": "string",
+            "description": "Specific description of assay platform used",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "keyAssayReagentType": {
+            "type": "string",
+            "description": "Type of critical reactant being measured",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "keyAssayReagent": {
+            "type": "string",
+            "description": "Critical reactant measured",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "technologicalTargetType": {
+            "type": "string",
+            "description": "General description of technological target measured in assay platform",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "technologicalTargetTypeSub": {
+            "type": "string",
+            "description": "Specific description of technological target measured in assay platform",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "aid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Assay ID"
+          },
+          "assayName": {
+            "type": "string",
+            "description": "Assay name (abbreviated 'anm' within the package)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assayDesc": {
+            "type": "string",
+            "description": "Assay description"
+          },
+          "timepointHr": {
+            "type": "number",
+            "format": "double",
+            "description": "Treatment duration in hours"
+          },
+          "organismId": {
+            "type": "integer",
+            "format": "int32",
+            "description": "NCBI taxonomic identifier, available here https://www.ncbi.nlm.nih.gov/taxonomy"
+          },
+          "organism": {
+            "type": "string",
+            "description": "Organism of origin",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "ncbiTaxonId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "taxonName": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "commonName": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "lineage": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "tissue": {
+            "type": "string",
+            "description": "Tissue of origin",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "cellFormat": {
+            "type": "string",
+            "description": "Description of cell format",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "cellFreeComponentSource": {
+            "type": "string",
+            "description": "Description of source for targeted cell-free components",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "cellShortName": {
+            "type": "string",
+            "description": "Abbreviation of cell line",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "cellGrowthMode": {
+            "type": "string",
+            "description": "Cell growth modality",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assayFootprint": {
+            "type": "string",
+            "description": "Microtiter plate size",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assayFormatType": {
+            "type": "string",
+            "description": "General description of assay format",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assayFormatTypeSub": {
+            "type": "string",
+            "description": "Specific description of assay format",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "contentReadoutType": {
+            "type": "string",
+            "description": "Description of well characteristics being measured",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "dilutionSolvent": {
+            "type": "string",
+            "description": "Solvent used in sample dilution",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "dilutionSolventPercentMax": {
+            "type": "number",
+            "format": "double",
+            "description": "Maximum percent of dilution solvent used, from 0 to 1."
+          },
+          "asid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Assay source ID"
+          },
+          "assaySourceName": {
+            "type": "string",
+            "description": "Assay source name (typically an abbreviation of the assay_source_long_name, abbreviated 'asnm' within the package)",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assaySourceLongName": {
+            "type": "string",
+            "description": "Full assay source name",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "assaySourceDesc": {
+            "type": "string",
+            "description": "Assay source description",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "gene": {
+            "type": "array",
+            "description": "JSON object containing gene mappings",
+            "items": {
+              "$ref": "#/components/schemas/Gene"
+            }
+          },
+          "assayList": {
+            "type": "array",
+            "description": "JSON object containing curated groupings of endpoints anchored by use in CCTE publications and/or projects",
+            "items": {
+              "$ref": "#/components/schemas/AssayList"
+            }
+          },
+          "citations": {
+            "type": "array",
+            "description": "JSON object containing references to assay-specific publications describing assay design or results",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            }
+          },
+          "mc2Methods": {
+            "type": "array",
+            "description": "JSON object containing Level 2 Multi-concentration (MC2)",
+            "items": {
+              "$ref": "#/components/schemas/Mc2Method"
+            }
+          },
+          "mc3Methods": {
+            "type": "array",
+            "description": "JSON object containing Level 3 Multi-concentration (MC3) normalized concentration-response data",
+            "items": {
+              "$ref": "#/components/schemas/Mc3Method"
+            }
+          },
+          "mc4Methods": {
+            "type": "array",
+            "description": "JSON object containing Level 4 Multi-concentration (MC4) All Models Fitting Parameters",
+            "items": {
+              "$ref": "#/components/schemas/Mc4Method"
+            }
+          },
+          "mc5Methods": {
+            "type": "array",
+            "description": "JSON object containing Level 5 Multi-concentration (MC5) Winning Model Fitting Parameters",
+            "items": {
+              "$ref": "#/components/schemas/Mc5Method"
+            }
+          },
+          "mc6Methods": {
+            "type": "array",
+            "description": "JSON object containing Level 6 Multi-concentration (MC6) Flags",
+            "items": {
+              "$ref": "#/components/schemas/Mc6Method"
+            }
+          },
+          "sc1Methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Sc1Method"
+            }
+          },
+          "sc2Methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Sc2Method"
+            }
+          }
+        }
+      },
+      "Mc6Param": {
+        "type": "object",
+        "properties": {
+          "flag": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mc6MthdId": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        }
+      },
+      "ProblemDetail": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string",
+            "format": "uri"
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        }
+      }
+    }
+  }
+}

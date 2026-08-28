@@ -30,13 +30,13 @@ const DTXSID = "DTXSID7020182"; // used directly — resolveDtxsid skips the sea
 describe("comptox tool — dataset 'toxcast'", () => {
     it("returns the resolved chemical plus assay results with full-panel counts", async () => {
         stubFetch([
-            ["/bioactivity/data/summary/", () => json([{ aeid: 10, aenm: "ER_agonist" }])],
+            ["/bioactivity/assay/search/by-aeid/", () => json([{ aeid: 10, assayComponentEndpointName: "ER_agonist" }])],
             [
                 "/bioactivity/data/search/",
                 () =>
                     json([
-                        { aeid: 10, hitc: 1, modl: "gnls", mc5Param: { ac50: 2.5 } },
-                        { aeid: 11, hitc: 0, modl: "cnst", mc5Param: { ac50: 40 } },
+                        { aeid: 10, hitc: 0.95, modl: "gnls", mc5Param: { ac50: 2.5 } },
+                        { aeid: 11, hitc: 0.02, modl: "cnst", mc5Param: { ac50: 40 } },
                     ]),
             ],
         ]);
@@ -57,15 +57,17 @@ describe("comptox tool — dataset 'toxcast'", () => {
         }
     });
 
-    it("filters to active hits by default", async () => {
+    // `hitc` is continuous in invitrodb v4, and the EPA calls 0.9 or more
+    // active. Thus 0.9 is a hit and 0.88 is not.
+    it("filters to active hits by default, at the 0.9 threshold", async () => {
         stubFetch([
-            ["/bioactivity/data/summary/", () => json([])],
+            ["/bioactivity/assay/search/by-aeid/", () => json([])],
             [
                 "/bioactivity/data/search/",
                 () =>
                     json([
-                        { aeid: 10, hitc: 1, mc5Param: { ac50: 2.5 } },
-                        { aeid: 11, hitc: 0, mc5Param: { ac50: 40 } },
+                        { aeid: 10, hitc: 0.9, mc5Param: { ac50: 2.5 } },
+                        { aeid: 11, hitc: 0.88, mc5Param: { ac50: 40 } },
                     ]),
             ],
         ]);
@@ -76,13 +78,13 @@ describe("comptox tool — dataset 'toxcast'", () => {
         if (result.found && "chemical" in result) {
             expect(result.chemical.totalAssays).toBe(2);
             expect(result.chemical.results).toHaveLength(1);
-            expect(result.chemical.results[0]!.hitCall).toBe(1);
+            expect(result.chemical.results[0]!.hitCall).toBe(0.9);
         }
     });
 
     it("throws when the bioactivity endpoint 5xxs", async () => {
         stubFetch([
-            ["/bioactivity/data/summary/", () => json([])],
+            ["/bioactivity/assay/search/by-aeid/", () => json([])],
             ["/bioactivity/data/search/", () => new Response("boom", { status: 500 })],
         ]);
 
@@ -102,13 +104,13 @@ describe("comptox tool — dataset 'hazard'", () => {
                         { toxvalType: "LOAEL", toxvalNumeric: 10 },
                     ]),
             ],
-            ["/hazard/genetox/summary/", () => json([{ assayType: "Ames", overallResult: "negative" }])],
+            ["/hazard/genetox/summary/", () => json([{ ames: "negative", genetoxCall: "negative", micronucleus: "negative", reportsNegative: 3 }])],
             [
                 "/hazard/cancer-summary/",
                 () =>
                     json([
-                        { source: "IARC", classification: "Group 2B" },
-                        { source: "NTP", cancerClassification: "R" },
+                        { source: "IARC", exposureRoute: "oral", cancerCall: "Group 2B" },
+                        { source: "NTP", exposureRoute: "inhalation", cancerCall: "R" },
                     ]),
             ],
         ]);
@@ -121,8 +123,10 @@ describe("comptox tool — dataset 'hazard'", () => {
             expect(result.toxval).toHaveLength(1); // capped
             expect(result.toxval![0]!.toxvalNumeric).toBe(5);
             expect(result.genetox).toHaveLength(1);
+            expect(result.genetox![0]!.genetoxCall).toBe("negative");
             expect(result.cancer).toHaveLength(2); // NOT capped
-            expect(result.cancer![1]!.classification).toBe("R"); // cancerClassification fallback
+            expect(result.cancer![1]!.cancerCall).toBe("R");
+            expect(result.cancer![1]!.exposureRoute).toBe("inhalation");
         }
     });
 
@@ -183,7 +187,7 @@ describe("comptox tool — dataset 'exposure'", () => {
         stubFetch([
             [
                 "/exposure/seem/general/",
-                () => json({ dtxsid: DTXSID, productionVolume: 1000, units: "kg/yr", probabilityDietary: 0.9, probabilityPesticde: 0.1 }),
+                () => json([{ dtxsid: DTXSID, productionVolume: 1000, units: "kg/yr", probabilityDietary: 0.9, probabilityPesticde: 0.1 }]),
             ],
             ["/exposure/httk/", () => json([{ parameter: "Clint", predicted: 12 }])],
             ["/exposure/functional-use/", () => json([{ functioncategory: "plasticizer" }])],
@@ -204,7 +208,7 @@ describe("comptox tool — dataset 'exposure'", () => {
     });
 
     it("fetches only seem when dataType is 'seem'", async () => {
-        stubFetch([["/exposure/seem/general/", () => json({ dtxsid: DTXSID, productionVolume: 5 })]]);
+        stubFetch([["/exposure/seem/general/", () => json([{ dtxsid: DTXSID, productionVolume: 5 }])]]);
 
         const { ctx } = makeToolContext();
         const result = (await comptox.execute({ dataset: "exposure", query: DTXSID, dataType: "seem" }, ctx))._unsafeUnwrap();
@@ -218,11 +222,18 @@ describe("comptox tool — dataset 'exposure'", () => {
 });
 
 describe("comptox tool — chemical resolution", () => {
-    it("resolves a name via the exact-match search endpoint", async () => {
+    it("resolves a name via the exact-match search endpoint, skipping a row with no DTXSID", async () => {
         stubFetch([
-            ["/chemical/search/equal/", () => json([{ dtxsid: DTXSID, preferredName: "Bisphenol A", casrn: "80-05-7" }])],
-            ["/bioactivity/data/summary/", () => json([])],
-            ["/bioactivity/data/search/", () => json([{ aeid: 1, hitc: 1, mc5Param: { ac50: 3 } }])],
+            [
+                "/chemical/search/equal/",
+                () =>
+                    json([
+                        { dtxsid: null, dtxcid: "DTXCID001000007", preferredName: null, casrn: null },
+                        { dtxsid: DTXSID, preferredName: "Bisphenol A", casrn: "80-05-7" },
+                    ]),
+            ],
+            ["/bioactivity/assay/search/by-aeid/", () => json([])],
+            ["/bioactivity/data/search/", () => json([{ aeid: 1, hitc: 0.99, mc5Param: { ac50: 3 } }])],
         ]);
 
         const { ctx } = makeToolContext();
@@ -235,14 +246,39 @@ describe("comptox tool — chemical resolution", () => {
         }
     });
 
-    it("returns found:false when the query resolves to no chemical", async () => {
-        stubFetch([["/chemical/search/equal/", () => json([])]]);
+    // The search endpoint never answers with an empty array. A query that matches
+    // nothing gives HTTP 400 with an RFC 7807 body, and that is the no-match.
+    it("returns found:false on the RFC 7807 no-match answer", async () => {
+        stubFetch([
+            [
+                "/chemical/search/equal/",
+                () =>
+                    json(
+                        {
+                            type: "about:blank",
+                            title: "Bad Request",
+                            status: 400,
+                            detail: "Searched by Synonym: Found 0 results for 'not-a-real-chemical'.",
+                            instance: "/chemical/search/equal/not-a-real-chemical",
+                            suggestions: [null],
+                        },
+                        400,
+                    ),
+            ],
+        ]);
 
         const { ctx } = makeToolContext();
         const result = (await comptox.execute({ dataset: "hazard", query: "not-a-real-chemical" }, ctx))._unsafeUnwrap();
 
         expect(result.found).toBe(false);
         if (!result.found) expect(result.query).toBe("not-a-real-chemical");
+    });
+
+    it("throws on a 4xx that is not the no-match ProblemDetail", async () => {
+        stubFetch([["/chemical/search/equal/", () => new Response("Forbidden", { status: 403 })]]);
+
+        const { ctx } = makeToolContext();
+        await expect(comptox.execute({ dataset: "hazard", query: "bisphenol A" }, ctx)).rejects.toThrow(/403/);
     });
 });
 

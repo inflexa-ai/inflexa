@@ -1,0 +1,22 @@
+{
+  "responseHeader": {
+    "status": 0,
+    "QTime": 0,
+    "params": {
+      "q": "human_gene_symbol:TP53",
+      "fl": "marker_symbol,mgi_accession_id",
+      "rows": "1",
+      "wt": "json"
+    }
+  },
+  "response": {
+    "numFound": 1,
+    "start": 0,
+    "docs": [
+      {
+        "marker_symbol": "Trp53",
+        "mgi_accession_id": "MGI:98834"
+      }
+    ]
+  }
+}

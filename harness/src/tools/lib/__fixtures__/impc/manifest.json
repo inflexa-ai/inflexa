@@ -1,0 +1,42 @@
+{
+    "gene-select-TP53.json": {
+        "url": "https://www.ebi.ac.uk/mi/impc/solr/gene/select",
+        "params": {
+            "q": "human_gene_symbol:TP53",
+            "rows": "1",
+            "fl": "marker_symbol,mgi_accession_id",
+            "wt": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "responseHeader.QTime"
+        ]
+    },
+    "gp-select-Trp53-rows5.json": {
+        "url": "https://www.ebi.ac.uk/mi/impc/solr/genotype-phenotype/select",
+        "params": {
+            "q": "marker_symbol:Trp53",
+            "rows": "5",
+            "wt": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "responseHeader.QTime",
+            "response.docs.*._version_"
+        ],
+        "replay": false
+    },
+    "gp-viability-Trp53.json": {
+        "url": "https://www.ebi.ac.uk/mi/impc/solr/genotype-phenotype/select",
+        "params": {
+            "q": "marker_symbol:Trp53 AND procedure_name:\"Viability Primary Screen\"",
+            "rows": "20",
+            "wt": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "responseHeader.QTime",
+            "response.docs.*._version_"
+        ]
+    }
+}

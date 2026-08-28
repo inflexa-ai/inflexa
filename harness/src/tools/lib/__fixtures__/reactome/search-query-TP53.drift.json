@@ -1,0 +1,64 @@
+{
+  "results": [
+    {
+      "entries": [
+        {
+          "dbId": "5633007",
+          "stId": "R-HSA-5633007",
+          "id": "R-HSA-5633007",
+          "name": [
+            "Regulation of TP53 Activity"
+          ],
+          "type": "Pathway",
+          "exactType": "Pathway",
+          "species": [
+            "Homo sapiens"
+          ],
+          "summation": "Protein stability and transcriptional activity of <span class=\"highlighting\" >TP53</span> (p53) tumor suppressor are regulated by post-translational modifications that include ubiquitination, phosphorylation, acetylation, methylation, sumoylation and prolyl-isomerization (Kruse and Gu 2009, Meek and Anderson 2009, Santiago et al. 2013, Mantovani et al. 2015). In addition to post-translational modifications, the activity of <span class=\"highlighting\" >TP53</span> is also regulated by binding of transcription co-factors.<p>In unstressed cells, <span class=\"highlighting\" >TP53</span> protein levels are low due to MDM2-mediated ubiquitination of <span class=\"highlighting\" >TP53</span>, which triggers proteasome-mediated degradation. In response to stress, <span class=\"highlighting\" >TP53</span> undergoes stabilizing phosphorylation, mainly at serine residues S15 and S20. Several different kinases can phosphorylate <span class=\"highlighting\" >TP53</span> at these sites, but the main S15 kinases are considered to be ATM and ATR, while the main S20 kinases are considered to be CHEK2 and CHEK1. Additional phosphorylation of <span class=\"highlighting\" >TP53</span> at serine residue S46 promotes transcription of pro-apoptotic, rather than cell cycle arrest genes.<p>Acetylation mainly has a positive impact on transcriptional activity of <span class=\"highlighting\" >TP53</span>, while methylation can both positively and negatively regulate <span class=\"highlighting\" >TP53</span>.<p>Some posttranslational modifications regulate interaction of <span class=\"highlighting\" >TP53</span> with transcriptional co-factors, some of which are themselves transcriptional targets of <span class=\"highlighting\" >TP53</span>.<p>For review of the complex network of <span class=\"highlighting\" >TP53</span> regulation, please refer to Kruse and Gu 2009, and Meek and Anderson 2009. ",
+          "isDisease": false,
+          "hasReferenceEntity": false,
+          "hasEHLD": true,
+          "disease": false
+        },
+        {
+          "dbId": "6804754",
+          "stId": "R-HSA-6804754",
+          "id": "R-HSA-6804754",
+          "name": "Regulation of <span class=\"highlighting\" >TP53</span> Expression",
+          "type": "Pathway",
+          "exactType": "Pathway",
+          "species": [
+            "Homo sapiens"
+          ],
+          "summation": "Transcription of the <span class=\"highlighting\" >TP53</span> (p53) gene is negatively regulated by the <span class=\"highlighting\" >TP53</span> transcriptional target PRDM1 (BLIMP1), which binds to the promoter region of <span class=\"highlighting\" >TP53</span> and probably induces repressive methylation (Yan et al. 2007).<p><span class=\"highlighting\" >TP53</span> functions as a homotetramer (Jeffrey et al. 1995, Waterman et al. 1995).",
+          "isDisease": false,
+          "hasReferenceEntity": false,
+          "hasEHLD": false,
+          "disease": false
+        },
+        {
+          "dbId": "6804757",
+          "stId": "R-HSA-6804757",
+          "id": "R-HSA-6804757",
+          "name": "Regulation of <span class=\"highlighting\" >TP53</span> Degradation",
+          "type": "Pathway",
+          "exactType": "Pathway",
+          "species": [
+            "Homo sapiens"
+          ],
+          "summation": "In unstressed cells, <span class=\"highlighting\" >TP53</span> (p53) has a short half-life as it undergoes rapid ubiquitination and proteasome-mediated degradation. The E3 ubiquitin ligase MDM2, which is a transcriptional target of <span class=\"highlighting\" >TP53</span>, plays the main role in <span class=\"highlighting\" >TP53</span> protein down-regulation (Wu et al. 1993). MDM2 forms homodimers and homo-oligomers, but also functions as a heterodimer/hetero-oligomer with MDM4 (MDMX) (Sharp et al. 1999, Cheng et al. 2011, Huang et al. 2011, Pant et al. 2011). The heterodimers of MDM2 and MDM4 may be especially important for downregulation of <span class=\"highlighting\" >TP53</span> during embryonic development (Pant et al. 2011).<p>The nuclear localization of MDM2 is positively regulated by AKT- or SGK1- mediated phosphorylation (Mayo and Donner 2001, Zhou et al. 2001, Amato et al. 2009, Lyo et al. 2010). Phosphorylation of MDM2 by CDK1 or CDK2 decreases affinity of MDM2 for <span class=\"highlighting\" >TP53</span> (Zhang and Prives 2001). ATM and CHEK2 kinases, activated by double strand DNA breaks, phosphorylate <span class=\"highlighting\" >TP53</span>, reducing its affinity for MDM2 (Banin et al. 1998, Canman et al. 1998, Khanna et al. 1998, Chehab et al. 1999, Chehab et al. 2000). At the same time, ATM phosphorylates MDM2, preventing MDM2 dimerization (Cheng et al. 2009, Cheng et al. 2011). Both ATM and CHEK2 phosphorylate MDM4, triggering MDM2-mediated ubiquitination of MDM4 (Chen et al. 2005, Pereg et al. 2005). Cyclin G1 (CCNG1), transcriptionally induced by <span class=\"highlighting\" >TP53</span>, targets the PP2A phosphatase complex to MDM2, resulting in dephosphorylation of MDM2 at specific sites, which can have either a positive or a negative impact on MDM2 function (Okamoto et al. 2002).<p>In contrast to MDM2, E3 ubiquitin ligases RNF34 (CARP1) and RFFL (CARP2) can ubiquitinate phosphorylated <span class=\"highlighting\" >TP53</span> (Yang et al. 2007).<p>In addition to ubiquitinating MDM4 (Pereg et al. 2005), MDM2 can also undergo auto-ubiquitination (Fang et al. 2000). MDM2 and MDM4 can be deubiquitinated by the ubiquitin protease USP2 (Stevenson et al. 2007, Allende-Vega et al. 2010). The ubiquitin protease USP7 can deubiquitinate <span class=\"highlighting\" >TP53</span>, but in the presence of DAXX deubiquitinates MDM2 (Li et al. 2002, Sheng et al. 2006, Tang et al. 2006).<p>The tumor suppressor p14-ARF, expressed from the CDKN2A gene in response to oncogenic or oxidative stress, forms a tripartite complex with MDM2 and <span class=\"highlighting\" >TP53</span>, sequesters MDM2 from <span class=\"highlighting\" >TP53</span>, and thus prevents <span class=\"highlighting\" >TP53</span> degradation (Zhang et al. 1998, Parisi et al. 2002, Voncken et al. 2005).<p>For review of this topic, please refer to Kruse and Gu 2009. ",
+          "isDisease": false,
+          "hasReferenceEntity": false,
+          "hasEHLD": false,
+          "disease": false
+        }
+      ],
+      "typeName": "Pathway",
+      "entriesCount": 55,
+      "rowCount": 10
+    }
+  ],
+  "rowCount": 10,
+  "numberOfGroups": 1,
+  "numberOfMatches": 55
+}

@@ -31,7 +31,7 @@ import { z } from "zod";
 import { defineTool } from "../define-tool.js";
 import { getSomaticMutationFrequencies, type MutationFrequency } from "../lib/cbioportal-client.js";
 import { filterInformative, searchClinvar, type ClinicalSignificance, type ClinvarVariant } from "../lib/clinvar-client.js";
-import { searchDisgenet, type Gda } from "../lib/disgenet-client.js";
+import { DISGENET_SOURCES, searchDisgenet, type Gda } from "../lib/disgenet-client.js";
 import { searchGwasCatalog, type GwasAssociation, type GwasSearchType } from "../lib/gwas-catalog-client.js";
 
 const SOURCES = ["gwas", "disgenet", "clinvar", "cbioportal"] as const;
@@ -141,9 +141,12 @@ const inputSchema = z.object({
         .describe("'gwas' only. P-value ceiling; default 5e-8 (genome-wide significance). Raise for suggestive hits."),
     minScore: z.number().min(0).max(1).optional().describe("'disgenet' only. Minimum GDA score 0–1; default 0.1. Higher = stronger evidence."),
     disgenetSource: z
-        .enum(["ALL", "CURATED", "ANIMAL_MODELS", "BEFREE"])
+        .enum(DISGENET_SOURCES)
         .optional()
-        .describe("'disgenet' only. Provenance filter; default 'ALL'. Prefer 'CURATED' for anything you will quote — 'BEFREE' is text-mined and noisy."),
+        .describe(
+            "'disgenet' only. Provenance filter; default 'ALL'. Prefer 'CURATED' for anything you will quote — 'TEXTMINING_HUMAN' and " +
+                "'TEXTMINING_MODELS' are text-mined and noisy, and 'MODELS' is animal-model evidence.",
+        ),
     clinicalSignificance: z
         .enum(["pathogenic", "likely-pathogenic", "benign", "likely-benign", "uncertain"])
         .optional()
@@ -245,12 +248,11 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
                 selected.includes("disgenet")
                     ? runSource<Gda>("disgenet", async () => {
                           if (!deps.disgenetApiKey) throw new Error("DISGENET_API_KEY is not configured");
-                          const records = await searchDisgenet(deps.disgenetApiKey, input.query, input.queryType === "gene" ? "gene" : "disease", {
+                          return await searchDisgenet(deps.disgenetApiKey, input.query, input.queryType === "gene" ? "gene" : "disease", {
                               limit,
                               ...(input.minScore !== undefined ? { minScore: input.minScore } : {}),
                               ...(input.disgenetSource !== undefined ? { source: input.disgenetSource } : {}),
                           });
-                          return { records };
                       })
                     : null,
                 selected.includes("clinvar")
