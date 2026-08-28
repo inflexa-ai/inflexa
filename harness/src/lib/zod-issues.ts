@@ -143,6 +143,19 @@ export function repairToolInput(input: unknown, error: z.ZodError): unknown | un
 }
 
 /**
+ * Decode a value that a model sent as a JSON-encoded object string, with or
+ * without a wrapper artifact. The decoded object is returned when the string
+ * parses to one. Each other value comes back as it is, thus a caller can apply
+ * this to an argument of any type. This is the repair that `repairToolInput`
+ * applies at the loop boundary, for a tool whose schema accepts the string.
+ */
+export function decodeObjectString(value: unknown): unknown {
+    if (typeof value !== "string" || value.length > MAX_REPAIRABLE_STRING_LENGTH) return value;
+    const parsed = parseAs(value, "object") ?? parseAs(stripWrappers(value).text, "object");
+    return parsed === undefined ? value : parsed.value;
+}
+
+/**
  * The measurement of a string that broke its maximum length, or `undefined` for
  * any other issue.
  *
