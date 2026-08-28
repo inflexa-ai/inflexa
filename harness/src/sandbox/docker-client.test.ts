@@ -57,6 +57,8 @@ interface CreatedContainer {
     capAdd?: string[];
     securityOpt?: string[];
     portBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
+    memory?: number;
+    memorySwap?: number;
 }
 
 interface CreateOpts {
@@ -73,6 +75,8 @@ interface CreateOpts {
         CapAdd?: string[];
         SecurityOpt?: string[];
         PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
+        Memory?: number;
+        MemorySwap?: number;
     };
 }
 
@@ -154,6 +158,8 @@ function stubDocker(): {
                 capAdd: opts.HostConfig?.CapAdd,
                 securityOpt: opts.HostConfig?.SecurityOpt,
                 portBindings: opts.HostConfig?.PortBindings,
+                memory: opts.HostConfig?.Memory,
+                memorySwap: opts.HostConfig?.MemorySwap,
             });
             labelsByName.set(opts.name, opts.Labels ?? {});
             return makeContainer(opts.name);
@@ -289,6 +295,70 @@ describe("docker createSandbox — transport modes", () => {
             `${refsRoot}:/mnt/refs:ro`,
         ]);
         expect(registered).toEqual([{ runId: "run-1", stepId: "step-a", sandboxId: ref.sandboxId }]);
+    });
+
+    test("the cpu request is published as the thread count of each parallel library", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        // Without these the libraries size their pools from the core count of the
+        // host and oversubscribe the cgroup that the same call sets NanoCpus on.
+        const env = envMapOf(sandboxOf(created)!);
+        expect(env.OMP_NUM_THREADS).toBe("2");
+        expect(env.OPENBLAS_NUM_THREADS).toBe("2");
+        expect(env.BIOCPARALLEL_WORKER_NUMBER).toBe("2");
+        expect(env.LOKY_MAX_CPU_COUNT).toBe("2");
+        // R defaults mclapply to 2 workers. A value here raises the fork count.
+        expect(env.MC_CORES).toBeUndefined();
+    });
+
+    test("a fractional cpu request floors to one thread, and extraEnv overrides the derived count", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox({ ...META, resources: { cpu: 0.5, memoryGb: 1 }, extraEnv: { OMP_NUM_THREADS: "8" } }, mintSandboxIdentity("run-1"))
+        )._unsafeUnwrap();
+
+        const env = envMapOf(sandboxOf(created)!);
+        expect(env.OPENBLAS_NUM_THREADS).toBe("1");
+        expect(env.OMP_NUM_THREADS).toBe("8");
+    });
+
+    test("the container gets no swap: MemorySwap equals Memory", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        // With swap a fork storm thrashes instead of an OOM kill, and
+        // sandbox-server in the same cgroup stops to answer /exec.
+        const sandbox = sandboxOf(created)!;
+        expect(sandbox.memory).toBe(4 * 1024 ** 3);
+        expect(sandbox.memorySwap).toBe(4 * 1024 ** 3);
     });
 
     test("a container that maps no host port is stopped, removed, and reported failed", async () => {
