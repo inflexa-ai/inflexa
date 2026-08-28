@@ -1,0 +1,1526 @@
+{
+    "_embedded": {
+        "singleNucleotidePolymorphisms": [
+            {
+                "rsId": "rs55662831",
+                "merged": 0,
+                "functionalClass": "intron_variant",
+                "lastUpdateDate": "2025-10-04T11:38:33.680+0000",
+                "locations": [
+                    {
+                        "chromosomeName": "17",
+                        "chromosomePosition": 7726875,
+                        "region": {
+                            "name": "17p13.1"
+                        },
+                        "_links": {
+                            "snps": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    }
+                ],
+                "genomicContexts": [
+                    {
+                        "isIntergenic": false,
+                        "isUpstream": false,
+                        "isDownstream": false,
+                        "distance": 0,
+                        "gene": {
+                            "geneName": "DNAH2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "146754"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000183914"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": false,
+                        "isDownstream": true,
+                        "distance": 27445,
+                        "gene": {
+                            "geneName": "RPL29P2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "118432"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000293140"
+                                },
+                                {
+                                    "ensemblGeneId": "ENSG00000240480"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": true,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 23370,
+                        "gene": {
+                            "geneName": "WRAP53",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "55135"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141499"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 98999,
+                        "gene": {
+                            "geneName": "SAT2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "112483"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141504"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": false,
+                        "isUpstream": false,
+                        "isDownstream": false,
+                        "distance": 0,
+                        "gene": {
+                            "geneName": "DNAH2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "146754"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000183914"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 98999,
+                        "gene": {
+                            "geneName": "SAT2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "112483"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141504"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 23373,
+                        "gene": {
+                            "geneName": "WRAP53",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "55135"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141499"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 93503,
+                        "gene": {
+                            "geneName": "SHBG",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "6462"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000129214"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 39385,
+                        "gene": {
+                            "geneName": "TP53",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "7157"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141510"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 69105,
+                        "gene": {
+                            "geneName": "ATP1B2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "482"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000129244"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": false,
+                        "isDownstream": true,
+                        "distance": 27445,
+                        "gene": {
+                            "geneName": "RPL29P2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "118432"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000293140"
+                                },
+                                {
+                                    "ensemblGeneId": "ENSG00000240480"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": true,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 15503,
+                        "gene": {
+                            "geneName": "EFNB3",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "1949"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000108947"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": true,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": false,
+                        "isDownstream": true,
+                        "distance": 27519,
+                        "gene": {
+                            "geneName": "RPL29P2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "118432"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000293140"
+                                },
+                                {
+                                    "ensemblGeneId": "ENSG00000240480"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 15503,
+                        "gene": {
+                            "geneName": "EFNB3",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "1949"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000108947"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": true,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 39329,
+                        "gene": {
+                            "geneName": "TP53",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "7157"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141510"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 69105,
+                        "gene": {
+                            "geneName": "ATP1B2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "482"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000129244"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 93406,
+                        "gene": {
+                            "geneName": "SHBG",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "6462"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000129214"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    }
+                ],
+                "_links": {
+                    "self": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831"
+                    },
+                    "singleNucleotidePolymorphism": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                        "templated": true
+                    },
+                    "associationsBySnpSummary": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831/associations?projection=associationBySnp"
+                    },
+                    "currentSnp": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831/currentSnp"
+                    },
+                    "associations": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831/associations"
+                    },
+                    "studies": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831/studies"
+                    }
+                }
+            },
+            {
+                "rsId": "rs55662831",
+                "merged": 0,
+                "functionalClass": "intron_variant",
+                "lastUpdateDate": "2025-10-04T11:38:33.680+0000",
+                "locations": [
+                    {
+                        "chromosomeName": "17",
+                        "chromosomePosition": 7726875,
+                        "region": {
+                            "name": "17p13.1"
+                        },
+                        "_links": {
+                            "snps": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    }
+                ],
+                "genomicContexts": [
+                    {
+                        "isIntergenic": false,
+                        "isUpstream": false,
+                        "isDownstream": false,
+                        "distance": 0,
+                        "gene": {
+                            "geneName": "DNAH2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "146754"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000183914"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": false,
+                        "isDownstream": true,
+                        "distance": 27445,
+                        "gene": {
+                            "geneName": "RPL29P2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "118432"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000293140"
+                                },
+                                {
+                                    "ensemblGeneId": "ENSG00000240480"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": true,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 23370,
+                        "gene": {
+                            "geneName": "WRAP53",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "55135"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141499"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 98999,
+                        "gene": {
+                            "geneName": "SAT2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "112483"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141504"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": false,
+                        "isUpstream": false,
+                        "isDownstream": false,
+                        "distance": 0,
+                        "gene": {
+                            "geneName": "DNAH2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "146754"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000183914"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 98999,
+                        "gene": {
+                            "geneName": "SAT2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "112483"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141504"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 23373,
+                        "gene": {
+                            "geneName": "WRAP53",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "55135"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141499"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 93503,
+                        "gene": {
+                            "geneName": "SHBG",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "6462"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000129214"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 39385,
+                        "gene": {
+                            "geneName": "TP53",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "7157"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141510"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 69105,
+                        "gene": {
+                            "geneName": "ATP1B2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "482"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000129244"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": false,
+                        "isDownstream": true,
+                        "distance": 27445,
+                        "gene": {
+                            "geneName": "RPL29P2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "118432"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000293140"
+                                },
+                                {
+                                    "ensemblGeneId": "ENSG00000240480"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": true,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 15503,
+                        "gene": {
+                            "geneName": "EFNB3",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "1949"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000108947"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": true,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": false,
+                        "isDownstream": true,
+                        "distance": 27519,
+                        "gene": {
+                            "geneName": "RPL29P2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "118432"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000293140"
+                                },
+                                {
+                                    "ensemblGeneId": "ENSG00000240480"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 15503,
+                        "gene": {
+                            "geneName": "EFNB3",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "1949"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000108947"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": true,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 39329,
+                        "gene": {
+                            "geneName": "TP53",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "7157"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000141510"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 69105,
+                        "gene": {
+                            "geneName": "ATP1B2",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "482"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000129244"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "NCBI",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    },
+                    {
+                        "isIntergenic": true,
+                        "isUpstream": true,
+                        "isDownstream": false,
+                        "distance": 93406,
+                        "gene": {
+                            "geneName": "SHBG",
+                            "entrezGeneIds": [
+                                {
+                                    "entrezGeneId": "6462"
+                                }
+                            ],
+                            "ensemblGeneIds": [
+                                {
+                                    "ensemblGeneId": "ENSG00000129214"
+                                }
+                            ]
+                        },
+                        "location": {
+                            "chromosomeName": "17",
+                            "chromosomePosition": 7726875,
+                            "region": {
+                                "name": "17p13.1"
+                            },
+                            "_links": {
+                                "snps": {
+                                    "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                    "templated": true
+                                }
+                            }
+                        },
+                        "source": "Ensembl",
+                        "mappingMethod": "Ensembl_pipeline",
+                        "isClosestGene": false,
+                        "_links": {
+                            "snp": {
+                                "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                                "templated": true
+                            }
+                        }
+                    }
+                ],
+                "_links": {
+                    "self": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831"
+                    },
+                    "singleNucleotidePolymorphism": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831{?projection}",
+                        "templated": true
+                    },
+                    "associationsBySnpSummary": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831/associations?projection=associationBySnp"
+                    },
+                    "currentSnp": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831/currentSnp"
+                    },
+                    "associations": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831/associations"
+                    },
+                    "studies": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/rs55662831/studies"
+                    }
+                }
+            }
+        ]
+    },
+    "_links": {
+        "first": {
+            "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/search/findByGene?geneName=TP53&projection=snpByGene&page=0&size=2"
+        },
+        "self": {
+            "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/search/findByGene?geneName=TP53&projection=snpByGene&size=2"
+        },
+        "next": {
+            "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/search/findByGene?geneName=TP53&projection=snpByGene&page=1&size=2"
+        },
+        "last": {
+            "href": "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/search/findByGene?geneName=TP53&projection=snpByGene&page=220&size=2"
+        }
+    },
+    "page": {
+        "size": 2,
+        "totalElements": 441,
+        "totalPages": 221,
+        "number": 0
+    }
+}

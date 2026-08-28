@@ -1,0 +1,40 @@
+{
+    "_embedded": {
+        "efoTraits": [
+            {
+                "trait": "asthma",
+                "uri": "http://purl.obolibrary.org/obo/MONDO_0004979",
+                "shortForm": "MONDO_0004979",
+                "_links": {
+                    "self": {
+                        "href": 4979
+                    },
+                    "efoTrait": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/efoTraits/MONDO_0004979{?projection}",
+                        "templated": true
+                    },
+                    "associationsByTraitSummary": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/efoTraits/MONDO_0004979/associations?projection=associationByEfoTrait"
+                    },
+                    "associations": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/efoTraits/MONDO_0004979/associations"
+                    },
+                    "studies": {
+                        "href": "https://www.ebi.ac.uk/gwas/rest/api/efoTraits/MONDO_0004979/studies"
+                    }
+                }
+            }
+        ]
+    },
+    "_links": {
+        "self": {
+            "href": "https://www.ebi.ac.uk/gwas/rest/api/efoTraits/search/findByEfoTrait?trait=asthma"
+        }
+    },
+    "page": {
+        "size": 20,
+        "totalElements": 1,
+        "totalPages": 1,
+        "number": 0
+    }
+}

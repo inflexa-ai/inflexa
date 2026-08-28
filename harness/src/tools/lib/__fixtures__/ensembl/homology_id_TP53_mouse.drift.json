@@ -1,0 +1,17 @@
+{
+    "data": [
+        {
+            "id": "ENSG00000141510",
+            "homologies": [
+                {
+                    "type": 1,
+                    "id": "ENSMUSG00000059552",
+                    "taxonomy_level": "Euarchontoglires",
+                    "method_link_type": "ENSEMBL_ORTHOLOGUES",
+                    "protein_id": "ENSMUSP00000104298",
+                    "species": "mus_musculus"
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,15 @@
+{
+    "header": {
+        "type": "esummary",
+        "version": "0.3"
+    },
+    "result": {
+        "uids": [
+            "999999999"
+        ],
+        "999999999": {
+            "uid": "999999999",
+            "error": "cannot get document summary"
+        }
+    }
+}

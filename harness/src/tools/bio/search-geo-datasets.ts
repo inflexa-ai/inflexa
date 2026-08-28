@@ -14,7 +14,7 @@ const ESEARCH_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 // optional because the API omits absent values; the mapping in `execute` keys
 // off the esearch `idlist` (request context) and reshapes each summary, so the
 // schemas model only the raw wire.
-const GeoEsearchResponseSchema = z.object({
+export const GeoEsearchResponseSchema = z.object({
     esearchresult: z
         .object({
             idlist: z.array(z.string()).optional(),
@@ -23,26 +23,70 @@ const GeoEsearchResponseSchema = z.object({
         .optional(),
 });
 
+// `gpl` is the platform accession, as a bare number string ("20301"). esummary
+// serves no `platform` key at any level. `error` marks the 200-with-error form:
+// esummary answers HTTP 200 for an unknown uid and puts `{"uid": …, "error": …}`
+// under that key, which carries no dataset.
 const GeoDatasetSummarySchema = z.object({
     accession: z.string().optional(),
     gse: z.string().optional(),
     title: z.string().optional(),
     summary: z.string().optional(),
     gpl: z.string().nullable().optional(),
-    platform: z.string().nullable().optional(),
     n_samples: z.union([z.string(), z.number()]).optional(),
     taxon: z.string().nullable().optional(),
     pubmedids: z.array(z.union([z.string(), z.number()])).optional(),
+    error: z.string().optional(),
 });
 type GeoDatasetSummary = z.infer<typeof GeoDatasetSummarySchema>;
+
+/** One dataset row, as the tool returns it. */
+export interface GeoDataset {
+    accession: string;
+    title: string;
+    summary: string;
+    platform: string | null;
+    sampleCount: number | null;
+    organism: string | null;
+    pubmedIds: (string | number)[];
+}
 
 // The esummary `result` object mixes a `uids` string array in with the
 // numeric-keyed dataset summaries; `.catch(undefined)` on the record value lets
 // that `uids` entry (and any drifted summary) fall through as undefined rather
 // than rejecting the whole response — the mapping reads only the numeric ids.
-const GeoEsummaryResponseSchema = z.object({
+export const GeoEsummaryResponseSchema = z.object({
     result: z.record(z.string(), GeoDatasetSummarySchema.optional().catch(undefined)).optional(),
 });
+
+/**
+ * Map one esummary answer onto the dataset rows.
+ *
+ * `ids` is the id list of the search, and it names the order of the rows. The
+ * function is pure, thus the golden-fixture table exercises it against a stored
+ * payload.
+ */
+export function mapGeoDatasets(ids: string[], summary: z.infer<typeof GeoEsummaryResponseSchema>): GeoDataset[] {
+    const result: Record<string, GeoDatasetSummary | undefined> = summary?.result ?? {};
+    const datasets: GeoDataset[] = [];
+    for (const id of ids) {
+        const r = result[id];
+        if (!r) continue;
+        // An error record carries no dataset. Without this guard it becomes a
+        // row of empty strings with a fabricated accession.
+        if (r.error !== undefined) continue;
+        datasets.push({
+            accession: r.accession ?? r.gse ?? `GDS${id}`,
+            title: r.title ?? "",
+            summary: (r.summary ?? "").slice(0, 300),
+            platform: r.gpl ?? null,
+            sampleCount: r.n_samples ? Number(r.n_samples) : null,
+            organism: r.taxon ?? null,
+            pubmedIds: r.pubmedids ?? [],
+        });
+    }
+    return datasets;
+}
 
 export const searchGeoDatasetsTool = defineTool({
     id: "search_geo_datasets",
@@ -100,22 +144,7 @@ export const searchGeoDatasetsTool = defineTool({
         const summaryRes = await apiFetchValidated(summaryUrl, GeoEsummaryResponseSchema);
         if (summaryRes.isErr()) throw new Error(describeApiError(summaryRes.error));
 
-        const result: Record<string, GeoDatasetSummary | undefined> = summaryRes.value?.result ?? {};
-        const datasets = ids
-            .map((id) => {
-                const r = result[id];
-                if (!r) return null;
-                return {
-                    accession: r.accession ?? r.gse ?? `GDS${id}`,
-                    title: r.title ?? "",
-                    summary: (r.summary ?? "").slice(0, 300),
-                    platform: r.gpl ?? r.platform ?? null,
-                    sampleCount: r.n_samples ? Number(r.n_samples) : null,
-                    organism: r.taxon ?? null,
-                    pubmedIds: r.pubmedids ?? [],
-                };
-            })
-            .filter((d): d is NonNullable<typeof d> => d !== null);
+        const datasets = mapGeoDatasets(ids, summaryRes.value);
 
         const totalFound = Number(searchRes.value?.esearchresult?.count) || datasets.length;
 

@@ -1,0 +1,22 @@
+{
+    "homology_id_TP53_mouse.json": {
+        "url": "https://rest.ensembl.org/homology/id/homo_sapiens/ENSG00000141510",
+        "params": {
+            "type": "orthologues",
+            "target_species": "mus_musculus",
+            "format": "condensed",
+            "content-type": "application/json"
+        },
+        "capturedAt": "2026-08-28"
+    },
+    "lookup_symbol_TP53.json": {
+        "url": "https://rest.ensembl.org/lookup/symbol/homo_sapiens/TP53",
+        "params": {
+            "content-type": "application/json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "version"
+        ]
+    }
+}

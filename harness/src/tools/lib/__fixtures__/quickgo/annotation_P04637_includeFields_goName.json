@@ -1,0 +1,173 @@
+{
+    "numberOfHits": 1043,
+    "results": [
+        {
+            "id": "UniProtKB:P04637!58679183",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of",
+            "goId": "GO:0008285",
+            "goName": "negative regulation of cell population proliferation",
+            "goEvidence": "ISS",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000250",
+            "reference": "PMID:30514107",
+            "withFrom": [
+                {
+                    "connectedXrefs": [
+                        {
+                            "db": "UniProtKB",
+                            "id": "P10361"
+                        }
+                    ]
+                }
+            ],
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "ARUK-UCL",
+            "extensions": [
+                {
+                    "connectedXrefs": [
+                        {
+                            "db": "CL",
+                            "id": "0002254",
+                            "relation": "occurs_in"
+                        }
+                    ]
+                }
+            ],
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20210810",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679184",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of",
+            "goId": "GO:0051726",
+            "goName": "regulation of cell cycle",
+            "goEvidence": "ISS",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000250",
+            "reference": "PMID:30514107",
+            "withFrom": [
+                {
+                    "connectedXrefs": [
+                        {
+                            "db": "UniProtKB",
+                            "id": "P10361"
+                        }
+                    ]
+                }
+            ],
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "ARUK-UCL",
+            "extensions": [
+                {
+                    "connectedXrefs": [
+                        {
+                            "db": "CL",
+                            "id": "0002254",
+                            "relation": "occurs_in"
+                        }
+                    ]
+                }
+            ],
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20210810",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679185",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_negative_effect",
+            "goId": "GO:1902749",
+            "goName": "regulation of cell cycle G2/M phase transition",
+            "goEvidence": "IMP",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000315",
+            "reference": "PMID:10962037",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "UniProt",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20210802",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679186",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_or_within",
+            "goId": "GO:0006974",
+            "goName": "DNA damage response",
+            "goEvidence": "IDA",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000314",
+            "reference": "PMID:14744935",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "MGI",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20101109",
+            "synonyms": null,
+            "name": null
+        },
+        {
+            "id": "UniProtKB:P04637!58679187",
+            "geneProductId": "UniProtKB:P04637",
+            "qualifier": "acts_upstream_of_or_within",
+            "goId": "GO:0006983",
+            "goName": "ER overload response",
+            "goEvidence": "IDA",
+            "goAspect": "biological_process",
+            "evidenceCode": "ECO:0000314",
+            "reference": "PMID:14744935",
+            "withFrom": null,
+            "taxonId": 9606,
+            "taxonName": null,
+            "assignedBy": "MGI",
+            "extensions": null,
+            "targetSets": [
+                "BHF-UCL",
+                "KRUK",
+                "dbTF"
+            ],
+            "symbol": "TP53",
+            "date": "20101109",
+            "synonyms": null,
+            "name": null
+        }
+    ],
+    "pageInfo": {
+        "resultsPerPage": 5,
+        "current": 1,
+        "total": 209
+    }
+}

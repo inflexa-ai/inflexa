@@ -1,0 +1,306 @@
+{
+    "data": {
+        "target": {
+            "id": "ENSG00000141510",
+            "approvedSymbol": 53,
+            "approvedName": "tumor protein p53",
+            "tractability": [
+                {
+                    "label": "Approved Drug",
+                    "modality": "SM",
+                    "value": false
+                },
+                {
+                    "label": "Advanced Clinical",
+                    "modality": "SM",
+                    "value": true
+                },
+                {
+                    "label": "Phase 1 Clinical",
+                    "modality": "SM",
+                    "value": false
+                },
+                {
+                    "label": "Structure with Ligand",
+                    "modality": "SM",
+                    "value": true
+                },
+                {
+                    "label": "High-Quality Ligand",
+                    "modality": "SM",
+                    "value": true
+                },
+                {
+                    "label": "High-Quality Pocket",
+                    "modality": "SM",
+                    "value": false
+                },
+                {
+                    "label": "Med-Quality Pocket",
+                    "modality": "SM",
+                    "value": true
+                },
+                {
+                    "label": "Druggable Family",
+                    "modality": "SM",
+                    "value": true
+                },
+                {
+                    "label": "Approved Drug",
+                    "modality": "AB",
+                    "value": false
+                },
+                {
+                    "label": "Advanced Clinical",
+                    "modality": "AB",
+                    "value": false
+                },
+                {
+                    "label": "Phase 1 Clinical",
+                    "modality": "AB",
+                    "value": false
+                },
+                {
+                    "label": "UniProt loc high conf",
+                    "modality": "AB",
+                    "value": false
+                },
+                {
+                    "label": "GO CC high conf",
+                    "modality": "AB",
+                    "value": false
+                },
+                {
+                    "label": "UniProt loc med conf",
+                    "modality": "AB",
+                    "value": false
+                },
+                {
+                    "label": "UniProt SigP or TMHMM",
+                    "modality": "AB",
+                    "value": false
+                },
+                {
+                    "label": "GO CC med conf",
+                    "modality": "AB",
+                    "value": false
+                },
+                {
+                    "label": "Human Protein Atlas loc",
+                    "modality": "AB",
+                    "value": false
+                },
+                {
+                    "label": "Approved Drug",
+                    "modality": "PR",
+                    "value": false
+                },
+                {
+                    "label": "Advanced Clinical",
+                    "modality": "PR",
+                    "value": false
+                },
+                {
+                    "label": "Phase 1 Clinical",
+                    "modality": "PR",
+                    "value": false
+                },
+                {
+                    "label": "Literature",
+                    "modality": "PR",
+                    "value": false
+                },
+                {
+                    "label": "UniProt Ubiquitination",
+                    "modality": "PR",
+                    "value": true
+                },
+                {
+                    "label": "Database Ubiquitination",
+                    "modality": "PR",
+                    "value": true
+                },
+                {
+                    "label": "Half-life Data",
+                    "modality": "PR",
+                    "value": false
+                },
+                {
+                    "label": "Small Molecule Binder",
+                    "modality": "PR",
+                    "value": true
+                },
+                {
+                    "label": "Approved Drug",
+                    "modality": "OC",
+                    "value": false
+                },
+                {
+                    "label": "Advanced Clinical",
+                    "modality": "OC",
+                    "value": true
+                },
+                {
+                    "label": "Phase 1 Clinical",
+                    "modality": "OC",
+                    "value": false
+                }
+            ]
+        },
+        "associations": {
+            "associatedDiseases": {
+                "rows": [
+                    {
+                        "disease": {
+                            "id": "MONDO_0018875",
+                            "name": "Li-Fraumeni syndrome"
+                        },
+                        "score": 0.8763216350824885,
+                        "datatypeScores": [
+                            {
+                                "id": "genetic_literature",
+                                "score": 0.8539007869518103
+                            },
+                            {
+                                "id": "literature",
+                                "score": 0.37239946930491674
+                            },
+                            {
+                                "id": "genetic_association",
+                                "score": 0.9564326867319108
+                            },
+                            {
+                                "id": "somatic_mutation",
+                                "score": 0.4377101742803672
+                            },
+                            {
+                                "id": "animal_model",
+                                "score": 0.6372497734413094
+                            }
+                        ]
+                    },
+                    {
+                        "disease": {
+                            "id": "MONDO_0007256",
+                            "name": "hepatocellular carcinoma"
+                        },
+                        "score": 0.7969945948908966,
+                        "datatypeScores": [
+                            {
+                                "id": "genetic_literature",
+                                "score": 0.607930797611621
+                            },
+                            {
+                                "id": "literature",
+                                "score": 0.996521540461086
+                            },
+                            {
+                                "id": "genetic_association",
+                                "score": 0.9161436221556352
+                            },
+                            {
+                                "id": "somatic_mutation",
+                                "score": 0.8546930263671441
+                            },
+                            {
+                                "id": "animal_model",
+                                "score": 0.614403007073547
+                            }
+                        ]
+                    },
+                    {
+                        "disease": {
+                            "id": "MONDO_0010150",
+                            "name": "head and neck squamous cell carcinoma"
+                        },
+                        "score": 0.7771072193728089,
+                        "datatypeScores": [
+                            {
+                                "id": "clinical",
+                                "score": 0.12158615952232422
+                            },
+                            {
+                                "id": "genetic_literature",
+                                "score": 0.607930797611621
+                            },
+                            {
+                                "id": "literature",
+                                "score": 0.9871901052498917
+                            },
+                            {
+                                "id": "genetic_association",
+                                "score": 0.837452876104994
+                            },
+                            {
+                                "id": "somatic_mutation",
+                                "score": 0.8687764418823478
+                            }
+                        ]
+                    },
+                    {
+                        "disease": {
+                            "id": "MONDO_0009837",
+                            "name": "choroid plexus papilloma"
+                        },
+                        "score": 0.7664749612489613,
+                        "datatypeScores": [
+                            {
+                                "id": "genetic_literature",
+                                "score": 0.8334055756591312
+                            },
+                            {
+                                "id": "literature",
+                                "score": 0.05644387031185621
+                            },
+                            {
+                                "id": "genetic_association",
+                                "score": 0.8562672705524287
+                            },
+                            {
+                                "id": "somatic_mutation",
+                                "score": 0.3039653988058105
+                            },
+                            {
+                                "id": "animal_model",
+                                "score": 0.3718104758192674
+                            }
+                        ]
+                    },
+                    {
+                        "disease": {
+                            "id": "MONDO_0005575",
+                            "name": "colorectal cancer"
+                        },
+                        "score": 0.7500093310828934,
+                        "datatypeScores": [
+                            {
+                                "id": "genetic_literature",
+                                "score": 0.8274613634158176
+                            },
+                            {
+                                "id": "clinical",
+                                "score": 0.10638788958203368
+                            },
+                            {
+                                "id": "literature",
+                                "score": 0.9724664261912873
+                            },
+                            {
+                                "id": "genetic_association",
+                                "score": 0.9138986656066158
+                            },
+                            {
+                                "id": "somatic_mutation",
+                                "score": 0.8340387335170519
+                            },
+                            {
+                                "id": "animal_model",
+                                "score": 0.5307394876750661
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+}

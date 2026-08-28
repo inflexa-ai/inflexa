@@ -1,0 +1,48 @@
+{
+    "esearch_BRCA1.json": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        "params": {
+            "db": "clinvar",
+            "term": "BRCA1",
+            "retmax": "5",
+            "retmode": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "header",
+            "esearchresult.count",
+            "esearchresult.idlist",
+            "esearchresult.retmax",
+            "esearchresult.translationstack"
+        ]
+    },
+    "esearch_sigmap_vus_probe.json": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        "params": {
+            "db": "clinvar",
+            "term": "BRCA1 AND clinsig_vus[Properties]",
+            "retmax": "2",
+            "retmode": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "header",
+            "esearchresult.count",
+            "esearchresult.idlist",
+            "esearchresult.retmax",
+            "esearchresult.translationstack"
+        ]
+    },
+    "esummary_BRCA1_multi.json": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
+        "params": {
+            "db": "clinvar",
+            "id": "4886459,4885790,4884744,4884209,4884188",
+            "retmode": "json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "header"
+        ]
+    }
+}

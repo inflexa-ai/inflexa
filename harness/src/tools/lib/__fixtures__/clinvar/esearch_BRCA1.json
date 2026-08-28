@@ -1,0 +1,29 @@
+{
+    "header": {
+        "type": "esearch",
+        "version": "0.3"
+    },
+    "esearchresult": {
+        "count": "85233",
+        "retmax": "5",
+        "retstart": "0",
+        "idlist": [
+            "4886459",
+            "4885790",
+            "4884744",
+            "4884209",
+            "4884188"
+        ],
+        "translationset": [],
+        "translationstack": [
+            {
+                "term": "BRCA1[All Fields]",
+                "field": "All Fields",
+                "count": "85233",
+                "explode": "N"
+            },
+            "GROUP"
+        ],
+        "querytranslation": "BRCA1[All Fields]"
+    }
+}

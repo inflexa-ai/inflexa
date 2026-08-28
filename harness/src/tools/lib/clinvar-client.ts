@@ -26,7 +26,7 @@ export interface ClinvarVariant {
 // optional — esummary omits absent values, and the record mapping below tolerates
 // partial payloads, so an over-strict schema would regress graceful degradation.
 
-/** NCBI esummary v2 classification block (germline or legacy). */
+/** NCBI esummary v2 germline classification block. */
 const ClinvarClassificationSchema = z.object({
     description: z.string().optional(),
     review_status: z.string().optional(),
@@ -34,20 +34,23 @@ const ClinvarClassificationSchema = z.object({
 });
 type ClinvarClassification = z.infer<typeof ClinvarClassificationSchema>;
 
-/** A single ClinVar esummary record. */
+/**
+ * A single ClinVar esummary record.
+ *
+ * `variant_type` is a field of `variation_set[]`, and never of the nested
+ * `variation_loc[]`, which carries the assembly coordinates alone.
+ */
 const ClinvarSummaryRecordSchema = z.object({
     title: z.string().optional(),
     accession: z.string().optional(),
     genes: z.array(z.object({ symbol: z.string().optional() })).optional(),
     germline_classification: ClinvarClassificationSchema.optional(),
-    clinical_significance: z.union([ClinvarClassificationSchema, z.string()]).optional(),
-    trait_set: z.array(z.object({ trait_name: z.string().optional() })).optional(),
     molecular_consequence_list: z.array(z.string()).optional(),
-    variation_set: z.array(z.object({ variation_loc: z.array(z.object({ variant_type: z.string().optional() })).optional() })).optional(),
+    variation_set: z.array(z.object({ variant_type: z.string().optional() })).optional(),
 });
 type ClinvarSummaryRecord = z.infer<typeof ClinvarSummaryRecordSchema>;
 
-const ClinvarSearchResponseSchema = z.object({
+export const ClinvarSearchResponseSchema = z.object({
     esearchresult: z
         .object({
             idlist: z.array(z.string()).optional(),
@@ -60,7 +63,7 @@ const ClinvarSearchResponseSchema = z.object({
 // the returned UIDs, so a record value is a summary object OR that string[].
 // The array member is listed first so an actual array never falls through to
 // the object schema (which rejects arrays).
-const ClinvarSummaryResponseSchema = z.object({
+export const ClinvarSummaryResponseSchema = z.object({
     result: z.record(z.string(), z.union([z.array(z.string()), ClinvarSummaryRecordSchema])).optional(),
 });
 
@@ -69,7 +72,7 @@ const SIG_MAP: Record<ClinicalSignificance, string> = {
     "likely-pathogenic": "clinsig_likely_pathogenic",
     benign: "clinsig_benign",
     "likely-benign": "clinsig_likely_benign",
-    uncertain: "clinsig_uncertain",
+    uncertain: "clinsig_vus",
 };
 
 /** Filter out uninformative ClinVar entries (literal "not provided", placeholders). */
@@ -115,34 +118,38 @@ export async function searchClinvar(
     const summaryRes = await apiFetchValidated(summaryUrl, ClinvarSummaryResponseSchema);
     if (summaryRes.isErr()) throw new Error(describeApiError(summaryRes.error));
 
-    const result: Record<string, ClinvarSummaryRecord | string[] | undefined> = summaryRes.value?.result ?? {};
+    return { totalFound, variants: mapClinvarVariants(ids, summaryRes.value) };
+}
+
+/**
+ * Map one ClinVar esummary answer onto the variant records.
+ *
+ * `ids` is the id list of the search, and it names the order of the answer when
+ * the answer carries no `uids` key. The function is pure, thus the
+ * golden-fixture table exercises it against a stored payload.
+ */
+export function mapClinvarVariants(ids: string[], summary: z.infer<typeof ClinvarSummaryResponseSchema>): ClinvarVariant[] {
+    const result: Record<string, ClinvarSummaryRecord | string[] | undefined> = summary?.result ?? {};
     const rawUids = result.uids;
     const uids: string[] = Array.isArray(rawUids) ? rawUids : ids;
 
-    const variants: ClinvarVariant[] = uids.map((uid) => {
+    return uids.map((uid) => {
         const recEntry = result[uid];
         const rec: ClinvarSummaryRecord = recEntry && !Array.isArray(recEntry) ? recEntry : {};
         const genes = rec.genes ?? [];
         const geneSymbol = genes[0]?.symbol ?? "";
-        // NCBI esummary v2 schema: germline_classification holds the primary
-        // pathogenicity call. The legacy top-level clinical_significance field
-        // no longer appears in responses — fall back gracefully for older cached data.
+        // NCBI esummary v2: `germline_classification` holds the primary
+        // pathogenicity call, and it holds the conditions.
         const germline: ClinvarClassification = rec.germline_classification ?? {};
-        // The legacy field is either a classification object or a bare string.
-        const legacy = rec.clinical_significance;
-        const legacyObj = typeof legacy === "object" ? legacy : null;
-        const legacyStr = typeof legacy === "string" ? legacy : null;
-        const clinSig = germline.description ?? legacyObj?.description ?? legacyStr ?? "";
-        const reviewStatus = germline.review_status ?? legacyObj?.review_status ?? "";
-        const conditions = (germline.trait_set ?? rec.trait_set ?? []).map((t) => t.trait_name ?? "");
-        const molecularConsequence =
-            rec.molecular_consequence_list?.join(", ") ??
-            rec.variation_set
-                ?.flatMap((vs) => vs.variation_loc ?? [])
-                .map((vl) => vl.variant_type ?? "")
-                .filter(Boolean)
-                .join(", ") ??
-            "";
+        const clinSig = germline.description ?? "";
+        const reviewStatus = germline.review_status ?? "";
+        const conditions = (germline.trait_set ?? []).map((t) => t.trait_name ?? "");
+        // The record of a copy-number variant carries an empty consequence list,
+        // and the variant type of the variation set is the answer there. Thus an
+        // empty list must fall through, and it must not join to an empty string.
+        const consequences = rec.molecular_consequence_list ?? [];
+        const variantTypes = (rec.variation_set ?? []).map((vs) => vs.variant_type ?? "").filter(Boolean);
+        const molecularConsequence = (consequences.length > 0 ? consequences : variantTypes).join(", ");
         return {
             variationId: uid,
             title: rec.title ?? "",
@@ -154,6 +161,4 @@ export async function searchClinvar(
             accession: rec.accession ?? `VCV${uid.padStart(9, "0")}`,
         };
     });
-
-    return { totalFound, variants };
 }
