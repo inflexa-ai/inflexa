@@ -73,9 +73,10 @@ import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
+import { emitReportObservation, installReportSessionModel, readReportProvenance } from "./report_bridge.ts";
 import { buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
-import { clearAgentSwitch, createSwappableProvider, installAgentSwitch } from "./agent_switch.ts";
+import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installAgentSwitch } from "./agent_switch.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
 // trigger (never from a passive flow — no-litter policy) and holds a process
@@ -1144,6 +1145,14 @@ async function bootHarnessRuntimeOnce(
                 modelProvider: connection.provider,
                 initialModels: { conversation: conversationModel, sandbox: sandboxModel, utility: utilityModel },
             });
+            // The report bridge names the model that drove each act, and the conversation agent is the
+            // one that drives a report session. The source reads the switch AT EMIT TIME, thus a live
+            // model change re-stamps every later act, the way a swap re-stamps the sandbox emitters.
+            // It is installed right after the switch that it reads, thus the two stay in one order. The
+            // boot model answers while the switch names nothing, thus an act that lands before the
+            // first swap still names the model that did it. The provider slug is the connection's, and
+            // a swap changes only the model half.
+            installReportSessionModel(() => `${connection.provider}/${currentAgentModels().conversation || conversationModel}`);
             seams.registerReaper({ pool: composition.pool, sandboxClient, logger });
             seams.registerWatchdog({ queryActiveSandboxes: () => queryActiveSandboxes(composition.pool), sandboxClient, logger });
             seams.registerNotificationSweep({ pool: composition.pool, logger });
@@ -1170,6 +1179,12 @@ async function bootHarnessRuntimeOnce(
                 // what makes the report path exist here at all. The realization runs on the same pinned
                 // runtime that the sandbox uses, thus one boot names one container engine.
                 eyes: createEphemeralEyes({ runtime: pinnedRuntime }),
+                // The two report seams of the signed document. The emit half records each act of a
+                // report session on the bus, and the read half gives the recorded document back for the
+                // page of a preview. The chat turn binds the SAME emit function itself, because the
+                // creation of a conversation thread happens there and this bag does not reach it.
+                emitReportObservation,
+                readReportProvenance,
             },
             pool: composition.pool,
             skillsDir: cfg.skillsDir,

@@ -10,6 +10,12 @@ import type {
     ProvUsedInputRef,
     ProvFileRef,
     ProvCommandRef,
+    ProvSessionRef,
+    ProvReportBlockRef,
+    ProvReportTitleRef,
+    ProvReportDerivationRef,
+    ProvReportPreviewRef,
+    ProvReportVersionRef,
 } from "./prov.ts";
 
 /**
@@ -116,7 +122,26 @@ export type BusEvent =
            */
           generation: "command" | "step";
       }
-    | { type: "prov.input_used"; analysisId: AnalysisId; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef };
+    | { type: "prov.input_used"; analysisId: AnalysisId; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef }
+    /**
+     * The report family. The agent performs each of these acts, so every member stamps the SYSTEM
+     * actor and carries the model that drove the session at emit time — the same treatment
+     * `prov.step_completed` gives a model-driven step, and the reason `model` is required rather
+     * than optional here too. The user steers the agent; recording that steering is a separate
+     * concern from recording who acted.
+     *
+     * The recorder maps this family host-side, through the kernel's lifecycle-action extension
+     * door, because the kernel dialect owns no report vocabulary.
+     */
+    | { type: "prov.session_created"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; session: ProvSessionRef }
+    | { type: "prov.report_block_added"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
+    | { type: "prov.report_block_changed"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
+    | { type: "prov.report_block_removed"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
+    | { type: "prov.report_block_moved"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
+    | { type: "prov.report_title_set"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; title: ProvReportTitleRef }
+    | { type: "prov.report_derivation_run"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; derivation: ProvReportDerivationRef }
+    | { type: "prov.report_previewed"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; preview: ProvReportPreviewRef }
+    | { type: "prov.report_version_recorded"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; version: ProvReportVersionRef };
 
 /** A {@link BusEvent} stamped with a unique id by the bus on emit (for telemetry correlation). */
 export type StampedEvent = BusEvent & { __infId: string };

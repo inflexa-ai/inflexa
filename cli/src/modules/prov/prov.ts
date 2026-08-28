@@ -2,7 +2,7 @@ import { ok, err, type Result } from "neverthrow";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
 import { applyProvEvent, computeChainHash, signHexDigest, PROV_UNIFY_OPTIONS, type ProvEvent } from "@inflexa-ai/prov-kernel";
 import type { BusEvent, StampedEvent } from "../../types/events.ts";
-import type { ProvActor } from "../../types/prov.ts";
+import type { ProvActor, ProvModelId, ProvReportBlockRef } from "../../types/prov.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
@@ -12,7 +12,7 @@ import { getLogger } from "../../lib/log.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 import { findAnalysesByRef, findAnalysesByRefWithAnchor, getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
-import { provModel, provSubject } from "./document.ts";
+import { cliProvDigest, provModel, provSubject } from "./document.ts";
 import { loadOrGenerateKeypair } from "./signing.ts";
 import { loadAuth } from "../auth/auth.ts";
 import { decodeIdTokenClaims } from "../auth/whoami.ts";
@@ -111,19 +111,244 @@ function isProvEvent(event: StampedEvent): event is StampedProvEvent {
     return event.type.startsWith("prov.");
 }
 
+/** The CORE prov family: every prov member the kernel dispatch owns, which is every one the host does not map itself. */
+type StampedCoreProvEvent = Exclude<StampedProvEvent, StampedReportEvent>;
+
 /** A prov bus member with its envelope stripped — the stamp id dropped and the `prov.` prefix removed. */
 type KernelEventOf<E> = E extends { type: `prov.${infer K}` } ? Omit<E, "type" | "__infId"> & { type: K } : never;
 
 /**
- * Strip the bus envelope off a prov member, yielding the kernel event `applyProvEvent` consumes.
- * The `ProvEvent` return type is the exhaustiveness guard: a NEW `prov.*` bus member whose stripped
- * shape has no kernel counterpart makes the return statement fail to compile — a forgotten kernel
- * mapping is a build error, not a silently dropped record.
+ * Strip the bus envelope off a core prov member, yielding the kernel event `applyProvEvent`
+ * consumes. The `ProvEvent` return type is the exhaustiveness guard: a NEW core member whose
+ * stripped shape has no kernel counterpart makes the return statement fail to compile — a forgotten
+ * kernel mapping is a build error, not a silently dropped record. The report family is excluded from
+ * the parameter, because the host maps it and the kernel owns no counterpart for it by design.
  */
-function toKernelEvent(event: StampedProvEvent): ProvEvent {
+function toKernelEvent(event: StampedCoreProvEvent): ProvEvent {
     // The cast only re-labels `type` after the mechanical prefix strip; the conditional type above
     // carries every payload field through unchanged, and the return type checks the result.
-    return { ...event, type: event.type.slice("prov.".length) } as KernelEventOf<StampedProvEvent>;
+    return { ...event, type: event.type.slice("prov.".length) } as KernelEventOf<StampedCoreProvEvent>;
+}
+
+// --- The report family (host-mapped) ---
+
+// The kernel dialect has no report vocabulary, so these records ride `appendLifecycleAction` — the
+// extension door it exposes for exactly this — and the remaining edges are written straight through
+// the tsprov document. Everything below deliberately mirrors the kernel's own shapes: the `inflexa`
+// namespace, the action activity, and the model agent's three edges. The two producers write into
+// ONE identifier space and one signed document, so a divergence here forks the graph instead of
+// extending it.
+
+/** The report family of {@link StampedProvEvent}: the session creation, plus every act on a report document. */
+type StampedReportEvent = Extract<StampedProvEvent, { type: "prov.session_created" | `prov.report_${string}` }>;
+
+/** The four block members carry one payload shape, so one mapping arm serves all four. */
+type StampedReportBlockEvent = Extract<StampedReportEvent, { block: ProvReportBlockRef }>;
+
+/** The attribute bag a report act stamps on its action activity — the plain-record shape of tsprov's `ProvAttributes`. */
+type ReportAttributes = Record<string, string | number | boolean | readonly string[]>;
+
+/** What a mapped act mints, so its arm can hang the edges only that act needs. */
+type ReportAction = { actionQn: string; agentQn: string; time: string };
+
+/**
+ * Narrow a prov member to the report family. The two type strings ARE the discriminant, so the test
+ * corresponds exactly to the template type above — that equivalence is what makes the predicate
+ * sound, the same argument {@link isProvEvent} rests on.
+ */
+function isReportEvent(event: StampedProvEvent): event is StampedReportEvent {
+    return event.type === "prov.session_created" || event.type.startsWith("prov.report_");
+}
+
+/**
+ * The report entity's QName, keyed by the digest of its thread id. `cliProvDigest` is the same
+ * derivation every other cli QName runs through, so a second implementation holding only the thread
+ * id computes this identifier without a lookup.
+ *
+ * The `inflexa:` prefix is the kernel's namespace, which a seeded document registers. A host-minted
+ * QName must name that prefix, or its record lands in an unregistered namespace.
+ */
+function reportQName(threadId: string): string {
+    return `inflexa:report-${cliProvDigest(threadId)}`;
+}
+
+/** The report-version entity's QName, keyed by the digest of the version id — one entity per recorded version. */
+function reportVersionQName(versionId: string): string {
+    return `inflexa:report-version-${cliProvDigest(versionId)}`;
+}
+
+/**
+ * Declare (re-declare) the report entity of a thread, returning its QName. Re-declaration is
+ * harmless, because `unified()` collapses same-QName entities — and that is exactly what makes the
+ * LAZY MINT fall out of the ordinary path: an act whose creation event never reached this document
+ * declares the entity here, with no parent thread, because only the creation event knows one.
+ */
+function appendReportEntity(doc: ProvDocument, threadId: string, parentThreadId?: string): string {
+    const qn = reportQName(threadId);
+    doc.entity(qn, {
+        "prov:type": "inflexa:Report",
+        "inflexa:threadId": threadId,
+        ...(parentThreadId !== undefined ? { "inflexa:parentThreadId": parentThreadId } : {}),
+    });
+    return qn;
+}
+
+/**
+ * Declare the model agent behind a report act and tie it to that act — the agent, its delegation to
+ * the responsible agent, and its association with the activity. This is what the kernel records for
+ * a model-driven step; the kernel keeps its own `appendModelAgent` off the host surface, so the
+ * three edges are restated over the exposed `modelAgentQName`. The QName derivation, which is the
+ * part that MUST agree between the two producers, stays the kernel's.
+ *
+ * The delegation carries the kernel's identifier, so one `(model, responsible)` pair yields one
+ * delegation record across the step records and the report records alike. The association is
+ * deliberately anonymous, like the actor association `appendLifecycleAction` writes: an action
+ * activity takes a fresh id per act, so it is never re-emitted and an identifier would dedupe
+ * nothing.
+ */
+function appendReportModelAgent(doc: ProvDocument, model: ProvModelId, responsibleQn: string, actionQn: string): void {
+    const qn = provModel.modelAgentQName(model);
+    doc.agent(qn, {
+        // Both types deliberately, as the kernel declares it: `prov:SoftwareAgent` places the agent
+        // in PROV's taxonomy, and `inflexa:Model` says which kind of software agent it is.
+        "prov:type": ["prov:SoftwareAgent", "inflexa:Model"],
+        "prov:label": model,
+        "inflexa:model": model,
+    });
+    doc.actedOnBehalfOf(qn, responsibleQn, undefined, `inflexa:delegation-${cliProvDigest(qn)}-${cliProvDigest(responsibleQn)}`);
+    doc.wasAssociatedWith(actionQn, qn);
+}
+
+/**
+ * The preamble every report act shares: mint the typed action activity, stamp the data of the act
+ * onto it, and record the model that drove it.
+ *
+ * The attributes land in a SECOND declaration of the freshly minted activity, because
+ * `appendLifecycleAction` owns the first one. They carry no formal time: both time slots are stamped
+ * already, and a second stamp is a merge hazard for no gain.
+ */
+function appendReportAction(doc: ProvDocument, event: StampedReportEvent, activityType: string, attributes: ReportAttributes): ReportAction {
+    const { actionQn, agentQn, time } = provModel.appendLifecycleAction(doc, event.analysisId, event.actor, activityType);
+    doc.activity(actionQn, undefined, undefined, attributes);
+    appendReportModelAgent(doc, event.model, agentQn, actionQn);
+    return { actionQn, agentQn, time };
+}
+
+/**
+ * Land one act on the report document it operated on: the action, the report entity of the thread
+ * (minted here when it is unseen), and the `used` edge between them. Every act names its thread as
+ * an attribute too, so a reader that walks attributes and a reader that walks edges both find it.
+ */
+function appendReportAct(doc: ProvDocument, event: StampedReportEvent, activityType: string, threadId: string, attributes: ReportAttributes): ReportAction {
+    const action = appendReportAction(doc, event, activityType, { "inflexa:threadId": threadId, ...attributes });
+    doc.used(action.actionQn, appendReportEntity(doc, threadId), action.time);
+    return action;
+}
+
+/** The four block acts differ only in the activity type they name. */
+function appendReportBlockAct(doc: ProvDocument, event: StampedReportBlockEvent, activityType: string): void {
+    appendReportAct(doc, event, activityType, event.block.threadId, { "inflexa:blockId": event.block.blockId });
+}
+
+/**
+ * Map one report member onto the analysis's live document.
+ *
+ * Every member lands one typed action activity, so each record says what was done and when, in the
+ * shape the lifecycle family already uses. Two members mint an entity beside it: a created report
+ * session mints the report itself, and a recorded version mints that version.
+ *
+ * A throw here reaches the recorder's shared guard, exactly as a kernel builder throw does.
+ */
+function appendReportRecords(doc: ProvDocument, event: StampedReportEvent): void {
+    switch (event.type) {
+        case "prov.session_created": {
+            const { threadId, kind, parentThreadId } = event.session;
+            // The parent thread rides the action as well as the report entity below. The entity is
+            // where a reader walks the session tree, but only a report session HAS an entity — so
+            // stamping the action too is what keeps a conversation session's parent from being lost.
+            const action = appendReportAction(doc, event, "inflexa:CreateSession", {
+                "inflexa:threadId": threadId,
+                "inflexa:sessionKind": kind,
+                ...(parentThreadId !== undefined ? { "inflexa:parentThreadId": parentThreadId } : {}),
+            });
+            // A conversation is the session and nothing else. Only a report session owns a document
+            // that later acts operate on, thus only it earns an entity.
+            if (kind !== "report") return;
+            const reportQn = appendReportEntity(doc, threadId, parentThreadId);
+            // The creation is the report's single generation and its attribution — the pair
+            // `appendCreation` writes for the analysis subject. Every later act only `used` it, so
+            // no second generation record can accrue.
+            doc.wasGeneratedBy(reportQn, action.actionQn, action.time);
+            doc.wasAttributedTo(reportQn, action.agentQn);
+            return;
+        }
+        case "prov.report_block_added":
+            appendReportBlockAct(doc, event, "inflexa:AddReportBlock");
+            return;
+        case "prov.report_block_changed":
+            appendReportBlockAct(doc, event, "inflexa:ChangeReportBlock");
+            return;
+        case "prov.report_block_removed":
+            appendReportBlockAct(doc, event, "inflexa:RemoveReportBlock");
+            return;
+        case "prov.report_block_moved":
+            appendReportBlockAct(doc, event, "inflexa:MoveReportBlock");
+            return;
+        case "prov.report_title_set":
+            appendReportAct(doc, event, "inflexa:SetReportTitle", event.title.threadId, { "inflexa:title": event.title.title });
+            return;
+        case "prov.report_derivation_run": {
+            const derivation = event.derivation;
+            appendReportAct(doc, event, "inflexa:RunReportDerivation", derivation.threadId, {
+                "inflexa:outputPath": derivation.outputPath,
+                "inflexa:outputHash": derivation.outputHash,
+                "inflexa:scriptHash": derivation.scriptHash,
+                // Each source rides as one `path|hash` value of a repeated attribute. Parallel path
+                // and hash attributes would read the same but lose WHICH hash belongs to which path,
+                // and a verifier needs that pairing to mount the evidence again.
+                ...(derivation.sources.length > 0 ? { "inflexa:source": derivation.sources.map((s) => `${s.path}|${s.hash}`) } : {}),
+            });
+            return;
+        }
+        case "prov.report_previewed":
+            appendReportAct(doc, event, "inflexa:PreviewReport", event.preview.threadId, {
+                "inflexa:pagePath": event.preview.pagePath,
+                "inflexa:documentHash": event.preview.documentHash,
+            });
+            return;
+        case "prov.report_version_recorded": {
+            const version = event.version;
+            const action = appendReportAct(doc, event, "inflexa:RecordReportVersion", version.threadId, {
+                "inflexa:versionId": version.versionId,
+                "inflexa:replaced": version.replaced,
+            });
+            const versionQn = reportVersionQName(version.versionId);
+            // tsprov's `specializationOf` takes no identifier, so that edge is anonymous and
+            // `unified()` — which dedups by identifier alone — cannot collapse a second copy. Write
+            // it only on the first declaration of the version entity, so a re-emitted record adds no
+            // duplicate.
+            const firstDeclaration = doc.getRecord(versionQn).length === 0;
+            doc.entity(versionQn, {
+                "prov:type": "inflexa:ReportVersion",
+                "inflexa:versionId": version.versionId,
+                "inflexa:threadId": version.threadId,
+            });
+            doc.wasGeneratedBy(versionQn, action.actionQn, action.time);
+            doc.wasAttributedTo(versionQn, action.agentQn);
+            // A version IS the report, fixed at one point in time, which is PROV's own reading of
+            // `specializationOf`. `wasAttributedTo` cannot say it, because attribution takes an
+            // AGENT and the report is an entity; `hadMember` would say the version is one PART of
+            // the report, which is false.
+            if (firstDeclaration) doc.specializationOf(versionQn, reportQName(version.threadId));
+            return;
+        }
+        default: {
+            // The compiler makes this unreachable: a new report member with no arm above fails to
+            // assign to `never`, so a forgotten mapping is a build error, not a dropped record.
+            const unhandled: never = event;
+            throw new Error(`unhandled report event: ${String(unhandled)}`);
+        }
+    }
 }
 
 function onEvent(event: StampedEvent): void {
@@ -139,7 +364,11 @@ function onEvent(event: StampedEvent): void {
     // the step, orphaning its outputs. So a defect in one builder must drop that single record (log +
     // skip the dirty-mark), never crash the emitting mutation/step.
     try {
-        applyProvEvent(provModel, doc, toKernelEvent(event));
+        // The report family is mapped HERE, in the host, and it never reaches `toKernelEvent`. That
+        // ordering is what keeps the kernel's exhaustiveness guard sharp: a new CORE member with no
+        // kernel counterpart still fails to compile, because only the report members are diverted.
+        if (isReportEvent(event)) appendReportRecords(doc, event);
+        else applyProvEvent(provModel, doc, toKernelEvent(event));
     } catch (err) {
         log.error({ type: event.type, analysisId: event.analysisId, err }, "prov builder threw; record dropped");
         return;
