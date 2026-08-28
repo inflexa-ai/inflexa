@@ -29,8 +29,9 @@ describe("deriveLineageModel — golden fixture", () => {
     const model = deriveLineageModel(goldenJson)._unsafeUnwrap();
 
     test("derives every PROV element into a node, plus the undeclared endpoints", () => {
-        // 6 declared entities + 2 synthesized from relation endpoints the document references but
-        // never declares (the resolved script and the failed command's output).
+        // 8 declared entities + 2 synthesized from relation endpoints the document references but
+        // never declares (the resolved script and the failed command's output). The report and the
+        // report version have no entity kind of their own, thus both take the `file` fallback.
         const entities = model.nodes.filter((n) => n.kind === "analysis" || n.kind === "input" || n.kind === "file");
         expect(entities.map((n) => n.qn).sort()).toEqual([
             "inflexa:analysis-a-golden",
@@ -41,8 +42,11 @@ describe("deriveLineageModel — golden fixture", () => {
             "inflexa:file-c0kyjyc0bmim",
             "inflexa:file-monvuc8rxoat",
             "inflexa:input-39n74a7sqlbvc",
+            "inflexa:report-m4vsy1xm0cwf",
+            "inflexa:report-version-1ebkcvsv7flfc",
         ]);
-        expect(model.nodes.filter((n) => n.kind === "activity")).toHaveLength(8);
+        // 8 execution and lifecycle activities, plus the 10 action activities of the report family.
+        expect(model.nodes.filter((n) => n.kind === "activity")).toHaveLength(18);
         expect(model.nodes.filter((n) => n.kind === "agent")).toHaveLength(3);
     });
 
@@ -184,9 +188,9 @@ describe("deriveLineageModel — golden fixture", () => {
     });
 
     test("derives exactly the seven edge kinds with no dangling endpoint; delegation is not an edge", () => {
-        // 12 associations + 6 generations + 5 attributions + 5 usages + 4 derivations +
+        // 32 associations + 13 usages + 8 generations + 7 attributions + 4 derivations +
         // 4 communications; the model delegation is skipped.
-        expect(model.edges).toHaveLength(36);
+        expect(model.edges).toHaveLength(68);
         expect(model.edges.some((e) => e.id.startsWith("inflexa:delegation-"))).toBe(false);
         const nodeQns = new Set(qns(model));
         for (const edge of model.edges) {
