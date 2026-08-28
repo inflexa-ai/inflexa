@@ -1,0 +1,264 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Computational Toxicology and Exposure (CTX) APIs - CTX Exposure API",
+    "description": "The CTX Exposure API is part of US EPA's Computational Toxicology and Exposure APIs. The CTX Exposure API provides programmtic access to exposure data through a set of endpoints.",
+    "version": "1.1.1"
+  },
+  "components": {
+    "schemas": {
+      "GenExpoPrediction": {
+        "type": "object",
+        "description": "These are estimates of the average (geometric mean) exposure rate (mg/kg bodyweight/day) for the U.S. population. We are 50% confident that the exposure for the chemical is below the median estimate, and we are 95% confident that the average exposure rate is below the upper 95th percent estimate. Total population predictions are based upon consensus exposure model predictions and the similarity of the compound to those chemicals monitored by NHANES. The method for the total U.S. population was described in a 2018 publication, \"Consensus Modeling of Median Chemical Intake for the U.S. Population Based on Predictions of Exposure Pathways\".",
+        "properties": {
+          "dtxsid": {
+            "type": "string",
+            "description": "Chemical identifier",
+            "maxLength": 20,
+            "minLength": 0
+          },
+          "productionVolume": {
+            "type": "number",
+            "description": "How much chemical is produced or imported in the United States"
+          },
+          "units": {
+            "type": "string",
+            "description": "Units on production volume",
+            "maxLength": 7,
+            "minLength": 0
+          },
+          "stockholmConvention": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Whether (1) or not (0) the chemical is banned by the Stockholm Convention on persistent organic pollutants"
+          },
+          "probabilityDietary": {
+            "type": "number",
+            "description": "QSPR-predicted probability that the chemical has human exposure via a dietary pathway"
+          },
+          "probabilityResidential": {
+            "type": "number",
+            "description": "QSPR-predicted probability that the chemical has human exposure via a consumer use pathway"
+          },
+          "probabilityPesticde": {
+            "type": "number",
+            "description": "QSPR-predicted probability that the chemical has human exposure via a far-field pesticide pathway"
+          },
+          "probabilityIndustrial": {
+            "type": "number",
+            "description": "QSPR-predicted probability that the chemical has human exposure via a far-field industrial pathway"
+          }
+        }
+      },
+      "HttkData": {
+        "type": "object",
+        "description": "The information here describes toxicokinetics in humans. Values are 1) measured either in vitro or in vivo, 2) predicted from chemical properties using in silico tools, or 3) computed with mathematical models simulating toxicokinetics. Note: intrinsic hepatic clearance and fraction unbound in plasma values can have measured values listed, but these may be assumed from measured data using a surrogate species. The Data Source Species column identifies the measured data species source. We use these assumed measured values in calculations to estimate other outcomes, such as volume of distribution, PK half life, and steady-state plasma concentration. The in vitro measured values reflect the value curated for the open source R package \u201chttk\u201d. The computed values are generated with httk using the reported in vitro values. \"https://CRAN.R-project.org/package=httk\". The in vivo measured values are estimated from toxicokinetic concentration vs. time contained in the CvTdb (https://doi.org/10.1038/s41597-020-0455-1). In vivo estimates are calculated using R package \u201cinvivoPKfit\u201d (https://github.com/USEPA/CompTox-ExpoCast-invivoPKfit)",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "dtxsid": {
+            "type": "string",
+            "description": "Chemical identifier",
+            "maxLength": 20,
+            "minLength": 0
+          },
+          "parameter": {
+            "type": "string",
+            "description": "The toxicokinetic parameter. Clint = Intrinsic hepatic clearance rate, Fup = fraction unbound in plasma, Vd = effective volume of distribution, Days.Css = number of days to reach steady-state from constant exposure, Css = plasma concentration after reaching steady-state, TK.Half.Life = number of hours for half of chemical in body to be eliminated",
+            "maxLength": 15,
+            "minLength": 0
+          },
+          "measuredText": {
+            "type": "string",
+            "maxLength": 15,
+            "minLength": 0
+          },
+          "measured": {
+            "type": "number",
+            "description": "Experimentally measured value for the parameter"
+          },
+          "predictedText": {
+            "type": "string",
+            "maxLength": 15,
+            "minLength": 0
+          },
+          "predicted": {
+            "type": "number",
+            "description": "The predicted value for the parameter"
+          },
+          "units": {
+            "type": "string",
+            "description": "Units on the predicted parameter",
+            "maxLength": 30,
+            "minLength": 0
+          },
+          "model": {
+            "type": "string",
+            "description": "The toxicokinetic model used to predict the parameter",
+            "maxLength": 15,
+            "minLength": 0
+          },
+          "reference": {
+            "type": "string",
+            "description": "Peer reviewed journal article(s) from which measured or predicted value was derived",
+            "maxLength": 150,
+            "minLength": 0
+          },
+          "percentile": {
+            "type": "string",
+            "description": "For humans, what fraction of the population have a lower value given the same dose. Not relevant to animal species",
+            "maxLength": 5,
+            "minLength": 0
+          },
+          "species": {
+            "type": "string",
+            "maxLength": 10,
+            "minLength": 0
+          },
+          "dataSourceSpecies": {
+            "type": "string",
+            "maxLength": 10,
+            "minLength": 0
+          }
+        }
+      },
+      "FunctionalUse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "dtxsid": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 0
+          },
+          "datatype": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 0
+          },
+          "docid": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "doctitle": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 0
+          },
+          "docdate": {
+            "type": "string",
+            "maxLength": 25,
+            "minLength": 0
+          },
+          "reportedfunction": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "functioncategory": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 0
+          }
+        }
+      },
+      "ProductData": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "dtxsid": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 0
+          },
+          "docid": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "doctitle": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 0
+          },
+          "docdate": {
+            "type": "string",
+            "maxLength": 25,
+            "minLength": 0
+          },
+          "productname": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 0
+          },
+          "gencat": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 0
+          },
+          "prodfam": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 0
+          },
+          "prodtype": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 0
+          },
+          "classificationmethod": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 0
+          },
+          "rawmincomp": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 0
+          },
+          "rawmaxcomp": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 0
+          },
+          "rawcentralcomp": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 0
+          },
+          "unittype": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 0
+          },
+          "lowerweightfraction": {
+            "type": "number"
+          },
+          "upperweightfraction": {
+            "type": "number"
+          },
+          "centralweightfraction": {
+            "type": "number"
+          },
+          "weightfractiontype": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 0
+          },
+          "component": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 0
+          }
+        }
+      }
+    }
+  }
+}

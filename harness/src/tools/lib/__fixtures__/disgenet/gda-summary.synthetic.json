@@ -1,0 +1,42 @@
+{
+  "status": "OK",
+  "payload": [
+    {
+      "assocID": "9349-C0020443",
+      "symbolOfGene": "PCSK9",
+      "geneNcbiID": 255738,
+      "geneNcbiType": "protein-coding",
+      "diseaseName": "Hypercholesterolemia, Autosomal Dominant, 3",
+      "diseaseUMLSCUI": "C1858729",
+      "diseaseType": "disease",
+      "score": 0.9,
+      "ei": 1.0,
+      "el": "Definitive",
+      "yearInitial": 2003,
+      "yearFinal": 2024,
+      "numPMIDs": 142,
+      "numCTsupportingAssociation": 3,
+      "numDBSNPsupportingAssociation": 27
+    },
+    {
+      "assocID": "9349-C0020445",
+      "symbolOfGene": "PCSK9",
+      "geneNcbiID": 255738,
+      "diseaseName": "Hyperlipoproteinemia Type II",
+      "diseaseUMLSCUI": "C0020445",
+      "diseaseType": "disease",
+      "score": 0.7,
+      "ei": null,
+      "yearInitial": null,
+      "yearFinal": null,
+      "numPMIDs": 8
+    }
+  ],
+  "paging": {
+    "currentPageNumber": 0,
+    "pageSize": 100,
+    "totalElements": 137,
+    "totalElementsInPage": 2
+  },
+  "httpStatus": 200
+}

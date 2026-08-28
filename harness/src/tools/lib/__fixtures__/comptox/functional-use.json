@@ -1,0 +1,62 @@
+[
+  {
+    "id": 221654,
+    "dtxsid": "DTXSID7020182",
+    "datatype": "Function",
+    "docid": 1631119,
+    "doctitle": "4",
+    "docdate": "",
+    "reportedfunction": "phenolics",
+    "functioncategory": null
+  },
+  {
+    "id": 221658,
+    "dtxsid": "DTXSID7020182",
+    "datatype": "Composition",
+    "docid": 1550827,
+    "doctitle": "Thin-Set_Epoxy_Terrazzo_Flooring-Master_Terrazzo_Technologies-2017-02-02",
+    "docdate": "february 2, 2017",
+    "reportedfunction": "epoxy hardener",
+    "functioncategory": null
+  },
+  {
+    "id": 221655,
+    "dtxsid": "DTXSID7020182",
+    "datatype": "Function",
+    "docid": 1630343,
+    "doctitle": "Octolite 485",
+    "docdate": "",
+    "reportedfunction": "antioxidants>phenolics",
+    "functioncategory": "Antioxidant"
+  },
+  {
+    "id": 221656,
+    "dtxsid": "DTXSID7020182",
+    "datatype": "Chemical presence list",
+    "docid": 1371471,
+    "doctitle": "The 25 Chemicals Found in All Nine of the Biosolids Studied",
+    "docdate": "",
+    "reportedfunction": "fire retardant",
+    "functioncategory": "Flame retardant"
+  },
+  {
+    "id": 221657,
+    "dtxsid": "DTXSID7020182",
+    "datatype": "Function",
+    "docid": 1514560,
+    "doctitle": "4,4'-isopropylidenediphenol",
+    "docdate": "",
+    "reportedfunction": "not reported",
+    "functioncategory": "No specific technical function"
+  },
+  {
+    "id": 221659,
+    "dtxsid": "DTXSID7020182",
+    "datatype": "Composition",
+    "docid": 1550827,
+    "doctitle": "Thin-Set_Epoxy_Terrazzo_Flooring-Master_Terrazzo_Technologies-2017-02-02",
+    "docdate": "february 2, 2017",
+    "reportedfunction": "curing agent",
+    "functioncategory": "Hardener"
+  }
+]

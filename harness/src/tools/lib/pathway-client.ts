@@ -2,6 +2,10 @@
  * Pure async client functions for biological pathway lookups via KEGG and Reactome.
  *
  * Used by §3.7 (Pathway Context).
+ *
+ * Absence policy: Reactome omits the key of an absent value, thus a maybe-absent
+ * field carries `.optional()`. KEGG serves plain text, not JSON, thus it has no
+ * key to omit.
  */
 
 import { z } from "zod";
@@ -9,10 +13,11 @@ import { z } from "zod";
 import { apiFetch, apiFetchValidated, parseTSV } from "./api-utils.js";
 
 const KEGG_BASE = "https://rest.kegg.jp";
-// The ContentService of the primary host answers 404 on each path. The release
-// host serves the same API, and a probe of `search/query`, `data/query/{stId}`
-// and `data/participants/{stId}` returned 200 on it. The web pages that a result
-// links to stay on the primary host, thus only the API base moves.
+// Both `reactome.org/ContentService` and `release.reactome.org/ContentService`
+// answer 200 on each path that this file calls. The two hosts serve different
+// data releases, thus the same stable identifier gives a different record on
+// each. The release host is the pinned one, and the web pages that a result
+// links to stay on the primary host.
 const REACTOME_BASE = "https://release.reactome.org/ContentService";
 
 export function stripHtmlAndCollapseWs(s: string): string {
@@ -60,12 +65,12 @@ const ReactomeSearchEntrySchema = z.object({
 });
 type ReactomeSearchEntry = z.infer<typeof ReactomeSearchEntrySchema>;
 
-const ReactomeSearchResponseSchema = z.object({
+export const ReactomeSearchResponseSchema = z.object({
     results: z.array(z.object({ entries: z.array(ReactomeSearchEntrySchema).optional() })).optional(),
 });
 
 /** Participant list — `searchReactome` reads `displayName` per participant. */
-const ReactomeParticipantsSchema = z.array(z.object({ displayName: z.string().optional() }));
+export const ReactomeParticipantsSchema = z.array(z.object({ displayName: z.string().optional() }));
 
 /** One Reactome event record, as `/data/query/{stId}` serves it. */
 const ReactomeEntrySchema = z.object({
@@ -75,7 +80,7 @@ const ReactomeEntrySchema = z.object({
 });
 
 /** Participant list — `getPathwayMemberships` reads `refEntities` per participant. */
-const ReactomeParticipantEntitiesSchema = z.array(
+export const ReactomeParticipantEntitiesSchema = z.array(
     z.object({
         refEntities: z.array(z.object({ schemaClass: z.string().optional(), identifier: z.string().optional() })).optional(),
     }),
@@ -113,6 +118,81 @@ export async function searchKegg(query: string, organism: string, maxResults: nu
         }
     }
     return pathways;
+}
+
+/**
+ * Read the KEGG gene identifier of a symbol, for example `hsa:7157` for `TP53`.
+ *
+ * `find/{organism}/{symbol}` searches the gene names of one organism, and it
+ * ranks a partial name match above an exact one. A query for `TP53` puts
+ * `TP53BP2` first. Thus the caller matches the symbol against the alias list of
+ * each row, and it never takes the first row.
+ */
+export function selectKeggGeneId(rows: string[][], symbol: string): string | null {
+    const wanted = symbol.trim().toUpperCase();
+    for (const cols of rows) {
+        const id = (cols[0] ?? "").trim();
+        // Column two is `ALIAS1, ALIAS2; definition`.
+        const aliases = (cols[1] ?? "").split(";")[0] ?? "";
+        for (const alias of aliases.split(",")) {
+            if (alias.trim().toUpperCase() === wanted) return id;
+        }
+    }
+    return null;
+}
+
+/** The pathway identifiers of a `link/pathway/{geneId}` answer, without the `path:` prefix. */
+export function parseKeggPathwayLinks(rows: string[][]): string[] {
+    const ids: string[] = [];
+    for (const cols of rows) {
+        const id = (cols[1] ?? "").replace("path:", "").trim();
+        if (id) ids.push(id);
+    }
+    return ids;
+}
+
+/**
+ * The pathways that hold one gene, from KEGG.
+ *
+ * `find/pathway/{query}` matches a pathway NAME only, thus a gene symbol gives
+ * an empty body there. The membership path is a gene resolution, then
+ * `link/pathway/{geneId}`, then one `list/pathway/{organism}` call for the
+ * names. The one list call costs about 22 kB and names every pathway of the
+ * organism, thus it replaces one `get/{id}` call for each membership.
+ */
+export async function keggPathwaysForGene(geneSymbol: string, organism: string, maxResults: number): Promise<Pathway[]> {
+    const geneRes = await apiFetch<string>(`${KEGG_BASE}/find/${organism}/${encodeURIComponent(geneSymbol)}`, { parseAs: "text" });
+    if (geneRes.isErr()) return [];
+
+    const geneId = selectKeggGeneId(parseTSV(geneRes.value), geneSymbol);
+    if (!geneId) return [];
+
+    const linkRes = await apiFetch<string>(`${KEGG_BASE}/link/pathway/${encodeURIComponent(geneId)}`, { parseAs: "text" });
+    if (linkRes.isErr()) return [];
+
+    const pathwayIds = parseKeggPathwayLinks(parseTSV(linkRes.value)).slice(0, maxResults);
+    if (pathwayIds.length === 0) return [];
+
+    const names = await keggPathwayNames(organism);
+    return pathwayIds.map((id) => ({
+        id,
+        name: names.get(id) ?? id,
+        source: "kegg" as const,
+        url: `https://www.kegg.jp/pathway/${id}`,
+    }));
+}
+
+/** The pathway vocabulary of one organism, keyed by the pathway identifier. */
+async function keggPathwayNames(organism: string): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+    const res = await apiFetch<string>(`${KEGG_BASE}/list/pathway/${encodeURIComponent(organism)}`, { parseAs: "text" });
+    if (res.isErr()) return names;
+    for (const cols of parseTSV(res.value)) {
+        const id = (cols[0] ?? "").trim();
+        const name = (cols[1] ?? "").trim();
+        if (id && name) names.set(id, name);
+    }
+    return names;
 }
 
 export async function searchReactome(query: string, species: string, maxResults: number, includeGenes: boolean): Promise<Pathway[]> {
@@ -235,7 +315,7 @@ export async function getPathwayById(id: string): Promise<Pathway | null> {
 
 /** Pathway memberships for a gene symbol — used directly by §3.7 collector. */
 export async function getPathwayMemberships(geneSymbol: string): Promise<Pathway[]> {
-    const [kegg, reactome] = await Promise.all([searchKegg(geneSymbol, "hsa", 25, false), searchReactome(geneSymbol, "Homo sapiens", 25, false)]);
+    const [kegg, reactome] = await Promise.all([keggPathwaysForGene(geneSymbol, "hsa", 25), searchReactome(geneSymbol, "Homo sapiens", 25, false)]);
     // For Reactome pathways, fetch participant UniProts (bounded to avoid rate limits).
     await Promise.all(
         reactome.slice(0, 50).map(async (pw) => {

@@ -1,0 +1,14 @@
+[
+  {
+    "dtxsid": "DTXSID7020182",
+    "dtxcid": "DTXCID30182",
+    "casrn": "80-05-7",
+    "preferredName": "Bisphenol A",
+    "hasStructureImage": 1,
+    "smiles": "CC(C)(C1=CC=C(O)C=C1)C1=CC=C(O)C=C1",
+    "isMarkush": false,
+    "searchName": "Approved Name",
+    "searchValue": "Bisphenol A",
+    "rank": 9
+  }
+]

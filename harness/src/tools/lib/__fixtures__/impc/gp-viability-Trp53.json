@@ -1,0 +1,76 @@
+{
+  "responseHeader": {
+    "status": 0,
+    "QTime": 0,
+    "params": {
+      "q": "marker_symbol:Trp53 AND procedure_name:\"Viability Primary Screen\"",
+      "rows": "20",
+      "wt": "json"
+    }
+  },
+  "response": {
+    "numFound": 1,
+    "start": 0,
+    "docs": [
+      {
+        "allele_accession_id": "MGI:6120822",
+        "allele_name": "targeted mutation 1b, Helmholtz Zentrum Muenchen GmbH",
+        "allele_symbol": "Trp53<tm1b(EUCOMM)Hmgu>",
+        "assertion_type": "manual",
+        "assertion_type_id": "ECO:0000218",
+        "colony_id": "H-Trp53-G11-TM1B",
+        "doc_id": "111669149807",
+        "effect_size": 1.0,
+        "intermediate_mp_term_id": [
+          "MP:0010770",
+          "MP:0010769",
+          "MP:0000001"
+        ],
+        "intermediate_mp_term_name": [
+          "preweaning lethality",
+          "abnormal survival",
+          "mammalian phenotype"
+        ],
+        "life_stage_acc": "IMPCLS:0005",
+        "life_stage_name": "Early adult",
+        "marker_accession_id": "MGI:98834",
+        "marker_symbol": "Trp53",
+        "mp_term_id": "MP:0011110",
+        "mp_term_name": "preweaning lethality, incomplete penetrance",
+        "p_value": 0.0,
+        "parameter_name": "Viability Outcome",
+        "parameter_stable_id": "IMPC_VIA_001_001",
+        "parameter_stable_key": [
+          "31440"
+        ],
+        "phenotyping_center": "MRC Harwell",
+        "pipeline_name": "Harwell",
+        "pipeline_stable_id": "HRWL_001",
+        "pipeline_stable_key": "8",
+        "procedure_name": "Viability Primary Screen",
+        "procedure_stable_id": [
+          "IMPC_VIA_001"
+        ],
+        "procedure_stable_key": [
+          "704"
+        ],
+        "project_name": [
+          "BaSH"
+        ],
+        "resource_name": "IMPC",
+        "sex": "not_considered",
+        "statistical_method": "Supplied as data",
+        "strain_accession_id": "MGI:2164831",
+        "strain_name": "C57BL/6NTac",
+        "top_level_mp_term_id": [
+          "MP:0010768"
+        ],
+        "top_level_mp_term_name": [
+          "mortality/aging"
+        ],
+        "zygosity": "homozygote",
+        "_version_": 1859321076643790848
+      }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+    "studies-SUMMARY.json": {
+        "url": "https://www.cbioportal.org/api/studies",
+        "params": {
+            "projection": "SUMMARY",
+            "pageSize": "10000"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "*.importDate",
+            "*.allSampleCount"
+        ],
+        "replay": false
+    },
+    "studies-DETAILED.json": {
+        "url": "https://www.cbioportal.org/api/studies",
+        "params": {
+            "projection": "DETAILED",
+            "pageSize": "3"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "*.importDate",
+            "*.allSampleCount",
+            "*.structuralVariantCount"
+        ]
+    },
+    "mutations-fetch-SUMMARY.json": {
+        "url": "https://www.cbioportal.org/api/mutations/fetch",
+        "params": {
+            "projection": "SUMMARY"
+        },
+        "method": "POST",
+        "headers": {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        },
+        "body": "{\"molecularProfileIds\": [\"acc_2019_mutations\"], \"entrezGeneIds\": [7157]}",
+        "capturedAt": "2026-08-28",
+        "replay": false
+    },
+    "openapi-v2.json": {
+        "url": "https://www.cbioportal.org/api/v2/api-docs",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    }
+}

@@ -1,0 +1,26 @@
+{
+    "search-query-TP53.json": {
+        "url": "https://release.reactome.org/ContentService/search/query",
+        "params": {
+            "query": "TP53",
+            "species": "Homo sapiens",
+            "types": "Pathway",
+            "cluster": "true",
+            "rows": "25"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "rowCount",
+            "numberOfGroups",
+            "numberOfMatches",
+            "results.*.entriesCount",
+            "results.*.rowCount"
+        ],
+        "replay": false
+    },
+    "data-participants.json": {
+        "url": "https://release.reactome.org/ContentService/data/participants/R-HSA-166208",
+        "capturedAt": "2026-08-28",
+        "replay": false
+    }
+}

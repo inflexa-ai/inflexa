@@ -5,6 +5,10 @@
  * the public cBioPortal REST API for mutation occurrence across all curated
  * cancer studies, then aggregates by cancer type to produce the spec's
  * "where is the target broken in human disease, and how often" view.
+ *
+ * Absence policy: cBioPortal omits the key of an absent value, and it never
+ * sends an explicit `null`. Thus a maybe-absent field carries `.optional()`,
+ * not `.nullable()`.
  */
 
 import { z } from "zod";
@@ -40,12 +44,13 @@ const RawMolecularProfileSchema = z.object({
 });
 type RawMolecularProfile = z.infer<typeof RawMolecularProfileSchema>;
 
-const RawMutationCountSchema = z.object({
+// One mutation row of `mutations/fetch`. The aggregation counts the distinct
+// samples of a study, thus it reads only the two key fields of the row.
+export const RawMutationRowSchema = z.object({
     studyId: z.string(),
     sampleId: z.string(),
-    mutationCount: z.number().optional(),
 });
-type RawMutationCount = z.infer<typeof RawMutationCountSchema>;
+type RawMutationRow = z.infer<typeof RawMutationRowSchema>;
 
 const RawSampleListSchema = z.object({
     sampleListId: z.string().optional(),
@@ -55,10 +60,13 @@ const RawSampleListSchema = z.object({
 });
 type RawSampleList = z.infer<typeof RawSampleListSchema>;
 
-const RawCancerStudySchema = z.object({
+export const RawCancerStudySchema = z.object({
     studyId: z.string(),
     cancerTypeId: z.string().optional(),
-    cancerType: z.object({ name: z.string().optional(), cancerTypeId: z.string().optional() }).optional(),
+    // The nested block keys its identifier as `id`. The `projection=DETAILED`
+    // answer carries the block, and `projection=SUMMARY` omits it, thus the
+    // top-level `cancerTypeId` stays the fallback.
+    cancerType: z.object({ id: z.string().optional(), name: z.string().optional() }).optional(),
     name: z.string().optional(),
     description: z.string().optional(),
     /** The denominator of a study. The sample-list SUMMARY projection carries no count. */
@@ -103,10 +111,10 @@ async function listMutationProfiles(): Promise<RawMolecularProfile[]> {
     return (res.value ?? []).filter((p) => p.molecularAlterationType === "MUTATION_EXTENDED");
 }
 
-async function fetchMutationCountsForGene(entrezGeneId: number, profileIds: string[]): Promise<RawMutationCount[]> {
+async function fetchMutationRowsForGene(entrezGeneId: number, profileIds: string[]): Promise<RawMutationRow[]> {
     if (profileIds.length === 0) return [];
     const url = `${CBIOPORTAL_BASE}/mutations/fetch?projection=SUMMARY`;
-    const res = await apiFetchValidated(url, z.array(RawMutationCountSchema), {
+    const res = await apiFetchValidated(url, z.array(RawMutationRowSchema), {
         method: "POST",
         headers: { ...HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -164,7 +172,7 @@ export async function getSomaticMutationFrequencies(
     const studyById = new Map<string, RawCancerStudy>();
     for (const s of studies) studyById.set(s.studyId, s);
 
-    const mutations = await fetchMutationCountsForGene(entrezGeneId, profileIds);
+    const mutations = await fetchMutationRowsForGene(entrezGeneId, profileIds);
     const mutatedStudySamples = new Map<string, Set<string>>();
     for (const m of mutations) {
         if (!mutatedStudySamples.has(m.studyId)) mutatedStudySamples.set(m.studyId, new Set());
@@ -176,7 +184,7 @@ export async function getSomaticMutationFrequencies(
         const study = studyById.get(studyId);
         const sampleCount = study?.allSampleCount ?? 0;
         if (sampleCount === 0) continue;
-        const cancerTypeId = study?.cancerType?.cancerTypeId ?? study?.cancerTypeId ?? "unknown";
+        const cancerTypeId = study?.cancerType?.id ?? study?.cancerTypeId ?? "unknown";
         const cancerTypeName = study?.cancerType?.name ?? typeNames.get(cancerTypeId) ?? cancerTypeId;
         if (!byCancerType.has(cancerTypeId)) {
             byCancerType.set(cancerTypeId, {

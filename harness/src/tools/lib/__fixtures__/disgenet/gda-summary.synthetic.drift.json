@@ -1,0 +1,19 @@
+{
+  "status": "OK",
+  "payload": [
+    {
+      "symbolOfGene": "PCSK9",
+      "geneNcbiID": "255738",
+      "diseaseName": "Hypercholesterolemia",
+      "diseaseUMLSCUI": "C1858729",
+      "score": 0.9
+    }
+  ],
+  "paging": {
+    "currentPageNumber": 0,
+    "pageSize": 100,
+    "totalElements": 137,
+    "totalElementsInPage": 1
+  },
+  "httpStatus": 200
+}

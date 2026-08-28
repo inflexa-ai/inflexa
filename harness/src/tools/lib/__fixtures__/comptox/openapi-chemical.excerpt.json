@@ -1,0 +1,214 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Computational Toxicology and Exposure (CTX) APIs - CTX Chemical API",
+    "description": "The CTX Chemical API is part of US EPA's Computational Toxicology and Exposure APIs. The CTX Chemical API provides programmtic access to chemical data through a set of endpoints.",
+    "version": "1.1.1"
+  },
+  "components": {
+    "schemas": {
+      "ChemicalDetailStandard": {
+        "type": "object",
+        "description": "Standard attributes available for chemical details APIs",
+        "properties": {
+          "preferredName": {
+            "type": "string"
+          },
+          "isMarkush": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hasStructureImage": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "monoisotopicMass": {
+            "type": "number",
+            "format": "double"
+          },
+          "relatedStructureCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "wikipediaArticle": {
+            "type": "string"
+          },
+          "descriptorStringTsv": {
+            "type": "string"
+          },
+          "relatedSubstanceCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "genericSubstanceId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "genericSubstanceid": {
+            "writeOnly": true
+          },
+          "dtxcid": {
+            "type": "string"
+          },
+          "casrn": {
+            "type": "string"
+          },
+          "dtxsid": {
+            "type": "string"
+          },
+          "smiles": {
+            "type": "string"
+          },
+          "qcLevel": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "qcNotes": {
+            "type": "string"
+          },
+          "isotope": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "multicomponent": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalAssays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "toxcastSelect": {
+            "type": "string"
+          },
+          "iupacName": {
+            "type": "string"
+          },
+          "activeAssays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cpdataCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "qsarReadySmiles": {
+            "type": "string"
+          },
+          "qcLevelDesc": {
+            "type": "string"
+          },
+          "molFormula": {
+            "type": "string"
+          },
+          "pubchemCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "inchikey": {
+            "type": "string"
+          },
+          "msReadySmiles": {
+            "type": "string"
+          },
+          "compoundId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pubmedCount": {
+            "type": "number",
+            "format": "double"
+          },
+          "sourcesCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pubchemCid": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "inchiString": {
+            "type": "string"
+          },
+          "pprtvLink": {
+            "type": "string"
+          },
+          "irisLink": {
+            "type": "string"
+          },
+          "percentAssays": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "ChemicalSearchAll": {
+        "type": "object",
+        "properties": {
+          "searchName": {
+            "type": "string"
+          },
+          "preferredName": {
+            "type": "string"
+          },
+          "isMarkush": {
+            "type": "boolean"
+          },
+          "hasStructureImage": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "dtxcid": {
+            "type": "string"
+          },
+          "casrn": {
+            "type": "string"
+          },
+          "dtxsid": {
+            "type": "string"
+          },
+          "smiles": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "searchValue": {
+            "type": "string"
+          }
+        }
+      },
+      "ProblemDetail": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string",
+            "format": "uri"
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        }
+      }
+    }
+  }
+}

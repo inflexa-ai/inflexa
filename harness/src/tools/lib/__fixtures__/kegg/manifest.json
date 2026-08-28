@@ -1,0 +1,19 @@
+{
+    "find-hsa-TP53.txt": {
+        "url": "https://rest.kegg.jp/find/hsa/TP53",
+        "capturedAt": "2026-08-28"
+    },
+    "link-pathway-hsa7157.txt": {
+        "url": "https://rest.kegg.jp/link/pathway/hsa:7157",
+        "capturedAt": "2026-08-28"
+    },
+    "list-pathway-hsa.txt": {
+        "url": "https://rest.kegg.jp/list/pathway/hsa",
+        "capturedAt": "2026-08-28",
+        "replay": false
+    },
+    "find-pathway-TP53.txt": {
+        "url": "https://rest.kegg.jp/find/pathway/TP53",
+        "capturedAt": "2026-08-28"
+    }
+}

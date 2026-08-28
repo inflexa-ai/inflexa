@@ -7,11 +7,24 @@
  * point they share: a DTXSID is used directly, anything else is resolved by
  * exact match against the chemical-search endpoint. `null` means the query
  * resolved to no chemical — an expected outcome, not an error.
+ *
+ * UNVERIFIED CONTRACT, 2026-08-28. Every data path of the CTX API demands
+ * `EPA_CCTE_API_KEY`, and no key exists, thus no schema here parsed a live
+ * answer. The contract comes from three secondary sources: the server source of
+ * the EPA (`github.com/USEPA/ccte-api-{chemical,hazard,exposure,bioactivity}`,
+ * branch `dev`), the contract tests of the EPA (`USEPA/ccte-api-karate`), and
+ * the response bodies that the R client of the EPA (`ctxR` 1.1.3) recorded
+ * against this same base. A Java `List<T>` return type serializes to a JSON
+ * array, thus the server source settles each container shape.
+ *
+ * Absence policy: the CTX API sends an explicit `null` for an absent value, and
+ * it omits a key that its projection excludes. Thus a field carries both
+ * `.nullable()` and `.optional()`.
  */
 
 import { z } from "zod";
 
-import { apiFetchValidated, describeApiError } from "./api-utils.js";
+import { apiFetchValidated, describeApiError, type ApiError } from "./api-utils.js";
 import { EPA_CCTE_BASE } from "./toxcast-config.js";
 
 export interface CtxResolved {
@@ -20,15 +33,32 @@ export interface CtxResolved {
     casrn: string | null;
 }
 
-// The chemical-search endpoint returns rows the code reads `dtxsid` from
-// unguarded, so `dtxsid` stays required — a row missing it is a contract break
-// surfaced as `invalid_response`, not a silent `undefined`. The other fields
-// are optional: the API omits absent values.
-const CtxChemicalSearchRowSchema = z.object({
-    dtxsid: z.string(),
+// A row of the chemical-search endpoint. `dtxsid` is nullable, because a search
+// that matches a DTXCID or a Markush record answers with a row that carries no
+// substance identifier. The caller drops such a row.
+export const CtxChemicalSearchRowSchema = z.object({
+    dtxsid: z.string().nullable().optional(),
     preferredName: z.string().nullable().optional(),
     casrn: z.string().nullable().optional(),
 });
+
+/**
+ * Is the error the RFC 7807 answer of a search that matched nothing?
+ *
+ * The chemical-search endpoint never answers with an empty array. It answers
+ * HTTP 400 with a `ProblemDetail` body that carries `title`, `detail`, and a
+ * `suggestions` list. Thus that one 400 is the no-match outcome, and every other
+ * 4xx stays a failure.
+ */
+function isNoMatchProblemDetail(error: ApiError): boolean {
+    if (error.type !== "http_status" || error.status !== 400) return false;
+    try {
+        const body: unknown = JSON.parse(error.body);
+        return typeof body === "object" && body !== null && "detail" in body && "title" in body;
+    } catch {
+        return false;
+    }
+}
 
 /** Resolve a DTXSID / CASRN / name to a chemical. `null` = no match (valid no-data). */
 export async function resolveDtxsid(query: string, headers: Record<string, string>): Promise<CtxResolved | null> {
@@ -38,10 +68,13 @@ export async function resolveDtxsid(query: string, headers: Record<string, strin
 
     const url = `${EPA_CCTE_BASE}/chemical/search/equal/${encodeURIComponent(query)}`;
     const res = await apiFetchValidated(url, z.array(CtxChemicalSearchRowSchema), { headers });
-    if (res.isErr()) throw new Error(describeApiError(res.error));
-    if (!res.value?.length) return null;
+    if (res.isErr()) {
+        if (isNoMatchProblemDetail(res.error)) return null;
+        throw new Error(describeApiError(res.error));
+    }
 
-    const chem = res.value[0];
+    const chem = (res.value ?? []).find((row) => row.dtxsid);
+    if (!chem?.dtxsid) return null;
     return {
         dtxsid: chem.dtxsid,
         preferredName: chem.preferredName ?? query,
@@ -80,7 +113,7 @@ const ToxcastMc6ParamSchema = z.object({
 });
 type ToxcastMc6Param = z.infer<typeof ToxcastMc6ParamSchema>;
 
-const ToxcastBioactivityRowSchema = z.object({
+export const ToxcastBioactivityRowSchema = z.object({
     aeid: z.number().optional(),
     hitc: z.number().optional(),
     maxMean: z.number().nullable().optional(),
@@ -90,10 +123,22 @@ const ToxcastBioactivityRowSchema = z.object({
 });
 type ToxcastBioactivityRow = z.infer<typeof ToxcastBioactivityRowSchema>;
 
-const ToxcastAssaySummaryRowSchema = z.object({
+/** One assay annotation of `bioactivity/assay/search/by-aeid/`. */
+const ToxcastAssayAnnotationSchema = z.object({
     aeid: z.number().optional(),
-    aenm: z.string().optional(),
+    assayComponentEndpointName: z.string().nullable().optional(),
 });
+
+/**
+ * The `hitc` of invitrodb v4 is a continuous value from 0 to 1, not a flag. The
+ * EPA calls a value of 0.9 or more active, thus the threshold is the predicate
+ * and an equality against 1 counts almost nothing.
+ */
+const ACTIVE_HIT_CALL = 0.9;
+
+function isActive(row: ToxcastBioactivityRow): boolean {
+    return (row.hitc ?? 0) >= ACTIVE_HIT_CALL;
+}
 
 /**
  * ToxCast/Tox21 assay results for a chemical, sorted by AC50 ascending.
@@ -105,21 +150,24 @@ export async function fetchToxcastBioactivity(
     headers: Record<string, string>,
     opts: { activeOnly: boolean; limit: number },
 ): Promise<ToxcastBioactivity> {
-    const aeidMap = await fetchAssayNames(dtxsid, headers);
-
     const bioUrl = `${EPA_CCTE_BASE}/bioactivity/data/search/by-dtxsid/${dtxsid}`;
     const bioRes = await apiFetchValidated(bioUrl, z.array(ToxcastBioactivityRowSchema), { headers });
     if (bioRes.isErr()) throw new Error(describeApiError(bioRes.error));
 
     const allResults = bioRes.value ?? [];
     const totalAssays = allResults.length;
-    const activeAssays = allResults.filter((r) => r.hitc === 1).length;
+    const activeAssays = allResults.filter(isActive).length;
 
-    const filtered = opts.activeOnly ? allResults.filter((r) => r.hitc === 1) : allResults;
+    const filtered = opts.activeOnly ? allResults.filter(isActive) : allResults;
 
     filtered.sort((a, b) => extractAc50(a) - extractAc50(b));
 
-    const results = filtered.slice(0, opts.limit).map((r) => {
+    const page = filtered.slice(0, opts.limit);
+    // The names come after the slice, thus one batch call covers the rows that
+    // the caller sees and never the whole tested panel.
+    const aeidMap = await fetchAssayNames(page, headers);
+
+    const results = page.map((r) => {
         const aeid = r.aeid ?? 0;
         const mc6: ToxcastMc6Param = r.mc6Param ?? {};
         const flags: string[] = Array.isArray(mc6.flag) ? mc6.flag : [];
@@ -156,14 +204,31 @@ function extractAc50Raw(r: ToxcastBioactivityRow): number | null {
     return null;
 }
 
-async function fetchAssayNames(dtxsid: string, headers: Record<string, string>): Promise<Map<number, string>> {
+/**
+ * The endpoint name of each assay of a result page, keyed by its aeid.
+ *
+ * The per-chemical summary endpoint serves a `ChemicalAgg` roll-up, which
+ * carries no assay identifier and no assay name. The names live on the assay
+ * resource, and its batch route takes the whole aeid list in one POST body.
+ * Thus a page of results costs one request, not one for each row.
+ *
+ * A failure gives an empty map, and the caller then labels a row `aeid:N`.
+ */
+async function fetchAssayNames(rows: readonly ToxcastBioactivityRow[], headers: Record<string, string>): Promise<Map<number, string>> {
     const map = new Map<number, string>();
-    const url = `${EPA_CCTE_BASE}/bioactivity/data/summary/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetchValidated(url, z.array(ToxcastAssaySummaryRowSchema), { headers });
+    const aeids = [...new Set(rows.map((r) => r.aeid).filter((aeid): aeid is number => aeid != null))];
+    if (aeids.length === 0) return map;
+
+    const url = `${EPA_CCTE_BASE}/bioactivity/assay/search/by-aeid/`;
+    const res = await apiFetchValidated(url, z.array(ToxcastAssayAnnotationSchema), {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(aeids.map((aeid) => String(aeid))),
+    });
     if (res.isOk() && Array.isArray(res.value)) {
-        for (const s of res.value) {
-            if (s.aeid != null && s.aenm) {
-                map.set(s.aeid, s.aenm);
+        for (const assay of res.value) {
+            if (assay.aeid != null && assay.assayComponentEndpointName) {
+                map.set(assay.aeid, assay.assayComponentEndpointName);
             }
         }
     }
@@ -177,7 +242,7 @@ async function fetchAssayNames(dtxsid: string, headers: Record<string, string>):
 // type. Every wire field is optional (the API omits absent values); the two
 // numeric fields the API sends as string-or-number stay `z.unknown()` so
 // `toNumberOrNull` can coerce them without the schema rejecting the row.
-const ToxValSchema = z
+export const ToxValSchema = z
     .object({
         source: z.string().nullable().optional(),
         toxvalType: z.string().nullable().optional(),
@@ -210,37 +275,45 @@ const ToxValSchema = z
     }));
 export type ToxValEntry = z.infer<typeof ToxValSchema>;
 
-const GenetoxSchema = z
+// The genotoxicity SUMMARY record. It is a roll-up over the genotoxicity
+// reports of a chemical: the two headline assay calls, the overall call, and
+// the report counts behind them. The per-report fields (the assay category, the
+// metabolic activation, the species) belong to the `genetox/details` endpoint,
+// which this client does not call.
+export const GenetoxSchema = z
     .object({
-        source: z.string().nullable().optional(),
-        assayCategory: z.string().nullable().optional(),
-        assayType: z.string().nullable().optional(),
-        metabolicActivation: z.string().nullable().optional(),
-        species: z.string().nullable().optional(),
-        overallResult: z.string().nullable().optional(),
-        year: z.unknown().optional(),
+        ames: z.string().nullable().optional(),
+        genetoxCall: z.string().nullable().optional(),
+        micronucleus: z.string().nullable().optional(),
+        reportsPositive: z.number().nullable().optional(),
+        reportsNegative: z.number().nullable().optional(),
+        reportsOther: z.number().nullable().optional(),
+        clowderDocId: z.string().nullable().optional(),
     })
     .transform((r) => ({
-        source: r.source ?? "",
-        assayCategory: r.assayCategory ?? "",
-        assayType: r.assayType ?? "",
-        metabolicActivation: r.metabolicActivation ?? "",
-        species: r.species ?? "",
-        overallResult: r.overallResult ?? "",
-        year: toNumberOrNull(r.year),
+        ames: r.ames ?? "",
+        genetoxCall: r.genetoxCall ?? "",
+        micronucleus: r.micronucleus ?? "",
+        reportsPositive: r.reportsPositive ?? null,
+        reportsNegative: r.reportsNegative ?? null,
+        reportsOther: r.reportsOther ?? null,
+        clowderDocId: r.clowderDocId ?? "",
     }));
 export type GenetoxSummary = z.infer<typeof GenetoxSchema>;
 
-const CancerSchema = z
+// The cancer SUMMARY record. `cancerCall` is the weight-of-evidence annotation,
+// and `exposureRoute` is the route that the annotation applies to.
+export const CancerSchema = z
     .object({
         source: z.string().nullable().optional(),
-        classification: z.string().nullable().optional(),
-        cancerClassification: z.string().nullable().optional(),
+        exposureRoute: z.string().nullable().optional(),
+        cancerCall: z.string().nullable().optional(),
         url: z.string().nullable().optional(),
     })
     .transform((r) => ({
         source: r.source ?? "",
-        classification: r.classification ?? r.cancerClassification ?? "",
+        exposureRoute: r.exposureRoute ?? "",
+        cancerCall: r.cancerCall ?? "",
         url: r.url ?? "",
     }));
 export type CancerSummary = z.infer<typeof CancerSchema>;
@@ -334,7 +407,6 @@ export interface ChemicalDetail {
     smiles: string;
     inchikey: string;
     monoisotopicMass: number | null;
-    averageMass: number | null;
     qcLevel: number | null;
     totalAssays: number | null;
     activeAssays: number | null;
@@ -360,7 +432,7 @@ export interface PropertySummary {
 // Raw CTX chemical-detail wire shape, validated at the fetch boundary. Every
 // field is optional (the API omits absent values); the mapper below normalizes
 // it into `ChemicalDetail`, folding in the resolved `dtxsid` fallback.
-const RawChemicalDetailSchema = z.object({
+export const RawChemicalDetailSchema = z.object({
     dtxsid: z.string().optional(),
     dtxcid: z.string().nullable().optional(),
     casrn: z.string().nullable().optional(),
@@ -370,7 +442,6 @@ const RawChemicalDetailSchema = z.object({
     smiles: z.string().nullable().optional(),
     inchikey: z.string().nullable().optional(),
     monoisotopicMass: z.number().nullable().optional(),
-    averageMass: z.number().nullable().optional(),
     qcLevel: z.number().nullable().optional(),
     totalAssays: z.number().nullable().optional(),
     activeAssays: z.number().nullable().optional(),
@@ -411,7 +482,6 @@ export async function fetchCtxChemicalDetail(dtxsid: string, headers: Record<str
         smiles: d.smiles ?? "",
         inchikey: d.inchikey ?? "",
         monoisotopicMass: d.monoisotopicMass ?? null,
-        averageMass: d.averageMass ?? null,
         qcLevel: d.qcLevel ?? null,
         totalAssays: d.totalAssays ?? null,
         activeAssays: d.activeAssays ?? null,
@@ -482,21 +552,21 @@ export interface ProductData {
     weightFractionType: string;
 }
 
-// SEEM exposure-prediction wire shape (endpoint returns a single object or an
-// array). `probabilityPesticde` is the API's own misspelling, read as a
-// fallback before the corrected `probabilityPesticide`, so both stay modeled.
-const RawSeemPredictionSchema = z.object({
+// SEEM exposure-prediction wire shape. The endpoint answers with an array.
+// `probabilityPesticde` is the wire name, and it is the own misspelling of the
+// API. The corrected spelling is served nowhere, thus only the wire name is
+// modeled and the mapped output carries the corrected one.
+export const RawSeemPredictionSchema = z.object({
     dtxsid: z.string().optional(),
     productionVolume: z.number().nullable().optional(),
     units: z.string().nullable().optional(),
     probabilityDietary: z.number().nullable().optional(),
     probabilityResidential: z.number().nullable().optional(),
     probabilityPesticde: z.number().nullable().optional(),
-    probabilityPesticide: z.number().nullable().optional(),
     probabilityIndustrial: z.number().nullable().optional(),
 });
 
-const RawHttkRowSchema = z.object({
+export const RawHttkRowSchema = z.object({
     parameter: z.string().nullable().optional(),
     measured: z.number().nullable().optional(),
     predicted: z.number().nullable().optional(),
@@ -506,7 +576,7 @@ const RawHttkRowSchema = z.object({
     reference: z.string().nullable().optional(),
 });
 
-const RawFunctionalUseRowSchema = z.object({
+export const RawFunctionalUseRowSchema = z.object({
     functioncategory: z.string().nullable().optional(),
     reportedfunction: z.string().nullable().optional(),
     doctitle: z.string().nullable().optional(),
@@ -578,10 +648,10 @@ export async function fetchCtxExposureData(
 
 async function fetchSeem(dtxsid: string, headers: Record<string, string>): Promise<SeemPrediction | undefined> {
     const url = `${EPA_CCTE_BASE}/exposure/seem/general/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetchValidated(url, z.union([RawSeemPredictionSchema, z.array(RawSeemPredictionSchema)]), { headers });
-    if (res.isErr() || !res.value) return undefined;
+    const res = await apiFetchValidated(url, z.array(RawSeemPredictionSchema), { headers });
+    if (res.isErr()) return undefined;
 
-    const d = Array.isArray(res.value) ? res.value[0] : res.value;
+    const d = res.value[0];
     if (!d) return undefined;
 
     return {
@@ -590,7 +660,7 @@ async function fetchSeem(dtxsid: string, headers: Record<string, string>): Promi
         units: d.units ?? "",
         probabilityDietary: d.probabilityDietary ?? null,
         probabilityResidential: d.probabilityResidential ?? null,
-        probabilityPesticide: d.probabilityPesticde ?? d.probabilityPesticide ?? null,
+        probabilityPesticide: d.probabilityPesticde ?? null,
         probabilityIndustrial: d.probabilityIndustrial ?? null,
     };
 }

@@ -1,0 +1,14 @@
+{
+    "expr-TP53-human.json": {
+        "url": "https://www.bgee.org/api/",
+        "params": {
+            "page": "gene",
+            "action": "expression",
+            "display_type": "json",
+            "gene_id": "ENSG00000141510",
+            "species_id": "9606"
+        },
+        "capturedAt": "2026-08-28",
+        "replay": false
+    }
+}

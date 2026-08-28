@@ -1,0 +1,247 @@
+{
+  "code": 200,
+  "status": "SUCCESS",
+  "message": "Gene expression for gene: ENSG00000141510 - TP53",
+  "data": {
+    "requestedCallType": "EXPRESSED",
+    "requestedConditionParameters": [
+      "Anat. entity",
+      "Cell type"
+    ],
+    "calls": [
+      {
+        "condition": {
+          "anatEntity": {
+            "id": "UBERON:0003053",
+            "name": "ventricular zone"
+          }
+        },
+        "expressionScore": {
+          "expressionScore": "95.11",
+          "expressionScoreConfidence": "high"
+        },
+        "fdr": "<= 1.00e-14",
+        "dataTypesWithData": [
+          "RNA-Seq"
+        ],
+        "expressionState": "expressed",
+        "expressionQuality": "gold",
+        "clusterIndex": 0
+      },
+      {
+        "condition": {
+          "anatEntity": {
+            "id": "UBERON:0004023",
+            "name": "ganglionic eminence"
+          }
+        },
+        "expressionScore": {
+          "expressionScore": "94.13",
+          "expressionScoreConfidence": "high"
+        },
+        "fdr": "<= 1.00e-14",
+        "dataTypesWithData": [
+          "RNA-Seq"
+        ],
+        "expressionState": "expressed",
+        "expressionQuality": "gold",
+        "clusterIndex": 0
+      },
+      {
+        "condition": {
+          "anatEntity": {
+            "id": "UBERON:0008188",
+            "name": "tendon of biceps brachii"
+          }
+        },
+        "expressionScore": {
+          "expressionScore": "92.63",
+          "expressionScoreConfidence": "high"
+        },
+        "fdr": "0.006",
+        "dataTypesWithData": [
+          "Affymetrix"
+        ],
+        "expressionState": "expressed",
+        "expressionQuality": "gold",
+        "clusterIndex": 0
+      },
+      {
+        "condition": {
+          "anatEntity": {
+            "id": "CL:0000576",
+            "name": "monocyte"
+          }
+        },
+        "expressionScore": {
+          "expressionScore": "90.86",
+          "expressionScoreConfidence": "high"
+        },
+        "fdr": "<= 1.00e-14",
+        "dataTypesWithData": [
+          "RNA-Seq"
+        ],
+        "expressionState": "expressed",
+        "expressionQuality": "gold",
+        "clusterIndex": 0
+      },
+      {
+        "condition": {
+          "anatEntity": {
+            "id": "UBERON:0000473",
+            "name": "testis"
+          },
+          "cellType": {
+            "id": "CL:0000089",
+            "name": "male germ line stem cell (sensu Vertebrata)"
+          }
+        },
+        "expressionScore": {
+          "expressionScore": "81.25",
+          "expressionScoreConfidence": "high"
+        },
+        "fdr": "1.73e-6",
+        "dataTypesWithData": [
+          "single-cell RNA-Seq"
+        ],
+        "expressionState": "expressed",
+        "expressionQuality": "gold",
+        "clusterIndex": 0
+      },
+      {
+        "condition": {
+          "anatEntity": {
+            "id": "UBERON:0000991",
+            "name": "gonad"
+          },
+          "cellType": {
+            "id": "CL:0000670",
+            "name": "primordial germ cell"
+          }
+        },
+        "expressionScore": {
+          "expressionScore": "78.93",
+          "expressionScoreConfidence": "high"
+        },
+        "fdr": "7.72e-5",
+        "dataTypesWithData": [
+          "single-cell RNA-Seq"
+        ],
+        "expressionState": "expressed",
+        "expressionQuality": "gold",
+        "clusterIndex": 0
+      }
+    ],
+    "gene": {
+      "geneId": "ENSG00000141510",
+      "name": "TP53",
+      "species": {
+        "id": 9606,
+        "name": "human",
+        "genus": "Homo",
+        "speciesName": "sapiens",
+        "preferredDisplayOrder": 1,
+        "sourcesOfDataPerDataType": [
+          {
+            "dataType": "Affymetrix",
+            "sources": [
+              {
+                "name": "ArrayExpress",
+                "description": "Affymetrix data source for various species",
+                "baseUrl": "https://www.ebi.ac.uk/arrayexpress/"
+              },
+              {
+                "name": "GEO",
+                "description": "Affymetrix data source for various species",
+                "baseUrl": "https://www.ncbi.nlm.nih.gov/geo/"
+              }
+            ]
+          },
+          {
+            "dataType": "EST",
+            "sources": [
+              {
+                "name": "UniGene",
+                "description": "EST data source for various species",
+                "baseUrl": "https://www.ncbi.nlm.nih.gov/unigene/"
+              }
+            ]
+          },
+          {
+            "dataType": "single-cell RNA-Seq",
+            "sources": [
+              {
+                "name": "SRA",
+                "description": "Single-cell RNA-Seq data source for various species",
+                "baseUrl": "https://www.ncbi.nlm.nih.gov/sra/"
+              }
+            ]
+          },
+          {
+            "dataType": "RNA-Seq",
+            "sources": [
+              {
+                "name": "GEO",
+                "description": "RNA-Seq data source for various species",
+                "baseUrl": "https://www.ncbi.nlm.nih.gov/geo/"
+              },
+              {
+                "name": "GTEx - dbGAP",
+                "description": "GTEx RNA-Seq data",
+                "baseUrl": "https://www.ncbi.nlm.nih.gov/projects/gap/cgi-bin/study.cgi?study_id=phs000424"
+              },
+              {
+                "name": "SRA",
+                "description": "RNA-Seq data source for various species",
+                "baseUrl": "https://www.ncbi.nlm.nih.gov/sra/"
+              }
+            ]
+          }
+        ],
+        "sourcesOfAnnotationsPerDataType": [
+          {
+            "dataType": "Affymetrix",
+            "sources": [
+              {
+                "name": "Bgee",
+                "description": "Gene expression data in animals",
+                "baseUrl": "https://www.bgee.org/"
+              }
+            ]
+          },
+          {
+            "dataType": "EST",
+            "sources": [
+              {
+                "name": "Bgee",
+                "description": "Gene expression data in animals",
+                "baseUrl": "https://www.bgee.org/"
+              }
+            ]
+          },
+          {
+            "dataType": "single-cell RNA-Seq",
+            "sources": [
+              {
+                "name": "Bgee",
+                "description": "Gene expression data in animals",
+                "baseUrl": "https://www.bgee.org/"
+              }
+            ]
+          },
+          {
+            "dataType": "RNA-Seq",
+            "sources": [
+              {
+                "name": "Bgee",
+                "description": "Gene expression data in animals",
+                "baseUrl": "https://www.bgee.org/"
+              }
+            ]
+          }
+        ]
+      },
+      "geneMappedToSameGeneIdCount": 1
+    }
+  }
+}
