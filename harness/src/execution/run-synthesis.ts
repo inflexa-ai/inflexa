@@ -46,6 +46,7 @@ import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import { composeSystemPrompt } from "../agents/system-prompt.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { runDir } from "../workspace/paths.js";
+import { decodeObjectString } from "../lib/zod-issues.js";
 
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { passthroughStep } from "../loop/run-step.js";
@@ -338,17 +339,21 @@ function buildValidateTool(ctx: InnerToolContext): Tool {
             "field-by-field synthesis schema is the arg schema of " +
             "submit_synthesis — this tool deliberately does not restate it. " +
             "Non-terminal: call as often as needed to iterate toward a clean " +
-            "synthesis, then submit_synthesis.",
+            "synthesis, then submit_synthesis. A candidate that arrives as a " +
+            "JSON-encoded string is decoded before the checks run, so the " +
+            "result describes the synthesis inside the string.",
         // Deliberately permissive: a structurally-invalid candidate must reach
         // `execute` so the model gets a structured {valid:false, issues} result —
         // including semantic issues — instead of a bare Zod rejection at the loop's
         // input boundary. `execute` re-parses against RunSynthesisSchema itself.
+        // The permissive schema also means the loop's string repair never runs
+        // here, so `execute` decodes a JSON-encoded string itself.
         inputSchema: z.object({
             synthesis: z.unknown().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
         }),
         describeCall: "none",
         execute: async (input) => {
-            const result = fullyValidate(input.synthesis, ctx);
+            const result = fullyValidate(decodeObjectString(input.synthesis), ctx);
             return ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues });
         },
     });

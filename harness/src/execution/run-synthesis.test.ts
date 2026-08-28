@@ -237,6 +237,49 @@ describe("validate_synthesis inner tool", () => {
         expect(holder.outcome).toBeNull();
     });
 
+    it("decodes a candidate that arrives as a JSON-encoded string", async () => {
+        const { validate, holder } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+
+        const plain = (await validate.execute({ synthesis: JSON.stringify(validSynthesisPayload()) }, makeToolCtx()))._unsafeUnwrap() as {
+            valid: boolean;
+            issues: unknown[];
+        };
+        const fenced = (
+            await validate.execute({ synthesis: "```json\n" + JSON.stringify(validSynthesisPayload()) + "\n```" }, makeToolCtx())
+        )._unsafeUnwrap() as {
+            valid: boolean;
+            issues: unknown[];
+        };
+
+        expect(plain.valid).toBe(true);
+        expect(plain.issues).toHaveLength(0);
+        expect(fenced.valid).toBe(true);
+        expect(fenced.issues).toHaveLength(0);
+        expect(holder.outcome).toBeNull();
+    });
+
+    it("reports the issues of the synthesis inside a JSON-encoded string", async () => {
+        const { validate } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+
+        const result = (
+            await validate.execute({ synthesis: JSON.stringify({ ...validSynthesisPayload(), runId: "other-run" }) }, makeToolCtx())
+        )._unsafeUnwrap() as {
+            valid: false;
+            issues: { path: string; code: string; message: string }[];
+        };
+
+        expect(result.valid).toBe(false);
+        expect(result.issues).toHaveLength(1);
+        expect(result.issues[0]?.path).toBe("synthesis.runId");
+        expect(result.issues[0]?.code).toBe("semantic");
+    });
+
     it("reports schema issues on a malformed candidate instead of rejecting it", async () => {
         const { validate, holder } = __buildInnerToolsForTest({
             knownStepIds: new Set(["T1S1"]),
