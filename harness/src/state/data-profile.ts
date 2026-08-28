@@ -74,6 +74,14 @@ export interface DataProfileStatus {
 const SEEDED = "seed_input_file_ids IS NOT NULL AND jsonb_array_length(seed_input_file_ids) > 0";
 
 /**
+ * The negation of {@link SEEDED}: the row names no input file. A NULL seed and `[]`
+ * both name zero files, and {@link completeEmptyDataProfile} treats them the same.
+ * The two predicates are disjoint, so a claim into `running` and an empty-set
+ * completion can never both win on one row.
+ */
+const UNSEEDED = "(seed_input_file_ids IS NULL OR jsonb_array_length(seed_input_file_ids) = 0)";
+
+/**
  * Try to claim a startable row into `running`. Startable means `'pending'` (seeded,
  * not yet run) or NULL (no profile: never profiled, or cleared by `clearDataProfile`).
  *
@@ -336,6 +344,56 @@ export function clearDataProfile(pool: Querier, analysisId: string): ResultAsync
                 seed_input_file_ids = NULL
             WHERE analysis_id = $1 AND data_profile_status IS DISTINCT FROM 'running'`,
             values: [analysisId],
+        });
+        return (result.rowCount ?? 0) > 0;
+    });
+}
+
+/**
+ * Stamp a row `completed` with no result, because the analysis has no input files.
+ *
+ * A profile describes files. An analysis with no files has nothing to describe, and
+ * thus the profile is complete at once: no claim into `running`, no workflow, and no
+ * sandbox. The write is a terminal write like {@link completeDataProfile}, but it starts
+ * from a settled row or an empty row, not from a `running` one. As a result
+ * `data_profile_started_at` and `data_profile_completed_at` carry the same instant, and
+ * `data_profile_workflow_id` stays NULL, because no stream is addressable (see
+ * {@link recordDataProfileWorkflowId}).
+ *
+ * The seed is written as `[]`, so the completed row names the set that it covers: the
+ * empty set. A `completed` row with a NULL seed stays forbidden (see
+ * {@link completeDataProfile}). A prior `data_profile_result` is replaced with NULL,
+ * because it describes files that the analysis no longer has. A prior `failed` row is
+ * replaced too, because the set that failed is gone.
+ *
+ * Two guards ride in the CAS:
+ * - `IS DISTINCT FROM 'running'`: a live workflow owns the row, and its terminal write
+ *   must not land on a row that this write moved. The same reason as
+ *   {@link clearDataProfile}.
+ * - {@link UNSEEDED}: the row names no file. A seed upsert that lands between a caller's
+ *   pre-read and this write makes the row a seeded, startable row. A `completed` stamp
+ *   over it would hide those files behind a finished profile. The CAS refuses that row,
+ *   and the caller reads the status again to name the cause.
+ *
+ * The rerun claim carries {@link SEEDED}, so a completed-empty row is not claimable until
+ * a later seed upsert names files. Then `tryRerunDataProfile` takes it, the same as any
+ * completed row.
+ *
+ * `ok(true)` when this call stamped the row. `ok(false)` when the guard refused it: no
+ * such analysis, a live run, or a seed that names files. A refusal stays in the ok
+ * channel, the same as the sibling CAS ops.
+ */
+export function completeEmptyDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
+    const now = new Date().toISOString();
+    return tryMutation("dataProfile.completeEmptyDataProfile", async () => {
+        const result = await pool.query({
+            text: `UPDATE cortex_analysis_state
+            SET data_profile_status = 'completed', data_profile_error = NULL,
+                data_profile_started_at = $1, data_profile_completed_at = $1,
+                data_profile_result = NULL, data_profile_workflow_id = NULL,
+                seed_input_file_ids = '[]'::jsonb
+            WHERE analysis_id = $2 AND data_profile_status IS DISTINCT FROM 'running' AND ${UNSEEDED}`,
+            values: [now, analysisId],
         });
         return (result.rowCount ?? 0) > 0;
     });

@@ -41,7 +41,8 @@ function legacyStagedInput(fileId: string): StagedInput {
  * Seed a `cortex_analysis_state` row at the given `data_profile_status` (pass `null`
  * for the cleared/never-profiled state). Mirrors the helper in
  * `state/data-profile.test.ts`: it leaves `seed_input_file_ids` NULL, which is
- * exactly the unseeded state both the trigger's guard and the claim CAS refuse.
+ * exactly the unseeded state that the claim CAS refuses, and that the trigger's guard
+ * refuses when the manifest names files.
  */
 async function seedAnalysis(pool: Pool, analysisId: string, dpStatus: string | null = "pending"): Promise<void> {
     const now = new Date().toISOString();
@@ -126,14 +127,15 @@ describe("triggerDataProfile seed-first guard", () => {
         await drop();
     });
 
-    it("refuses a NULL-seed row and leaves it unclaimed", async () => {
-        // `seedAnalysis` leaves `seed_input_file_ids` NULL — the unseeded ledger.
+    it("refuses a NULL-seed row dispatched a manifest that names files, and leaves it unclaimed", async () => {
+        // `seedAnalysis` leaves `seed_input_file_ids` NULL. The manifest names a file, so
+        // the caller skipped the seed: the trigger refuses before any claim.
         await seedAnalysis(pool, "a-noseed", "pending");
 
         const result = await triggerDataProfile(tripwireDeps(pool), {
             auth: makeLocalAuth(),
             analysisId: "a-noseed",
-            stagedInputs: [],
+            stagedInputs: [stagedInput("file-aaa")],
         });
 
         expect(result).toBe("failed");
@@ -144,20 +146,84 @@ describe("triggerDataProfile seed-first guard", () => {
         expect(status?.status).toBe("pending");
     });
 
-    it("refuses an empty-seed row — `[]` names zero files, and is not a seed", async () => {
+    it("refuses an empty-seed row dispatched a manifest that names files — `[]` is not a seed", async () => {
         // `upsertAnalysis` writes NULL to mean "leave the stored seed alone", so `[]`
-        // reaches the ledger as a real value. It must be refused exactly like NULL.
+        // reaches the ledger as a real value. Against a manifest that names a file, it
+        // must be refused exactly like NULL.
         await seedAnalysis(pool, "a-emptyseed", "pending");
         await setSeed(pool, "a-emptyseed", []);
 
         const result = await triggerDataProfile(tripwireDeps(pool), {
             auth: makeLocalAuth(),
             analysisId: "a-emptyseed",
-            stagedInputs: [],
+            stagedInputs: [stagedInput("file-aaa")],
         });
 
         expect(result).toBe("failed");
         expect(await rawStatus(pool, "a-emptyseed")).toBe("pending");
+    });
+
+    it("completes a NULL-seed row dispatched an empty manifest — no input files, no workflow", async () => {
+        // The never-profiled analysis with no inputs. Nothing to profile, so the row is
+        // `completed` at once. `tripwireDeps` documents that no workflow is launched.
+        await seedAnalysis(pool, "a-empty-noseed", null);
+
+        const result = await triggerDataProfile(tripwireDeps(pool), {
+            auth: makeLocalAuth(),
+            analysisId: "a-empty-noseed",
+            stagedInputs: [],
+        });
+
+        expect(result).toBe("completed");
+        expect(await rawStatus(pool, "a-empty-noseed")).toBe("completed");
+        const status = (await loadDataProfileStatus(pool, "a-empty-noseed"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.result).toBeNull();
+        expect(status?.workflowId).toBeNull();
+        expect(status?.seedInputFileIds).toEqual([]);
+    });
+
+    it("completes an empty-seed pending row dispatched an empty manifest", async () => {
+        // The caller seeded `[]` and forwarded an empty manifest: the two agree that the
+        // analysis has no input files.
+        await seedAnalysis(pool, "a-empty-seeded", "pending");
+        await setSeed(pool, "a-empty-seeded", []);
+
+        const result = await triggerDataProfile(tripwireDeps(pool), {
+            auth: makeLocalAuth(),
+            analysisId: "a-empty-seeded",
+            stagedInputs: [],
+        });
+
+        expect(result).toBe("completed");
+        expect(await rawStatus(pool, "a-empty-seeded")).toBe("completed");
+    });
+
+    it("reports already_running for an empty manifest against a live run", async () => {
+        // A live workflow owns the row. The empty-set stamp refuses it, and the trigger
+        // names the cause from the status instead of a bare failure.
+        await seedAnalysis(pool, "a-empty-running", "running");
+        await setSeed(pool, "a-empty-running", []);
+
+        const result = await triggerDataProfile(tripwireDeps(pool), {
+            auth: makeLocalAuth(),
+            analysisId: "a-empty-running",
+            stagedInputs: [],
+        });
+
+        expect(result).toBe("already_running");
+        expect(await rawStatus(pool, "a-empty-running")).toBe("running");
+    });
+
+    it("fails an empty manifest for an analysis with no ledger row", async () => {
+        const result = await triggerDataProfile(tripwireDeps(pool), {
+            auth: makeLocalAuth(),
+            analysisId: "a-empty-norow",
+            stagedInputs: [],
+        });
+
+        expect(result).toBe("failed");
+        expect(await rawStatus(pool, "a-empty-norow")).toBeNull();
     });
 
     it("claims a NULL-status seeded row — the cleared-then-reseeded state", async () => {

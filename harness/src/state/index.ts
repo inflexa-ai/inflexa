@@ -62,6 +62,7 @@ export {
     expireStaleDataProfile,
     reconcileOrphanedDataProfile,
     clearDataProfile,
+    completeEmptyDataProfile,
     loadDataProfileStatus,
     loadSeedInputFileIds,
     recordDataProfileWorkflowId,
