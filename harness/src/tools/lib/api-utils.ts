@@ -1,7 +1,8 @@
 /**
  * Shared HTTP fetch helper for bioinformatics API tools.
  *
- * Provides retry-with-backoff for rate-limited APIs (429/503), request
+ * Provides retry-with-backoff for a rate-limited or a transiently-broken API
+ * (429/502/503/504), request
  * timeouts, and tab-delimited text parsing. `apiFetch` is the external-call
  * boundary, so it is where a throw becomes a `Result`: it returns a
  * `ResultAsync<T, ApiError>` rather than throwing — callers branch on
@@ -30,10 +31,13 @@ export type ApiError =
     | { readonly type: "exhausted"; readonly attempts: number; readonly lastError: string }
     | { readonly type: "invalid_response"; readonly issues: string };
 
-const RETRYABLE_STATUSES = new Set([429, 503]);
+// 502 and 504 sit here next to 429 and 503 because a gateway in front of a bio
+// provider answers with one of them while the origin restarts, and it sends an
+// HTML body. That answer is transient, thus a retry gets the real payload.
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
 /**
- * Fetch a URL with retry on 429/503, exponential backoff, and timeout.
+ * Fetch a URL with retry on 429/502/503/504, exponential backoff, and timeout.
  * `err` carries the structured failure; a non-ok HTTP status is reported as
  * `http_status` so callers can branch on a concrete code (a 404 is usually an
  * expected "not found" → a data variant; see `isUnexpectedApiError`).
@@ -151,6 +155,40 @@ export function describeApiError(e: ApiError): string {
 export function isUnexpectedApiError(e: ApiError): boolean {
     return !(e.type === "http_status" && e.status >= 400 && e.status < 500);
 }
+
+/**
+ * Read a number that a provider serializes as a JSON string.
+ *
+ * A Tastypie `decimal` field (ChEMBL `max_phase`, `standard_value`,
+ * `pchembl_value`) and the eutils `esearch` counts arrive as strings, and the
+ * same value arrives as a number from a different serializer of the same
+ * provider. One helper answers for both encodings, thus no call site invents its
+ * own rule.
+ *
+ * A value that is not a finite number gives `null`. As a result a caller never
+ * sees `NaN`, which compares false against itself and poisons every downstream
+ * threshold.
+ */
+export function parseWireNumber(value: string | number | null | undefined): number | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const trimmed = value.trim();
+    // `Number("")` and `Number(" ")` give 0, thus an empty string must not reach it.
+    if (trimmed === "") return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * The schema form of `parseWireNumber`, for a field that a provider serializes
+ * as a string or as a number.
+ *
+ * The helper accepts neither `null` nor an omission, because absence is a
+ * per-provider policy and no field is widened without evidence. A caller
+ * composes `.nullable()`, `.optional()`, or both, per the policy of its
+ * provider.
+ */
+export const zWireNumber = z.union([z.string(), z.number()]).transform((value) => parseWireNumber(value));
 
 /**
  * Parse tab-separated text into rows of columns (e.g., KEGG responses).
