@@ -1,0 +1,17 @@
+[
+    {
+        "targetId": 43,
+        "name": "CT receptor",
+        "abbreviation": null,
+        "systematicName": null,
+        "type": "gpcr",
+        "familyIds": [
+            11
+        ],
+        "familyNames": [
+            "Calcitonin receptors"
+        ],
+        "subunitIds": [],
+        "subunitNames": []
+    }
+]

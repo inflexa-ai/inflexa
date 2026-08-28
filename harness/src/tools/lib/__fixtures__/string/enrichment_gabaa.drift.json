@@ -1,0 +1,328 @@
+[
+    {
+        "category": "COMPARTMENTS",
+        "term": "GOCC:1902711",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 19,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": "GABRB2,GABRB1,GABRA1,GABRG2,GABRA2",
+        "p_value": 1.72e-15,
+        "fdr": 3.95e-12,
+        "description": "GABA-A receptor complex"
+    },
+    {
+        "category": "Process",
+        "term": "GO:0007214",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 28,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 9.59e-15,
+        "fdr": 1.5e-10,
+        "description": "Gamma-aminobutyric acid signaling pathway"
+    },
+    {
+        "category": "Component",
+        "term": "GO:1902711",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 19,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 1.72e-15,
+        "fdr": 3.52e-12,
+        "description": "GABA-A receptor complex"
+    },
+    {
+        "category": "Function",
+        "term": "GO:0022851",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 13,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 3.46e-16,
+        "fdr": 1.71e-12,
+        "description": "GABA-gated chloride ion channel activity"
+    },
+    {
+        "category": "DISEASES",
+        "term": "DOID:1826",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 306,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 9.49e-10,
+        "fdr": 0.00000436,
+        "description": "Epilepsy"
+    },
+    {
+        "category": "Keyword",
+        "term": "KW-0869",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 49,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 1.28e-13,
+        "fdr": 8.59e-11,
+        "description": "Chloride channel"
+    },
+    {
+        "category": "KEGG",
+        "term": "hsa05033",
+        "number_of_genes": 3,
+        "number_of_genes_in_background": 37,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1"
+        ],
+        "p_value": 7.73e-8,
+        "fdr": 0.000026,
+        "description": "Nicotine addiction"
+    },
+    {
+        "category": "InterPro",
+        "term": "IPR006028",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 22,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 3.26e-15,
+        "fdr": 2.34e-11,
+        "description": "Gamma-aminobutyric acid A receptor/Glycine receptor alpha"
+    },
+    {
+        "category": "Pfam",
+        "term": "PF02931",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 47,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 1.05e-13,
+        "fdr": 2.2e-10,
+        "description": "Neurotransmitter-gated ion-channel ligand binding domain"
+    },
+    {
+        "category": "PMID",
+        "term": "PMID:35850019",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 9,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 8.09e-17,
+        "fdr": 4.16e-10,
+        "description": "(2022) Genetic variations in GABA metabolism and epilepsy."
+    },
+    {
+        "category": "RCTM",
+        "term": "HSA-977443",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 60,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 3.34e-13,
+        "fdr": 7.62e-10,
+        "description": "GABA receptor activation"
+    },
+    {
+        "category": "WikiPathways",
+        "term": "WP4159",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 31,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 1.52e-14,
+        "fdr": 1.19e-11,
+        "description": "GABA receptor signaling"
+    },
+    {
+        "category": "HPO",
+        "term": "HP:0001298",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 276,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 5.69e-10,
+        "fdr": 0.00000355,
+        "description": "Encephalopathy"
+    },
+    {
+        "category": "NetworkNeighborAL",
+        "term": "CL:23142",
+        "number_of_genes": 5,
+        "number_of_genes_in_background": 10,
+        "ncbiTaxonId": 9606,
+        "inputGenes": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "preferredNames": [
+            "GABRB2",
+            "GABRB1",
+            "GABRA1",
+            "GABRG2",
+            "GABRA2"
+        ],
+        "p_value": 1.21e-16,
+        "fdr": 5.55e-13,
+        "description": "GABA-gated chloride ion channel activity"
+    }
+]

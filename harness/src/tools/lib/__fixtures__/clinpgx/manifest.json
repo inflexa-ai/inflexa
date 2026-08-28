@@ -1,0 +1,18 @@
+{
+    "clinicalAnnotation_drug_clopidogrel.json": {
+        "url": "https://api.clinpgx.org/v1/data/clinicalAnnotation",
+        "params": {
+            "relatedChemicals.name": "clopidogrel"
+        },
+        "capturedAt": "2026-08-28",
+        "replay": false
+    },
+    "clinicalAnnotation_gene_CYP2C19.json": {
+        "url": "https://api.clinpgx.org/v1/data/clinicalAnnotation",
+        "params": {
+            "location.genes.symbol": "CYP2C19"
+        },
+        "capturedAt": "2026-08-28",
+        "replay": false
+    }
+}

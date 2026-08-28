@@ -1,0 +1,432 @@
+{
+    "entryType": "UniProtKB reviewed (Swiss-Prot)",
+    "primaryAccession": 533,
+    "uniProtkbId": "EGFR_HUMAN",
+    "genes": [
+        {
+            "geneName": {
+                "evidences": [
+                    {
+                        "evidenceCode": "ECO:0000312",
+                        "source": "HGNC",
+                        "id": "HGNC:3236"
+                    }
+                ],
+                "value": "EGFR"
+            },
+            "synonyms": [
+                {
+                    "value": "ERBB"
+                },
+                {
+                    "value": "ERBB1"
+                },
+                {
+                    "value": "HER1"
+                }
+            ]
+        }
+    ],
+    "comments": [
+        {
+            "texts": [
+                {
+                    "evidences": [
+                        {
+                            "evidenceCode": "ECO:0000255",
+                            "source": "PROSITE-ProRule",
+                            "id": "PRU00159"
+                        }
+                    ],
+                    "value": "Belongs to the protein kinase superfamily. Tyr protein kinase family. EGF receptor subfamily"
+                }
+            ],
+            "commentType": "SIMILARITY"
+        }
+    ],
+    "uniProtKBCrossReferences": [
+        {
+            "database": "ChEMBL",
+            "id": "CHEMBL203",
+            "properties": [
+                {
+                    "key": "Description",
+                    "value": "-"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-1227986",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Signaling by ERBB2"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-1236382",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Constitutive Signaling by Ligand-Responsive EGFR Cancer Variants"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-1236394",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Signaling by ERBB4"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-1250196",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "SHC1 events in ERBB2 signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-1251932",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "PLCG1 events in ERBB2 signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-1257604",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "PIP3 activates AKT signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-177929",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Signaling by EGFR"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-179812",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "GRB2 events in EGFR signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-180292",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "GAB1 signalosome"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-180336",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "SHC1 events in EGFR signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-182971",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "EGFR downregulation"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-1963640",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "GRB2 events in ERBB2 signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-1963642",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "PI3K events in ERBB2 signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-212718",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "EGFR interacts with phospholipase C-gamma"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-2179392",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "EGFR Transactivation by Gastrin"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-2219530",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Constitutive Signaling by Aberrant PI3K in Cancer"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-445144",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Signal transduction by L1"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-5637810",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Constitutive Signaling by EGFRvIII"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-5638303",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Inhibition of Signaling by Overexpressed EGFR"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-5673001",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "RAF/MAP kinase cascade"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-6785631",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "ERBB2 Regulates Cell Motility"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-6811558",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "PI5P, PP2A and IER3 Regulate PI3K/AKT Signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-8847993",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "ERBB2 Activates PTK6 Signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-8856825",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Cargo recognition for clathrin-mediated endocytosis"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-8856828",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Clathrin-mediated endocytosis"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-8857538",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "PTK6 promotes HIF1A stabilization"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-8863795",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Downregulation of ERBB2 signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-8866910",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "TFAP2 (AP-2) family regulates transcription of growth factors and their receptors"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-9009391",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Extra-nuclear estrogen signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-9013507",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "NOTCH3 Activation and Transmission of Signal to the Nucleus"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-9609690",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "HCMV Early Events"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-9634638",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Estrogen-dependent nuclear events downstream of ESR-membrane signaling"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-9664565",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Signaling by ERBB2 KD Mutants"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-9665348",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Signaling by ERBB2 ECD mutants"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-9665686",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Signaling by ERBB2 TMD/JMD mutants"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-9820960",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Respiratory syncytial virus (RSV) attachment and entry"
+                }
+            ]
+        },
+        {
+            "database": "Reactome",
+            "id": "R-HSA-9927432",
+            "properties": [
+                {
+                    "key": "PathwayName",
+                    "value": "Developmental Lineage of Mammary Gland Myoepithelial Cells"
+                }
+            ]
+        }
+    ],
+    "extraAttributes": {
+        "uniParcId": "UPI000003E750"
+    }
+}

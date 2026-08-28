@@ -1,0 +1,15 @@
+{
+    "entry_P00533_EGFR.json": {
+        "url": "https://rest.uniprot.org/uniprotkb/P00533?fields=accession,id,gene_names,xref_chembl,xref_reactome,cc_similarity&format=json",
+        "capturedAt": "2026-08-28"
+    },
+    "entry_Q6ZQY7_obscure.json": {
+        "url": "https://rest.uniprot.org/uniprotkb/Q6ZQY7?fields=accession,id,gene_names,xref_chembl,xref_reactome,cc_similarity&format=json",
+        "capturedAt": "2026-08-28"
+    },
+    "uniprotkb_openapi.json": {
+        "url": "https://rest.uniprot.org/uniprotkb/api/docs",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    }
+}

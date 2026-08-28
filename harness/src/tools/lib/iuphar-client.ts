@@ -12,21 +12,34 @@
 
 import { z } from "zod";
 
-import { apiFetchValidated, describeApiError, type ApiError } from "./api-utils.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
+import { apiFetchValidated, describeApiError, isUnexpectedApiError, type ApiError } from "./api-utils.js";
 import { IUPHAR_BASE, IUPHAR_HEADERS as HEADERS } from "./iuphar-config.js";
 
-// Validated at the fetch boundary. GtoPdb returns familyIds/complexIds as
-// arrays on every target, and the resolver reads `.length` / iterates them
-// without a guard, so they stay required — a missing value surfaces as
-// `invalid_response` rather than a runtime TypeError. subunitIds and type are
-// only read behind a guard, so they may be absent.
-const IupharTargetSchema = z.object({
+// Validated at the fetch boundary. GtoPdb serves the target record in three
+// wire shapes under this one schema, and the key set differs per shape:
+//
+//   Shape A — the `/targets?…` list and `/targets/{id}/complexes`. It OMITS
+//     `complexIds`, and `type` is lower snake case (`gpcr`,
+//     `catalytic_receptor`, and `""` for an accessory protein).
+//   Shape B — `/targets/{id}/subunits`. It carries `complexIds` as a populated
+//     number array, and `type` is CamelCase (`GPCR`, `AccessoryProtein`).
+//   Shape C — `/targets/{id}`. Same key set as shape B, plus about 27 flat
+//     cross-reference keys, but `type` is the shape A casing again.
+//
+// Thus `complexIds` is optional, and its one read site in
+// `getFamilyHeterodimers` guards the omission. `familyIds` stays required,
+// because every shape sends it and an accessory protein sends `[]`. A missing
+// `familyIds` surfaces as `invalid_response` rather than as a runtime
+// TypeError.
+export const IupharTargetSchema = z.object({
     targetId: z.number(),
     name: z.string(),
     type: z.string().nullable().optional(),
     familyIds: z.array(z.number()),
     subunitIds: z.array(z.number()).optional(),
-    complexIds: z.array(z.number()),
+    complexIds: z.array(z.number()).optional(),
     subunitType: z.string().optional(),
 });
 export type IupharTarget = z.infer<typeof IupharTargetSchema>;
@@ -112,7 +125,11 @@ export async function getSubunits(complexId: number): Promise<IupharTarget[]> {
  */
 export async function getFamilyHeterodimers(uniprotOrGeneSymbol: string): Promise<IupharHeterodimer[]> {
     const target = await resolveTarget(uniprotOrGeneSymbol);
-    if (!target || target.complexIds.length === 0) return [];
+    // `resolveTarget` gives a shape A record, which omits `complexIds`. An
+    // omission thus says nothing about the complexes of the target, and only a
+    // present and empty array proves that there is none. `?.length === 0` is
+    // false for the omission, thus the `/complexes` call below answers for it.
+    if (!target || target.complexIds?.length === 0) return [];
 
     const url = `${IUPHAR_BASE}/targets/${target.targetId}/complexes`;
     const res = await apiFetchValidated(url, z.array(IupharTargetSchema), { headers: HEADERS });
@@ -131,6 +148,12 @@ export async function getFamilyHeterodimers(uniprotOrGeneSymbol: string): Promis
             const complex = batch[j]!;
             const subunits = subunitLists[j]!;
             const cleanedSubunits = subunits.map((s) => ({ ...s, name: stripHtml(s.name) }));
+            // Only a shape B row reaches this filter, because `getSubunits`
+            // calls `/targets/{id}/subunits`. Shape B is the one shape that
+            // names the kind of a target as `AccessoryProtein`, and the
+            // lower-case compare matches that CamelCase form. Shape A and shape
+            // C send `""` for the same target, thus the same filter over a list
+            // row or a single-target row would match nothing.
             const accessories = cleanedSubunits.filter((s) => (s.type ?? "").toLowerCase() === "accessoryprotein");
             results.push({
                 complex: { ...complex, name: stripHtml(complex.name) },
@@ -163,7 +186,7 @@ export async function getAccessoryProteinNames(uniprotOrGeneSymbol: string): Pro
 
 // getFamilySiblingUniprots iterates `targetIds` without a guard, so it stays
 // required; the other fields are not read, so they may be absent.
-const IupharFamilySchema = z.object({
+export const IupharFamilySchema = z.object({
     familyId: z.number().optional(),
     name: z.string().optional(),
     targetIds: z.array(z.number()),
@@ -179,10 +202,15 @@ export async function getFamily(familyId: number): Promise<IupharFamily | null> 
         if (notFound(res.error)) return null;
         throw new Error(describeApiError(res.error));
     }
+    // GtoPdb answers an unknown family with HTTP 200 and the sentinel record
+    // `{familyId: -1, targetIds: []}`, never with a 404. Thus the sentinel is
+    // the one signal that the family does not exist, and the `notFound` branch
+    // above cannot report it.
+    if (res.value.familyId === -1) return null;
     return res.value;
 }
 
-const IupharDatabaseLinkSchema = z.object({
+export const IupharDatabaseLinkSchema = z.object({
     accession: z.string().optional(),
     database: z.string().optional(),
     species: z.string().optional(),
@@ -213,7 +241,8 @@ export async function getTargetHumanUniprots(targetId: number): Promise<string[]
  * CALCRL accession; the AMY1/2/3 complexes are excluded because they are
  * heterodimers, not separate primary proteins.
  */
-export async function getFamilySiblingUniprots(uniprotOrGeneSymbol: string): Promise<string[]> {
+export async function getFamilySiblingUniprots(uniprotOrGeneSymbol: string, logger?: Logger): Promise<string[]> {
+    const log = (logger ?? createNoopLogger()).named("iuphar-client.family-siblings").with({ query: uniprotOrGeneSymbol });
     const self = await resolveTarget(uniprotOrGeneSymbol);
     if (!self) return [];
     const selfUniprots = new Set(await getTargetHumanUniprots(self.targetId));
@@ -240,7 +269,15 @@ export async function getFamilySiblingUniprots(uniprotOrGeneSymbol: string): Pro
             batch.map(async (tid) => {
                 const url = `${IUPHAR_BASE}/targets/${tid}`;
                 const res = await apiFetchValidated(url, IupharTargetSchema, { headers: HEADERS });
-                if (res.isErr()) return [];
+                if (res.isErr()) {
+                    // A sibling that GtoPdb does not serve is a normal miss, and the
+                    // loop drops it. But a contract break drops every sibling in the
+                    // same way, thus an unexpected cause reaches the Logger first.
+                    if (isUnexpectedApiError(res.error)) {
+                        log.error("sibling target dropped from the result", { targetId: tid, cause: describeApiError(res.error) });
+                    }
+                    return [];
+                }
                 const t = res.value;
                 if (t.subunitIds && t.subunitIds.length > 0) return [];
                 return getTargetHumanUniprots(t.targetId);
