@@ -1,0 +1,495 @@
+{
+    "atc_classifications": ["L01FD01"],
+    "availability_type": 1,
+    "biotherapeutic": {
+        "biocomponents": [
+            {
+                "component_id": 31030,
+                "component_type": "Protein",
+                "description": "Light chain",
+                "organism": null,
+                "sequence": "DIQMTQSPSSLSASVGDRVTITCRASQDVNTAVAWYQQKPGKAPKLLIYSASFLYSGVPSRFSGSRSGTDFTLTISSLQPEDFATYYCQQHYTTPPTFGQGTKVEIKRTVAAPSVFIFPPSDEQLKSGTASVVCLLNNFYPREAKVQWKVDNALQSGNSQESVTEQDSKDSTYSLSSTLTLSKADYEKHKVYACEVTHQGLSSPVTKSFNRGEC",
+                "tax_id": null
+            },
+            {
+                "component_id": 29092,
+                "component_type": "Protein",
+                "description": "Sequence",
+                "organism": null,
+                "sequence": "EVQLVESGGGLVQPGGSLRLSCAASGFNIKDTYIHWVRQAPGKGLEWVARIYPTNGYTRYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCSRWGGDGFYAMDYWGQGTLVTVSSASTKGPSVFPLAPSSKSTSGGTAALGCLVKDYFPEPVTVSWNSGALTSGVHTFPAVLQSSGLYSLSSVVTVPSSSLGTQTYICNVNHKPSNTKVDKKVEPPKSCDKTHTCPPCPAPELLGGPSVFLFPPKPKDTLMISRTPEVTCVVVDVSHEDPEVKFNWYVDGVEVHNAKTKPREEQYNSTYRVVSVLTVLHQDWLNGKEYKCKVSNKALPAPIEKTISKAKGQPREPQVYTLPPSRDELTKNQVSLTCLVKGFYPSDIAVEWESNGQPENNYKTTPPVLDSDGSFFLYSKLTVDKSRWQQGNVFSCSVMHEALHNHYTQKSLSLSPGK",
+                "tax_id": null
+            }
+        ],
+        "description": "Immunoglobulin G1-kappa, anti-[Homo sapiens ERBB2 (epidermal growth factor receptor 2, HER-2, p185c-erbB2, NEU, EGFR2)], humanized monoclonal antibody conjugated to maytansinoid DM1; gamma1 heavy chain (1-449) [humanized VH (Homo sapiens IGHV3-66*01 (81.60%) -(IGHD)-IGHJ6*01 T123>L) [8.8.13] (1-120) - Homo sapiens IGHG1*03 (121-449) CH1 R120>K], (223-214')-disulfide with kappa light chain (1’-214’) [humanized V-KAPPA (Homo sapiens IGKV1-39*01 (86.30%) -IGKJ1*01) [6.3.9] (1'-107') - Homo sapiens IGKC*01 (108'-214')]; (229-229\"\":232-232\"\")-bisdisulfide dimer; conjugated, on an average of 3 to 4 lysyl, to maytansinoid DM1 via a succinimidyl-4-(N-maleimidomethyl) cyclohexane-1-carboxylate (SMCC) linker.",
+        "helm_notation": "PEPTIDE1{D.I.Q.M.T.Q.S.P.S.S.L.S.A.S.V.G.D.R.V.T.I.T.C.R.A.S.Q.D.V.N.T.A.V.A.W.Y.Q.Q.K.P.G.K.A.P.K.L.L.I.Y.S.A.S.F.L.Y.S.G.V.P.S.R.F.S.G.S.R.S.G.T.D.F.T.L.T.I.S.S.L.Q.P.E.D.F.A.T.Y.Y.C.Q.Q.H.Y.T.T.P.P.T.F.G.Q.G.T.K.V.E.I.K.R.T.V.A.A.P.S.V.F.I.F.P.P.S.D.E.Q.L.K.S.G.T.A.S.V.V.C.L.L.N.N.F.Y.P.R.E.A.K.V.Q.W.K.V.D.N.A.L.Q.S.G.N.S.Q.E.S.V.T.E.Q.D.S.K.D.S.T.Y.S.L.S.S.T.L.T.L.S.K.A.D.Y.E.K.H.K.V.Y.A.C.E.V.T.H.Q.G.L.S.S.P.V.T.K.S.F.N.R.G.E.C}|PEPTIDE2{E.V.Q.L.V.E.S.G.G.G.L.V.Q.P.G.G.S.L.R.L.S.C.A.A.S.G.F.N.I.K.D.T.Y.I.H.W.V.R.Q.A.P.G.K.G.L.E.W.V.A.R.I.Y.P.T.N.G.Y.T.R.Y.A.D.S.V.K.G.R.F.T.I.S.A.D.T.S.K.N.T.A.Y.L.Q.M.N.S.L.R.A.E.D.T.A.V.Y.Y.C.S.R.W.G.G.D.G.F.Y.A.M.D.Y.W.G.Q.G.T.L.V.T.V.S.S.A.S.T.K.G.P.S.V.F.P.L.A.P.S.S.K.S.T.S.G.G.T.A.A.L.G.C.L.V.K.D.Y.F.P.E.P.V.T.V.S.W.N.S.G.A.L.T.S.G.V.H.T.F.P.A.V.L.Q.S.S.G.L.Y.S.L.S.S.V.V.T.V.P.S.S.S.L.G.T.Q.T.Y.I.C.N.V.N.H.K.P.S.N.T.K.V.D.K.K.V.E.P.P.K.S.C.D.K.T.H.T.C.P.P.C.P.A.P.E.L.L.G.G.P.S.V.F.L.F.P.P.K.P.K.D.T.L.M.I.S.R.T.P.E.V.T.C.V.V.V.D.V.S.H.E.D.P.E.V.K.F.N.W.Y.V.D.G.V.E.V.H.N.A.K.T.K.P.R.E.E.Q.Y.N.S.T.Y.R.V.V.S.V.L.T.V.L.H.Q.D.W.L.N.G.K.E.Y.K.C.K.V.S.N.K.A.L.P.A.P.I.E.K.T.I.S.K.A.K.G.Q.P.R.E.P.Q.V.Y.T.L.P.P.S.R.D.E.L.T.K.N.Q.V.S.L.T.C.L.V.K.G.F.Y.P.S.D.I.A.V.E.W.E.S.N.G.Q.P.E.N.N.Y.K.T.T.P.P.V.L.D.S.D.G.S.F.F.L.Y.S.K.L.T.V.D.K.S.R.W.Q.Q.G.N.V.F.S.C.S.V.M.H.E.A.L.H.N.H.Y.T.Q.K.S.L.S.L.S.P.G.K}|PEPTIDE3{E.V.Q.L.V.E.S.G.G.G.L.V.Q.P.G.G.S.L.R.L.S.C.A.A.S.G.F.N.I.K.D.T.Y.I.H.W.V.R.Q.A.P.G.K.G.L.E.W.V.A.R.I.Y.P.T.N.G.Y.T.R.Y.A.D.S.V.K.G.R.F.T.I.S.A.D.T.S.K.N.T.A.Y.L.Q.M.N.S.L.R.A.E.D.T.A.V.Y.Y.C.S.R.W.G.G.D.G.F.Y.A.M.D.Y.W.G.Q.G.T.L.V.T.V.S.S.A.S.T.K.G.P.S.V.F.P.L.A.P.S.S.K.S.T.S.G.G.T.A.A.L.G.C.L.V.K.D.Y.F.P.E.P.V.T.V.S.W.N.S.G.A.L.T.S.G.V.H.T.F.P.A.V.L.Q.S.S.G.L.Y.S.L.S.S.V.V.T.V.P.S.S.S.L.G.T.Q.T.Y.I.C.N.V.N.H.K.P.S.N.T.K.V.D.K.K.V.E.P.P.K.S.C.D.K.T.H.T.C.P.P.C.P.A.P.E.L.L.G.G.P.S.V.F.L.F.P.P.K.P.K.D.T.L.M.I.S.R.T.P.E.V.T.C.V.V.V.D.V.S.H.E.D.P.E.V.K.F.N.W.Y.V.D.G.V.E.V.H.N.A.K.T.K.P.R.E.E.Q.Y.N.S.T.Y.R.V.V.S.V.L.T.V.L.H.Q.D.W.L.N.G.K.E.Y.K.C.K.V.S.N.K.A.L.P.A.P.I.E.K.T.I.S.K.A.K.G.Q.P.R.E.P.Q.V.Y.T.L.P.P.S.R.D.E.L.T.K.N.Q.V.S.L.T.C.L.V.K.G.F.Y.P.S.D.I.A.V.E.W.E.S.N.G.Q.P.E.N.N.Y.K.T.T.P.P.V.L.D.S.D.G.S.F.F.L.Y.S.K.L.T.V.D.K.S.R.W.Q.Q.G.N.V.F.S.C.S.V.M.H.E.A.L.H.N.H.Y.T.Q.K.S.L.S.L.S.P.G.K}|PEPTIDE4{D.I.Q.M.T.Q.S.P.S.S.L.S.A.S.V.G.D.R.V.T.I.T.C.R.A.S.Q.D.V.N.T.A.V.A.W.Y.Q.Q.K.P.G.K.A.P.K.L.L.I.Y.S.A.S.F.L.Y.S.G.V.P.S.R.F.S.G.S.R.S.G.T.D.F.T.L.T.I.S.S.L.Q.P.E.D.F.A.T.Y.Y.C.Q.Q.H.Y.T.T.P.P.T.F.G.Q.G.T.K.V.E.I.K.R.T.V.A.A.P.S.V.F.I.F.P.P.S.D.E.Q.L.K.S.G.T.A.S.V.V.C.L.L.N.N.F.Y.P.R.E.A.K.V.Q.W.K.V.D.N.A.L.Q.S.G.N.S.Q.E.S.V.T.E.Q.D.S.K.D.S.T.Y.S.L.S.S.T.L.T.L.S.K.A.D.Y.E.K.H.K.V.Y.A.C.E.V.T.H.Q.G.L.S.S.P.V.T.K.S.F.N.R.G.E.C}$PEPTIDE1,PEPTIDE1,23:R3-88:R3|PEPTIDE2,PEPTIDE2,371:R3-429:R3|PEPTIDE4,PEPTIDE4,134:R3-194:R3|PEPTIDE1,PEPTIDE1,134:R3-194:R3|PEPTIDE3,PEPTIDE3,265:R3-325:R3|PEPTIDE3,PEPTIDE4,224:R3-214:R3|PEPTIDE2,PEPTIDE3,233:R3-233:R3|PEPTIDE2,PEPTIDE2,265:R3-325:R3|PEPTIDE2,PEPTIDE2,147:R3-203:R3|PEPTIDE2,PEPTIDE3,230:R3-230:R3|PEPTIDE2,PEPTIDE1,224:R3-214:R3|PEPTIDE3,PEPTIDE3,147:R3-203:R3|PEPTIDE2,PEPTIDE2,22:R3-96:R3|PEPTIDE3,PEPTIDE3,22:R3-96:R3|PEPTIDE3,PEPTIDE3,371:R3-429:R3|PEPTIDE4,PEPTIDE4,23:R3-88:R3$$$",
+        "molecule_chembl_id": "CHEMBL1201585"
+    },
+    "black_box_warning": 1,
+    "chemical_probe": 0,
+    "chirality": 1,
+    "cross_references": [
+        {
+            "xref_id": "trastuzumab-dkst",
+            "xref_name": "trastuzumab-dkst",
+            "xref_src": "DailyMed"
+        },
+        {
+            "xref_id": "human/EPAR/ogivri",
+            "xref_name": "ogivri",
+            "xref_src": "EMA"
+        },
+        {
+            "xref_id": "human/EPAR/herwenda",
+            "xref_name": "herwenda",
+            "xref_src": "EMA"
+        },
+        {
+            "xref_id": "human/EPAR/kanjinti",
+            "xref_name": "kanjinti",
+            "xref_src": "EMA"
+        },
+        {
+            "xref_id": "human/EPAR/herceptin",
+            "xref_name": "herceptin",
+            "xref_src": "EMA"
+        },
+        {
+            "xref_id": "human/EPAR/zercepac",
+            "xref_name": "zercepac",
+            "xref_src": "EMA"
+        },
+        {
+            "xref_id": "human/EPAR/trazimera",
+            "xref_name": "trazimera",
+            "xref_src": "EMA"
+        },
+        {
+            "xref_id": "human/EPAR/ontruzant",
+            "xref_name": "ontruzant",
+            "xref_src": "EMA"
+        },
+        {
+            "xref_id": "human/EPAR/herzuma",
+            "xref_name": "herzuma",
+            "xref_src": "EMA"
+        },
+        {
+            "xref_id": "trastuzumab-pkrb",
+            "xref_name": "trastuzumab-pkrb",
+            "xref_src": "DailyMed"
+        },
+        {
+            "xref_id": "trastuzumab-anns",
+            "xref_name": "trastuzumab-anns",
+            "xref_src": "DailyMed"
+        },
+        {
+            "xref_id": "trastuzumab",
+            "xref_name": "trastuzumab",
+            "xref_src": "DailyMed"
+        }
+    ],
+    "dosed_ingredient": true,
+    "first_approval": 1998,
+    "first_in_class": 0,
+    "helm_notation": "PEPTIDE1{D.I.Q.M.T.Q.S.P.S.S.L.S.A.S.V.G.D.R.V.T.I.T.C.R.A.S.Q.D.V.N.T.A.V.A.W.Y.Q.Q.K.P.G.K.A.P.K.L.L.I.Y.S.A.S.F.L.Y.S.G.V.P.S.R.F.S.G.S.R.S.G.T.D.F.T.L.T.I.S.S.L.Q.P.E.D.F.A.T.Y.Y.C.Q.Q.H.Y.T.T.P.P.T.F.G.Q.G.T.K.V.E.I.K.R.T.V.A.A.P.S.V.F.I.F.P.P.S.D.E.Q.L.K.S.G.T.A.S.V.V.C.L.L.N.N.F.Y.P.R.E.A.K.V.Q.W.K.V.D.N.A.L.Q.S.G.N.S.Q.E.S.V.T.E.Q.D.S.K.D.S.T.Y.S.L.S.S.T.L.T.L.S.K.A.D.Y.E.K.H.K.V.Y.A.C.E.V.T.H.Q.G.L.S.S.P.V.T.K.S.F.N.R.G.E.C}|PEPTIDE2{E.V.Q.L.V.E.S.G.G.G.L.V.Q.P.G.G.S.L.R.L.S.C.A.A.S.G.F.N.I.K.D.T.Y.I.H.W.V.R.Q.A.P.G.K.G.L.E.W.V.A.R.I.Y.P.T.N.G.Y.T.R.Y.A.D.S.V.K.G.R.F.T.I.S.A.D.T.S.K.N.T.A.Y.L.Q.M.N.S.L.R.A.E.D.T.A.V.Y.Y.C.S.R.W.G.G.D.G.F.Y.A.M.D.Y.W.G.Q.G.T.L.V.T.V.S.S.A.S.T.K.G.P.S.V.F.P.L.A.P.S.S.K.S.T.S.G.G.T.A.A.L.G.C.L.V.K.D.Y.F.P.E.P.V.T.V.S.W.N.S.G.A.L.T.S.G.V.H.T.F.P.A.V.L.Q.S.S.G.L.Y.S.L.S.S.V.V.T.V.P.S.S.S.L.G.T.Q.T.Y.I.C.N.V.N.H.K.P.S.N.T.K.V.D.K.K.V.E.P.P.K.S.C.D.K.T.H.T.C.P.P.C.P.A.P.E.L.L.G.G.P.S.V.F.L.F.P.P.K.P.K.D.T.L.M.I.S.R.T.P.E.V.T.C.V.V.V.D.V.S.H.E.D.P.E.V.K.F.N.W.Y.V.D.G.V.E.V.H.N.A.K.T.K.P.R.E.E.Q.Y.N.S.T.Y.R.V.V.S.V.L.T.V.L.H.Q.D.W.L.N.G.K.E.Y.K.C.K.V.S.N.K.A.L.P.A.P.I.E.K.T.I.S.K.A.K.G.Q.P.R.E.P.Q.V.Y.T.L.P.P.S.R.D.E.L.T.K.N.Q.V.S.L.T.C.L.V.K.G.F.Y.P.S.D.I.A.V.E.W.E.S.N.G.Q.P.E.N.N.Y.K.T.T.P.P.V.L.D.S.D.G.S.F.F.L.Y.S.K.L.T.V.D.K.S.R.W.Q.Q.G.N.V.F.S.C.S.V.M.H.E.A.L.H.N.H.Y.T.Q.K.S.L.S.L.S.P.G.K}|PEPTIDE3{E.V.Q.L.V.E.S.G.G.G.L.V.Q.P.G.G.S.L.R.L.S.C.A.A.S.G.F.N.I.K.D.T.Y.I.H.W.V.R.Q.A.P.G.K.G.L.E.W.V.A.R.I.Y.P.T.N.G.Y.T.R.Y.A.D.S.V.K.G.R.F.T.I.S.A.D.T.S.K.N.T.A.Y.L.Q.M.N.S.L.R.A.E.D.T.A.V.Y.Y.C.S.R.W.G.G.D.G.F.Y.A.M.D.Y.W.G.Q.G.T.L.V.T.V.S.S.A.S.T.K.G.P.S.V.F.P.L.A.P.S.S.K.S.T.S.G.G.T.A.A.L.G.C.L.V.K.D.Y.F.P.E.P.V.T.V.S.W.N.S.G.A.L.T.S.G.V.H.T.F.P.A.V.L.Q.S.S.G.L.Y.S.L.S.S.V.V.T.V.P.S.S.S.L.G.T.Q.T.Y.I.C.N.V.N.H.K.P.S.N.T.K.V.D.K.K.V.E.P.P.K.S.C.D.K.T.H.T.C.P.P.C.P.A.P.E.L.L.G.G.P.S.V.F.L.F.P.P.K.P.K.D.T.L.M.I.S.R.T.P.E.V.T.C.V.V.V.D.V.S.H.E.D.P.E.V.K.F.N.W.Y.V.D.G.V.E.V.H.N.A.K.T.K.P.R.E.E.Q.Y.N.S.T.Y.R.V.V.S.V.L.T.V.L.H.Q.D.W.L.N.G.K.E.Y.K.C.K.V.S.N.K.A.L.P.A.P.I.E.K.T.I.S.K.A.K.G.Q.P.R.E.P.Q.V.Y.T.L.P.P.S.R.D.E.L.T.K.N.Q.V.S.L.T.C.L.V.K.G.F.Y.P.S.D.I.A.V.E.W.E.S.N.G.Q.P.E.N.N.Y.K.T.T.P.P.V.L.D.S.D.G.S.F.F.L.Y.S.K.L.T.V.D.K.S.R.W.Q.Q.G.N.V.F.S.C.S.V.M.H.E.A.L.H.N.H.Y.T.Q.K.S.L.S.L.S.P.G.K}|PEPTIDE4{D.I.Q.M.T.Q.S.P.S.S.L.S.A.S.V.G.D.R.V.T.I.T.C.R.A.S.Q.D.V.N.T.A.V.A.W.Y.Q.Q.K.P.G.K.A.P.K.L.L.I.Y.S.A.S.F.L.Y.S.G.V.P.S.R.F.S.G.S.R.S.G.T.D.F.T.L.T.I.S.S.L.Q.P.E.D.F.A.T.Y.Y.C.Q.Q.H.Y.T.T.P.P.T.F.G.Q.G.T.K.V.E.I.K.R.T.V.A.A.P.S.V.F.I.F.P.P.S.D.E.Q.L.K.S.G.T.A.S.V.V.C.L.L.N.N.F.Y.P.R.E.A.K.V.Q.W.K.V.D.N.A.L.Q.S.G.N.S.Q.E.S.V.T.E.Q.D.S.K.D.S.T.Y.S.L.S.S.T.L.T.L.S.K.A.D.Y.E.K.H.K.V.Y.A.C.E.V.T.H.Q.G.L.S.S.P.V.T.K.S.F.N.R.G.E.C}$PEPTIDE1,PEPTIDE1,23:R3-88:R3|PEPTIDE2,PEPTIDE2,371:R3-429:R3|PEPTIDE4,PEPTIDE4,134:R3-194:R3|PEPTIDE1,PEPTIDE1,134:R3-194:R3|PEPTIDE3,PEPTIDE3,265:R3-325:R3|PEPTIDE3,PEPTIDE4,224:R3-214:R3|PEPTIDE2,PEPTIDE3,233:R3-233:R3|PEPTIDE2,PEPTIDE2,265:R3-325:R3|PEPTIDE2,PEPTIDE2,147:R3-203:R3|PEPTIDE2,PEPTIDE3,230:R3-230:R3|PEPTIDE2,PEPTIDE1,224:R3-214:R3|PEPTIDE3,PEPTIDE3,147:R3-203:R3|PEPTIDE2,PEPTIDE2,22:R3-96:R3|PEPTIDE3,PEPTIDE3,22:R3-96:R3|PEPTIDE3,PEPTIDE3,371:R3-429:R3|PEPTIDE4,PEPTIDE4,23:R3-88:R3$$$",
+    "inorganic_flag": 0,
+    "max_phase": "4.0",
+    "molecule_chembl_id": "CHEMBL1201585",
+    "molecule_hierarchy": {
+        "active_chembl_id": "CHEMBL1201585",
+        "molecule_chembl_id": "CHEMBL1201585",
+        "parent_chembl_id": "CHEMBL1201585"
+    },
+    "molecule_properties": null,
+    "molecule_structures": "none",
+    "molecule_synonyms": [
+        {
+            "molecule_synonym": "4D5V8",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "4D5V8"
+        },
+        {
+            "molecule_synonym": "ABP 980",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "ABP 980"
+        },
+        {
+            "molecule_synonym": "ABP-980",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "ABP-980"
+        },
+        {
+            "molecule_synonym": "ABP980",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "ABP980"
+        },
+        {
+            "molecule_synonym": "Abp-980 (trastuzumab biosimilar)",
+            "syn_type": "OTHER",
+            "synonyms": "ABP-980 (TRASTUZUMAB BIOSIMILAR)"
+        },
+        {
+            "molecule_synonym": "Bmab-200",
+            "syn_type": "OTHER",
+            "synonyms": "BMAB-200"
+        },
+        {
+            "molecule_synonym": "Canhera",
+            "syn_type": "OTHER",
+            "synonyms": "CANHERA"
+        },
+        {
+            "molecule_synonym": "Dmb-3111",
+            "syn_type": "OTHER",
+            "synonyms": "DMB-3111"
+        },
+        {
+            "molecule_synonym": "DMB-3111 (TRASTUZUMAB BIOSIMILAR)",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "DMB-3111 (TRASTUZUMAB BIOSIMILAR)"
+        },
+        {
+            "molecule_synonym": "EG-12014",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "EG-12014"
+        },
+        {
+            "molecule_synonym": "EG12014",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "EG12014"
+        },
+        {
+            "molecule_synonym": "Eg12014 trastuzumab biosimilar",
+            "syn_type": "OTHER",
+            "synonyms": "EG12014 TRASTUZUMAB BIOSIMILAR"
+        },
+        {
+            "molecule_synonym": "Eg-12014 (trastuzumab biosimilar)",
+            "syn_type": "OTHER",
+            "synonyms": "EG-12014 (TRASTUZUMAB BIOSIMILAR)"
+        },
+        {
+            "molecule_synonym": "Herceptin",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "HERCEPTIN"
+        },
+        {
+            "molecule_synonym": "Hercessi",
+            "syn_type": "OTHER",
+            "synonyms": "HERCESSI"
+        },
+        {
+            "molecule_synonym": "Herwenda",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "HERWENDA"
+        },
+        {
+            "molecule_synonym": "Herzuma",
+            "syn_type": "OTHER",
+            "synonyms": "HERZUMA"
+        },
+        {
+            "molecule_synonym": "Herzuma",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "HERZUMA"
+        },
+        {
+            "molecule_synonym": "Hlx 02",
+            "syn_type": "OTHER",
+            "synonyms": "HLX 02"
+        },
+        {
+            "molecule_synonym": "HLX-02",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "HLX-02"
+        },
+        {
+            "molecule_synonym": "Hlx02",
+            "syn_type": "OTHER",
+            "synonyms": "HLX02"
+        },
+        {
+            "molecule_synonym": "Hlx-02 trastuzumab biosimilar",
+            "syn_type": "OTHER",
+            "synonyms": "HLX-02 TRASTUZUMAB BIOSIMILAR"
+        },
+        {
+            "molecule_synonym": "Kadcyla",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "KADCYLA"
+        },
+        {
+            "molecule_synonym": "Kanjinti",
+            "syn_type": "OTHER",
+            "synonyms": "KANJINTI"
+        },
+        {
+            "molecule_synonym": "Kanjinti",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "KANJINTI"
+        },
+        {
+            "molecule_synonym": "Ogivri",
+            "syn_type": "OTHER",
+            "synonyms": "OGIVRI"
+        },
+        {
+            "molecule_synonym": "Ogivri",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "OGIVRI"
+        },
+        {
+            "molecule_synonym": "Ontruzant",
+            "syn_type": "OTHER",
+            "synonyms": "ONTRUZANT"
+        },
+        {
+            "molecule_synonym": "Ontruzant",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "ONTRUZANT"
+        },
+        {
+            "molecule_synonym": "Pf-05280014",
+            "syn_type": "OTHER",
+            "synonyms": "PF-05280014"
+        },
+        {
+            "molecule_synonym": "R-597",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "R-597"
+        },
+        {
+            "molecule_synonym": "Rhumab her2",
+            "syn_type": "OTHER",
+            "synonyms": "RHUMAB HER2"
+        },
+        {
+            "molecule_synonym": "RHUMABHER2",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "RHUMABHER2"
+        },
+        {
+            "molecule_synonym": "RO-0452317",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "RO-0452317"
+        },
+        {
+            "molecule_synonym": "RO0452317",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "RO0452317"
+        },
+        {
+            "molecule_synonym": "Sb-3 (trastuzumab biosimilar)",
+            "syn_type": "OTHER",
+            "synonyms": "SB-3 (TRASTUZUMAB BIOSIMILAR)"
+        },
+        {
+            "molecule_synonym": "SYD-977",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "SYD-977"
+        },
+        {
+            "molecule_synonym": "SYD977",
+            "syn_type": "RESEARCH_CODE",
+            "synonyms": "SYD977"
+        },
+        {
+            "molecule_synonym": "Trastuzumab",
+            "syn_type": "ATC",
+            "synonyms": "TRASTUZUMAB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab",
+            "syn_type": "BAN",
+            "synonyms": "TRASTUZUMAB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab",
+            "syn_type": "BNF",
+            "synonyms": "TRASTUZUMAB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab",
+            "syn_type": "EMA",
+            "synonyms": "TRASTUZUMAB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab",
+            "syn_type": "FDA",
+            "synonyms": "TRASTUZUMAB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab",
+            "syn_type": "INN",
+            "synonyms": "TRASTUZUMAB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab",
+            "syn_type": "MERCK_INDEX",
+            "synonyms": "TRASTUZUMAB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab",
+            "syn_type": "USAN",
+            "synonyms": "TRASTUZUMAB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab anns",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB ANNS"
+        },
+        {
+            "molecule_synonym": "Trastuzumab-anns",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB-ANNS"
+        },
+        {
+            "molecule_synonym": "Trastuzumab beta",
+            "syn_type": "INN",
+            "synonyms": "TRASTUZUMAB BETA"
+        },
+        {
+            "molecule_synonym": "Trastuzumab biosimilar (abp-980)",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB BIOSIMILAR (ABP-980)"
+        },
+        {
+            "molecule_synonym": "Trastuzumab biosimilar (amgen)",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB BIOSIMILAR (AMGEN)"
+        },
+        {
+            "molecule_synonym": "Trastuzumab biosimilar (ct-p6)",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB BIOSIMILAR (CT-P6)"
+        },
+        {
+            "molecule_synonym": "Trastuzumab biosimilar (pfizer)",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB BIOSIMILAR (PFIZER)"
+        },
+        {
+            "molecule_synonym": "Trastuzumab biosimilar (sb-3)",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB BIOSIMILAR (SB-3)"
+        },
+        {
+            "molecule_synonym": "Trastuzumab component of herceptin hylecta",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "TRASTUZUMAB COMPONENT OF HERCEPTIN HYLECTA"
+        },
+        {
+            "molecule_synonym": "Trastuzumab component of phesgo",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "TRASTUZUMAB COMPONENT OF PHESGO"
+        },
+        {
+            "molecule_synonym": "Trastuzumab dkst",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB DKST"
+        },
+        {
+            "molecule_synonym": "Trastuzumab-dkst",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB-DKST"
+        },
+        {
+            "molecule_synonym": "Trastuzumab dttb",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB DTTB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab-dttb",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB-DTTB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab (herceptin)",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB (HERCEPTIN)"
+        },
+        {
+            "molecule_synonym": "Trastuzumab-oysk",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB-OYSK"
+        },
+        {
+            "molecule_synonym": "Trastuzumab-pfizer",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB-PFIZER"
+        },
+        {
+            "molecule_synonym": "Trastuzumab pkrb",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB PKRB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab-pkrb",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB-PKRB"
+        },
+        {
+            "molecule_synonym": "Trastuzumab qyyp",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB QYYP"
+        },
+        {
+            "molecule_synonym": "Trastuzumab-qyyp",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB-QYYP"
+        },
+        {
+            "molecule_synonym": "Trastuzumab-strf",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB-STRF"
+        },
+        {
+            "molecule_synonym": "Trastuzumab-zzxf",
+            "syn_type": "OTHER",
+            "synonyms": "TRASTUZUMAB-ZZXF"
+        },
+        {
+            "molecule_synonym": "Trazimera",
+            "syn_type": "OTHER",
+            "synonyms": "TRAZIMERA"
+        },
+        {
+            "molecule_synonym": "Trazimera",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "TRAZIMERA"
+        },
+        {
+            "molecule_synonym": "Zercepac",
+            "syn_type": "OTHER",
+            "synonyms": "ZERCEPAC"
+        },
+        {
+            "molecule_synonym": "Zercepac",
+            "syn_type": "TRADE_NAME",
+            "synonyms": "ZERCEPAC"
+        }
+    ],
+    "molecule_type": "Antibody",
+    "natural_product": 0,
+    "oral": false,
+    "orphan": 0,
+    "parenteral": true,
+    "polymer_flag": 0,
+    "pref_name": "TRASTUZUMAB",
+    "prodrug": 0,
+    "structure_type": "SEQ",
+    "therapeutic_flag": true,
+    "topical": false,
+    "usan_stem": "-mab; -mab",
+    "usan_stem_definition": "monoclonal antibodies: fully human; monoclonal antibodies: humanized",
+    "usan_substem": "-mab (-umab); -mab (-zumab)",
+    "usan_year": null,
+    "veterinary": 0,
+    "withdrawn_flag": false
+}

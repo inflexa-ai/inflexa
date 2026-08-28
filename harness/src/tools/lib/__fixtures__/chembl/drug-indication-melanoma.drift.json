@@ -1,0 +1,77 @@
+{
+    "drug_indications": [
+        {
+            "drugind_id": 24041,
+            "efo_id": "EFO:0000756",
+            "efo_term": "melanoma",
+            "indication_refs": [
+                {
+                    "ref_id": "NCT00949702,NCT01006980,NCT01271803,NCT01307397,NCT01378975,NCT01400451,NCT01474551,NCT01495988,NCT01519323,NCT01585415,NCT01586195,NCT01597908,NCT01603212,NCT01611675,NCT01638676,NCT01656642,NCT01657591,NCT01667419,NCT01673854,NCT01689519,NCT01754376,NCT01765543,NCT01765556,NCT01765569,NCT01781026,NCT01813214,NCT01826448,NCT01835184,NCT01843738,NCT01844674,NCT01849666,NCT01851824,NCT01876641,NCT01897116,NCT01898585,NCT01909453,NCT01910181,NCT01942993,NCT01943422,NCT01959633,NCT01983124,NCT02036086,NCT02042040,NCT02050321,NCT02068079,NCT02095652,NCT02145910,NCT02230306,NCT02303951,NCT02427893,NCT02441465,NCT02537600,NCT02583516,NCT02721459,NCT02818023,NCT02902029,NCT02908672,NCT02968303,NCT03005639,NCT03101254,NCT03224208,NCT03554083,NCT04722575,NCT05263453",
+                    "ref_type": "ClinicalTrials",
+                    "ref_url": "https://clinicaltrials.gov/search?term=NCT00949702%20NCT01006980%20NCT01271803%20NCT01307397%20NCT01378975%20NCT01400451%20NCT01474551%20NCT01495988%20NCT01519323%20NCT01585415%20NCT01586195%20NCT01597908%20NCT01603212%20NCT01611675%20NCT01638676%20NCT01656642%20NCT01657591%20NCT01667419%20NCT01673854%20NCT01689519%20NCT01754376%20NCT01765543%20NCT01765556%20NCT01765569%20NCT01781026%20NCT01813214%20NCT01826448%20NCT01835184%20NCT01843738%20NCT01844674%20NCT01849666%20NCT01851824%20NCT01876641%20NCT01897116%20NCT01898585%20NCT01909453%20NCT01910181%20NCT01942993%20NCT01943422%20NCT01959633%20NCT01983124%20NCT02036086%20NCT02042040%20NCT02050321%20NCT02068079%20NCT02095652%20NCT02145910%20NCT02230306%20NCT02303951%20NCT02427893%20NCT02441465%20NCT02537600%20NCT02583516%20NCT02721459%20NCT02818023%20NCT02902029%20NCT02908672%20NCT02968303%20NCT03005639%20NCT03101254%20NCT03224208%20NCT03554083%20NCT04722575%20NCT05263453"
+                },
+                {
+                    "ref_id": "38eea320-7e0c-485a-bc30-98c3c45e2763",
+                    "ref_type": "DailyMed",
+                    "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=38eea320-7e0c-485a-bc30-98c3c45e2763"
+                },
+                {
+                    "ref_id": "EMEA/H/C/002409",
+                    "ref_type": "EMA",
+                    "ref_url": "https://www.ema.europa.eu/en/medicines/human/EPAR/zelboraf"
+                }
+            ],
+            "max_phase_for_ind": true,
+            "mesh_heading": "Melanoma",
+            "mesh_id": "D008545",
+            "molecule_chembl_id": "CHEMBL1229517",
+            "parent_molecule_chembl_id": "CHEMBL1229517"
+        },
+        {
+            "drugind_id": 45542,
+            "efo_id": "EFO:0000389",
+            "efo_term": "cutaneous melanoma",
+            "indication_refs": [
+                {
+                    "ref_id": "NCT00025181,NCT00032045,NCT00058279,NCT00077532,NCT00084656,NCT00357461,NCT01134614,NCT01176474,NCT01274338,NCT01708941,NCT01950390,NCT01970527,NCT02158520,NCT02339571,NCT02437279,NCT02941744,NCT03396952,NCT03719131,NCT03769155,NCT03949153,NCT05200143,NCT05578872,NCT06377111",
+                    "ref_type": "ClinicalTrials",
+                    "ref_url": "https://clinicaltrials.gov/search?term=NCT00025181%20NCT00032045%20NCT00058279%20NCT00077532%20NCT00084656%20NCT00357461%20NCT01134614%20NCT01176474%20NCT01274338%20NCT01708941%20NCT01950390%20NCT01970527%20NCT02158520%20NCT02339571%20NCT02437279%20NCT02941744%20NCT03396952%20NCT03719131%20NCT03769155%20NCT03949153%20NCT05200143%20NCT05578872%20NCT06377111"
+                }
+            ],
+            "max_phase_for_ind": "4.0",
+            "mesh_heading": "Melanoma",
+            "mesh_id": "D008545",
+            "molecule_chembl_id": "CHEMBL1789844",
+            "parent_molecule_chembl_id": "CHEMBL1789844"
+        },
+        {
+            "drugind_id": 53812,
+            "efo_id": "EFO:0000756",
+            "efo_term": "melanoma",
+            "indication_refs": [
+                {
+                    "ref_id": "NCT01777776,NCT01820364,NCT01894672,NCT01909453,NCT02159066,NCT02263898,NCT02902042,NCT03235245,NCT03563729,NCT03878719,NCT04655157,NCT04657991,NCT04741997,NCT05270044,NCT05926960,NCT06194929",
+                    "ref_type": "ClinicalTrials",
+                    "ref_url": "https://clinicaltrials.gov/search?term=NCT01777776%20NCT01820364%20NCT01894672%20NCT01909453%20NCT02159066%20NCT02263898%20NCT02902042%20NCT03235245%20NCT03563729%20NCT03878719%20NCT04655157%20NCT04657991%20NCT04741997%20NCT05270044%20NCT05926960%20NCT06194929"
+                },
+                {
+                    "ref_id": "EMEA/H/C/004580",
+                    "ref_type": "EMA",
+                    "ref_url": "https://www.ema.europa.eu/en/medicines/human/EPAR/braftovi"
+                }
+            ],
+            "max_phase_for_ind": "4.0",
+            "mesh_heading": "Melanoma",
+            "mesh_id": "D008545",
+            "molecule_chembl_id": "CHEMBL3301612",
+            "parent_molecule_chembl_id": "CHEMBL3301612"
+        }
+    ],
+    "page_meta": {
+        "limit": 3,
+        "next": "/chembl/api/data/drug_indication.json?limit=3&offset=3&efo_term__icontains=melanoma&order_by=-max_phase_for_ind",
+        "offset": 0,
+        "previous": null,
+        "total_count": 755
+    }
+}

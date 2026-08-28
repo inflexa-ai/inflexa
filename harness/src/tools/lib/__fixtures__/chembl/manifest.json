@@ -1,0 +1,90 @@
+{
+    "activity-standard-units-isnull.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/activity.json",
+        "params": {
+            "standard_units__isnull": "true",
+            "limit": "1"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": ["page_meta"]
+    },
+    "drug-indication-melanoma.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/drug_indication.json",
+        "params": {
+            "efo_term__icontains": "melanoma",
+            "order_by": "-max_phase_for_ind",
+            "limit": "3"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": ["page_meta"]
+    },
+    "mechanism-action-type-isnull.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/mechanism.json",
+        "params": {
+            "action_type__isnull": "true",
+            "limit": "2"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": ["page_meta"]
+    },
+    "molecule-detail-trastuzumab.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/molecule/CHEMBL1201585.json",
+        "capturedAt": "2026-08-28"
+    },
+    "molecule-pref-name-isnull.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/molecule.json",
+        "params": {
+            "pref_name__isnull": "true",
+            "limit": "2"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": ["page_meta"]
+    },
+    "molecule-search-imatinib.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/molecule/search.json",
+        "params": {
+            "q": "imatinib",
+            "limit": "2"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": ["page_meta", "molecules.*.score"]
+    },
+    "molecule-set-aspirin-trastuzumab.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/molecule/set/CHEMBL25;CHEMBL1201585.json",
+        "capturedAt": "2026-08-28"
+    },
+    "schema-activity.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/activity/schema.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    },
+    "schema-drug-indication.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/drug_indication/schema.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    },
+    "schema-mechanism.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/mechanism/schema.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    },
+    "schema-molecule.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/molecule/schema.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    },
+    "schema-target.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/target/schema.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    },
+    "target-organism-isnull.json": {
+        "url": "https://www.ebi.ac.uk/chembl/api/data/target.json",
+        "params": {
+            "organism__isnull": "true",
+            "limit": "3"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": ["page_meta"]
+    }
+}

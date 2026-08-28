@@ -1,0 +1,61 @@
+{
+    "mechanisms": [
+        {
+            "action_type": null,
+            "binding_site_comment": null,
+            "direct_interaction": 1,
+            "disease_efficacy": 1,
+            "max_phase": 4,
+            "mec_id": 2105,
+            "mechanism_comment": null,
+            "mechanism_of_action": "Unknown",
+            "mechanism_refs": [
+                {
+                    "ref_id": "label/2012/022372s004lbledt.pdf",
+                    "ref_type": "FDA",
+                    "ref_url": "http://www.accessdata.fda.gov/drugsatfda_docs/label/2012/022372s004lbledt.pdf"
+                }
+            ],
+            "molecular_mechanism": 1,
+            "molecule_chembl_id": "CHEMBL2021423",
+            "parent_molecule_chembl_id": "CHEMBL2021423",
+            "record_id": 3130881,
+            "selectivity_comment": null,
+            "site_id": null,
+            "target_chembl_id": null,
+            "variant_sequence": null
+        },
+        {
+            "action_type": null,
+            "binding_site_comment": null,
+            "direct_interaction": 1,
+            "disease_efficacy": 1,
+            "max_phase": 4,
+            "mec_id": 2111,
+            "mechanism_comment": "Radiotherapy agent, binds to hydroxyapatite in bone, where alpha radiation results in double strand DNA breaks.",
+            "mechanism_of_action": "Radiotherapy agent",
+            "mechanism_refs": [
+                {
+                    "ref_id": "setid=a398400e-bd31-41a9-9696-4f7c06569ede#nlm34090-1",
+                    "ref_type": "DailyMed",
+                    "ref_url": "http://dailymed.nlm.nih.gov/dailymed/lookup.cfm?setid=a398400e-bd31-41a9-9696-4f7c06569ede#nlm34090-1"
+                }
+            ],
+            "molecular_mechanism": 1,
+            "molecule_chembl_id": "CHEMBL2107816",
+            "parent_molecule_chembl_id": "CHEMBL2111187",
+            "record_id": 1706440,
+            "selectivity_comment": null,
+            "site_id": null,
+            "target_chembl_id": null,
+            "variant_sequence": null
+        }
+    ],
+    "page_meta": {
+        "limit": 2,
+        "next": "/chembl/api/data/mechanism.json?limit=2&offset=2&action_type__isnull=true",
+        "offset": 0,
+        "previous": null,
+        "total_count": 577
+    }
+}

@@ -44,9 +44,10 @@ const inputSchema = z
                 "Which ChEMBL lookup to run; each names its params and return fields.\n" +
                     "'compounds' (query + searchType) — molecules by target, name or SMILES: resolve a named compound to its ID and structure, or list " +
                     "what was assayed against a target. → chemblId, preferredCompoundName, canonicalSmiles, molecularWeight, alogp, molecularFormula.\n" +
-                    "'drug' (query) — the drug registry by drug name or indication: 'what treats X?', 'is Y approved, since when?'. → moleculeChemblId, " +
-                    "preferredName, maxPhase (4 = approved), moleculeType, firstApproval, indication. If the drug endpoint is empty it falls back to a " +
-                    "max_phase >= 4 molecule search, whose rows carry indication: null.\n" +
+                    "'drug' (query) — approved drugs by indication or by drug name: 'what treats X?', 'is Y approved, since when?'. → moleculeChemblId, " +
+                    "preferredName, maxPhase (4 = approved), moleculeType, firstApproval, indication. A disease term reads the curated indication " +
+                    "registry, highest phase first; a query that matches no disease term reads the approved molecules (max_phase >= 4) instead, and " +
+                    "their indications come back with them.\n" +
                     "'mechanism' (chemblId, molecule only) — curated mechanism of ONE molecule: 'how does X work?'. → mechanismOfAction, actionType " +
                     "(INHIBITOR, AGONIST, …), targetChemblId + targetName, moleculeChemblId. Curated mainly for clinical/approved molecules, so tool " +
                     "compounds often have none.\n" +
