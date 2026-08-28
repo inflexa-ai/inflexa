@@ -20,6 +20,8 @@
 
 import { z } from "zod";
 
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
 import { apiFetchValidated } from "./api-utils.js";
 import { resolveSymbolToEnsemblId } from "./ensembl-client.js";
 import { searchTargets as searchChemblTargets } from "./chembl-client.js";
@@ -71,7 +73,9 @@ export interface ResolvedTarget {
 // HGNC search payload, validated at the fetch boundary. Every field is optional
 // because the API omits absent values; each read below is optional-chained /
 // defaulted, so a missing field degrades gracefully rather than throwing.
-const HgncResponseSchema = z.object({
+// The schema is exported for the golden-fixture table, which is the only place
+// that asserts the contract itself instead of the resolved entity.
+export const HgncResponseSchema = z.object({
     response: z
         .object({
             docs: z
@@ -117,7 +121,6 @@ const UniprotResponseSchema = z.object({
                         }),
                     )
                     .optional(),
-                proteinFamily: z.string().optional(),
                 extraAttributes: z.object({ uniParcId: z.string().optional() }).optional(),
                 keywords: z.array(z.object({ name: z.string().optional() })).optional(),
             }),
@@ -176,7 +179,8 @@ function extractProteinFamily(uniprotKeywords?: { name?: string }[]): string | n
  *
  * @throws when the input cannot be mapped to any human gene/protein.
  */
-export async function resolveTarget(input: string): Promise<ResolvedTarget> {
+export async function resolveTarget(input: string, logger?: Logger): Promise<ResolvedTarget> {
+    const log = (logger ?? createNoopLogger()).named("identifier-resolver").with({ target: input });
     const trimmed = input.trim();
     if (!trimmed) throw new Error("Target identifier is required");
 
@@ -248,7 +252,13 @@ export async function resolveTarget(input: string): Promise<ResolvedTarget> {
     // Step 4: ChEMBL
     let chemblId: string | null = seedChembl;
     if (!chemblId && symbolForEnsembl) {
-        const targets = await searchChemblTargets(symbolForEnsembl, 5).catch(() => []);
+        // `searchTargets` answers an unknown symbol with an empty list, thus a throw
+        // here is always an unexpected cause. Without this record the ChEMBL id stays
+        // null and every downstream collector reports a false "no ChEMBL entry".
+        const targets = await searchChemblTargets(symbolForEnsembl, 5).catch((error: unknown) => {
+            log.error("ChEMBL target search failed", { symbol: symbolForEnsembl, ...log.errorFields(error) });
+            return [];
+        });
         const human = targets.find((t) => t.organism === "Homo sapiens");
         chemblId = (human ?? targets[0])?.targetChemblId ?? null;
     }

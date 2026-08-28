@@ -1,0 +1,37 @@
+{
+    "01-search-scanpy.json": {
+        "url": "https://context7.com/api/v1/search",
+        "params": {
+            "query": "scanpy",
+            "topic": "differential expression"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "results.*.lastUpdateDate",
+            "results.*.score",
+            "results.*.stars",
+            "results.*.totalSnippets",
+            "results.*.totalTokens"
+        ],
+        "replay": false
+    },
+    "08-docs-path-form.json": {
+        "url": "https://context7.com/api/v1/scverse/scanpy",
+        "params": {
+            "type": "json",
+            "topic": "rank_genes_groups"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "snippets.*.relevance",
+            "snippets.*.generationDate",
+            "snippets.*.model"
+        ],
+        "replay": false
+    },
+    "context7-openapi.json": {
+        "url": "https://context7.com/openapi.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true
+    }
+}

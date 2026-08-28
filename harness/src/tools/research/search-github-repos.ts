@@ -4,6 +4,10 @@
  * (lower rate limit); `GITHUB_TOKEN` raises the limit.
  *
  * Same wire call and envelope as the legacy tool. Stateless HTTP; no deps.
+ *
+ * Absence policy: the OpenAPI document of GitHub marks `description` and
+ * `language` as required and nullable, thus an absent value is an explicit
+ * `null`. The OpenAPI document gives the modifier of each field.
  */
 
 import { ok, type Result } from "neverthrow";

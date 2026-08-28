@@ -1,0 +1,32 @@
+{
+    "fetch-symbol-BRCA1.json": {
+        "url": "https://rest.genenames.org/fetch/symbol/BRCA1",
+        "headers": {
+            "Accept": "application/json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "responseHeader.QTime"
+        ]
+    },
+    "fetch-symbol-LINC00115.json": {
+        "url": "https://rest.genenames.org/fetch/symbol/LINC00115",
+        "headers": {
+            "Accept": "application/json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "responseHeader.QTime"
+        ]
+    },
+    "fetch-symbol-NOTAREALGENE123.json": {
+        "url": "https://rest.genenames.org/fetch/symbol/NOTAREALGENE123",
+        "headers": {
+            "Accept": "application/json"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "responseHeader.QTime"
+        ]
+    }
+}

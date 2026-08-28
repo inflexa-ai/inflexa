@@ -1,0 +1,30 @@
+{
+    "15-search-bulk.json": {
+        "url": "https://api.semanticscholar.org/graph/v1/paper/search/bulk",
+        "params": {
+            "fields": "paperId,externalIds,url,title,venue,year,citationCount,openAccessPdf,authors,abstract"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "total",
+            "token"
+        ],
+        "replay": false
+    },
+    "07-paper-arxiv.json": {
+        "url": "https://api.semanticscholar.org/graph/v1/paper/ARXIV:1706.03762",
+        "params": {
+            "fields": "paperId,externalIds,url,title,venue,year,citationCount,openAccessPdf,authors,abstract"
+        },
+        "capturedAt": "2026-08-28",
+        "ignorePaths": [
+            "citationCount"
+        ]
+    },
+    "s2-paper-schemas.json": {
+        "url": "https://api.semanticscholar.org/graph/v1/swagger.json",
+        "capturedAt": "2026-08-28",
+        "oracle": true,
+        "replay": false
+    }
+}

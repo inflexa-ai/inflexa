@@ -288,14 +288,15 @@ describe("Semantic Scholar citation client", () => {
                     year: 2021,
                     venue: "Example Journal",
                     authors: [{ name: "Jane Smith" }],
-                    externalIds: { DOI: "10.1000/EXAMPLE", PubMed: "12345678" },
+                    // Semantic Scholar serializes CorpusId as a JSON integer.
+                    externalIds: { DOI: "10.1000/EXAMPLE", PubMed: "12345678", CorpusId: 215416146 },
                 });
             },
         });
         const result = await client.resolve(request({ citation: "10.1000/example" }, "semantic_scholar", "semantic_scholar_identifier"));
 
         expect(result.status).toBe("ok");
-        expect(result.records[0]).toMatchObject({ identifiers: { doi: "10.1000/example", pmid: "12345678" } });
+        expect(result.records[0]).toMatchObject({ identifiers: { doi: "10.1000/example", pmid: "12345678", corpusId: "215416146" } });
         expect(seen?.url).toContain("DOI%3A10.1000%2Fexample");
         expect(seen?.headers.get("x-api-key")).toBe("s2-key");
     });

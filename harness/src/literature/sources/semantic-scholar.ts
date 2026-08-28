@@ -1,3 +1,9 @@
+/**
+ * Absence policy: Semantic Scholar gives each requested key, and it sends an
+ * explicit `null` for an absent value such as `abstract` or `year`. An absent
+ * `venue` is the empty string.
+ */
+
 import { z } from "zod";
 
 import { requestJson, type SourceHttpOptions, type SourceHttpResult } from "./http.js";
@@ -15,11 +21,16 @@ const WirePaperSchema = z
         citationCount: z.number().nullable().optional(),
         url: z.string().nullable().optional(),
         authors: z.array(z.object({ name: z.string().nullable().optional() })).optional(),
-        externalIds: z.record(z.string(), z.unknown()).nullable().optional(),
+        // An external id is a string, but `CorpusId` is a JSON integer on every
+        // observed paper. A string-only value type drops it at the map site below.
+        externalIds: z
+            .record(z.string(), z.union([z.string(), z.number()]))
+            .nullable()
+            .optional(),
     })
     .passthrough();
-const ExactPaperSchema = WirePaperSchema.extend({ paperId: z.string() });
-const SearchResponseSchema = z.object({ data: z.array(WirePaperSchema).optional() });
+export const ExactPaperSchema = WirePaperSchema.extend({ paperId: z.string() });
+export const SearchResponseSchema = z.object({ data: z.array(WirePaperSchema).optional() });
 
 export interface SemanticScholarPaper {
     id: string;
@@ -46,9 +57,10 @@ export interface SemanticScholarSource {
     lookupIdentifier(identifier: string, signal?: AbortSignal): Promise<SourceHttpResult<SemanticScholarPaper>>;
 }
 
-function stringExternalIds(value: Record<string, unknown> | null | undefined): Record<string, string> | undefined {
+/** Give one text form to each external id, thus a numeric `CorpusId` reaches a caller that keys on a string. */
+function stringExternalIds(value: Record<string, string | number> | null | undefined): Record<string, string> | undefined {
     if (value === null || value === undefined) return undefined;
-    const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+    const entries = Object.entries(value).map(([key, raw]): [string, string] => [key, typeof raw === "string" ? raw : String(raw)]);
     return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
+import { readFixture } from "../lib/__fixtures__/fixture-runner.js";
 import { resolveLibraryIdTool } from "./context7-docs.js";
 import { createInspectRunTool } from "./inspect-run.js";
 
@@ -17,27 +18,24 @@ function stubFetch(response: () => Response): void {
 
 describe("resolveLibraryId (remaining-leaf family)", () => {
     it("returns a populated data variant for a resolved library", async () => {
+        // The body is the golden fixture, thus the mock cannot invent a field that
+        // the provider does not serve.
         stubFetch(
             () =>
-                new Response(
-                    JSON.stringify({
-                        results: [
-                            {
-                                id: "/scverse/scanpy",
-                                name: "scanpy",
-                                description: "Single-cell analysis in Python",
-                            },
-                        ],
-                    }),
-                    { status: 200, headers: { "content-type": "application/json" } },
-                ),
+                new Response(JSON.stringify(readFixture("context7", "01-search-scanpy.json")), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                }),
         );
 
         const { ctx } = makeToolContext();
         const result = (await resolveLibraryIdTool.execute({ libraryName: "scanpy", query: "differential expression" }, ctx))._unsafeUnwrap();
 
         expect(result.found).toBe(true);
-        if (result.found) expect(result.libraryId).toBe("/scverse/scanpy");
+        if (result.found) {
+            expect(result.libraryId).toBe("/scverse/scanpy");
+            expect(result.name).toBe("Scanpy");
+        }
     });
 
     it("returns the found:false variant when no library matches", async () => {
