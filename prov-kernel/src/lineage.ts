@@ -30,9 +30,13 @@ import type { ProvFileKey } from "./types.js";
 /** Why a document did not derive: the bytes do not parse or unify as a dialect document. */
 export type ProvReadError = { type: "prov_corrupt"; cause: unknown };
 
-/** The dialect entity node kinds — the three declared entity types, with a QName-prefix fallback. */
+/** The dialect entity node kinds — the five declared entity types, with a QName-prefix fallback. */
 export type LineageAnalysisNode = { kind: "analysis"; qn: string; label: string; name?: string; slug?: string };
 export type LineageInputNode = { kind: "input"; qn: string; label: string; path?: string; isDir?: boolean };
+/** The document a report session builds — the entity every act of that session reads. */
+export type LineageReportNode = { kind: "report"; qn: string; label: string; threadId?: string; parentThreadId?: string };
+/** One recorded version of a report — the report, fixed at one point in time. */
+export type LineageReportVersionNode = { kind: "report_version"; qn: string; label: string; versionId?: string; threadId?: string };
 export type LineageFileNode = {
     kind: "file";
     qn: string;
@@ -83,7 +87,8 @@ export type LineageAgentNode = {
     model?: string;
 };
 
-export type LineageNode = LineageAnalysisNode | LineageInputNode | LineageFileNode | LineageActivityNode | LineageAgentNode;
+export type LineageNode =
+    LineageAnalysisNode | LineageInputNode | LineageFileNode | LineageReportNode | LineageReportVersionNode | LineageActivityNode | LineageAgentNode;
 
 export type LineageEdgeKind = "used" | "generated" | "informed" | "derived" | "attributed" | "associated" | "invalidated";
 
@@ -140,14 +145,19 @@ function localpart(qn: string): string {
     return colon === -1 ? qn : qn.slice(colon + 1);
 }
 
-function entityKindOf(types: string[], qn: string): "analysis" | "input" | "file" {
+function entityKindOf(types: string[], qn: string): "analysis" | "input" | "file" | "report" | "report_version" {
     if (types.includes("Analysis")) return "analysis";
     if (types.includes("Input")) return "input";
     if (types.includes("File")) return "file";
+    if (types.includes("ReportVersion")) return "report_version";
+    if (types.includes("Report")) return "report";
     // A read input carries no prov:type (SPEC.md) — fall back to the QName prefix.
     const local = localpart(qn);
     if (local.startsWith("analysis-")) return "analysis";
     if (local.startsWith("input-")) return "input";
+    // `report-version-` first: `report-` is a prefix of it, thus the wider test would swallow it.
+    if (local.startsWith("report-version-")) return "report_version";
+    if (local.startsWith("report-")) return "report";
     return "file";
 }
 
@@ -163,6 +173,27 @@ function toEntityNode(record: ProvEntity): LineageNode {
     if (kind === "input") {
         const isDir = attrBoolean(record, "isDir");
         return { kind, qn, label: path ?? localpart(qn), ...(path !== undefined ? { path } : {}), ...(isDir !== undefined ? { isDir } : {}) };
+    }
+    const threadId = attrString(record, "threadId");
+    if (kind === "report") {
+        const parentThreadId = attrString(record, "parentThreadId");
+        return {
+            kind,
+            qn,
+            label: threadId ?? localpart(qn),
+            ...(threadId !== undefined ? { threadId } : {}),
+            ...(parentThreadId !== undefined ? { parentThreadId } : {}),
+        };
+    }
+    if (kind === "report_version") {
+        const versionId = attrString(record, "versionId");
+        return {
+            kind,
+            qn,
+            label: versionId ?? localpart(qn),
+            ...(versionId !== undefined ? { versionId } : {}),
+            ...(threadId !== undefined ? { threadId } : {}),
+        };
     }
     const hash = attrString(record, "hash");
     const size = attrNumber(record, "size");

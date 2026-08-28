@@ -20,8 +20,9 @@
 - [x] 3.1 Add the report builders to `src/document.ts`, beside
   `appendCreation`. Port the cli mapping one-for-one: the action preamble,
   the report entity, the version entity, and the attribute names.
-- [x] 3.2 Call the internal `appendModelAgent` from the report preamble, with
-  the delegation identifier that the kernel derives.
+- [x] 3.2 Record the model agent from the report preamble through the split
+  model-agent builders, with the kernel-derived delegation identifier and an
+  anonymous association.
 - [x] 3.3 Guard the generation edge, the attribution, and the specialization
   of the report entity and of the version entity on the first declaration.
 - [x] 3.4 Stamp `inflexa:blockKind` on the four block arms.
@@ -36,8 +37,15 @@
   specialization under a re-emission, the lazy report mint, the conversation
   arm with no entity, and the block kind stamp.
 
-## 5. The release
+## 5. The read model
 
-- [x] 5.1 Run `bun run typecheck`, `bun run lint`, `bun test`, and
+- [x] 5.1 Type a report entity as `report` and a version entity as
+  `report_version` in the lineage read model, with their node shapes.
+- [x] 5.2 Cover the two kinds, and make sure that `findFileEntity` returns
+  neither.
+
+## 6. The release
+
+- [x] 6.1 Run `bun run typecheck`, `bun run lint`, `bun test`, and
   `bun run build && bun run smoke`.
-- [x] 5.2 Set the package version to `0.6.0`.
+- [x] 6.2 Set the package version to `0.6.0`.

@@ -55,6 +55,22 @@ represents, hosts decide.
   the generic `appendLifecycleAction`
 - **THEN** the kernel needs no change and no version bump
 
+### Requirement: The kernel owns the lineage read model
+
+The kernel MUST give the one read-side interpretation of a stored dialect
+document. This delta changes one piece: the typed entity node kinds. The
+entity kinds cover `analysis`, `input`, `file`, `report`, and
+`report_version`. A report entity types as `report`, and a version entity
+types as `report_version`, never through the `file` fallback. The rest of the
+requirement does not change.
+
+#### Scenario: A report entity types as a report
+
+- **GIVEN** a document with a report entity and a version entity
+- **WHEN** `deriveLineageModel` runs
+- **THEN** the report node carries the kind `report`, the version node
+  carries the kind `report_version`, and `findFileEntity` returns neither
+
 ## ADDED Requirements
 
 ### Requirement: The session and report family is core format
