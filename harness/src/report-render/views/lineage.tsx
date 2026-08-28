@@ -34,13 +34,32 @@ export const LINEAGE_CONTROL_CLASS = "report-lineage";
 /** The name of the control for a reader who hears the page instead of seeing it. */
 const LINEAGE_CONTROL_LABEL = "Show the lineage of this reference";
 
+/** The class of the glyph inside the control. The design sheet holds the matching rule. */
+const LINEAGE_GLYPH_CLASS = "report-lineage-glyph";
+
 /**
- * The glyph of the control.
+ * The glyph of the control: a branch of three nodes on the 16px grid.
  *
- * The glyph reads as a disclosure beside the bracket marker, and never as a second marker. A bracket form
- * here would give the page two notations that look alike and mean different things.
+ * The drawing reads as a chain that divides, which is what the panel behind it shows. A text glyph reads
+ * as a disclosure of more prose, and a bracket form would give the page two notations that look alike and
+ * mean different things.
+ *
+ * The stroke takes the current color, thus the muted color of the button and its primary color on hover
+ * both reach the drawing and the sheet holds one color for the two states. The glyph is decoration, thus
+ * it hides from a reader who hears the page and the label of the button answers instead.
  */
-const LINEAGE_CONTROL_GLYPH = "▾";
+function LineageGlyph() {
+    return (
+        <svg class={LINEAGE_GLYPH_CLASS} width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <circle cx="4" cy="4" r="2" />
+            <circle cx="4" cy="12" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <path d="M4 6v4" />
+            <path d="M6 12h4" />
+            <path d="M12 10V8a4 4 0 0 0-4-4H6" />
+        </svg>
+    );
+}
 
 /** The pin of one artifact: the analysis-relative path, and the content hash of the bytes. */
 export interface LineagePin {
@@ -120,7 +139,7 @@ export function LineageControl({ place }: { place: number }) {
             aria-expanded="false"
             {...{ [LINEAGE_KEY_ATTRIBUTE]: String(place) }}
         >
-            {LINEAGE_CONTROL_GLYPH}
+            <LineageGlyph />
         </button>
     );
 }

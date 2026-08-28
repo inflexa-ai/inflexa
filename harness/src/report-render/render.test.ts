@@ -19,10 +19,13 @@ import { FIXTURE_DOCUMENT, FIXTURE_PROVENANCE, FIXTURE_VALUES } from "./fixture.
 import {
     CHART_BOOTSTRAP,
     GRID_BOOTSTRAP,
+    LINEAGE_COMPLETE_NOTE,
     LINEAGE_NO_ANSWER_NOTE,
     LINEAGE_NO_LIBRARY_NOTE,
     LINEAGE_NO_NODE_NOTE,
     LINEAGE_POPOVER,
+    LINEAGE_RECORD_NOTE,
+    LINEAGE_SIGNED_NOTE,
     LINEAGE_TRUNCATED_NOTE,
     SECTION_SPY,
     TABLE_DATA_DECODER,
@@ -687,6 +690,14 @@ describe("the lineage stamp and the popover control", () => {
         expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_NO_ANSWER_NOTE));
         expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_NO_NODE_NOTE));
         expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_TRUNCATED_NOTE));
+        expect(LINEAGE_POPOVER).toContain(JSON.stringify(LINEAGE_RECORD_NOTE));
+    });
+
+    it("claims a signature in the footer only where the page carries an attestation", () => {
+        // The carrier holds the attestation where the source held one. Thus the footer of a page over an
+        // unsigned document never states that the analysis document signs the chain.
+        expect(LINEAGE_POPOVER).toContain('typeof carrier.attestation === "string"');
+        expect(LINEAGE_POPOVER).toContain(`signed ? ${JSON.stringify(LINEAGE_SIGNED_NOTE)} : ${JSON.stringify(LINEAGE_COMPLETE_NOTE)}`);
     });
 
     it("reads the document, builds the graph one time, and walks backward over the dataflow", () => {
@@ -721,18 +732,52 @@ describe("the lineage stamp and the popover control", () => {
         expect(groundedPage()).not.toContain(TSPROV_ASSET.file);
     });
 
+    it("builds the rail from the edges of the walk, and never from its node set", () => {
+        // The node set is flat: it holds the siblings and the bookkeeping beside the chain. The edges carry
+        // the structure, thus the rail reads them and the panel shows the chain alone.
+        expect(LINEAGE_POPOVER).toContain("for (var e = 0; e < walked.edges.length; e++) {");
+        expect(LINEAGE_POPOVER).toContain("edge.relation instanceof library.ProvGeneration");
+        expect(LINEAGE_POPOVER).toContain("edge.relation instanceof library.ProvUsage");
+        expect(LINEAGE_POPOVER).toContain("edge.relation instanceof library.ProvCommunication");
+        expect(LINEAGE_POPOVER).not.toContain("walked.nodes");
+    });
+
+    it("expands an execution alone, and reads the step through the edge that names it", () => {
+        // A step, a run, and a lifecycle action are the bookkeeping of the analysis. The rail expands the two
+        // execution types alone, thus no bookkeeping node becomes a row. A command activity carries no step
+        // id, thus the step comes from the activity at the end of its communication edge.
+        expect(LINEAGE_POPOVER).toContain('if (type !== "Command" && type !== "FileToolWrite") {');
+        expect(LINEAGE_POPOVER).toContain("var stepUri = ranIn[uri];");
+        expect(LINEAGE_POPOVER).toContain('attrText(stepNode.element, "inflexa:stepId")');
+    });
+
+    it("collapses the other outputs of one command behind a count row", () => {
+        // The backward walk never traverses the generation edge of a sibling output, thus the graph answers
+        // for the count. One row then states what the rail leaves out, and no off-chain file becomes a hop.
+        expect(LINEAGE_POPOVER).toContain("var into = built.inEdges(commandUri);");
+        expect(LINEAGE_POPOVER).toContain("return total - onRail;");
+        expect(LINEAGE_POPOVER).toContain('rows.push({ form: "more", level: level + 1, count: others, step: command.step });');
+    });
+
+    it("guards the walk against a document whose edges lead back to a command that the rail showed", () => {
+        // Without the visited set such a document would build rows forever.
+        expect(LINEAGE_POPOVER).toContain("if (seenCommand[commandUri]) {");
+        expect(LINEAGE_POPOVER).toContain("seenCommand[commandUri] = true;");
+        expect(LINEAGE_POPOVER).toContain("if (seenFile[inputs[i]]) {");
+    });
+
     it("names the pin as the last hop where the walk gives nothing", () => {
         // The page knows the pin on its own. Thus a reader of a chain that stops still reads what the block
         // binds, and the note states why the chain stops there.
-        expect(LINEAGE_POPOVER).toContain('hops.push({ kind: "Artifact", path: key.path, hash: key.hash });');
+        expect(LINEAGE_POPOVER).toContain('rows = [{ form: "pin", level: 0, path: String(key.path), hash: String(key.hash) }];');
     });
 
     it("shows the external record of a citation and walks nothing for it", () => {
         // The walk resolves a node by a pin. A record names a paper, thus the pin branch alone calls the
         // library and the record branch names the record.
         expect(LINEAGE_POPOVER).toContain('var pinned = typeof key.path === "string";');
-        expect(LINEAGE_POPOVER).toContain('var walked = pinned ? walk(key) : { hops: [], note: "" };');
-        expect(LINEAGE_POPOVER).toContain('hops.push({ kind: "Citation", label: recordName(key) });');
+        expect(LINEAGE_POPOVER).toContain(`var walked = pinned ? walk(key) : { rows: [], note: ${JSON.stringify(LINEAGE_RECORD_NOTE)}, hops: 1 };`);
+        expect(LINEAGE_POPOVER).toContain('rows = [{ form: "record", level: 0, path: recordName(key), hash: "" }];');
     });
 
     it("opens one panel at a time, and closes on a click outside and on the Escape key", () => {
@@ -769,6 +814,143 @@ describe("the lineage stamp and the popover control", () => {
             // class of the panel.
             expect(html.includes(`class="${name}"`) || LINEAGE_POPOVER.includes(`"${name}"`)).toBe(true);
         }
+    });
+
+    it("builds the header, the scrolling body, and the completion footer of the locked anatomy", () => {
+        // The header names the marker and the depth of the chain, the body holds the rail, and the footer
+        // states the outcome. A reader reads the size of the chain before the body scrolls.
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-header"');
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-count"');
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-body"');
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-footer"');
+        expect(LINEAGE_POPOVER).toContain('countText(marker, walked.hops, walked.note === "")');
+    });
+
+    it("gives the rail one form for the pin, one for a producer, and one for a raw input", () => {
+        // The three forms carry the chain. A row with no modifier is an artifact that the rail continues
+        // past, thus the base row is the form that the panel shows most.
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-row-pin"');
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-row-producer"');
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-row-raw"');
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-more"');
+
+        // The connector labels ride the indent rails between two levels of the rail.
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-link"');
+        expect(LINEAGE_POPOVER).toContain('"report-lineage-rail"');
+        expect(LINEAGE_POPOVER).toContain('"MADE BY"');
+        expect(LINEAGE_POPOVER).toContain('return count === 1 ? "READ 1 FILE" : "READ " + count + " FILES";');
+    });
+
+    it("caps the body inside the viewport and holds the panel above the control where it does not fit", () => {
+        const bodyRule = /\.report-lineage-body\s*\{([^}]*)\}/.exec(DESIGN_CSS);
+        if (bodyRule === null) {
+            throw new Error("The design sheet holds no body rule for the lineage popover.");
+        }
+
+        // A deep pipeline builds more rows than a window holds. The cap reads against the viewport, thus the
+        // body scrolls inside the panel and the page never grows under it.
+        expect(bodyRule[1]).toContain("max-height: 60vh");
+        expect(bodyRule[1]).toContain("overflow-y: auto");
+        expect(LINEAGE_POPOVER).toContain("box.top - panel.offsetHeight - 8");
+    });
+
+    it("drops the shared run prefix from each row, and rides the whole path on the hover", () => {
+        // Every hop of one chain sits under the run directory of the pin, thus the head repeats on each row
+        // and it carries nothing. The title states the whole path on each row, cut or not, thus the reader
+        // reads the head back with no second panel. A path outside the run keeps its whole form.
+        expect(LINEAGE_POPOVER).toContain('if (path.indexOf("runs/") !== 0) {');
+        expect(LINEAGE_POPOVER).toContain('var cut = path.indexOf("/", 5);');
+        expect(LINEAGE_POPOVER).toContain('return prefix !== "" && path.indexOf(prefix) === 0 ? path.slice(prefix.length) : path;');
+        expect(LINEAGE_POPOVER).toContain('var prefix = pinned ? runPrefix(String(key.path)) : "";');
+        expect(LINEAGE_POPOVER).toContain("pathNode(shownPath(row.path, prefix), row.path)");
+        expect(LINEAGE_POPOVER).toContain('node.setAttribute("title", full);');
+    });
+
+    it("cuts a long tail at its start, thus the file name stays on the row", () => {
+        // The measure runs against the laid-out row, and the cut takes whole segments off the front. A
+        // reordering of the text would mangle the punctuation of a path, thus the script measures and the
+        // sheet holds no bidi rule.
+        expect(LINEAGE_POPOVER).toContain("while (parts.length > 1 && node.scrollWidth > node.clientWidth) {");
+        expect(LINEAGE_POPOVER).toContain("parts.shift();");
+        expect(LINEAGE_POPOVER).toContain('writePath(node, "…/" + parts.join("/"));');
+        expect(LINEAGE_POPOVER).toContain("fitPaths(panel);");
+        expect(LINEAGE_POPOVER.indexOf("fitPaths(panel);")).toBeLessThan(LINEAGE_POPOVER.indexOf("place(panel, control);"));
+        expect(DESIGN_CSS).not.toContain("direction: rtl");
+    });
+
+    it("cuts an over-long name in its middle, thus the start and the extension both stay on the row", () => {
+        const script = LINEAGE_POPOVER.slice(LINEAGE_POPOVER.indexOf("function nameTail("), LINEAGE_POPOVER.indexOf("function fitPaths("));
+
+        // A name that overflows the row on its own leaves no segment to cut. The tail starts at the last dot,
+        // thus the extension stays and two siblings that differ in their extension alone read apart. A dot far
+        // from the end belongs to the name, thus the fixed count answers there and the start still stays.
+        expect(script).toContain('var dot = name.lastIndexOf(".");');
+        expect(script).toContain("var extension = dot > 0 ? name.length - dot : 0;");
+        expect(script).toContain("name.slice(name.length - (extension > 0 && extension <= 8 ? extension : 4))");
+        expect(script).toContain("while (keep > 1 && node.scrollWidth > node.clientWidth) {");
+        expect(script).toContain('writePath(node, head + name.slice(0, keep) + "…" + tail);');
+
+        // The segment cut runs first and the name cut runs after it, thus a long directory still goes before
+        // one character of the name goes. The mark of the segment cut stands in front of the cut name.
+        const fitPath = script.slice(script.indexOf("function fitPath("));
+        expect(fitPath).toContain('fitName(node, whole > 1 ? "…/" : "", parts[0]);');
+        expect(fitPath.indexOf("parts.shift();")).toBeLessThan(fitPath.indexOf("fitName(node,"));
+
+        // The rule of the sheet stays as the last guard, for a row too narrow to hold even a cut name.
+        expect(DESIGN_CSS).toContain("text-overflow: ellipsis;");
+    });
+
+    it("sizes the panel to its longest row up to a cap, and holds that width across the fit", () => {
+        const rule = /\.report-lineage-popover \{([^}]*)\}/.exec(DESIGN_CSS);
+        if (rule === null) {
+            throw new Error("The design sheet holds no rule for the lineage popover.");
+        }
+
+        // The panel grows to its longest row, thus a normal window shows each name whole and the cut answers
+        // a narrow window alone. The cap bounds the panel against the design and against the viewport.
+        expect(rule[1]).toContain("width: max-content;");
+        expect(rule[1]).toContain("max-width: min(48rem, calc(100vw - 24px));");
+
+        // A cut shortens the row that sized the panel. Without the pin the panel would shrink under the fit,
+        // and each later row would then measure against a narrower box.
+        expect(LINEAGE_POPOVER).toContain('panel.style.width = panel.getBoundingClientRect().width + "px";');
+        expect(LINEAGE_POPOVER.indexOf("panel.style.width =")).toBeLessThan(LINEAGE_POPOVER.indexOf("fitPaths(panel);"));
+    });
+
+    it("opens the panel under the control, flips it over the control on short space, and covers it never", () => {
+        // The reader reads down from what was clicked, thus the panel opens under the control. Where neither
+        // side holds the whole panel, the body shrinks to the larger side. Thus the panel never covers the
+        // control, and the horizontal clamp holds it inside the two margins of the viewport.
+        expect(LINEAGE_POPOVER).toContain("var below = root.clientHeight - box.bottom - 8 * 2;");
+        expect(LINEAGE_POPOVER).toContain("var above = box.top - 8 * 2;");
+        expect(LINEAGE_POPOVER).toContain("var over = panel.offsetHeight > below && above > below;");
+        expect(LINEAGE_POPOVER).toContain("var top = over ? box.top - panel.offsetHeight - 8 : box.bottom + 8;");
+        expect(LINEAGE_POPOVER).toContain('body.style.maxHeight = (room - chrome > 0 ? room - chrome : 0) + "px";');
+        expect(LINEAGE_POPOVER).toContain("if (left < 12) {");
+    });
+
+    it("places the open panel again on a resize", () => {
+        const handler = LINEAGE_POPOVER.slice(LINEAGE_POPOVER.indexOf('window.addEventListener("resize"'));
+
+        // A resize moves the box of the control. The panel stands against the document, thus it would hold
+        // the place of the old box without this listener.
+        expect(handler).toContain("place(openPanel, openControl);");
+        expect(handler).not.toContain("close()");
+    });
+
+    it("draws the control as a stroke branch glyph that takes the color of its button", () => {
+        const page = load(groundedPage(PROVENANCE));
+        const glyph = page(`button.${LINEAGE_CONTROL_CLASS} svg.report-lineage-glyph`).first();
+
+        // The drawing strokes in the current color, thus the muted color of the button and its primary color
+        // on hover both reach it. It is decoration, thus the label of the button answers a reader who hears
+        // the page.
+        expect(glyph.length).toBe(1);
+        expect(glyph.attr("stroke")).toBe("currentColor");
+        expect(glyph.attr("stroke-width")).toBe("1.5");
+        expect(glyph.attr("aria-hidden")).toBe("true");
+        expect(glyph.find("circle").length).toBe(3);
+        expect(glyph.find("path").length).toBe(3);
     });
 
     it("hides the control and the panel in print, and drops the open motion under reduced motion", () => {
