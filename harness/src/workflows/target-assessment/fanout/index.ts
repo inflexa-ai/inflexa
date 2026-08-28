@@ -12,6 +12,7 @@
  */
 
 import { withHost } from "../../../lib/host-concurrency.js";
+import type { Logger } from "../../../lib/logger.js";
 
 import type { SerializedError } from "../coverage.js";
 
@@ -96,7 +97,7 @@ export async function faersForOneModulator(item: ModulatorItem): Promise<Coverag
 
 // ── Per-modulator polypharmacology ──────────────────────────────────
 
-export async function polypharmForOneModulator(item: PolypharmInputItem): Promise<CoverageEnvelope<PerModulatorPolypharmItem>> {
+export async function polypharmForOneModulator(item: PolypharmInputItem, logger?: Logger): Promise<CoverageEnvelope<PerModulatorPolypharmItem>> {
     try {
         const [hits, primaryPchembl] = await Promise.all([
             withHost("chembl", () =>
@@ -107,7 +108,7 @@ export async function polypharmForOneModulator(item: PolypharmInputItem): Promis
                 }),
             ),
             item.primaryTargetChemblId
-                ? withHost("chembl", () => getModulatorOnTargetPchembl(item.moleculeChemblId, item.primaryTargetChemblId!))
+                ? withHost("chembl", () => getModulatorOnTargetPchembl(item.moleculeChemblId, item.primaryTargetChemblId!, logger))
                 : Promise.resolve(null),
         ]);
         if (hits.length === 0) {

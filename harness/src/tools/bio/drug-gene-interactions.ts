@@ -89,7 +89,7 @@ const inputSchema = z.object({
         .optional()
         .describe(
             `Max records per identifier per source (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}). DGIdb rows are ordered by source count descending; ` +
-                "`totalInteractions` gives the pre-trim count.",
+                "`totalInteractions` gives the pre-trim count. DrugBank serves one page of at most 50 records, thus a larger limit still returns at most 50 there.",
         ),
     interactionTypes: z.array(z.string()).optional().describe("'dgidb' only. Case-insensitive substring filter on interaction type, e.g. ['inhibitor']."),
     sourceDbs: z.array(z.string()).optional().describe("'dgidb' only. Keep only interactions from these underlying databases (substring), e.g. ['chembl']."),

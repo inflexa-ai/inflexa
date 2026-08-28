@@ -24,7 +24,7 @@
 
 import { z } from "zod";
 
-import { apiFetchValidated, describeApiError, type ApiError } from "./api-utils.js";
+import { apiFetchValidated, describeApiError, zWireNumber, type ApiError } from "./api-utils.js";
 import { EPA_CCTE_BASE } from "./toxcast-config.js";
 
 export interface CtxResolved {
@@ -54,7 +54,10 @@ function isNoMatchProblemDetail(error: ApiError): boolean {
     if (error.type !== "http_status" || error.status !== 400) return false;
     try {
         const body: unknown = JSON.parse(error.body);
-        return typeof body === "object" && body !== null && "detail" in body && "title" in body;
+        // `suggestions` separates the no-match answer from a generic 400
+        // `ProblemDetail`, which carries `title` and `detail` alone. Without it,
+        // a malformed request reads as a clean no-match.
+        return typeof body === "object" && body !== null && "detail" in body && "title" in body && "suggestions" in body;
     } catch {
         return false;
     }
@@ -240,13 +243,12 @@ async function fetchAssayNames(rows: readonly ToxcastBioactivityRow[], headers: 
 // Each schema below both validates one raw CTX hazard row and normalizes it
 // into the curated output shape via `.transform`; `z.infer` is that output
 // type. Every wire field is optional (the API omits absent values); the two
-// numeric fields the API sends as string-or-number stay `z.unknown()` so
-// `toNumberOrNull` can coerce them without the schema rejecting the row.
+// numeric fields the API sends as string-or-number ride `zWireNumber`.
 export const ToxValSchema = z
     .object({
         source: z.string().nullable().optional(),
         toxvalType: z.string().nullable().optional(),
-        toxvalNumeric: z.unknown().optional(),
+        toxvalNumeric: zWireNumber.nullable().optional(),
         toxvalUnits: z.string().nullable().optional(),
         studyType: z.string().nullable().optional(),
         studyDurationClass: z.string().nullable().optional(),
@@ -255,13 +257,13 @@ export const ToxValSchema = z
         toxicologicalEffect: z.string().nullable().optional(),
         riskAssessmentClass: z.string().nullable().optional(),
         humanEco: z.string().nullable().optional(),
-        year: z.unknown().optional(),
+        year: zWireNumber.nullable().optional(),
         quality: z.string().nullable().optional(),
     })
     .transform((r) => ({
         source: r.source ?? "",
         toxvalType: r.toxvalType ?? "",
-        toxvalNumeric: toNumberOrNull(r.toxvalNumeric),
+        toxvalNumeric: r.toxvalNumeric ?? null,
         toxvalUnits: r.toxvalUnits ?? "",
         studyType: r.studyType ?? "",
         studyDurationClass: r.studyDurationClass ?? "",
@@ -270,7 +272,7 @@ export const ToxValSchema = z
         toxicologicalEffect: r.toxicologicalEffect ?? "",
         riskAssessmentClass: r.riskAssessmentClass ?? "",
         humanEco: r.humanEco ?? "",
-        year: toNumberOrNull(r.year),
+        year: r.year ?? null,
         quality: r.quality ?? "",
     }));
 export type ToxValEntry = z.infer<typeof ToxValSchema>;
@@ -371,12 +373,6 @@ async function fetchToxval(dtxsid: string, headers: Record<string, string>, limi
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
     return res.value.slice(0, limit);
-}
-
-function toNumberOrNull(v: unknown): number | null {
-    if (v == null || v === "") return null;
-    const n = typeof v === "number" ? v : Number(v);
-    return Number.isFinite(n) ? n : null;
 }
 
 async function fetchGenetox(dtxsid: string, headers: Record<string, string>, limit: number): Promise<GenetoxSummary[]> {

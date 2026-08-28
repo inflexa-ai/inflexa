@@ -455,7 +455,7 @@ export async function runExecuteTargetAssessmentBody(
                 polypharmItems,
                 "modulator-polypharm",
                 (item) => item.moleculeChemblId,
-                polypharmForOneModulator,
+                (item) => polypharmForOneModulator(item, logger),
             ),
             runFanoutBlock<ClassDrugItem, PerClassDrugAEsItem>(classDrugItems, "class-drug-aes", (item) => item.moleculeChemblId, aesForOneClassDrug),
         ]);

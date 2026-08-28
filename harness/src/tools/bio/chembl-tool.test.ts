@@ -238,9 +238,11 @@ describe("chembl — action: drug", () => {
         expect(drugs[0]!.maxPhase).toBe(4);
         expect(drugs[0]!.firstApproval).toBe(2011);
         expect(drugs[0]!.indication).toBe("Melanoma; Skin Neoplasms");
-        expect(requestedUrls[0]).toContain("/drug_indication.json?efo_term__icontains=melanoma");
-        expect(requestedUrls[0]).toContain("order_by=-max_phase_for_ind");
-        expect(requestedUrls[1]).toContain("/molecule/set/CHEMBL1229517.json");
+        // The name search runs first and misses, then the indication read answers.
+        expect(requestedUrls[0]).toContain("/molecule/search.json");
+        expect(requestedUrls[1]).toContain("/drug_indication.json?efo_term__icontains=melanoma");
+        expect(requestedUrls[1]).toContain("order_by=-max_phase_for_ind");
+        expect(requestedUrls[2]).toContain("/molecule/set/CHEMBL1229517.json");
         expect(requestedUrls.some((url) => url.includes("/drug/search.json"))).toBe(false);
     });
 
@@ -258,13 +260,11 @@ describe("chembl — action: drug", () => {
 
         expect(drugs).toHaveLength(1);
         expect(drugs[0]!.indication).toBe("Leukemia");
-        expect(requestedUrls[1]).toContain("/drug_indication.json?mesh_heading__icontains=leukemia");
+        expect(requestedUrls[2]).toContain("/drug_indication.json?mesh_heading__icontains=leukemia");
     });
 
-    it("searches the approved molecules when the query names no indication", async () => {
+    it("searches the approved molecules first, and a name query never reads an indication filter", async () => {
         stubRoutes([
-            ["drug_indication.json?efo_term__icontains", { drug_indications: [] }],
-            ["drug_indication.json?mesh_heading__icontains", { drug_indications: [] }],
             [
                 "/molecule/search.json",
                 {
@@ -297,8 +297,9 @@ describe("chembl — action: drug", () => {
         expect(drugs[0]!.maxPhase).toBe(4);
         expect(drugs[0]!.moleculeType).toBe("Small molecule");
         expect(drugs[0]!.indication).toBe("Leukemia, Myelogenous, Chronic, BCR-ABL Positive");
-        expect(requestedUrls[2]).toContain("/molecule/search.json?q=imatinib&limit=25");
-        expect(requestedUrls[3]).toContain("/drug_indication.json?molecule_chembl_id__in=CHEMBL941");
+        expect(requestedUrls[0]).toContain("/molecule/search.json?q=imatinib&limit=25");
+        expect(requestedUrls[1]).toContain("/drug_indication.json?molecule_chembl_id__in=CHEMBL941");
+        expect(requestedUrls.some((url) => url.includes("__icontains"))).toBe(false);
         expect(requestedUrls.some((url) => url.includes("/drug/search.json"))).toBe(false);
     });
 
