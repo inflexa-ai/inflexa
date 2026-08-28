@@ -7,23 +7,32 @@ and the wire-format contract that independent producers implement against.
 ## Requirements
 ### Requirement: The kernel owns the dialect and nothing else
 
-`@inflexa-ai/prov-kernel` SHALL carry the Inflexa PROV dialect: the document model
-(QName derivation, statement builders, unify options, injectable digest), the
-core event union `ProvEvent` with its apply function `applyProvEvent`, the
-chain-hash and Ed25519 sign/verify primitives, the signed-attestation schema,
-and the actor/ref value types the events carry. The event-to-statements
-mapping determines the serialized document bytes, thus the mapping is format
-and the kernel SHALL own it for the core events. Core statements SHALL be
-producible only through `applyProvEvent`: the per-core-event statement
-builders stay off the supported public surface, closing the bypass path that
-could produce divergent documents. (The package's `./*` subpath exports mean
-a deep import can still reach module internals — the boundary is the
-supported type surface, not runtime privacy.) The package SHALL NOT
-contain a recorder lifecycle (sink, flush, queue, CAS), signer wiring, or a
-harness bridge, and it SHALL NOT depend on `@inflexa-ai/harness`. A host
-extension event SHALL stay outside the core union and map onto
-`appendLifecycleAction`, the QName derivations, and tsprov interop. The
-layering rule is: the harness observes, the kernel represents, hosts decide.
+`@inflexa-ai/prov-kernel` MUST carry the Inflexa PROV dialect, and nothing
+else. The dialect covers:
+
+- the document model: the QName derivation, the statement builders, the unify
+  options, and the injectable digest
+- the core event union `ProvEvent` with its apply function `applyProvEvent`
+- the chain-hash and Ed25519 signature primitives
+- the signed-attestation schema
+- the actor and ref value types that the events carry
+
+The core union covers three families: the execution family, the lifecycle
+family, and the session and report family. The event-to-statements mapping
+determines the serialized document bytes. Thus the mapping is format, and the
+kernel MUST own it for the core events. Core statements MUST be producible
+only through `applyProvEvent`. The per-core-event statement builders stay off
+the supported public surface, which closes the bypass path to a divergent
+document.
+
+(The `./*` subpath exports let a deep import reach module internals
+— the boundary is the supported type surface, not runtime privacy.) The
+package MUST NOT contain a recorder lifecycle (sink, flush, queue, CAS),
+signer wiring, or a harness bridge, and it MUST NOT depend on
+`@inflexa-ai/harness`. A host-specific extension event MUST stay outside the
+core union, and it maps onto `appendLifecycleAction`, the QName derivations,
+and tsprov interop. The layering rule is: the harness observes, the kernel
+represents, hosts decide.
 
 #### Scenario: A host without a harness produces a document
 
@@ -43,10 +52,64 @@ layering rule is: the harness observes, the kernel represents, hosts decide.
 
 #### Scenario: Extension events stay out of the kernel
 
-- **GIVEN** a host that adds a new observed event kind outside the core union
+- **GIVEN** a host that adds an observed event kind that only that host
+  records
 - **WHEN** it maps the event onto the extension surface, for example through
   the generic `appendLifecycleAction`
 - **THEN** the kernel needs no change and no version bump
+
+### Requirement: The session and report family is core format
+
+The core union MUST carry nine session and report members: `session_created`,
+`report_block_added`, `report_block_changed`, `report_block_removed`,
+`report_block_moved`, `report_title_set`, `report_derivation_run`,
+`report_previewed`, and `report_version_recorded`. Each member maps onto one
+typed action activity in the lifecycle shape, with the act data as
+attributes. Each member names the model that drove the act. The mapping
+records the model agent, its delegation to the responsible agent, and its
+association with the activity. The four block members MUST carry `blockKind`,
+stamped as `inflexa:blockKind` on the action activity.
+
+A `session_created` member of kind `report` mints the report entity. A
+`session_created` member of kind `conversation` mints no entity, because a
+conversation is the session alone. A `report_version_recorded` member mints
+the version entity and its specialization of the report. The generation edge,
+the attribution, and the specialization of a minted entity MUST land only on
+the first declaration of that entity.
+
+The statements MUST stay byte-identical to the historical host mapping of the
+cli, under the same injected digest. `SPEC.md` MUST state the report
+vocabulary, and the golden fixture MUST cover the nine members.
+
+#### Scenario: A double emit adds no second generation edge
+
+- **GIVEN** a document that received one `session_created` of kind `report`
+  twice for one thread
+- **WHEN** it serializes under `unified()` with `PROV_UNIFY_OPTIONS`
+- **THEN** the report entity carries one generation edge and one attribution
+
+#### Scenario: A version is a specialization of its report
+
+- **GIVEN** a document with a `session_created` of kind `report` and a
+  `report_version_recorded` for the same thread
+- **WHEN** it serializes under `unified()`
+- **THEN** the version entity carries exactly one `specializationOf` edge to
+  the report entity, also when the version member arrived twice
+
+#### Scenario: A block act names its kind
+
+- **WHEN** `applyProvEvent` maps a `report_block_added` with `blockKind`
+  `chart`
+- **THEN** the action activity carries `inflexa:blockKind` with the value
+  `chart`
+
+#### Scenario: A late act mints the report entity lazily
+
+- **GIVEN** a document that received a `report_block_added` and no
+  `session_created`
+- **WHEN** the arm maps the act
+- **THEN** the report entity exists with no parent attribute, and the act
+  holds a `used` edge to it
 
 ### Requirement: Identifiers are deterministic and digest-parameterized
 
@@ -127,7 +190,7 @@ The kernel SHALL provide the one read-side interpretation of a stored dialect
 document. `deriveLineageModel(provJson)` SHALL take the exact stored PROV-JSON
 string, unify it under `PROV_UNIFY_OPTIONS`, and return a
 `{ nodes, edges }` model: typed, presentation-free nodes (`analysis`, `input`,
-and `file` entities, `activity` nodes with the kinds `run`/`step`/`command`/
+`file`, `report`, and `report_version` entities, `activity` nodes with the kinds `run`/`step`/`command`/
 `file_tool`/`action`, and `agent` nodes with the kinds
 `system`/`user`/`model`) and edges for exactly the seven relation kinds
 `used`, `generated`, `informed`, `derived`, `attributed`, `associated`, and
@@ -201,6 +264,13 @@ fixture bytes do not change.
   and the run spine, the agents via association and attribution, and the
   analysis via derivation, while a sibling command's exclusive output stays
   out
+
+#### Scenario: A report entity types as a report
+
+- **GIVEN** a document with a report entity and a version entity
+- **WHEN** `deriveLineageModel` runs
+- **THEN** the report node carries the kind `report`, the version node
+  carries the kind `report_version`, and `findFileEntity` returns neither
 
 ### Requirement: The kernel loads in browser and server runtimes
 
