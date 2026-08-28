@@ -39,6 +39,7 @@ import type { Logger } from "../lib/logger.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan, sandboxWriteTail } from "./mount-plan.js";
+import { threadLimitEnv } from "./thread-env.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -329,18 +330,24 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
 
                     const image = meta.image ?? config.image;
 
+                    const spec = meta.resources;
+
                     // Poll mode never dials out and carries no CORTEX_BASE_URL; it sets the
                     // firewall flag so the root entrypoint installs the egress block before
                     // dropping to uid 1000. Callback mode is the inverse.
-                    const env = [
-                        `SANDBOX_TRANSPORT=${transport}`,
-                        `SANDBOX_CALLBACK_SECRET=${callbackSecret}`,
-                        ...(pollMode ? ["SANDBOX_EGRESS_FIREWALL=1"] : [`CORTEX_BASE_URL=${config.cortexBaseUrl}`]),
-                        ...Object.entries(plan.env).map(([k, v]) => `${k}=${v}`),
-                        ...Object.entries(meta.extraEnv ?? {}).map(([k, v]) => `${k}=${v}`),
-                    ];
+                    //
+                    // Composed as one record, not a list of `K=V`: a duplicate key in the
+                    // Env array resolves by whichever end of `environ` the reading libc
+                    // scans from, so the later spread has to be the one that wins here.
+                    const env = Object.entries({
+                        SANDBOX_TRANSPORT: transport,
+                        SANDBOX_CALLBACK_SECRET: callbackSecret,
+                        ...(pollMode ? { SANDBOX_EGRESS_FIREWALL: "1" } : { CORTEX_BASE_URL: config.cortexBaseUrl }),
+                        ...threadLimitEnv(spec),
+                        ...plan.env,
+                        ...(meta.extraEnv ?? {}),
+                    }).map(([k, v]) => `${k}=${v}`);
 
-                    const spec = meta.resources;
                     const createOpts: Docker.ContainerCreateOptions = {
                         name: sandboxId,
                         ...(config.platform !== undefined && { platform: config.platform }),

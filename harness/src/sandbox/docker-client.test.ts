@@ -291,6 +291,47 @@ describe("docker createSandbox — transport modes", () => {
         expect(registered).toEqual([{ runId: "run-1", stepId: "step-a", sandboxId: ref.sandboxId }]);
     });
 
+    test("the cpu request is published as the thread count of every parallel runtime", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        // Without these the runtimes size their pools from the host's core count
+        // and oversubscribe the cgroup the same call sets NanoCpus on.
+        const env = envMapOf(sandboxOf(created)!);
+        expect(env.OMP_NUM_THREADS).toBe("2");
+        expect(env.OPENBLAS_NUM_THREADS).toBe("2");
+        expect(env.MC_CORES).toBe("2");
+    });
+
+    test("a fractional cpu request floors to one thread, and extraEnv overrides the derived count", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox({ ...META, resources: { cpu: 0.5, memoryGb: 1 }, extraEnv: { OMP_NUM_THREADS: "8" } }, mintSandboxIdentity("run-1"))
+        )._unsafeUnwrap();
+
+        const env = envMapOf(sandboxOf(created)!);
+        expect(env.MC_CORES).toBe("1");
+        expect(env.OMP_NUM_THREADS).toBe("8");
+    });
+
     test("a container that maps no host port is stopped, removed, and reported failed", async () => {
         const { docker, removed } = stubDocker();
         // A daemon that starts the container but publishes no port for 8765/tcp.

@@ -129,6 +129,11 @@ describe("k8s createSandbox", () => {
         expect(envMap.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
         expect(envMap.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
+        // The cgroup limit below is invisible to the runtimes inside it, so the
+        // same cpu request rides in as their thread count.
+        expect(envMap.OMP_NUM_THREADS).toBe("2");
+        expect(envMap.OPENBLAS_NUM_THREADS).toBe("2");
+        expect(envMap.MC_CORES).toBe("2");
 
         expect(container.workingDir).toBe("/an-1/runs/run-1/step-a");
 

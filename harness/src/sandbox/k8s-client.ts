@@ -30,6 +30,7 @@ import { ResultAsync, err, ok } from "neverthrow";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan, buildSessionSubPaths } from "./mount-plan.js";
+import { threadLimitEnv } from "./thread-env.js";
 import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -183,25 +184,26 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
     });
 
     const transport = config.transport ?? "poll";
-    const env = [
-        { name: "SANDBOX_TRANSPORT", value: transport },
+    const spec = meta.resources;
+    // Composed as one record, not a list of `{name, value}`: a duplicate name in
+    // a container's env is resolved by the kubelet, not by this spec, so the
+    // later spread has to be the one that wins here.
+    const env = Object.entries({
+        SANDBOX_TRANSPORT: transport,
         // Poll mode never dials out, so the URL is omitted (matching the Docker
         // backend) — the pod spec itself then documents that no callback egress
         // is expected. sandbox-server neither reads nor requires it in poll mode.
-        ...(transport === "callback" ? [{ name: "CORTEX_BASE_URL", value: config.cortexBaseUrl }] : []),
-        { name: "SANDBOX_CALLBACK_SECRET", value: identity.callbackSecret },
-        ...Object.entries(plan.env).map(([name, value]) => ({ name, value })),
-        ...Object.entries(meta.extraEnv ?? {}).map(([k, v]) => ({
-            name: k,
-            value: v,
-        })),
-    ];
+        ...(transport === "callback" ? { CORTEX_BASE_URL: config.cortexBaseUrl } : {}),
+        SANDBOX_CALLBACK_SECRET: identity.callbackSecret,
+        ...threadLimitEnv(spec),
+        ...plan.env,
+        ...(meta.extraEnv ?? {}),
+    }).map(([name, value]) => ({ name, value }));
 
     // requests == limits → Guaranteed QoS and a predictable OOM bound; also
     // satisfies the namespace ResourceQuota, which rejects any pod that omits
     // requests.cpu/memory. The CPU limit can throttle a hot step, but a throttle
     // beats an eviction.
-    const spec = meta.resources;
     const quantities: Record<string, string> = {
         cpu: String(spec.cpu),
         memory: `${spec.memoryGb}Gi`,
