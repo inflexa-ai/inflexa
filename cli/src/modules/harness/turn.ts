@@ -25,6 +25,7 @@ import {
 
 import { getLogger, harnessLogger } from "../../lib/log.ts";
 import { enterChatTurn } from "./agent_switch.ts";
+import { emitReportObservation } from "./report_bridge.ts";
 
 // The headless chat turn engine. One transport-free sequence —
 // `prepareChatTurn → runAgent → unconditional appendTurn` — shared by BOTH the
@@ -261,8 +262,14 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // The logger rides into preparation so the history-repair warning of the
         // message assembly reaches the file log — without it, a repaired thread
         // heals silently and the writer defect it covers stays invisible.
+        //
+        // The report seam rides beside it, because preparation holds the one site that writes a
+        // conversation thread and thus the one site that knows the true moment of that creation. It is
+        // the SAME module-level function that the composition root binds on the core bag, imported the
+        // way the turn gauge above is: one seam, thus one claim about a created session, whichever
+        // surface drives the turn.
         const prepared = await ResultAsync.fromPromise(
-            seams.prepare({ pool, logger: harnessLogger("harness") }, { analysisId, threadId, userInput }),
+            seams.prepare({ pool, logger: harnessLogger("harness"), emitReportObservation }, { analysisId, threadId, userInput }),
             (e): unknown => e,
         ).match(
             (r) => r,
