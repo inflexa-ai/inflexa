@@ -30,7 +30,7 @@ import type { AcquireEyes } from "../lib/eyes.js";
 import type { Logger } from "../lib/logger.js";
 import type { ThreadInputError, ThreadType } from "../memory/thread-store.js";
 import { defineTool, type Tool, type ToolError } from "./define-tool.js";
-import type { EmitReportObservation } from "./report-observation.js";
+import type { ProvenanceSeam } from "../provenance/seam.js";
 
 /**
  * The character bound of each brief field. The whole brief lands in one durable
@@ -126,11 +126,11 @@ export interface StartReportSessionToolDeps {
      */
     readonly anchorSession?: (threadId: string) => Promise<EnsureSessionStateResult>;
     /**
-     * The observation seam of the composition. The tool hands it to the spawn,
+     * The provenance seam of the composition. The tool hands it to the spawn,
      * which emits the creation of the session at the moment that the child lands.
      * The tool emits nothing of its own.
      */
-    readonly emitReportObservation?: EmitReportObservation;
+    readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
 }
 
@@ -187,7 +187,7 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
         chrome: deps.chrome,
         ...(deps.eyes ? { eyes: deps.eyes } : {}),
         ...(deps.anchorSession ? { anchorSession: deps.anchorSession } : {}),
-        ...(deps.emitReportObservation ? { emitReportObservation: deps.emitReportObservation } : {}),
+        ...(deps.provenance ? { provenance: deps.provenance } : {}),
         ...(deps.logger ? { logger: deps.logger } : {}),
     };
     const spawn = createReportSessionSpawn(spawnDeps);

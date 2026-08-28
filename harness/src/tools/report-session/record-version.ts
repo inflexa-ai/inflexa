@@ -50,7 +50,7 @@ import type { RecordVersionError, ReportVersionStore } from "../../state/report-
 import { reportSessionDerivedDir, resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
-import { bindReportObservation, type EmitReportObservation } from "../report-observation.js";
+import { bindSessionEmit, type ProvenanceSeam } from "../../provenance/seam.js";
 
 /** The empty input. The tool records the current draft of the thread, thus it needs no field. */
 const recordVersionInput = z.object({});
@@ -96,8 +96,8 @@ export interface RecordVersionToolDeps {
     readonly threads: Pick<ThreadStore, "getThread">;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
-    /** The report observation seam; an unbound seam emits nothing and the record runs the same. */
-    readonly emitReportObservation?: EmitReportObservation;
+    /** The provenance seam; an unbound session emit emits nothing and the record runs the same. */
+    readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
 }
 
@@ -189,7 +189,7 @@ async function pruneUnusedDerivations(args: {
  */
 export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<RecordVersionInput, RecordVersionResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("record-report-version");
-    const observe = bindReportObservation(deps.emitReportObservation, logger);
+    const observe = bindSessionEmit(deps.provenance, logger);
 
     return defineTool({
         id: "record_report_version",

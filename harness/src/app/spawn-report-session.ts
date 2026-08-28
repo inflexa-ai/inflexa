@@ -74,7 +74,7 @@ import type { DomainError } from "../lib/result.js";
 import { conversationRecordTurn, createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type Thread, type ThreadInputError, type ThreadPage, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
-import { bindReportObservation, type EmitReportObservation } from "../tools/report-observation.js";
+import { bindSessionEmit, type ProvenanceSeam } from "../provenance/seam.js";
 import type { EnsureSessionStateResult } from "./report-session-runtime.js";
 
 /**
@@ -217,15 +217,16 @@ export interface ReportSessionSpawnDeps {
      */
     readonly anchorSession?: (threadId: string) => Promise<EnsureSessionStateResult>;
     /**
-     * The observation seam of a report session. The spawn is the birth of the
-     * session, thus it is the one site that can tell the embedder the true moment
-     * of the ask. A consumer that waits for the first authoring act reads a later
-     * moment, and it reads nothing at all for a session that stays empty.
+     * The provenance seam. The spawn reads its session emit member, and no other
+     * member. The spawn is the birth of the session, thus it is the one site that
+     * can tell the embedder the true moment of the ask. A consumer that waits for
+     * the first authoring act reads a later moment, and it reads nothing at all
+     * for a session that stays empty.
      *
-     * The seam is optional and fire-and-forget, the same as it is at each
+     * The member is optional and fire-and-forget, the same as it is at each
      * authoring site.
      */
-    readonly emitReportObservation?: EmitReportObservation;
+    readonly provenance?: ProvenanceSeam;
     /** Operational logging seam. An omitted logger falls back to the no-op. */
     readonly logger?: Logger;
 }
@@ -375,9 +376,9 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
     // The routes are fixed at construction, thus the gate reads one boolean and
     // never a live probe of the sidecar.
     const eyesAvailable = compositionHasEyes(deps);
-    // An unbound seam gives a call that does nothing, thus the spawn emits at one
-    // site with no test of its own.
-    const observe = bindReportObservation(deps.emitReportObservation, log);
+    // An unbound member gives a call that does nothing, thus the spawn emits at
+    // one site with no test of its own.
+    const observe = bindSessionEmit(deps.provenance, log);
 
     /**
      * Write the one seed message of the child and give the child back. The

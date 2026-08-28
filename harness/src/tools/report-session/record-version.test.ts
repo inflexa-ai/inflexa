@@ -30,7 +30,7 @@ import { reportSessionDerivedDir } from "../../workspace/paths.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
 import type { ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
-import type { EmitReportObservation, ReportObservationEvent } from "../report-observation.js";
+import type { ProvenanceSeam, SessionProvenanceEvent } from "../../provenance/seam.js";
 import { createPreviewReportTool } from "./preview-report.js";
 import { createRecordVersionTool, type RecordVersionResult } from "./record-version.js";
 
@@ -240,7 +240,7 @@ describe("createRecordVersionTool", () => {
         await drop();
     });
 
-    function makeTool(gateway: ReportSessionStateGateway, root?: string, logger?: Logger, emitReportObservation?: EmitReportObservation) {
+    function makeTool(gateway: ReportSessionStateGateway, root?: string, logger?: Logger, emitSessionEvent?: ProvenanceSeam["emitSessionEvent"]) {
         return createRecordVersionTool({
             gateway,
             store,
@@ -248,7 +248,7 @@ describe("createRecordVersionTool", () => {
             resolveWorkspaceRoot: () => root ?? suiteRoot,
             makeResolver: () => createFixtureResolver(),
             ...(logger ? { logger } : {}),
-            ...(emitReportObservation ? { emitReportObservation } : {}),
+            ...(emitSessionEvent ? { provenance: { emitSessionEvent } } : {}),
         });
     }
 
@@ -682,7 +682,7 @@ describe("createRecordVersionTool", () => {
         it("gives one event for the version that landed, and it marks the record that replaced it", async () => {
             const threadId = "thread-observed";
             await anchorThread(threadId, "parent-observed");
-            const events: ReportObservationEvent[] = [];
+            const events: SessionProvenanceEvent[] = [];
             const session = mutableSession(threadId, metricDoc(), metricSnapshot);
             const tool = makeTool(session.gateway, undefined, undefined, (event) => events.push(event));
 
@@ -706,7 +706,7 @@ describe("createRecordVersionTool", () => {
 
         it("emits nothing when the look-before-record rule refuses", async () => {
             const threadId = "thread-observed-never-seen";
-            const events: ReportObservationEvent[] = [];
+            const events: SessionProvenanceEvent[] = [];
             const tool = makeTool(gatewayFor(threadId, metricDoc(), metricSnapshot, null), undefined, undefined, (event) => events.push(event));
 
             expect((await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap().outcome).toBe("never-seen");
@@ -727,7 +727,7 @@ describe("createRecordVersionTool", () => {
             // The version stands before the emit, thus a defect of the host costs the event alone.
             expect(result.outcome).toBe("recorded");
             expect((await store.getThreadVersion(threadId))._unsafeUnwrap()).not.toBeNull();
-            const record = logger.records.find((held) => held.msg.includes("the report observation seam threw"));
+            const record = logger.records.find((held) => held.msg.includes("the session emit of the provenance seam threw"));
             expect(record?.level).toBe("error");
             expect(record?.fields).toMatchObject({ analysisId: ANALYSIS_ID, threadId, event: "record-version", err: "the recorder is down" });
         });

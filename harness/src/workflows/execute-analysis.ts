@@ -96,6 +96,7 @@ import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, type UpstreamHandoff } fro
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
+import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge } from "../billing/run-charge.js";
 import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -196,60 +197,6 @@ export interface ExecuteAnalysisResult {
 // ── Dep injection ─────────────────────────────────────────────────────
 
 /**
- * A run-lifecycle provenance observation handed to an optional host observer.
- * Harness-owned plain union — the harness stays tsprov-free and bus-free; the
- * host maps these execution facts onto its own ledger vocabulary.
- *
- * Every `atMs` is epoch milliseconds read via `await DBOS.now()`, a checkpointed
- * step: a body re-executed by DBOS recovery reads the recorded value, so a
- * re-emitted event carries the identical timestamp and merges on the host's
- * ledger without a value conflict. Never source these from a wall clock
- * (`Date.now()`) — that would diverge across replays and defeat the merge.
- *
- * `run_completed.durationMs` is the terminal `atMs` minus the `run_started`
- * `atMs` (both `DBOS.now()` reads) — the true workflow-observed run span.
- *
- * `step_completed` fires once at EVERY scheduler-loop settlement — the only site
- * that observes every executed step (registration sees only artifact-producing
- * steps, and a child cannot observe its own parent-driven cancel). Steps that
- * were never dispatched (dependents of a failed sibling) emit nothing by design;
- * the run's terminal status carries that outcome. `status` maps the settlement
- * outcome: `complete` → `"completed"`, `canceled` → `"canceled"`,
- * `failed`/`blocked`/child-error → `"failed"`.
- *
- * `run_completed` fires at BOTH terminal boundaries (success and failure); the
- * `status` field distinguishes them.
- */
-export type RunProvenanceEvent =
-    | { type: "run_started"; analysisId: string; runId: string; planSummary: string; stepCount: number; atMs: number }
-    | {
-          type: "step_completed";
-          analysisId: string;
-          runId: string;
-          stepId: string;
-          /** Settlement outcome mapped to a terminal step status. */
-          status: "completed" | "failed" | "canceled";
-          /** The child's durable execution duration; absent when the child settled by throwing. */
-          durationMs?: number;
-          atMs: number;
-      }
-    | {
-          type: "run_completed";
-          analysisId: string;
-          runId: string;
-          /**
-           * The body's terminal status. Both boundary sites resolve it through `deriveFinalStatus`,
-           * which records a budget pause as `"canceled"` — so `"suspended_insufficient_funds"` (a
-           * `RunStatus` member) is never emitted here and is deliberately absent from this narrower
-           * `ExecuteAnalysisFinalStatus`-minus-`"running"` set.
-           */
-          status: Exclude<ExecuteAnalysisFinalStatus, "running">;
-          atMs: number;
-          /** `atMs − run_started.atMs`: the workflow-observed run span in ms. */
-          durationMs: number;
-      };
-
-/**
  * A step's in-run display state. Wider than the ledger's `StepExecutionStatus`: `queued` is a
  * scheduler-only condition (dependency-satisfied but held for budget capacity) that never reaches a
  * database row, and `skipped` is asserted mid-run for a doomed dependent whose ledger row stays
@@ -333,9 +280,11 @@ export interface ExecuteAnalysisDeps {
     readonly usageRecorder?: UsageRecorder;
 
     /**
-     * Optional, fire-and-forget provenance observation of the run lifecycle.
-     * Deliberately invoked directly in the workflow body (NOT wrapped in
-     * `DBOS.runStep`) so that body re-execution on DBOS recovery re-fires it —
+     * The provenance seam of the composition. The body reads its run emit member,
+     * and it reads no other member.
+     *
+     * The emit is deliberately invoked directly in the workflow body (NOT wrapped
+     * in `DBOS.runStep`) so that body re-execution on DBOS recovery re-fires it —
      * a cached step would suppress the recovery re-emission, defeating the
      * point. Idempotency is the consumer's job, achieved via the deterministic
      * identifiers the events carry, not via step caching. Every call site is
@@ -345,20 +294,20 @@ export interface ExecuteAnalysisDeps {
      * persisting realization needs its credential, scope, and identity.
      * Implementations may ignore the parameter.
      */
-    readonly emitProvenance?: (event: RunProvenanceEvent, session: RunSession) => void;
+    readonly provenance?: ProvenanceSeam;
 
     /**
      * Optional, fire-and-forget observation of the run's live shape, for a host driving a UI.
      *
-     * Independent of {@link emitProvenance} in every direction: neither is implemented in terms of
-     * the other, they share no payload, and supplying one does not imply the other. They exist
-     * separately because provenance closes a signed, hash-chained record under a single-writer
-     * lock, while this is a lossy-tolerant display channel — coupling them would put a UI repaint
-     * behind the chain's write discipline and force provenance to carry step names and agent ids it
-     * has no reason to record.
+     * Independent of the run emit of {@link provenance} in every direction: neither is implemented
+     * in terms of the other, they share no payload, and supplying one does not imply the other.
+     * They exist separately because provenance closes a signed, hash-chained record under a
+     * single-writer lock, while this is a lossy-tolerant display channel — coupling them would put
+     * a UI repaint behind the chain's write discipline and force provenance to carry step names and
+     * agent ids it has no reason to record.
      *
-     * Invoked directly in the workflow body (NOT wrapped in `DBOS.runStep`) for the same reason
-     * `emitProvenance` is: body re-execution on recovery must re-fire it, and a cached step would
+     * Invoked directly in the workflow body (NOT wrapped in `DBOS.runStep`) for the same reason the
+     * run emit is: body re-execution on recovery must re-fire it, and a cached step would
      * suppress that. Idempotency comes free for rendering because the payload is a whole-run
      * snapshot; a host taking a DURABLE side effect on one must key it by run id and status itself.
      *
@@ -385,11 +334,12 @@ function emitStreamPart(part: unknown): Promise<void> {
  */
 function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEvent, session: RunSession): void {
     const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis");
-    if (!deps.emitProvenance) return;
+    const emit = deps.provenance?.emitRunEvent;
+    if (!emit) return;
     try {
-        deps.emitProvenance(event, session);
+        emit(event, session);
     } catch (err) {
-        logger.error("emitProvenance threw", { runId: event.runId, event: event.type, ...logger.errorFields(err) });
+        logger.error("the run emit of the provenance seam threw", { runId: event.runId, event: event.type, ...logger.errorFields(err) });
     }
 }
 
