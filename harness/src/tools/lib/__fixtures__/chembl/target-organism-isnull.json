@@ -1,0 +1,41 @@
+{
+    "page_meta": {
+        "limit": 3,
+        "next": "/chembl/api/data/target.json?limit=3&offset=3&organism__isnull=true",
+        "offset": 0,
+        "previous": null,
+        "total_count": 275
+    },
+    "targets": [
+        {
+            "cross_references": [],
+            "organism": null,
+            "pref_name": "NON-PROTEIN TARGET",
+            "species_group_flag": false,
+            "target_chembl_id": "CHEMBL3879801",
+            "target_components": [],
+            "target_type": "NON-MOLECULAR",
+            "tax_id": null
+        },
+        {
+            "cross_references": [],
+            "organism": null,
+            "pref_name": "Nucleic Acid",
+            "species_group_flag": false,
+            "target_chembl_id": "CHEMBL345",
+            "target_components": [],
+            "target_type": "NUCLEIC-ACID",
+            "tax_id": null
+        },
+        {
+            "cross_references": [],
+            "organism": null,
+            "pref_name": "ADMET",
+            "species_group_flag": false,
+            "target_chembl_id": "CHEMBL612558",
+            "target_components": [],
+            "target_type": "ADMET",
+            "tax_id": null
+        }
+    ]
+}

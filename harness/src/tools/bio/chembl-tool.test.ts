@@ -70,11 +70,26 @@ const EGFR_TARGET = {
     ],
 };
 
+/** The wire shape of a ChEMBL molecule row: a decimal is a string, and an absent value is an explicit null. */
 const ASPIRIN_MOLECULE = {
     molecule_chembl_id: "CHEMBL25",
     pref_name: "ASPIRIN",
+    max_phase: "4.0",
+    molecule_type: "Small molecule",
+    first_approval: 1950,
     molecule_structures: { canonical_smiles: "CC(=O)Oc1ccccc1C(=O)O" },
-    molecule_properties: { full_mwt: "180.16", alogp: "1.31", molecular_formula: "C9H8O4" },
+    molecule_properties: { full_mwt: "180.16", alogp: "1.31", full_molformula: "C9H8O4" },
+};
+
+/** An antibody carries an explicit null for both blocks. */
+const TRASTUZUMAB_MOLECULE = {
+    molecule_chembl_id: "CHEMBL1201585",
+    pref_name: "TRASTUZUMAB",
+    max_phase: "4.0",
+    molecule_type: "Antibody",
+    first_approval: 1998,
+    molecule_structures: null,
+    molecule_properties: null,
 };
 
 describe("chembl — action: targets", () => {
@@ -150,22 +165,22 @@ describe("chembl — action: compounds", () => {
             [
                 "/activity.json",
                 {
-                    activities: [{ molecule_chembl_id: "CHEMBL25" }, { molecule_chembl_id: "CHEMBL941" }, { molecule_chembl_id: "CHEMBL25" }],
+                    activities: [{ molecule_chembl_id: "CHEMBL25" }, { molecule_chembl_id: "CHEMBL1201585" }, { molecule_chembl_id: "CHEMBL25" }],
                 },
             ],
-            ["/molecule/set/", { molecules: [ASPIRIN_MOLECULE, { molecule_chembl_id: "CHEMBL941", pref_name: "IMATINIB" }] }],
+            ["/molecule/set/", { molecules: [ASPIRIN_MOLECULE, TRASTUZUMAB_MOLECULE] }],
         ]);
 
         const compounds = resultKey(await callChembl({ action: "compounds", query: "EGFR", searchType: "target", limit: 500 }), "compounds");
 
-        expect(compounds.map((c) => c.chemblId)).toEqual(["CHEMBL25", "CHEMBL941"]);
-        // A biologic with no structures/properties block still parses.
+        expect(compounds.map((c) => c.chemblId)).toEqual(["CHEMBL25", "CHEMBL1201585"]);
+        // A biologic with an explicit null in both blocks still parses.
         expect(compounds[1]!.canonicalSmiles).toBeNull();
         expect(compounds[1]!.molecularWeight).toBeNull();
         expect(requestedUrls[0]).toContain("/target/search.json?q=EGFR&limit=1");
         expect(requestedUrls[1]).toContain("/activity.json?target_chembl_id=CHEMBL203&limit=500");
         // The duplicate molecule id is fetched once.
-        expect(requestedUrls[2]).toContain("/molecule/set/CHEMBL25;CHEMBL941.json");
+        expect(requestedUrls[2]).toContain("/molecule/set/CHEMBL25;CHEMBL1201585.json");
     });
 
     it("returns an empty compounds list when the target does not resolve", async () => {
@@ -178,59 +193,124 @@ describe("chembl — action: compounds", () => {
 });
 
 describe("chembl — action: drug", () => {
-    it("returns drug registry rows with indications", async () => {
+    const IMATINIB_MOLECULE = {
+        molecule_chembl_id: "CHEMBL941",
+        pref_name: "IMATINIB",
+        max_phase: "4.0",
+        molecule_type: "Small molecule",
+        first_approval: 2001,
+        molecule_hierarchy: { parent_chembl_id: "CHEMBL941" },
+    };
+
+    it("resolves an indication query through the drug_indication resource", async () => {
         stubRoutes([
             [
-                "/drug/search.json",
+                "drug_indication.json?efo_term__icontains=melanoma",
                 {
-                    drugs: [
+                    drug_indications: [
+                        { molecule_chembl_id: "CHEMBL1229517", mesh_heading: "Melanoma", efo_term: "melanoma", max_phase_for_ind: "4.0" },
+                        { molecule_chembl_id: "CHEMBL1229517", mesh_heading: "Skin Neoplasms", efo_term: null, max_phase_for_ind: "4.0" },
+                    ],
+                },
+            ],
+            [
+                "/molecule/set/",
+                {
+                    molecules: [
                         {
-                            molecule_chembl_id: "CHEMBL941",
-                            pref_name: "IMATINIB",
-                            max_phase: 4,
+                            molecule_chembl_id: "CHEMBL1229517",
+                            pref_name: "VEMURAFENIB",
+                            max_phase: "4.0",
                             molecule_type: "Small molecule",
-                            first_approval: 2001,
-                            drug_indications: [
-                                { mesh_heading: "Leukemia, Myelogenous, Chronic, BCR-ABL Positive" },
-                                { efo_term: "gastrointestinal stromal tumor" },
-                            ],
+                            first_approval: 2011,
                         },
                     ],
                 },
             ],
         ]);
 
-        const drugs = resultKey(await callChembl({ action: "drug", query: "imatinib" }), "drugs");
+        const drugs = resultKey(await callChembl({ action: "drug", query: "melanoma" }), "drugs");
 
         expect(drugs).toHaveLength(1);
-        expect(drugs[0]!.moleculeChemblId).toBe("CHEMBL941");
+        expect(drugs[0]!.moleculeChemblId).toBe("CHEMBL1229517");
+        expect(drugs[0]!.preferredName).toBe("VEMURAFENIB");
+        // ChEMBL serves the decimal `max_phase` as the string "4.0".
         expect(drugs[0]!.maxPhase).toBe(4);
-        expect(drugs[0]!.firstApproval).toBe(2001);
-        expect(drugs[0]!.indication).toBe("Leukemia, Myelogenous, Chronic, BCR-ABL Positive; gastrointestinal stromal tumor");
-        expect(requestedUrls[0]).toContain("/drug/search.json?q=imatinib&limit=10");
+        expect(drugs[0]!.firstApproval).toBe(2011);
+        expect(drugs[0]!.indication).toBe("Melanoma; Skin Neoplasms");
+        expect(requestedUrls[0]).toContain("/drug_indication.json?efo_term__icontains=melanoma");
+        expect(requestedUrls[0]).toContain("order_by=-max_phase_for_ind");
+        expect(requestedUrls[1]).toContain("/molecule/set/CHEMBL1229517.json");
+        expect(requestedUrls.some((url) => url.includes("/drug/search.json"))).toBe(false);
     });
 
-    it("falls back to an approved-molecule search (indication: null) when the drug endpoint is empty", async () => {
+    it("reads the mesh_heading filter when no EFO term matches", async () => {
         stubRoutes([
-            ["/drug/search.json", { drugs: [] }],
+            ["drug_indication.json?efo_term__icontains", { drug_indications: [] }],
+            [
+                "drug_indication.json?mesh_heading__icontains",
+                { drug_indications: [{ molecule_chembl_id: "CHEMBL941", mesh_heading: "Leukemia", efo_term: null, max_phase_for_ind: "4.0" }] },
+            ],
+            ["/molecule/set/", { molecules: [IMATINIB_MOLECULE] }],
+        ]);
+
+        const drugs = resultKey(await callChembl({ action: "drug", query: "leukemia" }), "drugs");
+
+        expect(drugs).toHaveLength(1);
+        expect(drugs[0]!.indication).toBe("Leukemia");
+        expect(requestedUrls[1]).toContain("/drug_indication.json?mesh_heading__icontains=leukemia");
+    });
+
+    it("searches the approved molecules when the query names no indication", async () => {
+        stubRoutes([
+            ["drug_indication.json?efo_term__icontains", { drug_indications: [] }],
+            ["drug_indication.json?mesh_heading__icontains", { drug_indications: [] }],
             [
                 "/molecule/search.json",
                 {
                     molecules: [
-                        { molecule_chembl_id: "CHEMBL25", pref_name: "ASPIRIN", max_phase: 4, molecule_type: "Small molecule" },
-                        { molecule_chembl_id: "CHEMBL999", pref_name: "TOOL COMPOUND", max_phase: 1 },
+                        IMATINIB_MOLECULE,
+                        { molecule_chembl_id: "CHEMBL999", pref_name: null, max_phase: "1.0", molecule_type: "Small molecule", first_approval: null },
+                    ],
+                },
+            ],
+            [
+                "drug_indication.json?molecule_chembl_id__in",
+                {
+                    drug_indications: [
+                        {
+                            molecule_chembl_id: "CHEMBL941",
+                            mesh_heading: "Leukemia, Myelogenous, Chronic, BCR-ABL Positive",
+                            efo_term: "chronic myelogenous leukemia",
+                            max_phase_for_ind: "4.0",
+                        },
                     ],
                 },
             ],
         ]);
 
-        const drugs = resultKey(await callChembl({ action: "drug", query: "aspirin", limit: 25 }), "drugs");
+        const drugs = resultKey(await callChembl({ action: "drug", query: "imatinib", limit: 25 }), "drugs");
 
-        // Only max_phase >= 4 survives the fallback filter.
+        // Only a molecule of max_phase >= 4 is an approved drug.
         expect(drugs).toHaveLength(1);
-        expect(drugs[0]!.moleculeChemblId).toBe("CHEMBL25");
-        expect(drugs[0]!.indication).toBeNull();
-        expect(requestedUrls[1]).toContain("/molecule/search.json?q=aspirin&limit=25");
+        expect(drugs[0]!.moleculeChemblId).toBe("CHEMBL941");
+        expect(drugs[0]!.maxPhase).toBe(4);
+        expect(drugs[0]!.moleculeType).toBe("Small molecule");
+        expect(drugs[0]!.indication).toBe("Leukemia, Myelogenous, Chronic, BCR-ABL Positive");
+        expect(requestedUrls[2]).toContain("/molecule/search.json?q=imatinib&limit=25");
+        expect(requestedUrls[3]).toContain("/drug_indication.json?molecule_chembl_id__in=CHEMBL941");
+        expect(requestedUrls.some((url) => url.includes("/drug/search.json"))).toBe(false);
+    });
+
+    it("returns an empty drugs list when neither resource matches", async () => {
+        stubRoutes([
+            ["/drug_indication.json", { drug_indications: [] }],
+            ["/molecule/search.json", { molecules: [] }],
+        ]);
+
+        const out = await callChembl({ action: "drug", query: "notadrug" });
+
+        expect(resultKey(out, "drugs")).toEqual([]);
     });
 });
 
