@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Docker from "dockerode";
@@ -32,14 +32,21 @@ async function writeCompleteStore(root: string, version: string): Promise<void> 
 // `refStorePath` is, at createSandbox time, a real (non-symlink) directory, so a bare
 // temp dir already models a usable store.
 let refsRoot: string;
+// A real parent of a workspace root. The Docker client writes the cpu files of a
+// sandbox into `<parent>/.cpu/<sandboxId>/`, and it makes `.cpu` only when the
+// parent exists. The `/sessions` root of the other tests is not on disk, thus
+// those sandboxes get no cpu binds and their exact bind lists stay short.
+let wsRoot: string;
 beforeEach(async () => {
     libRoot = await mkdtemp(join(tmpdir(), "harness-libstore-"));
     await writeCompleteStore(libRoot, "2026.07.04-abc");
     refsRoot = await mkdtemp(join(tmpdir(), "harness-refstore-"));
+    wsRoot = await mkdtemp(join(tmpdir(), "harness-workspace-"));
 });
 afterEach(async () => {
     await rm(libRoot, { recursive: true, force: true });
     await rm(refsRoot, { recursive: true, force: true });
+    await rm(wsRoot, { recursive: true, force: true });
 });
 
 interface CreatedContainer {
@@ -361,6 +368,85 @@ describe("docker createSandbox — transport modes", () => {
         expect(sandbox.memorySwap).toBe(4 * 1024 ** 3);
     });
 
+    test("the cpu files are bound over the online list and /proc/cpuinfo, and teardown removes them", async () => {
+        const { docker, created } = stubDocker();
+        const hostCpuinfo = [0, 1, 2, 3].map((n) => `processor\t: ${n}\nmodel name\t: Test CPU\n\n`).join("");
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join(wsRoot, id),
+            readHostCpuinfo: async () => hostCpuinfo,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const ref = (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        // `parallel::detectCores()` greps /proc/cpuinfo and `os.cpu_count()` reads
+        // the online list. Both files describe the host, thus a small file over
+        // each path is the only way to make them report the quota.
+        const cpuDir = join(wsRoot, ".cpu", ref.sandboxId);
+        const sandbox = sandboxOf(created)!;
+        expect(sandbox.binds).toEqual([
+            `${wsRoot}/an-1:/an-1:ro`,
+            `${wsRoot}/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw`,
+            `${cpuDir}/online:/sys/devices/system/cpu/online:ro`,
+            `${cpuDir}/cpuinfo:/proc/cpuinfo:ro`,
+        ]);
+        expect(await readFile(join(cpuDir, "online"), "utf8")).toBe("0-1\n");
+        // The first two processor blocks of the host, and no other.
+        expect(await readFile(join(cpuDir, "cpuinfo"), "utf8")).toBe("processor\t: 0\nmodel name\t: Test CPU\n\nprocessor\t: 1\nmodel name\t: Test CPU\n\n");
+
+        (await ops.teardown(ref))._unsafeUnwrap();
+        expect(existsSync(cpuDir)).toBe(false);
+    });
+
+    test("a host with no /proc/cpuinfo binds the online file only", async () => {
+        const { docker, created } = stubDocker();
+        const logger = createCapturingLogger();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join(wsRoot, id),
+            readHostCpuinfo: async () => undefined,
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        const ref = (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        const binds = sandboxOf(created)!.binds;
+        expect(binds).toContain(`${join(wsRoot, ".cpu", ref.sandboxId, "online")}:/sys/devices/system/cpu/online:ro`);
+        expect(binds.some((b) => b.endsWith(":/proc/cpuinfo:ro"))).toBe(false);
+        expect(logger.records.some((r) => r.level === "debug" && r.msg.includes("no host /proc/cpuinfo"))).toBe(true);
+    });
+
+    test("a workspace root with no parent on disk gets no cpu binds and a warning", async () => {
+        const { docker, created } = stubDocker();
+        const logger = createCapturingLogger();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join(wsRoot, "absent", id),
+            readHostCpuinfo: async () => "processor\t: 0\n\n",
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        // The sandbox still starts: the thread env limits each library, and only
+        // the two base calls report the host.
+        expect(sandboxOf(created)!.binds.some((b) => b.includes(".cpu"))).toBe(false);
+        expect(existsSync(join(wsRoot, "absent"))).toBe(false);
+        expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("cpu files not written"))).toBe(true);
+    });
+
     test("a container that maps no host port is stopped, removed, and reported failed", async () => {
         const { docker, removed } = stubDocker();
         // A daemon that starts the container but publishes no port for 8765/tcp.
@@ -563,7 +649,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => join(wsRoot, id),
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -629,7 +715,7 @@ describe("docker createSandbox — ref store re-check", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => join(wsRoot, id),
             refStorePath: missing,
             docker,
             fetch: okFetch,
