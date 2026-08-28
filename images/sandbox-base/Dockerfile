@@ -281,6 +281,12 @@ COPY images/sandbox-base/provenance/Rprofile.site /opt/provenance/Rprofile.site
 # publishes the quota as INFLEXA_CPU_LIMIT; see server/cpulimit.go.
 COPY images/sandbox-base/cpu-limit.R /opt/cpu-limit.R
 
+# The same shim for Python. A .pth line that starts with `import` is executed by
+# the site module at interpreter start, which needs no PYTHONPATH entry and so
+# does not leak into conda's Python (see the lib-store .pth above).
+COPY images/sandbox-base/cpu-limit.py /usr/lib/python3/dist-packages/inflexa_cpu_limit.py
+RUN echo "import inflexa_cpu_limit" > /usr/lib/python3/dist-packages/inflexa-cpu-limit.pth
+
 # Default to the unprivileged workload user. Callback mode and K8s run as uid
 # 1000 throughout. Docker poll mode overrides `User` to root at create time so
 # the entrypoint can install the egress firewall, then `setpriv` drops back to
