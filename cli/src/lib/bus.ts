@@ -68,6 +68,57 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.file.path, producer: event.file.producer };
         case "prov.input_used":
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.input.path, source: event.input.source };
+        // The report family projects its identifying fields only: the thread, plus the block, the
+        // version, or the path the member carries. Authored content stays out — the title text and
+        // the block bodies are the user's report, not telemetry.
+        case "prov.session_created":
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                threadId: event.session.threadId,
+                sessionKind: event.session.kind,
+                model: event.model,
+            };
+        case "prov.report_block_added":
+        case "prov.report_block_changed":
+        case "prov.report_block_removed":
+        case "prov.report_block_moved":
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                threadId: event.block.threadId,
+                blockId: event.block.blockId,
+                model: event.model,
+            };
+        case "prov.report_title_set":
+            // The title itself is authored report content, so only the thread it landed on rides.
+            return { analysisId: event.analysisId, actorKind: event.actor.kind, threadId: event.title.threadId, model: event.model };
+        case "prov.report_derivation_run":
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                threadId: event.derivation.threadId,
+                outputPath: event.derivation.outputPath,
+                sourceCount: event.derivation.sources.length,
+                model: event.model,
+            };
+        case "prov.report_previewed":
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                threadId: event.preview.threadId,
+                pagePath: event.preview.pagePath,
+                model: event.model,
+            };
+        case "prov.report_version_recorded":
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                threadId: event.version.threadId,
+                versionId: event.version.versionId,
+                replaced: event.version.replaced,
+                model: event.model,
+            };
         case "run.observed":
             // The snapshot carries every step; telemetry keeps the shape as counts. A run of 40
             // steps observed on every transition would otherwise write the whole DAG to the log
