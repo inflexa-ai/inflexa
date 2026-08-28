@@ -277,6 +277,10 @@ COPY --from=provtrack-builder /provtrack.so /opt/provenance/provtrack.so
 COPY images/sandbox-base/provenance/sitecustomize.py /opt/provenance/sitecustomize.py
 COPY images/sandbox-base/provenance/Rprofile.site /opt/provenance/Rprofile.site
 
+# CPU-quota shim for R. sandbox-server points R_PROFILE_USER at this file and
+# publishes the quota as INFLEXA_CPU_LIMIT; see server/cpulimit.go.
+COPY images/sandbox-base/cpu-limit.R /opt/cpu-limit.R
+
 # Default to the unprivileged workload user. Callback mode and K8s run as uid
 # 1000 throughout. Docker poll mode overrides `User` to root at create time so
 # the entrypoint can install the egress firewall, then `setpriv` drops back to

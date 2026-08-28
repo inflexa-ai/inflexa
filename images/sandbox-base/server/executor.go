@@ -510,6 +510,9 @@ func buildCommand(ctx context.Context, req execSubmitRequest) *exec.Cmd {
 		cmd.Dir = req.Cwd
 	}
 	cmd.Env = sanitizedEnviron()
+	// Before req.Env: the quota is a default that a caller with better knowledge
+	// of one command overrides, not a mandate.
+	cmd.Env = append(cmd.Env, cpuLimitEnv(cmd.Env, cpuQuota())...)
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
