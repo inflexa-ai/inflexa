@@ -366,6 +366,26 @@ export async function runImageTransfer(kind: "runtime_image" | "provisioner_imag
         const sandboxImage = configuredSandboxImage();
         const image = kind === "runtime_image" ? sandboxImage : provisionerImageFor(sandboxImage);
 
+        // A `localhost/` reference names the engine's own store, never a
+        // registry — a pull would ping a registry called "localhost" and
+        // refuse on every retry. A dev override is the one source of such a
+        // reference, thus the row classifies instead of pulling: a held
+        // image is usable as it stands, and an absent one names the remedy.
+        if (image.startsWith("localhost/")) {
+            const held = await localImageDigest(rt, image);
+            if (held !== null) {
+                settleTransfer(kind, { state: "installed", message: `${image} is a local image, and the engine holds it. Nothing transfers.` }).unwrapOr(
+                    undefined,
+                );
+            } else {
+                settleTransfer(kind, {
+                    state: "failed",
+                    message: `${image} is a local image, and the engine does not hold it. Build it, or remove the \`harness.sandboxImage\` override so the pull uses the published image.`,
+                }).unwrapOr(undefined);
+            }
+            return;
+        }
+
         const previous = await localImageDigest(rt, image);
         // The total resolves BEFORE the pull, from the registry manifest, thus
         // the meter renders a real ratio from the first byte. A manifest that
