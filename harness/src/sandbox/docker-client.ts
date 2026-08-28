@@ -7,6 +7,15 @@
  * `/mnt/libs` / `/mnt/refs` when their host paths are configured. Container
  * paths and lib-store env come from the shared mount plan (`mount-plan.ts`).
  *
+ * ## The cpu files
+ *
+ * Two more binds put a small file over `/sys/devices/system/cpu/online` and
+ * over `/proc/cpuinfo` (`cpu-files.ts`). Each file describes `spec.cpu` cpus,
+ * not the host. The host side of each bind is a file under
+ * `<parent of the workspace root>/.cpu/<sandboxId>/`, thus outside the tree
+ * that the sandbox sees. `teardown` removes the directory when this process
+ * wrote it. A directory from an earlier process stays.
+ *
  * ## Transport and confinement
  *
  * The container joins the default bridge and publishes sandbox-server's port to
@@ -30,7 +39,8 @@
  */
 
 import { existsSync, lstatSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import Docker from "dockerode";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
@@ -39,6 +49,7 @@ import type { Logger } from "../lib/logger.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan, sandboxWriteTail } from "./mount-plan.js";
+import { cpuFiles } from "./cpu-files.js";
 import { threadLimitEnv } from "./thread-env.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
@@ -70,6 +81,12 @@ const MANAGED_BY_VALUE = "cortex";
 const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
 const RUN_ID_LABEL = "cortex/run-id";
 const STEP_ID_LABEL = "cortex/step-id";
+
+/** The two container paths that the cpu files cover. */
+const CPU_ONLINE_PATH = "/sys/devices/system/cpu/online";
+const CPUINFO_PATH = "/proc/cpuinfo";
+/** The directory next to the workspace root that holds the cpu files of each sandbox. */
+const CPU_FILES_DIR = ".cpu";
 
 export interface DockerClientConfig {
     image: string;
@@ -106,6 +123,12 @@ export interface DockerClientConfig {
     docker?: Docker;
     /** Injected for tests so `/health` polling can be stubbed. */
     fetch?: typeof fetch;
+    /**
+     * Injected for tests so the `/proc/cpuinfo` of the host can be stubbed. The
+     * default reads the file once per process. `undefined` means that the host
+     * has no such file, for example macOS.
+     */
+    readHostCpuinfo?: () => Promise<string | undefined>;
     /**
      * Optional logger so a lib-store degradation (a configured store whose `current`
      * vanished or went incomplete by sandbox-create time) is observable instead of a
@@ -156,6 +179,54 @@ function refStoreUsable(refStorePath: string): boolean {
         return lstatSync(refStorePath).isDirectory();
     } catch {
         return false;
+    }
+}
+
+/**
+ * The `/proc/cpuinfo` of the harness host, read once per process. The content
+ * does not change while the process runs. A host with no such file, for
+ * example macOS, gives `undefined`, and the caller binds only `online`.
+ */
+let hostCpuinfo: Promise<string | undefined> | undefined;
+function readHostCpuinfoOnce(): Promise<string | undefined> {
+    hostCpuinfo ??= readFile(CPUINFO_PATH, "utf8").catch(() => undefined);
+    return hostCpuinfo;
+}
+
+/**
+ * Write the cpu files of one sandbox into `dir` and return their binds.
+ *
+ * The directory `.cpu` is made with no `recursive` option on purpose. The
+ * parent of the workspace root must exist already. Thus a root that is not on
+ * disk gives no directory at an unexpected place, and the sandbox starts with
+ * no cpu files. The failure is a degradation, not an error: the thread env
+ * still limits each library, but `detectCores()` and `os.cpu_count()` report
+ * the host.
+ */
+async function writeCpuFiles(
+    dir: string,
+    files: { readonly online: string; readonly cpuinfo: string | undefined },
+    logger: Logger,
+    sandboxId: string,
+): Promise<string[]> {
+    const ignoreExists = (cause: NodeJS.ErrnoException): void => {
+        if (cause.code !== "EEXIST") throw cause;
+    };
+    try {
+        await mkdir(dirname(dir)).catch(ignoreExists);
+        await mkdir(dir).catch(ignoreExists);
+        const online = join(dir, "online");
+        await writeFile(online, files.online);
+        const binds = [`${online}:${CPU_ONLINE_PATH}:ro`];
+        if (files.cpuinfo !== undefined) {
+            const cpuinfo = join(dir, "cpuinfo");
+            await writeFile(cpuinfo, files.cpuinfo);
+            binds.push(`${cpuinfo}:${CPUINFO_PATH}:ro`);
+        }
+        return binds;
+    } catch (cause) {
+        logger.warn("cpu files not written — the sandbox reports the cores of the host", { sandboxId, dir, cause });
+        return [];
     }
 }
 
@@ -273,6 +344,9 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
     const fetchImpl = config.fetch ?? fetch;
     const transport: SandboxTransport = config.transport ?? "poll";
     const pollMode = transport === "poll";
+    const readHostCpuinfo = config.readHostCpuinfo ?? readHostCpuinfoOnce;
+    /** The cpu directory of each sandbox that this process wrote, for `teardown`. */
+    const cpuDirs = new Map<string, string>();
 
     return {
         createSandbox(meta, identity) {
@@ -311,6 +385,17 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     // a crafted tail cannot escape the resolved root into the container. The
                     // tail is the step directory, or the one the caller declared.
                     const write = sandboxWriteTail(meta);
+                    // The same floor as `threadLimitEnv`: a fractional cpu request is one cpu.
+                    const threads = Math.max(1, Math.floor(meta.resources.cpu));
+                    const cpuinfo = await readHostCpuinfo();
+                    if (cpuinfo === undefined) {
+                        logger.debug("no host /proc/cpuinfo — the sandbox gets the online file only", { sandboxId });
+                    }
+                    // Next to the workspace root, not under it: the root is bound read-only
+                    // at `/{analysisId}`, and a file under it is visible in the sandbox.
+                    const cpuDir = join(dirname(hostTreePath), CPU_FILES_DIR, sandboxId);
+                    const cpuBinds = await writeCpuFiles(cpuDir, cpuFiles(threads, cpuinfo), logger, sandboxId);
+                    if (cpuBinds.length > 0) cpuDirs.set(sandboxId, cpuDir);
                     const binds = [
                         `${hostTreePath}:${plan.readonlyTreePath}:ro`,
                         ...(write && plan.writableStepPath
@@ -318,6 +403,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             : []),
                         ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
                         ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
+                        ...cpuBinds,
                     ];
 
                     const createFailed = (status: number | undefined, cause: unknown): SandboxError => ({
@@ -429,11 +515,11 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
         },
 
         teardown(ref) {
-            return removeContainerIgnoreMissing(docker, ref.sandboxId);
+            return teardownSandbox(ref.sandboxId);
         },
 
         teardownById(sandboxId) {
-            return removeContainerIgnoreMissing(docker, sandboxId);
+            return teardownSandbox(sandboxId);
         },
 
         listManagedSandboxes() {
@@ -471,6 +557,22 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
 
         isAliveById,
     };
+
+    /**
+     * Remove the container, then the cpu files that this process wrote for it.
+     * A failure of the file removal does not fail the teardown: the container is
+     * gone, and a stale small directory is not a risk to a later sandbox.
+     */
+    function teardownSandbox(sandboxId: string): ResultAsync<void, SandboxError> {
+        return removeContainerIgnoreMissing(docker, sandboxId).map(async () => {
+            const cpuDir = cpuDirs.get(sandboxId);
+            if (cpuDir === undefined) return;
+            cpuDirs.delete(sandboxId);
+            await rm(cpuDir, { recursive: true, force: true }).catch((cause: unknown) => {
+                logger.debug("cpu files not removed", { sandboxId, cpuDir, cause });
+            });
+        });
+    }
 
     function isAliveById(sandboxId: string): ResultAsync<SandboxLiveness, SandboxError> {
         return trySandbox(
