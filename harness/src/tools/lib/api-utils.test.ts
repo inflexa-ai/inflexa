@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { z } from "zod";
 
-import { apiFetchValidated, describeApiError, isUnexpectedApiError } from "./api-utils.js";
+import { apiFetchValidated, describeApiError, isUnexpectedApiError, parseWireNumber, zWireNumber } from "./api-utils.js";
 
 const realFetch = globalThis.fetch;
 
@@ -78,5 +78,65 @@ describe("apiFetchValidated", () => {
     it("renders an invalid_response error to a readable message", () => {
         const message = describeApiError({ type: "invalid_response", issues: "0.id: Expected number, received string" });
         expect(message).toBe("Response did not match the expected schema: 0.id: Expected number, received string");
+    });
+
+    it("retries a 502 and returns the payload of the next attempt", async () => {
+        // A gateway in front of a bio provider answers 502 with an HTML body while
+        // the origin restarts. The next attempt gets the real payload, thus 502 is
+        // retryable and the caller never sees the transient failure.
+        let attempts = 0;
+        stubFetch(() => {
+            attempts += 1;
+            if (attempts === 1) return new Response("<html>502 Bad Gateway</html>", { status: 502 });
+            return json([{ id: 7, name: "BRCA1" }]);
+        });
+
+        const res = await apiFetchValidated("https://example.test/x", ListSchema, { retryDelayMs: 0 });
+
+        expect(attempts).toBe(2);
+        expect(res.isOk()).toBe(true);
+        expect(res._unsafeUnwrap()).toEqual([{ id: 7, name: "BRCA1" }]);
+    });
+});
+
+describe("parseWireNumber", () => {
+    it("reads a quoted decimal as a number", () => {
+        expect(parseWireNumber("4.0")).toBe(4);
+    });
+
+    it("passes a real number through", () => {
+        expect(parseWireNumber(2001)).toBe(2001);
+    });
+
+    it("gives null for a string that is not a number", () => {
+        expect(parseWireNumber("abc")).toBeNull();
+    });
+
+    it("gives null for an absent value", () => {
+        expect(parseWireNumber(null)).toBeNull();
+        expect(parseWireNumber(undefined)).toBeNull();
+    });
+
+    it("gives null for an empty string and for NaN", () => {
+        // `Number("")` gives 0, thus an empty cell must not become a real value.
+        expect(parseWireNumber("")).toBeNull();
+        expect(parseWireNumber("   ")).toBeNull();
+        expect(parseWireNumber(Number.NaN)).toBeNull();
+    });
+});
+
+describe("zWireNumber", () => {
+    it("transforms each wire encoding to the same output", () => {
+        expect(zWireNumber.parse("4.0")).toBe(4);
+        expect(zWireNumber.parse(2001)).toBe(2001);
+        expect(zWireNumber.parse("abc")).toBeNull();
+    });
+
+    it("rejects an absent value until a caller widens it", () => {
+        // Absence is a per-provider policy, thus the helper stays strict and the
+        // client composes `.nullable()` or `.optional()` over it.
+        expect(zWireNumber.safeParse(null).success).toBe(false);
+        expect(zWireNumber.nullable().parse(null)).toBeNull();
+        expect(zWireNumber.nullable().optional().parse(undefined)).toBeUndefined();
     });
 });

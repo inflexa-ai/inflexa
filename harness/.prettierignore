@@ -6,3 +6,9 @@ src/data/
 # kernel/contenttoken/testdata files; local formatting must not touch them.
 src/__tests__/fixtures/preview-res.json
 src/__tests__/fixtures/report-session-res.json
+
+# Golden payloads of the external APIs, plus their published-schema oracles.
+# `scripts/refresh-fixtures.ts` writes and diffs these files, and a reformat
+# would report as drift on the next replay. The manifest and the runner are
+# source, thus only the captured data is ignored.
+src/tools/lib/__fixtures__/*/
