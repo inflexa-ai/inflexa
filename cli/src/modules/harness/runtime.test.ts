@@ -143,12 +143,12 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(workflows.sandboxStep.artifactRegistry.register).toBeInstanceOf(Function);
             expect(workflows.sandboxStep.artifactRegistry.sync).toBeInstanceOf(Function);
             // The parent builder receives the registered child callable and wires the
-            // bridge's run-lifecycle emitter as the optional provenance observer
+            // bridge's provenance seam, whose run emit is the optional run-lifecycle observer
             //. Exercise it with a stand-in child callable.
             const child = async () => ({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
             const executeAnalysisDeps = workflows.buildExecuteAnalysis(child);
             expect(executeAnalysisDeps.sandboxStepCallable).toBe(child);
-            expect(executeAnalysisDeps.emitProvenance).toBeInstanceOf(Function);
+            expect(executeAnalysisDeps.provenance!.emitRunEvent).toBeInstanceOf(Function);
             // The data-profile bundle carries the workspace-root seam every consumer
             // shares plus the RESOLVED provider instance advertising its
             // index width. The ONE resolver instance built at boot threads to every

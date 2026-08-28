@@ -128,24 +128,30 @@ describe("run-engine provenance wiring", () => {
         expect(result.registered[0]!.path).toBe("runs/run-1/step-1/output/r.csv");
     });
 
-    test("buildExecuteAnalysisDeps carries emitProvenance, which lands run events on the bus", () => {
+    test("buildExecuteAnalysisDeps carries the provenance seam, whose run emit lands run events on the bus", () => {
         // `sandboxStepCallable` + `runAuthorizer` are stored, never invoked by the builder.
         const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
         const authorizer = {} as unknown as RunAuthorizer;
         const deps = buildExecuteAnalysisDeps(testComposition(), callable, authorizer);
 
-        expect(deps.emitProvenance).toBeInstanceOf(Function);
+        expect(deps.provenance!.emitRunEvent).toBeInstanceOf(Function);
 
         captured = [];
         Bus.on("inflexa", spy);
-        deps.emitProvenance!({ type: "run_started", analysisId: "an-1", runId: "run-1", planSummary: "plan", stepCount: 1, atMs: 1_700_000_000_000 }, runSession);
+        deps.provenance!.emitRunEvent!(
+            { type: "run_started", analysisId: "an-1", runId: "run-1", planSummary: "plan", stepCount: 1, atMs: 1_700_000_000_000 },
+            runSession,
+        );
 
         expect(captured).toHaveLength(1);
         expect(captured[0]!.type).toBe("prov.run_started");
 
         // The emitter closed over the composition's model id — a settled step records which model
         // drove it (the wiring half of the model-agent record; the mapping itself is prov_bridge's).
-        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_001_000 }, runSession);
+        deps.provenance!.emitRunEvent!(
+            { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_001_000 },
+            runSession,
+        );
         const stepEvent = captured[1]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(stepEvent.model).toBe("anthropic/claude-test");
@@ -161,7 +167,10 @@ describe("run-engine provenance wiring", () => {
 
         captured = [];
         Bus.on("inflexa", spy);
-        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_002_000 }, runSession);
+        deps.provenance!.emitRunEvent!(
+            { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_002_000 },
+            runSession,
+        );
 
         const stepEvent = captured[0]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
@@ -173,7 +182,7 @@ describe("run-engine provenance wiring", () => {
 // once at registration. The fake-swap tests in
 // agent_switch.test.ts prove the controller's TIMING; these prove the injection's EFFECTIVENESS through
 // the REAL bundles under the worst-case consumer — one that snapshots its deps field at registration
-// (exactly what destructuring `const { emitProvenance } = deps` in a consumer would do). Because the injected
+// (exactly what destructuring `const emit = deps.provenance.emitRunEvent` in a consumer would do). Because the injected
 // value is the holder's STABLE delegating handle, the swap lands through the captured reference.
 describe("snapshot-safety — a captured deps field observes a live swap through the stable handle", () => {
     let captured: StampedEvent[] = [];
@@ -188,18 +197,21 @@ describe("snapshot-safety — a captured deps field observes a live swap through
     const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
     const authorizer = {} as unknown as RunAuthorizer;
 
-    test("emitProvenance captured at registration stamps the NEW name after a swap through that captured reference", () => {
+    test("the run emit captured at registration stamps the NEW name after a swap through that captured reference", () => {
         const comp = testComposition();
         const deps = buildExecuteAnalysisDeps(comp, callable, authorizer);
         // The worst case: a consumer snapshots the field ONCE, before any switch. A field mutation on a
         // consumer-held object would leave this stale; a stable delegating handle does not.
-        const capturedEmit = deps.emitProvenance!;
+        const capturedEmit = deps.provenance!.emitRunEvent!;
 
         comp.sandboxEmitters.swap("anthropic/claude-swapped");
 
         captured = [];
         Bus.on("inflexa", spy);
-        capturedEmit({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_000_000 }, runSession);
+        capturedEmit(
+            { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_000_000 },
+            runSession,
+        );
 
         const stepEvent = captured[0]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");

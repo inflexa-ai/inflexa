@@ -68,9 +68,9 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.file.path, producer: event.file.producer };
         case "prov.input_used":
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.input.path, source: event.input.source };
-        // The report family projects its identifying fields only: the thread, plus the block, the
-        // version, or the path the member carries. Authored content stays out — the title text and
-        // the block bodies are the user's report, not telemetry.
+        // The report family projects its identifying fields only: the thread, plus the block and its
+        // kind, the version, or the path the member carries. Authored content stays out — the title
+        // text and the block bodies are the user's report, not telemetry.
         case "prov.session_created":
             return {
                 analysisId: event.analysisId,
@@ -88,6 +88,8 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 actorKind: event.actor.kind,
                 threadId: event.block.threadId,
                 blockId: event.block.blockId,
+                // The kind says WHAT the act touched; a block id alone tells a reader nothing.
+                blockKind: event.block.blockKind,
                 model: event.model,
             };
         case "prov.report_title_set":

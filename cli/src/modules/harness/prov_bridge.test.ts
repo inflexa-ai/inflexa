@@ -1,13 +1,34 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUIDv7 } from "bun";
 import type { AgentSession, ArtifactManifestEntry, ArtifactRegistrationInput, ProvenanceCollector, RunProvenanceEvent } from "@inflexa-ai/harness";
+import { attestationSchema, verifyAttestation } from "@inflexa-ai/prov-kernel";
 
+import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
+import { getAnalysisProvenance } from "../../db/primary_query.ts";
 import { Bus } from "../../lib/bus.ts";
+import { asStr256 } from "../../lib/types.ts";
+import { freshDb } from "../../test_support/db.ts";
+import type { Analysis } from "../../types/analysis.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import type { ProvModelId } from "../../types/prov.ts";
 import { provModel } from "../prov/document.ts";
+import { flushProvenanceAsync, initProvenanceRecording, resetProvenanceRecorderForTests } from "../prov/prov.ts";
+import { resetSigningForTests } from "../prov/signing.ts";
 
 const { fileQName } = provModel;
-import { createBusArtifactRegistry, createRunProvenanceEmitter, createSwappableSandboxEmitters } from "./prov_bridge.ts";
+import {
+    createBusArtifactRegistry,
+    createProvenanceSeam,
+    createRunProvenanceEmitter,
+    createSwappableSandboxEmitters,
+    emitSessionObservation,
+    hostProvenanceSeam,
+    installReportSessionModel,
+    readProvenanceExport,
+} from "./prov_bridge.ts";
 
 // Bus-spy harness: capture every `inflexa` event the adapter emits, always detaching in cleanup so
 // the listener never leaks across tests (a lingering spy would double-count later files' events).
@@ -523,5 +544,238 @@ describe("createSwappableSandboxEmitters", () => {
 
         expect(emitters.emitProvenance).toBe(emit);
         expect(emitters.artifactRegistry).toBe(registry);
+    });
+});
+
+const sessionModelId: ProvModelId = "anthropic/claude-sonnet-4-5";
+const sessionAnalysisId = "analysis-1";
+const reportThreadId = "thread-report-1";
+
+/** The single captured event, or a test failure when the bridge emitted none or more than one. */
+function onlyEvent(): StampedEvent {
+    expect(captured.length).toBe(1);
+    return captured[0]!;
+}
+
+describe("emitSessionObservation", () => {
+    beforeEach(() => {
+        installReportSessionModel(() => sessionModelId);
+    });
+    afterEach(() => {
+        installReportSessionModel(null);
+    });
+
+    test("a created report session carries the thread, the kind, and the parent", () => {
+        emitSessionObservation({
+            type: "create-session",
+            analysisId: sessionAnalysisId,
+            threadId: reportThreadId,
+            sessionKind: "report",
+            parentThreadId: "thread-conv-1",
+        });
+
+        const event = onlyEvent();
+        if (event.type !== "prov.session_created") throw new Error(`expected prov.session_created, got ${event.type}`);
+        expect(event.analysisId).toBe(sessionAnalysisId);
+        expect(event.session).toEqual({ threadId: reportThreadId, kind: "report", parentThreadId: "thread-conv-1" });
+    });
+
+    test("a created conversation session carries its kind and no parent key", () => {
+        emitSessionObservation({ type: "create-session", analysisId: sessionAnalysisId, threadId: "thread-conv-1", sessionKind: "conversation" });
+
+        const event = onlyEvent();
+        if (event.type !== "prov.session_created") throw new Error("expected prov.session_created");
+        expect(event.session.kind).toBe("conversation");
+        // A root session has no parent, so the key is absent rather than present and undefined.
+        expect("parentThreadId" in event.session).toBe(false);
+    });
+
+    test("each block act maps onto its own member and carries the kind of the block", () => {
+        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        emitSessionObservation({ type: "change-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b2", blockKind: "chart" });
+        emitSessionObservation({ type: "remove-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b3", blockKind: "table" });
+        emitSessionObservation({ type: "move-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b4", blockKind: "figure" });
+
+        expect(captured.map((e) => e.type)).toEqual([
+            "prov.report_block_added",
+            "prov.report_block_changed",
+            "prov.report_block_removed",
+            "prov.report_block_moved",
+        ]);
+        const kinds = captured.map((e) => (e.type.startsWith("prov.report_block_") && "block" in e ? e.block.blockKind : null));
+        expect(kinds).toEqual(["text", "chart", "table", "figure"]);
+        const moved = captured[3]!;
+        if (moved.type !== "prov.report_block_moved") throw new Error("expected prov.report_block_moved");
+        expect(moved.block).toEqual({ threadId: reportThreadId, blockId: "b4", blockKind: "figure" });
+    });
+
+    test("the title, the preview, and the version record carry the data of their act", () => {
+        emitSessionObservation({ type: "set-title", analysisId: sessionAnalysisId, threadId: reportThreadId, title: "Differential expression" });
+        emitSessionObservation({
+            type: "preview",
+            analysisId: sessionAnalysisId,
+            threadId: reportThreadId,
+            pagePath: "report-sessions/t/page.html",
+            documentHash: "h-doc",
+        });
+        emitSessionObservation({ type: "record-version", analysisId: sessionAnalysisId, threadId: reportThreadId, versionId: "v1", replaced: true });
+
+        const [title, preview, version] = captured;
+        if (title?.type !== "prov.report_title_set") throw new Error("expected prov.report_title_set");
+        expect(title.title).toEqual({ threadId: reportThreadId, title: "Differential expression" });
+        if (preview?.type !== "prov.report_previewed") throw new Error("expected prov.report_previewed");
+        expect(preview.preview).toEqual({ threadId: reportThreadId, pagePath: "report-sessions/t/page.html", documentHash: "h-doc" });
+        if (version?.type !== "prov.report_version_recorded") throw new Error("expected prov.report_version_recorded");
+        expect(version.version).toEqual({ threadId: reportThreadId, versionId: "v1", replaced: true });
+    });
+
+    test("a derivation carries its chain, restated pair by pair", () => {
+        const sources = [
+            { path: "data/inputs/f1/counts.csv", hash: "h1" },
+            { path: "runs/r1/s1/output/de.csv", hash: "h2" },
+        ];
+        emitSessionObservation({
+            type: "run-derivation",
+            analysisId: sessionAnalysisId,
+            threadId: reportThreadId,
+            outputPath: "report-sessions/t/tables/top.csv",
+            outputHash: "h-out",
+            scriptHash: "h-script",
+            sources,
+        });
+
+        const event = onlyEvent();
+        if (event.type !== "prov.report_derivation_run") throw new Error("expected prov.report_derivation_run");
+        expect(event.derivation.outputPath).toBe("report-sessions/t/tables/top.csv");
+        expect(event.derivation.outputHash).toBe("h-out");
+        expect(event.derivation.scriptHash).toBe("h-script");
+        expect(event.derivation.sources).toEqual(sources);
+        // Nothing that the tool still holds reaches a subscriber.
+        expect(event.derivation.sources).not.toBe(sources);
+        expect(event.derivation.sources[0]).not.toBe(sources[0]);
+    });
+
+    test("every act stamps the system actor", () => {
+        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+
+        const event = onlyEvent();
+        if (event.type !== "prov.report_block_added") throw new Error("expected prov.report_block_added");
+        expect(event.actor.kind).toBe("system");
+    });
+
+    test("the model is read at emit time, so a live switch re-stamps the later acts", () => {
+        let live: ProvModelId = "anthropic/claude-sonnet-4-5";
+        installReportSessionModel(() => live);
+
+        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        live = "openai/gpt-5";
+        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b2", blockKind: "text" });
+
+        const [first, second] = captured;
+        if (first?.type !== "prov.report_block_added" || second?.type !== "prov.report_block_added") throw new Error("expected two block events");
+        expect(first.model).toBe("anthropic/claude-sonnet-4-5");
+        expect(second.model).toBe("openai/gpt-5");
+    });
+
+    test("with no live model the record is dropped rather than stamped with an invented name", () => {
+        installReportSessionModel(null);
+
+        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+
+        expect(captured.length).toBe(0);
+    });
+});
+
+const analysis: Analysis = {
+    id: "a1",
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+    name: asStr256("My Analysis"),
+    slug: "my-analysis",
+    anchorId: "anchor1",
+    projectId: null,
+};
+
+describe("readProvenanceExport", () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+        freshDb();
+        resetProvenanceRecorderForTests();
+        // A real keypair in a temp dir: the flush refuses to write unsigned bytes, so a test that reads
+        // the column at all needs signing to succeed.
+        tmpDir = join(tmpdir(), `prov-bridge-test-${randomUUIDv7()}`);
+        mkdirSync(tmpDir, { recursive: true });
+        resetSigningForTests(join(tmpDir, "prov_key.json"));
+        initProvenanceRecording(); // idempotent: subscribes once across the whole test run
+        installReportSessionModel(() => sessionModelId);
+
+        insertAnchor({ id: "anchor1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis(analysis)._unsafeUnwrap();
+    });
+
+    afterEach(() => {
+        resetSigningForTests(null);
+        installReportSessionModel(null);
+        rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    test("a populated analysis gives the stored bytes and an attestation over them", async () => {
+        emitSessionObservation({ type: "add-block", analysisId: "a1", threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        await flushProvenanceAsync();
+
+        const provenance = await readProvenanceExport("a1");
+        expect(provenance).toBeDefined();
+        // The exact bytes of the column, which are the bytes the chain hash covers.
+        expect(provenance!.document).toBe(getAnalysisProvenance("a1")._unsafeUnwrap()!);
+        const attestation = attestationSchema.parse(JSON.parse(provenance!.attestation!));
+        expect((await verifyAttestation(provenance!.document, attestation)).status).toBe("valid");
+    });
+
+    test("the drain runs first, so a read gives the bytes that include the act", async () => {
+        // The recorder writes the column on a debounced flush, and this read never awaits one itself.
+        emitSessionObservation({ type: "record-version", analysisId: "a1", threadId: reportThreadId, versionId: "v-drain", replaced: false });
+
+        const provenance = await readProvenanceExport("a1");
+        expect(provenance).toBeDefined();
+        expect(provenance!.document).toContain("v-drain");
+    });
+
+    test("an unknown analysis gives absence", async () => {
+        expect(await readProvenanceExport("no-such-analysis")).toBeUndefined();
+    });
+
+    test("an analysis whose provenance column is null gives absence", async () => {
+        // The row exists, and no act has flushed a document onto it.
+        expect(getAnalysisProvenance("a1")._unsafeUnwrap()).toBeNull();
+
+        expect(await readProvenanceExport("a1")).toBeUndefined();
+    });
+
+    test("a failed attestation build gives absence, and the document never reaches the page without its proof", async () => {
+        emitSessionObservation({ type: "add-block", analysisId: "a1", threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        await flushProvenanceAsync();
+        expect(getAnalysisProvenance("a1")._unsafeUnwrap()).not.toBeNull();
+
+        // A parseable key file that holds no importable key: the build of the attestation then fails
+        // while the column still holds a document. The failure also reaches the log.
+        const corruptPath = join(tmpDir, "corrupt_key.json");
+        writeFileSync(corruptPath, JSON.stringify({ publicKey: {}, privateKey: {} }));
+        resetSigningForTests(corruptPath);
+
+        expect(await readProvenanceExport("a1")).toBeUndefined();
+    });
+});
+
+describe("createProvenanceSeam", () => {
+    test("the seam binds the three members, and its run emit is the holder's stable handle", () => {
+        const emitters = createSwappableSandboxEmitters("anthropic/claude-old");
+        const seam = createProvenanceSeam(emitters);
+
+        expect(seam.emitRunEvent).toBe(emitters.emitProvenance);
+        // The chat turn reaches the SAME session emit and read, so one created session carries one
+        // claim whichever surface drives the turn.
+        expect(seam.emitSessionEvent).toBe(hostProvenanceSeam.emitSessionEvent);
+        expect(seam.readExport).toBe(hostProvenanceSeam.readExport);
     });
 });
