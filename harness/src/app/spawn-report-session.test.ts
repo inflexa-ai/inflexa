@@ -9,7 +9,7 @@ import { createThreadStore, type ThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory, type WorkingMemoryStore } from "../memory/working-memory.js";
 import { upsertAnalysis } from "../state/analyses.js";
 import { upsertArtifact, type RegisterArtifactInput } from "../state/artifacts.js";
-import type { ReportObservationEvent } from "../tools/report-observation.js";
+import type { SessionProvenanceEvent } from "../provenance/seam.js";
 import { createReportSessionRuntime } from "./report-session-runtime.js";
 import { compositionHasEyes, createReportSessionSpawn, REPORT_CHILD_PAGE_SIZE, type ReportBrief, type ReportSessionSpawn } from "./spawn-report-session.js";
 
@@ -321,8 +321,8 @@ describe("spawnReportSession title", () => {
 describe("spawnReportSession observation", () => {
     it("gives the bound seam one create-session event with the child, the kind, and the parent", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
-        const events: ReportObservationEvent[] = [];
-        const observed = createReportSessionSpawn({ pool, chrome: WITH_BROWSER, emitReportObservation: (event) => events.push(event) });
+        const events: SessionProvenanceEvent[] = [];
+        const observed = createReportSessionSpawn({ pool, chrome: WITH_BROWSER, provenance: { emitSessionEvent: (event) => events.push(event) } });
 
         const child = (await observed.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
@@ -340,8 +340,8 @@ describe("spawnReportSession observation", () => {
 
     it("emits nothing when the spawn refuses", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
-        const events: ReportObservationEvent[] = [];
-        const observed = createReportSessionSpawn({ pool, chrome: WITH_BROWSER, emitReportObservation: (event) => events.push(event) });
+        const events: SessionProvenanceEvent[] = [];
+        const observed = createReportSessionSpawn({ pool, chrome: WITH_BROWSER, provenance: { emitSessionEvent: (event) => events.push(event) } });
 
         // An unknown parent refuses before the insert, thus no session exists to report.
         (await observed.spawnReportSession("ghost", BRIEF))._unsafeUnwrapErr();

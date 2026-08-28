@@ -110,18 +110,16 @@ export { UnavailableSessionPagePublisher } from "./tools/report-session/session-
 export type { MakeSessionPagePublisher, SessionPagePublisher, SessionPageMintResult } from "./tools/report-session/session-page-publisher.js";
 export type { ResolvePageUrl, SessionPageAccess } from "./tools/report-session/index.js";
 
-// Seam: the observation of one report session. The embedder records the acts of the session
-// in the document of the analysis that it owns, thus the seam and its vocabulary belong on the
-// front door: an embedder cannot type its realization without them. `DerivationSource` rides
-// beside the event union, because the derivation event carries the chain of the derived table.
-export type { EmitReportObservation, ReportObservationEvent } from "./tools/report-observation.js";
+// Seam: the one provenance surface. The embedder records the facts of a run and the acts of a
+// session in the document of the analysis that it owns, and it gives the bytes of that document
+// back for the report page. Thus the seam and its vocabulary belong on the front door: an embedder
+// cannot type its realization without them. The two binders ride beside the types, because an
+// embedder that calls `prepareChatTurn` or one tool factory directly binds the same total forms
+// that the assembly binds. `DerivationSource` rides beside the event union, because the derivation
+// event carries the chain of the derived table.
+export { bindReadExport, bindSessionEmit } from "./provenance/seam.js";
+export type { ProvenanceExport, ProvenanceSeam, RunProvenanceEvent, SessionProvenanceEvent } from "./provenance/seam.js";
 export type { DerivationSource } from "./state/report-session-state.js";
-
-// Seam: the provenance source of a report session. The embedder owns the signed document of the
-// analysis, thus it gives the bytes and the harness carries a frozen copy into the page. The seam
-// belongs on the front door for the same reason as the observation seam: an embedder cannot type its
-// realization without it. Absence is a normal result of the seam.
-export type { ProvenanceExport, ReadReportProvenance } from "./tools/report-provenance.js";
 
 // Run launching.
 export { createDbosRunLauncher } from "./execution/dbos-run-launcher.js";
@@ -592,7 +590,6 @@ export type {
     ExecuteAnalysisInput,
     ExecuteAnalysisResult,
     RunObservation,
-    RunProvenanceEvent,
     RunStepObservation,
     StepRuntimeStatus,
 } from "./workflows/execute-analysis.js";

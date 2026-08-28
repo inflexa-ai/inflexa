@@ -24,8 +24,7 @@ import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, S
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
-import type { ReportObservationEvent } from "../report-observation.js";
-import type { ReadReportProvenance } from "../report-provenance.js";
+import type { ProvenanceSeam, SessionProvenanceEvent } from "../../provenance/seam.js";
 import { createPreviewReportTool, type PreviewReportResult } from "./preview-report.js";
 import { UnavailableSessionPagePublisher, type SessionPagePublisher } from "./session-page-publisher.js";
 
@@ -1012,12 +1011,12 @@ describe("the report observation", () => {
         const gateway = makeFakeGateway();
         const draft = metricDoc();
         gateway.seed("t1", { document: draft, snapshot: metricSnapshot });
-        const events: ReportObservationEvent[] = [];
+        const events: SessionProvenanceEvent[] = [];
         const tool = createPreviewReportTool({
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            emitReportObservation: (event) => events.push(event),
+            provenance: { emitSessionEvent: (event) => events.push(event) },
         });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
@@ -1041,12 +1040,12 @@ describe("the report observation", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: { title: "", sections: [] }, snapshot: { artifacts: {} } });
-        const events: ReportObservationEvent[] = [];
+        const events: SessionProvenanceEvent[] = [];
         const tool = createPreviewReportTool({
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            emitReportObservation: (event) => events.push(event),
+            provenance: { emitSessionEvent: (event) => events.push(event) },
         });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
@@ -1064,8 +1063,10 @@ describe("the report observation", () => {
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            emitReportObservation: () => {
-                throw new Error("the recorder is down");
+            provenance: {
+                emitSessionEvent: () => {
+                    throw new Error("the recorder is down");
+                },
             },
             logger,
         });
@@ -1077,7 +1078,7 @@ describe("the report observation", () => {
         if (result.outcome === "rendered") {
             expect(existsSync(result.pagePath)).toBe(true);
         }
-        const record = logger.records.find((held) => held.msg.includes("the report observation seam threw"));
+        const record = logger.records.find((held) => held.msg.includes("the session emit of the provenance seam threw"));
         expect(record?.level).toBe("error");
         expect(record?.fields).toMatchObject({ analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", event: "preview", err: "the recorder is down" });
     });
@@ -1115,14 +1116,14 @@ describe("the provenance export", () => {
     }
 
     /** A tool over a seeded metric draft, with the given provenance source. */
-    function toolOver(root: string, readReportProvenance?: ReadReportProvenance): ReturnType<typeof createPreviewReportTool> {
+    function toolOver(root: string, readExport?: ProvenanceSeam["readExport"]): ReturnType<typeof createPreviewReportTool> {
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
         return createPreviewReportTool({
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            ...(readReportProvenance ? { readReportProvenance } : {}),
+            ...(readExport ? { provenance: { readExport } } : {}),
         });
     }
 
@@ -1182,6 +1183,27 @@ describe("the provenance export", () => {
         expect(await stagedProvenance(root)).toEqual([]);
     });
 
+    // Each member of the seam is optional alone, thus a composition that records the acts alone gets the
+    // events and a page with no document.
+    it("emits the act and stages no provenance asset when the seam carries the session emit alone", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const events: SessionProvenanceEvent[] = [];
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            provenance: { emitSessionEvent: (event) => events.push(event) },
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        expect(events.map((event) => event.type)).toEqual(["preview"]);
+        expect(await stagedProvenance(root)).toEqual([]);
+    });
+
     it("stages the new document under a new name, and the sweep removes the old one", async () => {
         const root = await makeRoot();
         let document = DOCUMENT;
@@ -1213,8 +1235,10 @@ describe("the provenance export", () => {
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            readReportProvenance: () => {
-                throw new Error("the document store is down");
+            provenance: {
+                readExport: () => {
+                    throw new Error("the document store is down");
+                },
             },
             logger,
         });
@@ -1224,7 +1248,7 @@ describe("the provenance export", () => {
         // The provenance is an addition to the report, thus a defect of the host costs the addition alone.
         expect(result.outcome).toBe("rendered");
         expect(await stagedProvenance(root)).toEqual([]);
-        const record = logger.records.find((held) => held.msg.includes("the report provenance source threw"));
+        const record = logger.records.find((held) => held.msg.includes("the document read of the provenance seam threw"));
         expect(record?.level).toBe("error");
         expect(record?.fields).toMatchObject({ analysisId: DEFAULT_ANALYSIS_ID, err: "the document store is down" });
     });

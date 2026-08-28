@@ -25,7 +25,7 @@ import type { Scope } from "../../auth/types.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
-import { bindReportObservation, type EmitReportObservation, type ReportObservationEvent } from "../report-observation.js";
+import { bindSessionEmit, type ProvenanceSeam, type SessionProvenanceEvent } from "../../provenance/seam.js";
 import { isSafeId } from "../../workspace/paths.js";
 import {
     addBlock,
@@ -523,6 +523,29 @@ function holderIdOf(document: DraftDocument, blockId: string): string | undefine
     return locate(document, blockId)?.parent?.id;
 }
 
+/**
+ * The event of one block act, or `undefined` when the document holds no block of that id.
+ *
+ * The kind rides beside the id, thus a reader of the record sees what the act touched and it needs no
+ * document of its own. The kind comes out of the document that holds the block after the act: the next
+ * document for an add, a change, and a move, and the previous one for a remove.
+ *
+ * A lookup of a landed operation always finds its block. The absent arm keeps the read total, and it drops
+ * the event rather than state a kind that no block carries.
+ */
+function blockActOf(
+    type: "add-block" | "change-block" | "remove-block" | "move-block",
+    scope: { analysisId: string; threadId: string },
+    document: DraftDocument,
+    blockId: string,
+): SessionProvenanceEvent | undefined {
+    const kind = locate(document, blockId)?.block.kind;
+    if (kind === undefined) {
+        return undefined;
+    }
+    return { type, analysisId: scope.analysisId, threadId: scope.threadId, blockId, blockKind: kind };
+}
+
 /** Read the child order of one container out of a document. */
 function containerIn(document: DraftDocument, parentId: string | undefined): ChangedContainer {
     if (parentId === undefined) {
@@ -551,8 +574,8 @@ const AUTHORING_EXECUTION_MODE = "inline" as const;
  * parameter of its own and this bag holds what a composition can leave out.
  */
 export interface ReportAuthoringToolDeps {
-    /** The report observation seam; an unbound seam emits nothing and each tool acts the same. */
-    readonly emitReportObservation?: EmitReportObservation;
+    /** The provenance seam; an unbound session emit emits nothing and each tool acts the same. */
+    readonly provenance?: ProvenanceSeam;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
 }
@@ -568,7 +591,7 @@ export interface ReportAuthoringToolDeps {
  * failed persist each emit nothing.
  */
 export function createReportAuthoringTools(gateway: ReportSessionStateGateway, deps: ReportAuthoringToolDeps = {}): ReportAuthoringTools {
-    const observe = bindReportObservation(deps.emitReportObservation, (deps.logger ?? createNoopLogger()).named("report-authoring"));
+    const observe = bindSessionEmit(deps.provenance, (deps.logger ?? createNoopLogger()).named("report-authoring"));
 
     /**
      * Resolve the thread of the call, and load its state.
@@ -591,8 +614,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
      * first turns the persist into a conflict, and the tool refuses with `stale-state`.
      *
      * `event` is the observation of the operation, and it emits after the persist landed. Thus one site owns
-     * the rule, and a refusal, a conflict, and a persist fault each emit nothing. A caller that cannot name
-     * the block of its own operation gives no event.
+     * the rule, and a refusal, a conflict, and a persist fault each emit nothing. It reads the two documents
+     * for the same reason that `holders` does: a removed block sits in the first alone, and an added block
+     * sits in the second alone. A caller that cannot name the block of its own operation gives no event.
      */
     const land = async (
         threadId: string,
@@ -600,7 +624,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         previous: DraftDocument,
         result: Result<DraftDocument, DraftRefusal>,
         holders: (previous: DraftDocument, next: DraftDocument) => (string | undefined)[],
-        event?: ReportObservationEvent,
+        event: (previous: DraftDocument, next: DraftDocument) => SessionProvenanceEvent | undefined,
     ): Promise<MutationResult> => {
         if (result.isErr()) {
             return { applied: false, refusal: result.error };
@@ -616,8 +640,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         if (persisted.outcome === "failed") {
             return { applied: false, refusal: { reason: "state-unavailable", detail: persisted.detail } };
         }
-        if (event !== undefined) {
-            observe(event);
+        const observed = event(previous, next);
+        if (observed !== undefined) {
+            observe(observed);
         }
         // A move inside one container names the same holder two times.
         const unique = [...new Set(holders(previous, next))];
@@ -666,7 +691,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
                     (_previous, next) => [addedId === undefined ? undefined : holderIdOf(next, addedId)],
                     // The grammar requires an id on the payload, thus a landed add always names one. A
                     // payload with no id reaches the core, which refuses it, and no event is due.
-                    addedId === undefined ? undefined : { type: "add-block", analysisId, threadId, blockId: addedId },
+                    (_previous, next) => (addedId === undefined ? undefined : blockActOf("add-block", { analysisId, threadId }, next, addedId)),
                 ),
             );
         },
@@ -698,7 +723,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
                     state.document,
                     changeBlock(state.document, operation.value, state.snapshot),
                     (_previous, next) => [holderIdOf(next, input.targetId)],
-                    { type: "change-block", analysisId, threadId, blockId: input.targetId },
+                    // A change is permitted to change the kind, thus the event states the kind that the
+                    // document holds after the act.
+                    (_previous, next) => blockActOf("change-block", { analysisId, threadId }, next, input.targetId),
                 ),
             );
         },
@@ -723,7 +750,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
                     state.document,
                     removeBlock(state.document, { targetId: input.targetId }, state.snapshot),
                     (previous) => [holderIdOf(previous, input.targetId)],
-                    { type: "remove-block", analysisId, threadId, blockId: input.targetId },
+                    // The next document holds no removed block, thus the event states the kind that the
+                    // previous one carried.
+                    (previous) => blockActOf("remove-block", { analysisId, threadId }, previous, input.targetId),
                 ),
             );
         },
@@ -754,7 +783,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
                     state.document,
                     moveBlock(state.document, { targetId: input.targetId, destination: destination.value }, state.snapshot),
                     (previous, next) => [holderIdOf(previous, input.targetId), holderIdOf(next, input.targetId)],
-                    { type: "move-block", analysisId, threadId, blockId: input.targetId },
+                    (_previous, next) => blockActOf("move-block", { analysisId, threadId }, next, input.targetId),
                 ),
             );
         },
@@ -776,12 +805,19 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             }
             const { threadId, analysisId, state, token } = opened.value;
             return ok(
-                await land(threadId, token, state.document, ok(setTitle(state.document, input.title)), () => [], {
-                    type: "set-title",
-                    analysisId,
+                await land(
                     threadId,
-                    title: input.title,
-                }),
+                    token,
+                    state.document,
+                    ok(setTitle(state.document, input.title)),
+                    () => [],
+                    () => ({
+                        type: "set-title",
+                        analysisId,
+                        threadId,
+                        title: input.title,
+                    }),
+                ),
             );
         },
     });

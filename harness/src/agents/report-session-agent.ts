@@ -42,8 +42,7 @@ import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import type { ReportVersionStore } from "../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
 import { createReportAuthoringTools } from "../tools/report-authoring/authoring-tools.js";
-import type { EmitReportObservation } from "../tools/report-observation.js";
-import type { ReadReportProvenance } from "../tools/report-provenance.js";
+import type { ProvenanceSeam } from "../provenance/seam.js";
 import {
     createDeriveTableTool,
     createExaminePageTool,
@@ -140,17 +139,13 @@ export interface ReportSessionAgentDeps {
      */
     readonly resolvePageUrl?: ResolvePageUrl;
     /**
-     * Report observation seam -- the acts of the session, as typed events for the embedder. The tools that
-     * change the draft, derive a table, preview the page, and record a version each emit through it, thus
-     * one bound seam carries the whole session. Omitted, no tool emits and every tool acts the same.
+     * The provenance seam -- the acts of the session as typed events, and the frozen document of the
+     * analysis as opaque bytes. The tools that change the draft, derive a table, preview the page, and
+     * record a version each emit through the session member, thus one bound member carries the whole
+     * session. The preview asks the read member before each render, and the page then carries the
+     * document. An unbound member emits nothing, or gives absence, and every tool acts the same.
      */
-    readonly emitReportObservation?: EmitReportObservation;
-    /**
-     * Report provenance source -- the frozen document of the analysis, as opaque bytes for the page. The
-     * preview tool asks it before each render, and the page then carries the document. Omitted, and where the
-     * source holds no document, the page carries none and the preview is unchanged.
-     */
-    readonly readReportProvenance?: ReadReportProvenance;
+    readonly provenance?: ProvenanceSeam;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
 }
@@ -158,10 +153,10 @@ export interface ReportSessionAgentDeps {
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
-    const { derivations, runDerivation, runAuthorizer, makeSessionPages, resolvePageUrl, emitReportObservation, readReportProvenance } = deps;
+    const { derivations, runDerivation, runAuthorizer, makeSessionPages, resolvePageUrl, provenance } = deps;
     // The seam rides into each tool that lands an act of the session, thus the composition binds it one
     // time and no tool reads a second source.
-    const observation = emitReportObservation ? { emitReportObservation } : {};
+    const observation = provenance ? { provenance } : {};
     const authoring = createReportAuthoringTools(gateway, { ...observation, ...(logger ? { logger } : {}) });
 
     const tools: Tool[] = [
@@ -208,10 +203,9 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             ...(makeResolver ? { makeResolver } : {}),
             ...(resolvePageAsset ? { resolvePageAsset } : {}),
             ...(makeSessionPages ? { makeSessionPages } : {}),
+            // The preview is the one site that carries the document into the page, thus the read member
+            // reaches this tool alone.
             ...observation,
-            // The preview is the one site that carries the provenance into the page, thus the seam reaches
-            // this tool alone.
-            ...(readReportProvenance ? { readReportProvenance } : {}),
             ...(logger ? { logger } : {}),
         }),
         // The eyes tool. It opens the rendered page in headless Chrome.

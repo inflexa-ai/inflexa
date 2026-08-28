@@ -25,21 +25,22 @@ import { assembleMessages, type AssembledMessages } from "./message-assembly.js"
 import { renderRunActivity, renderRunActivityUnavailable, RUN_ACTIVITY_DETAIL_LIMIT } from "./run-activity.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import { bindReportObservation, type EmitReportObservation } from "../tools/report-observation.js";
+import { bindSessionEmit, type ProvenanceSeam } from "../provenance/seam.js";
 
 export interface PrepareChatTurnDeps {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly pool: Pool;
     /**
-     * The session observation seam. The turn holds the one site that writes the
-     * conversation thread of an analysis, thus it is the one site that can tell
-     * the embedder the true moment of that creation.
+     * The provenance seam. The turn reads its session emit member, and no other
+     * member. The turn holds the one site that writes the conversation thread of
+     * an analysis, thus it is the one site that can tell the embedder the true
+     * moment of that creation.
      *
-     * The seam is optional and fire-and-forget, the same as it is at each site of
-     * a report session.
+     * The member is optional and fire-and-forget, the same as it is at each site
+     * of a report session.
      */
-    readonly emitReportObservation?: EmitReportObservation;
+    readonly provenance?: ProvenanceSeam;
 }
 
 export interface PrepareChatTurnParams {
@@ -59,9 +60,9 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
     const { pool } = deps;
     const { analysisId, threadId, userInput } = params;
     const logger = (deps.logger ?? createNoopLogger()).named("harness.chat");
-    // An unbound seam gives a call that does nothing, thus the emit below needs no
-    // test of its own.
-    const observe = bindReportObservation(deps.emitReportObservation, logger);
+    // An unbound member gives a call that does nothing, thus the emit below needs
+    // no test of its own.
+    const observe = bindSessionEmit(deps.provenance, logger);
 
     // Ownership check before any read/write of the thread — a `threadId`
     // owned by a different analysis is indistinguishable from a missing one.

@@ -51,7 +51,7 @@ import type { DerivationRecord, DerivationSource, ReportSessionStateStore } from
 import { isSafeId, reportSessionDerivedDir, toSandboxPath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
-import { bindReportObservation, type EmitReportObservation } from "../report-observation.js";
+import { bindSessionEmit, type ProvenanceSeam } from "../../provenance/seam.js";
 import { readHeaderColumns } from "./list-artifacts.js";
 
 /** The input of one derivation: the script, the declared pinned inputs, and the name of the output file. */
@@ -99,8 +99,8 @@ export interface DeriveTableToolDeps {
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     readonly runDerivation?: DeriveTableRunner;
     readonly runAuthorizer?: RunAuthorizer;
-    /** The report observation seam; an unbound seam emits nothing and the derivation runs the same. */
-    readonly emitReportObservation?: EmitReportObservation;
+    /** The provenance seam; an unbound session emit emits nothing and the derivation runs the same. */
+    readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
 }
 
@@ -229,7 +229,7 @@ export type DeriveTableRunner = (input: DeriveTableExecInput) => Promise<ExecRes
  */
 export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTableInput, DeriveTableResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("derive-table");
-    const observe = bindReportObservation(deps.emitReportObservation, logger);
+    const observe = bindSessionEmit(deps.provenance, logger);
     const { runDerivation, runAuthorizer } = deps;
 
     return defineTool({

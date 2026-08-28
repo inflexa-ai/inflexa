@@ -7,7 +7,7 @@ import { createThreadHistory } from "../memory/thread-history.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { insertRun, updateRunStatus } from "../state/index.js";
-import type { ReportObservationEvent } from "../tools/report-observation.js";
+import type { SessionProvenanceEvent } from "../provenance/seam.js";
 import { prepareChatTurn } from "./chat-turn.js";
 
 const ANALYSIS_A = "analysis-a";
@@ -242,10 +242,10 @@ describe("prepareChatTurn", () => {
     });
 
     it("emits one create-session event when it writes a new conversation thread", async () => {
-        const events: ReportObservationEvent[] = [];
+        const events: SessionProvenanceEvent[] = [];
 
         const result = await prepareChatTurn(
-            { pool, emitReportObservation: (event) => events.push(event) },
+            { pool, provenance: { emitSessionEvent: (event) => events.push(event) } },
             { analysisId: ANALYSIS_A, threadId: "t-observed", userInput: "hello" },
         );
 
@@ -254,11 +254,11 @@ describe("prepareChatTurn", () => {
     });
 
     it("emits nothing on a turn over a thread that the store already holds", async () => {
-        const events: ReportObservationEvent[] = [];
+        const events: SessionProvenanceEvent[] = [];
         (await createThreadStore(pool).createThread({ threadId: "t-already", analysisId: ANALYSIS_A, title: "Already here" }))._unsafeUnwrap();
 
         const result = await prepareChatTurn(
-            { pool, emitReportObservation: (event) => events.push(event) },
+            { pool, provenance: { emitSessionEvent: (event) => events.push(event) } },
             { analysisId: ANALYSIS_A, threadId: "t-already", userInput: "hello again" },
         );
 
@@ -267,11 +267,11 @@ describe("prepareChatTurn", () => {
     });
 
     it("emits nothing for a thread that another analysis owns", async () => {
-        const events: ReportObservationEvent[] = [];
+        const events: SessionProvenanceEvent[] = [];
         (await createThreadStore(pool).createThread({ threadId: "t-foreign", analysisId: ANALYSIS_B, title: "Owned by B" }))._unsafeUnwrap();
 
         const result = await prepareChatTurn(
-            { pool, emitReportObservation: (event) => events.push(event) },
+            { pool, provenance: { emitSessionEvent: (event) => events.push(event) } },
             { analysisId: ANALYSIS_A, threadId: "t-foreign", userInput: "hello" },
         );
 

@@ -35,7 +35,8 @@ import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunSession } from "../auth/types.js";
 
 import { runExecuteAnalysisBody, synthesisRowUpdate } from "./execute-analysis.js";
-import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation, RunProvenanceEvent } from "./execute-analysis.js";
+import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation } from "./execute-analysis.js";
+import type { RunProvenanceEvent } from "../provenance/seam.js";
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
@@ -259,7 +260,7 @@ interface FakeDepsRecord {
 function makeDeps(opts: {
     childResults: Map<string, SandboxStepResult | Error>;
     pool: FakePool;
-    emitProvenance?: (event: RunProvenanceEvent, session: RunSession) => void;
+    emitRunEvent?: (event: RunProvenanceEvent, session: RunSession) => void;
     observeRun?: (observation: RunObservation) => void;
 }): {
     deps: ExecuteAnalysisDeps;
@@ -299,9 +300,9 @@ function makeDeps(opts: {
                 record.mandateRevokeCalls.push({ reason });
             },
         },
-        // Omitted entirely when absent so the "no emitProvenance" tests exercise
+        // Omitted entirely when absent so the "no run emit" tests exercise
         // a genuinely undefined dep, not a present-but-undefined field.
-        ...(opts.emitProvenance ? { emitProvenance: opts.emitProvenance } : {}),
+        ...(opts.emitRunEvent ? { provenance: { emitRunEvent: opts.emitRunEvent } } : {}),
         ...(opts.observeRun ? { observeRun: opts.observeRun } : {}),
     };
 
@@ -425,7 +426,7 @@ describe("executeAnalysis body", () => {
         // would throw), C completes, then E dispatches and completes.
         const { deps, record } = makeDeps({
             pool,
-            emitProvenance: (e) => events.push(e),
+            emitRunEvent: (e) => events.push(e),
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
                 ["B", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }],
@@ -1310,24 +1311,24 @@ describe("executeAnalysis body", () => {
 
     // ── Run-lifecycle provenance callback ──────────────────────────────
 
-    it("without emitProvenance the run completes (absent callback changes nothing)", async () => {
+    it("without the run emit the run completes (absent member changes nothing)", async () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
 
-        expect(deps.emitProvenance).toBeUndefined();
+        expect(deps.provenance).toBeUndefined();
         const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
         expect(result.status).toBe("completed");
     });
 
-    it("emitProvenance collects run_started, step_completed, then run_completed on the success path with stub-sourced times", async () => {
+    it("the run emit collects run_started, step_completed, then run_completed on the success path with stub-sourced times", async () => {
         const pool = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
-            emitProvenance: (e) => events.push(e),
+            emitRunEvent: (e) => events.push(e),
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
 
@@ -1359,12 +1360,12 @@ describe("executeAnalysis body", () => {
         ]);
     });
 
-    it("emitProvenance emits step_completed(failed) and run_completed(failed) on the failed path", async () => {
+    it("the run emit gives step_completed(failed) and run_completed(failed) on the failed path", async () => {
         const pool = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
-            emitProvenance: (e) => events.push(e),
+            emitRunEvent: (e) => events.push(e),
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }]]),
         });
 
@@ -1402,7 +1403,7 @@ describe("executeAnalysis body", () => {
         // canceled. D is never dispatched because its dependency failed.
         const { deps } = makeDeps({
             pool,
-            emitProvenance: (e) => events.push(e),
+            emitRunEvent: (e) => events.push(e),
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 5, finishReason: "stop", error: null }],
                 ["B", { status: "failed", durationMs: 7, finishReason: null, error: "boom" }],
@@ -1441,7 +1442,7 @@ describe("executeAnalysis body", () => {
         // yields a `step_completed(completed)`.
         const { deps } = makeDeps({
             pool,
-            emitProvenance: (e) => events.push(e),
+            emitRunEvent: (e) => events.push(e),
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 2, finishReason: "stop", error: null }]]),
         });
 
@@ -1458,7 +1459,7 @@ describe("executeAnalysis body", () => {
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
-            emitProvenance: (e) => events.push(e),
+            emitRunEvent: (e) => events.push(e),
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 4, finishReason: "stop", error: null }],
                 ["B", { status: "complete", durationMs: 6, finishReason: "stop", error: null }],
@@ -1491,7 +1492,7 @@ describe("executeAnalysis body", () => {
         const sessions: RunSession[] = [];
         const { deps } = makeDeps({
             pool,
-            emitProvenance: (e, s) => {
+            emitRunEvent: (e, s) => {
                 events.push(e);
                 sessions.push(s);
             },
@@ -1512,11 +1513,11 @@ describe("executeAnalysis body", () => {
         for (const s of sessions) expect(s).toBe(inp.runSession);
     });
 
-    it("a throwing emitProvenance observer does not fail the run", async () => {
+    it("a throwing run emit does not fail the run", async () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            emitProvenance: () => {
+            emitRunEvent: () => {
                 throw new Error("observer boom");
             },
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -1635,7 +1636,7 @@ describe("executeAnalysis run observation", () => {
         const withProv = makeDeps({
             pool: makeFakePool(),
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
-            emitProvenance: (e) => provOnly.push(e),
+            emitRunEvent: (e) => provOnly.push(e),
         });
         const provResult = await runExecuteAnalysisBody(input([{ id: "A" }]), withProv.deps);
 

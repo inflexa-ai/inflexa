@@ -34,7 +34,7 @@ import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import type { Logger } from "../../lib/logger.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
-import type { EmitReportObservation, ReportObservationEvent } from "../report-observation.js";
+import type { ProvenanceSeam, SessionProvenanceEvent } from "../../provenance/seam.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import {
     buildDerivationExec,
@@ -258,7 +258,7 @@ function makeTool(args: {
     result?: ExecResult;
     ledger?: FakeLedger;
     sandbox?: FakeSandbox;
-    emitReportObservation?: EmitReportObservation;
+    provenance?: ProvenanceSeam;
     logger?: Logger;
 }) {
     const gateway = makeFakeGateway();
@@ -275,7 +275,7 @@ function makeTool(args: {
         // with a fixed clock, thus the seam calls under test are the seam calls in production.
         runDerivation: (input) => runDeriveTableExecBody(input, { sandboxClient: sandbox.client, now: () => Promise.resolve(0) }),
         runAuthorizer: auth.authorizer,
-        ...(args.emitReportObservation ? { emitReportObservation: args.emitReportObservation } : {}),
+        ...(args.provenance ? { provenance: args.provenance } : {}),
         ...(args.logger ? { logger: args.logger } : {}),
     });
     return { tool, gateway, sandbox, ledger, auth };
@@ -660,8 +660,8 @@ describe("the disposal of a session", () => {
 describe("the report observation", () => {
     it("gives one derivation event that carries the chain of the table", async () => {
         const root = await makeRoot();
-        const events: ReportObservationEvent[] = [];
-        const { tool } = makeTool({ root, emitReportObservation: (event) => events.push(event) });
+        const events: SessionProvenanceEvent[] = [];
+        const { tool } = makeTool({ root, provenance: { emitSessionEvent: (event) => events.push(event) } });
 
         const result = await derive(tool, {});
         if (result.outcome !== "derived") throw new Error("expected a derived table");
@@ -683,11 +683,11 @@ describe("the report observation", () => {
 
     it("emits nothing when the script fails in the container", async () => {
         const root = await makeRoot();
-        const events: ReportObservationEvent[] = [];
+        const events: SessionProvenanceEvent[] = [];
         const { tool } = makeTool({
             root,
             result: execResult({ exitCode: 1, stderr: "KeyError: group" }),
-            emitReportObservation: (event) => events.push(event),
+            provenance: { emitSessionEvent: (event) => events.push(event) },
         });
 
         expect((await derive(tool, {})).outcome).toBe("exec-failed");
@@ -700,8 +700,10 @@ describe("the report observation", () => {
         const { tool, ledger } = makeTool({
             root,
             logger,
-            emitReportObservation: () => {
-                throw new Error("the recorder is down");
+            provenance: {
+                emitSessionEvent: () => {
+                    throw new Error("the recorder is down");
+                },
             },
         });
 
@@ -710,7 +712,7 @@ describe("the report observation", () => {
         // The record landed before the emit, thus a defect of the host costs the event alone.
         expect(result.outcome).toBe("derived");
         expect(ledger.records).toHaveLength(1);
-        const record = logger.records.find((held) => held.msg.includes("the report observation seam threw"));
+        const record = logger.records.find((held) => held.msg.includes("the session emit of the provenance seam threw"));
         expect(record?.level).toBe("error");
         expect(record?.fields).toMatchObject({ analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", event: "run-derivation", err: "the recorder is down" });
     });

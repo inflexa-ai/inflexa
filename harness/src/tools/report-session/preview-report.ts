@@ -66,8 +66,7 @@ import type { RenderProblem } from "../../report-render/types.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
-import { bindReportObservation, type EmitReportObservation } from "../report-observation.js";
-import { bindReportProvenance, type ReadReportProvenance } from "../report-provenance.js";
+import { bindReadExport, bindSessionEmit, type ProvenanceSeam } from "../../provenance/seam.js";
 import { describeSessionPageMintFailure, type MakeSessionPagePublisher, type SessionPageMintResult } from "./session-page-publisher.js";
 
 /** The empty input. The tool renders the current draft of the thread, thus it needs no field. */
@@ -130,13 +129,12 @@ export interface PreviewReportToolDeps {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly resolvePageAsset?: ResolvePageAsset;
     readonly makeSessionPages?: MakeSessionPagePublisher;
-    /** The report observation seam; an unbound seam emits nothing and the render runs the same. */
-    readonly emitReportObservation?: EmitReportObservation;
     /**
-     * The provenance source of the analysis; an unbound seam and a source that holds no document both give
-     * absence, and the page then carries no provenance asset.
+     * The provenance seam. An unbound session emit emits nothing and the render runs the same. An unbound
+     * document read, and a read that holds no document for the analysis, both give absence, and the page
+     * then carries no provenance asset.
      */
-    readonly readReportProvenance?: ReadReportProvenance;
+    readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
 }
 
@@ -516,8 +514,8 @@ async function mintAccess(
  */
 export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<PreviewReportInput, PreviewReportResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("preview-report");
-    const observe = bindReportObservation(deps.emitReportObservation, logger);
-    const readProvenance = bindReportProvenance(deps.readReportProvenance, logger);
+    const observe = bindSessionEmit(deps.provenance, logger);
+    const readProvenance = bindReadExport(deps.provenance, logger);
     const resolvePageAsset = deps.resolvePageAsset ?? resolvePageAssetFromInstallation;
 
     return defineTool({

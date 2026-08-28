@@ -54,8 +54,7 @@ import { createThreadStore } from "../memory/thread-store.js";
 import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
-import type { EmitReportObservation } from "../tools/report-observation.js";
-import type { ReadReportProvenance } from "../tools/report-provenance.js";
+import type { ProvenanceSeam } from "../provenance/seam.js";
 import type { MakeSessionPagePublisher, ResolvePageAsset, ResolvePageUrl } from "../tools/report-session/index.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
@@ -193,27 +192,26 @@ export interface CoreRuntimeDeps {
      */
     readonly eyes?: AcquireEyes;
     /**
-     * The observation seam of a report session. Each act of a session — the creation of the session, the
-     * block operations, the title, the derivation, the preview, and the record — rides it as one typed
-     * event, and the embedder lands the events in the record of the analysis that it owns. The emit is
+     * The provenance seam. Each act of a session — the creation of the session, the block operations, the
+     * title, the derivation, the preview, and the record — rides the session emit as one typed event, and
+     * the embedder lands the events in the record of the analysis that it owns. The emit is
      * fire-and-forget: it gives no result, a throw of the realization reaches the log alone, and an unbound
-     * seam emits nothing. Thus a composition that binds none behaves the same as one that never had the
+     * member emits nothing. Thus a composition that binds none behaves the same as one that never had the
      * seam.
      *
-     * The assembly reaches two consumers with it: the report agent, and the conversation agent, whose start
-     * tool passes it to the spawn. The creation of a conversation thread rides `prepareChatTurn`, which an
-     * embedder calls on its own. Thus that composition binds the seam there as well.
+     * The document read gives the signed document of the analysis back, as opaque text. The preview of a
+     * report session carries a frozen copy into the page, and the page then shows the chain of a grounded
+     * block with no host and no network. The harness parses nothing. Absence is a normal result: an unbound
+     * member, and a bound member that holds no document for the analysis, both give a page with no
+     * provenance and no other change.
+     *
+     * Each member is optional alone, thus a composition binds the members that it records.
+     *
+     * The assembly reaches two consumers with the seam: the report agent, and the conversation agent, whose
+     * start tool passes it to the spawn. The creation of a conversation thread rides `prepareChatTurn`,
+     * which an embedder calls on its own. Thus that composition binds the seam there as well.
      */
-    readonly emitReportObservation?: EmitReportObservation;
-    /**
-     * The provenance source of a report session. The embedder owns the signed document of the analysis, thus
-     * it gives the current bytes and the attestation bytes here, as opaque text. The preview of a report
-     * session then carries a frozen copy into the page, and the page shows the chain of a grounded block with
-     * no host and no network. The harness parses nothing. Absence is a normal result: an unbound seam, and a
-     * bound seam that holds no document for the analysis, both give a page with no provenance and no other
-     * change. The seam is independent of `emitReportObservation`, thus a composition binds either one alone.
-     */
-    readonly readReportProvenance?: ReadReportProvenance;
+    readonly provenance?: ProvenanceSeam;
 }
 
 /**
@@ -361,7 +359,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         ...(eyes ? { eyes } : {}),
         // The start tool passes it to the spawn, which emits the creation of a
         // report session. The same seam reaches the report agent below.
-        ...(deps.emitReportObservation ? { emitReportObservation: deps.emitReportObservation } : {}),
+        ...(deps.provenance ? { provenance: deps.provenance } : {}),
     });
 
     // The report agent is a singleton over the conversation deps, the same way the
@@ -417,8 +415,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         ...(deps.resolveReportPageAsset ? { resolvePageAsset: deps.resolveReportPageAsset } : {}),
         ...(deps.makeSessionPagePublisher ? { makeSessionPages: deps.makeSessionPagePublisher } : {}),
         ...(deps.resolveReportPageUrl ? { resolvePageUrl: deps.resolveReportPageUrl } : {}),
-        ...(deps.emitReportObservation ? { emitReportObservation: deps.emitReportObservation } : {}),
-        ...(deps.readReportProvenance ? { readReportProvenance: deps.readReportProvenance } : {}),
+        ...(deps.provenance ? { provenance: deps.provenance } : {}),
         ...(conversation.logger ? { logger: conversation.logger } : {}),
     });
 
