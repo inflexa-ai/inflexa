@@ -94,7 +94,9 @@ run_test("multiple methods can be requested together", function() {
   stopifnot(inherits(oc, "optimal.cutpoints"))
   stopifnot(all(c("Youden", "MaxSpSe") %in% names(oc)))
   for (m in c("Youden", "MaxSpSe")) {
-    cut_m <- as.numeric(oc[[m]]$Global$optimal.cutoff$cutoff)
+    # The per-method branch carries the name "Global" for some methods and
+    # no name for others in 1.1.5. Entry one is the global branch each way.
+    cut_m <- as.numeric(oc[[m]][[1]]$optimal.cutoff$cutoff)
     stopifnot(length(cut_m) >= 1L, all(is.finite(cut_m)))
   }
 })

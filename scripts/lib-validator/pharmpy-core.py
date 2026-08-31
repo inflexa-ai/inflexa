@@ -75,22 +75,25 @@ def run_test(name, fn):
 def test_exposes_model_and_modeling():
     import importlib
 
-    # Model is the top-level model class; modeling is the functional API
-    # namespace (transforms, parameterisation, estimation setup, …). Import the
-    # namespace lazily so a rename is a test failure, not a top-level crash.
-    assert hasattr(pharmpy, "Model")
+    # The Model class lives in the pharmpy.model module, and modeling is the
+    # functional API namespace (transforms, parameterisation, estimation
+    # setup, …). Import each namespace lazily so a rename is a test failure,
+    # not a top-level crash.
+    model_mod = importlib.import_module("pharmpy.model")
+    assert isinstance(getattr(model_mod, "Model", None), type)
     modeling = importlib.import_module("pharmpy.modeling")
     assert callable(getattr(modeling, "create_basic_pk_model", None))
 
 
 def test_create_basic_pk_model_constructs():
+    from pharmpy.model import Model
     from pharmpy.modeling import create_basic_pk_model
 
     # create_basic_pk_model builds a minimal PK model with no dataset file —
     # cheap, offline, and file-free (unlike parsing a real NONMEM control
     # stream, which is deliberately not exercised here).
     model = create_basic_pk_model()
-    assert isinstance(model, pharmpy.Model)
+    assert isinstance(model, Model)
 
 
 run_test("exposes pharmpy.Model + pharmpy.modeling", test_exposes_model_and_modeling)

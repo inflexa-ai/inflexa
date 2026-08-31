@@ -23,6 +23,10 @@ if (!requireNamespace("timeROC", quietly = TRUE)) {
 }
 
 suppressPackageStartupMessages(library(timeROC))
+# timeROC() calls Surv() without a namespace prefix and finds it through the
+# search path of the caller. Thus the caller must attach survival, and the
+# package documentation shows the same attach.
+suppressPackageStartupMessages(library(survival))
 cat(sprintf("timeROC version: %s\n", as.character(packageVersion("timeROC"))))
 
 failures <- 0L

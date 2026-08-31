@@ -86,8 +86,10 @@ def test_run_harmony_corrects_embedding():
 
     ho = harmonypy.run_harmony(data_mat, meta_data, vars_use=["batch"])
 
-    # Z_corr is the corrected embedding, transposed to (dims, cells).
-    assert ho.Z_corr.shape == (n_dims, n_cells)
+    # Z_corr is the corrected embedding. The 1.x line stores it as
+    # (dims, cells), and the 2.0 line stores the transpose. Accept the
+    # orientation of the installed line.
+    assert ho.Z_corr.shape in ((n_dims, n_cells), (n_cells, n_dims))
     assert np.all(np.isfinite(np.asarray(ho.Z_corr)))
 
 

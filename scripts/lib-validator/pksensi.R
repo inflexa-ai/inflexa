@@ -112,6 +112,10 @@ run_test("tell2 computes sensitivity indices from the model responses", function
   # our single time / single output add two trailing length-1 axes. The row
   # order of y_vec (sample fastest, then replicate) matches this fill order.
   y <- array(y_vec, dim = c(d[-pdim], 1L, 1L))
+  # tell2 reads the time labels from dimnames(y)[[3]] and the output names
+  # from dimnames(y)[[4]], and it puts them on the index arrays. Axes three
+  # and four must carry names, or the dimnames assignment inside tell2 fails.
+  dimnames(y) <- list(NULL, NULL, "t2", "conc")
   x <- tell2(x, y)
 
   # Main (first-order) and total sensitivity indices must be finite and land in

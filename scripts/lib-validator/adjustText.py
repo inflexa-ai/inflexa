@@ -92,10 +92,11 @@ def test_adjust_text_runs_on_scatter():
         ax.scatter(xs, ys)
         texts = [ax.text(x, y, s) for x, y, s in zip(xs, ys, labels)]
         assert len(texts) == 5
-        # Return type varies by version (iteration count or None); either way a
-        # clean call over real Text handles is the smoke signal we want.
+        # The return type varies by version: None, an iteration count, or a
+        # tuple with the moved Text handles. The smoke signal is a clean call
+        # over real Text handles, not the return shape.
         result = adjust_text(texts, ax=ax)
-        assert result is None or isinstance(result, int)
+        assert result is None or isinstance(result, (int, tuple, list))
     finally:
         plt.close(fig)
 

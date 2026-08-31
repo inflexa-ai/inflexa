@@ -65,8 +65,11 @@ run_test("a result container class is defined", function() {
 run_test("CentWaveParam constructs offline and reports its parameters", function() {
   p <- CentWaveParam(ppm = 25, peakwidth = c(20, 50))
   stopifnot(inherits(p, "CentWaveParam"))
-  stopifnot(ppm(p) == 25)
-  stopifnot(identical(peakwidth(p), c(20, 50)))
+  # xcms 4.10 exports no ppm()/peakwidth() accessor for the Param classes.
+  # The parameters live in the S4 slots that the constructor sets, thus the
+  # test reads the slots.
+  stopifnot(p@ppm == 25)
+  stopifnot(identical(p@peakwidth, c(20, 50)))
 })
 
 if (failures > 0L) {

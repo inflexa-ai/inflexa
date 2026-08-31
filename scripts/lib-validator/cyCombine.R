@@ -118,8 +118,10 @@ run_test("synthetic tidy tibble has the expected shape", function() {
 })
 
 run_test("batch_correct preserves shape, stays finite, shrinks the batch gap", function() {
+  # batch_correct() of cyCombine 0.3.0 takes no `batch =` argument. It reads
+  # the column literally named "batch", which the data above carries.
   corrected <- suppressWarnings(suppressMessages(
-    cyCombine::batch_correct(df, markers = markers, batch = "batch", seed = 1)))
+    cyCombine::batch_correct(df, markers = markers, seed = 1)))
   # same number of cells (one corrected row per input cell)
   stopifnot(nrow(corrected) == n_cells)
   # marker columns survive the correction (result may ADD helper columns)

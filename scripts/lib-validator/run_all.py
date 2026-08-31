@@ -105,6 +105,14 @@ def _version_from(stdout: str) -> str:
     return ""
 
 
+# Per-script headroom over the --timeout cap. missMethyl loads two whole
+# annotation packages, and its honest runtime sits near the default cap on a
+# contended machine. A multiplier keeps the tight default for everything else.
+TIMEOUT_FACTORS = {
+    "missMethyl": 3.0,
+}
+
+
 def run_one(path: Path, timeout: float) -> Result:
     lang = "py" if path.suffix == ".py" else "R"
     interp = _interp_for(path)
@@ -278,7 +286,10 @@ def main() -> int:
     start = time.perf_counter()
     results: list[Result] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
-        futs = {ex.submit(run_one, p, args.timeout): p for p in scripts}
+        futs = {
+            ex.submit(run_one, p, args.timeout * TIMEOUT_FACTORS.get(p.stem, 1.0)): p
+            for p in scripts
+        }
         for fut in concurrent.futures.as_completed(futs):
             results.append(fut.result())
     elapsed = time.perf_counter() - start

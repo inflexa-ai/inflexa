@@ -80,12 +80,14 @@ def test_alpha_diversity_shannon():
     import numpy as np
 
     counts = [10, 10, 10, 10]
-    h = shannon(counts)
+    # The default base of shannon changed to e in scikit-bio 0.7. An explicit
+    # base keeps the 2-bits expectation stable across the lines.
+    h = shannon(counts, base=2)
     assert np.isfinite(h)
     # Four equally-abundant taxa → Shannon (log2) index of exactly 2 bits.
     assert abs(float(h) - 2.0) < 1e-9
-    # A single-taxon community has zero diversity.
-    assert abs(float(shannon([42, 0, 0]))) < 1e-9
+    # A single-taxon community has zero diversity in any base.
+    assert abs(float(shannon([42, 0, 0], base=2))) < 1e-9
 
 
 def test_distance_matrix_condensed_form():

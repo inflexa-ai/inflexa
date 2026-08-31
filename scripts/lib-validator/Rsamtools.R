@@ -67,8 +67,12 @@ run_test("countBam reports a positive record count", function() {
 
 run_test("scanBamHeader exposes reference targets", function() {
   hdr <- scanBamHeader(bam_path)
-  stopifnot(is.list(hdr), "targets" %in% names(hdr))
-  targets <- hdr$targets
+  # scanBamHeader(files) returns one entry per file. Each entry holds the
+  # `targets` vector and the `text` lines, thus the check reads entry one.
+  stopifnot(is.list(hdr), length(hdr) == 1L)
+  h1 <- hdr[[1]]
+  stopifnot(is.list(h1), "targets" %in% names(h1))
+  targets <- h1$targets
   stopifnot(length(targets) > 0L)
   # Target lengths are named positive integers.
   stopifnot(!is.null(names(targets)), all(targets > 0))
