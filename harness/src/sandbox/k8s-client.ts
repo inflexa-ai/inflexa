@@ -18,7 +18,6 @@ import {
     BatchV1Api,
     CoreV1Api,
     KubeConfig,
-    type V1ConfigMap,
     type V1Job,
     type V1ObjectMeta,
     type V1PodSpec,
@@ -32,7 +31,6 @@ import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan, buildSessionSubPaths } from "./mount-plan.js";
 import { threadLimitEnv } from "./thread-env.js";
-import { CPU_ONLINE_PATH, CPUINFO_PATH, type CpuFiles, cpuFiles, readHostCpuinfoOnce } from "./cpu-files.js";
 import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -45,8 +43,6 @@ function statusOf(e: SandboxError): number | undefined {
 const SESSION_VOLUME_NAME = "session";
 const LIBS_VOLUME_NAME = "libs";
 const REFS_VOLUME_NAME = "refs";
-/** The ConfigMap volume that holds the two cpu files of the sandbox (`cpu-files.ts`). */
-const CPU_VOLUME_NAME = "cpu";
 
 const SANDBOX_SERVER_PORT = 8765;
 const POD_READY_TIMEOUT_MS = 5 * 60_000;
@@ -120,33 +116,10 @@ export interface K8sClientConfig {
     tolerations?: V1Toleration[];
     /** RuntimeClass for runtime isolation (e.g. `gvisor`). Omit for the default runtime. */
     runtimeClassName?: string;
-    /**
-     * The `/proc/cpuinfo` text that the cpu ConfigMap of each Job is cut from.
-     * Defaults to the file of the host of this process, read once. Injected for tests.
-     */
-    readHostCpuinfo?: () => Promise<string | undefined>;
     /** Injected for tests. */
     batchApi?: BatchV1Api;
     coreApi?: CoreV1Api;
     registerSandbox: (meta: CreateSandboxMeta, ref: SandboxRef) => Promise<void>;
-}
-
-function deleteConfigMapIgnoreMissing(coreApi: CoreV1Api, namespace: string, name: string): ResultAsync<void, SandboxError> {
-    return trySandbox(
-        async () => {
-            await coreApi.deleteNamespacedConfigMap({ namespace, name });
-        },
-        (status, cause) => ({
-            type: "teardown_failed",
-            op: "k8s.teardown",
-            sandboxId: name,
-            status,
-            cause,
-        }),
-    ).orElse((e) =>
-        // A 404 means the owner reference removed it with the Job already.
-        statusOf(e) === 404 ? ok(undefined) : err(e),
-    );
 }
 
 function deleteJobIgnoreMissing(batchApi: BatchV1Api, namespace: string, name: string): ResultAsync<void, SandboxError> {
@@ -203,13 +176,7 @@ function workspaceSubPathFor(config: K8sClientConfig, analysisId: string): strin
     return posix;
 }
 
-/** Which of the two kernel paths the cpu ConfigMap of a Job covers. */
-interface CpuMount {
-    /** `false` on a harness host with no `/proc/cpuinfo`: the pod then covers `online` only. */
-    hasCpuinfo: boolean;
-}
-
-function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity: SandboxIdentity, cpu: CpuMount): V1Job {
+function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity: SandboxIdentity): V1Job {
     const { sandboxId } = identity;
     const plan = buildMountPlan(meta, {
         libs: !!config.libStorePvc,
@@ -294,17 +261,6 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
             mountPath: plan.refsPath,
             readOnly: true,
         });
-    }
-
-    // The cpu files ride in a ConfigMap named after the Job (`ensureCpuConfigMap`).
-    // A `subPath` mount of one key over one kernel path is accepted by the API
-    // server, the kubelet, and gVisor. Under gVisor the sandbox sees no cgroup
-    // at all, thus these two files are the only source of the quota for
-    // `parallel::detectCores()` and `os.cpu_count()`.
-    volumes.push({ name: CPU_VOLUME_NAME, configMap: { name: sandboxId } });
-    volumeMounts.push({ name: CPU_VOLUME_NAME, mountPath: CPU_ONLINE_PATH, subPath: "online", readOnly: true });
-    if (cpu.hasCpuinfo) {
-        volumeMounts.push({ name: CPU_VOLUME_NAME, mountPath: CPUINFO_PATH, subPath: "cpuinfo", readOnly: true });
     }
 
     const podSpec: V1PodSpec = {
@@ -504,9 +460,6 @@ function waitForJobGone(batchApi: BatchV1Api, namespace: string, name: string): 
  * means an (astronomically rare) name collision with a *different* step —
  * adopting its pod would HMAC-fail every callback, and deleting its Job would
  * kill a live sibling. Refuse loudly instead.
- *
- * The result is the uid of the Job that the pod belongs to, for the owner
- * reference of the cpu ConfigMap.
  */
 function createOrAdoptJob(
     batchApi: BatchV1Api,
@@ -515,7 +468,7 @@ function createOrAdoptJob(
     sandboxId: string,
     ownerWorkflowId: string,
     job: V1Job,
-): ResultAsync<string | undefined, SandboxError> {
+): ResultAsync<void, SandboxError> {
     const createFailed = (status: number | undefined, cause: unknown): SandboxError => ({
         type: "container_create_failed",
         op: "k8s.createNamespacedJob",
@@ -526,7 +479,7 @@ function createOrAdoptJob(
     return new ResultAsync(
         (async () => {
             const created = await trySandbox(() => batchApi.createNamespacedJob({ namespace, body: job }), createFailed);
-            if (created.isOk()) return ok(created.value?.metadata?.uid);
+            if (created.isOk()) return ok(undefined);
             if (statusOf(created.error) !== 409) return err(created.error);
 
             const existingRead = await trySandbox(() => batchApi.readNamespacedJob({ namespace, name: sandboxId }), createFailed);
@@ -550,77 +503,8 @@ function createOrAdoptJob(
                 if (gone.isErr()) return err(gone.error);
                 const recreated = await trySandbox(() => batchApi.createNamespacedJob({ namespace, body: job }), createFailed);
                 if (recreated.isErr()) return err(recreated.error);
-                return ok(recreated.value?.metadata?.uid);
+                return ok(undefined);
             }
-            return ok(existingRead.value.metadata?.uid);
-        })(),
-    );
-}
-
-/**
- * Make the cpu ConfigMap of a Job, or bring an existing one up to date.
- *
- * The ConfigMap comes after the Job, because the Job is its owner. Thus the
- * TTL of the Job and a Foreground delete both remove the ConfigMap with it.
- * The pod waits at its mount until the ConfigMap exists, and that wait is
- * shorter than the schedule of the pod.
- *
- * A `409 AlreadyExists` is the recovery re-run of the spawn step, or a
- * ConfigMap whose prior owner Job is not yet collected. Both cases get the
- * same data and the current owner through a replace.
- */
-function ensureCpuConfigMap(
-    coreApi: CoreV1Api,
-    namespace: string,
-    sandboxId: string,
-    jobUid: string | undefined,
-    files: CpuFiles,
-): ResultAsync<void, SandboxError> {
-    const createFailed = (status: number | undefined, cause: unknown): SandboxError => ({
-        type: "container_create_failed",
-        op: "k8s.createNamespacedConfigMap",
-        sandboxId,
-        status,
-        cause,
-    });
-    const body: V1ConfigMap = {
-        apiVersion: "v1",
-        kind: "ConfigMap",
-        metadata: {
-            name: sandboxId,
-            namespace,
-            labels: {
-                [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
-                role: "sandbox",
-                "cortex/sandbox-id": sandboxId,
-            },
-            ...(jobUid !== undefined && {
-                ownerReferences: [{ apiVersion: "batch/v1", kind: "Job", name: sandboxId, uid: jobUid }],
-            }),
-        },
-        data: {
-            online: files.online,
-            ...(files.cpuinfo !== undefined && { cpuinfo: files.cpuinfo }),
-        },
-    };
-    return new ResultAsync(
-        (async () => {
-            const created = await trySandbox(() => coreApi.createNamespacedConfigMap({ namespace, body }), createFailed);
-            if (created.isOk()) return ok(undefined);
-            if (statusOf(created.error) !== 409) return err(created.error);
-
-            const existing = await trySandbox(() => coreApi.readNamespacedConfigMap({ namespace, name: sandboxId }), createFailed);
-            if (existing.isErr()) return err(existing.error);
-            const replaced = await trySandbox(
-                () =>
-                    coreApi.replaceNamespacedConfigMap({
-                        namespace,
-                        name: sandboxId,
-                        body: { ...body, metadata: { ...body.metadata, resourceVersion: existing.value.metadata?.resourceVersion } },
-                    }),
-                createFailed,
-            );
-            if (replaced.isErr()) return err(replaced.error);
             return ok(undefined);
         })(),
     );
@@ -635,29 +519,16 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
     listManagedSandboxes(): ResultAsync<ManagedSandbox[], SandboxError>;
 } {
     const { batchApi, coreApi } = config.batchApi && config.coreApi ? { batchApi: config.batchApi, coreApi: config.coreApi } : buildKubeApi();
-    const readHostCpuinfo = config.readHostCpuinfo ?? readHostCpuinfoOnce;
 
     return {
         createSandbox(meta, identity) {
             return new ResultAsync(
                 (async () => {
                     const { sandboxId } = identity;
-                    // The same floor as `threadLimitEnv`: a fraction of a core still
-                    // keeps one thread busy, and a count of zero is not representable.
-                    const threads = Math.max(1, Math.floor(meta.resources.cpu));
-                    const files = cpuFiles(threads, await readHostCpuinfo());
-                    const job = buildJobSpec(meta, config, identity, { hasCpuinfo: files.cpuinfo !== undefined });
+                    const job = buildJobSpec(meta, config, identity);
 
                     const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, meta.childWorkflowId, job);
                     if (adopted.isErr()) return err(adopted.error);
-
-                    const cpuMap = await ensureCpuConfigMap(coreApi, config.namespace, sandboxId, adopted.value, files);
-                    if (cpuMap.isErr()) {
-                        // A pod whose ConfigMap never comes stays at ContainerCreating
-                        // until the ready wait expires. Fail now, with the real cause.
-                        await cleanupFailedJob(batchApi, coreApi, config.namespace, sandboxId, config.logger ?? createNoopLogger());
-                        return err(cpuMap.error);
-                    }
 
                     // A Job whose pod never schedules (quota rejection, no nodes, spot
                     // reclaim) is reaped by neither backoffLimit (an admission rejection
@@ -685,29 +556,23 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                             }),
                         );
                         if (registered.isErr()) {
-                            await cleanupFailedJob(batchApi, coreApi, config.namespace, sandboxId, config.logger ?? createNoopLogger());
+                            await cleanupFailedJob(batchApi, config.namespace, sandboxId, config.logger ?? createNoopLogger());
                             return err(registered.error);
                         }
                         return ok(ref);
                     }
-                    await cleanupFailedJob(batchApi, coreApi, config.namespace, sandboxId, config.logger ?? createNoopLogger());
+                    await cleanupFailedJob(batchApi, config.namespace, sandboxId, config.logger ?? createNoopLogger());
                     return err(ready.error);
                 })(),
             );
         },
 
-        // The owner reference removes the cpu ConfigMap with the Job. The explicit
-        // delete covers a ConfigMap that got no owner, and it is a no-op on 404.
         teardown(ref) {
-            return deleteJobIgnoreMissing(batchApi, config.namespace, ref.sandboxId).andThen(() =>
-                deleteConfigMapIgnoreMissing(coreApi, config.namespace, ref.sandboxId),
-            );
+            return deleteJobIgnoreMissing(batchApi, config.namespace, ref.sandboxId);
         },
 
         teardownById(sandboxId) {
-            return deleteJobIgnoreMissing(batchApi, config.namespace, sandboxId).andThen(() =>
-                deleteConfigMapIgnoreMissing(coreApi, config.namespace, sandboxId),
-            );
+            return deleteJobIgnoreMissing(batchApi, config.namespace, sandboxId);
         },
 
         listManagedSandboxes() {
@@ -786,13 +651,9 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
  * matters; a delete error here is logged and swallowed so it never masks the
  * create error returned to the caller.
  */
-async function cleanupFailedJob(batchApi: BatchV1Api, coreApi: CoreV1Api, namespace: string, sandboxId: string, logger: Logger): Promise<void> {
+async function cleanupFailedJob(batchApi: BatchV1Api, namespace: string, sandboxId: string, logger: Logger): Promise<void> {
     const deleted = await deleteJobIgnoreMissing(batchApi, namespace, sandboxId);
     if (deleted.isErr()) {
         logger.named("k8s-client").error("failed to delete Job after startup failure", { sandboxId, err: deleted.error });
-    }
-    const deletedMap = await deleteConfigMapIgnoreMissing(coreApi, namespace, sandboxId);
-    if (deletedMap.isErr()) {
-        logger.named("k8s-client").error("failed to delete cpu ConfigMap after startup failure", { sandboxId, err: deletedMap.error });
     }
 }

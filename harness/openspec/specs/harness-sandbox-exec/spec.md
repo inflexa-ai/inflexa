@@ -165,33 +165,17 @@ step output so the workflow body holds it verbatim on replay.
 
 ### Requirement: The step quota is published inside the sandbox
 
-Both backends SHALL make the cpu quota of a step visible inside the sandbox.
-The backend SHALL cover `/proc/cpuinfo` and `/sys/devices/system/cpu/online`
-with files that describe `floor(cpu)` cores (minimum 1): a read-only bind mount
-on Docker, and a per-Job ConfigMap with `subPath` mounts on K8s. The ConfigMap
-SHALL carry the Job as its owner reference, thus the delete of the Job removes
-it. Teardown SHALL also delete it explicitly, for a ConfigMap that got no
-owner.
+The Docker backend SHALL make the cpu quota of a step visible inside the
+sandbox. It SHALL cover `/proc/cpuinfo` and `/sys/devices/system/cpu/online`
+with a read-only bind mount of files that describe `floor(cpu)` cores
+(minimum 1). The K8s backend SHALL NOT mount cpu files: the cluster runtime
+(gVisor with `cpu-num-from-quota` and `systemd-cgroup`) derives the guest
+core count and memory from the pod limits.
 
 Both backends SHALL inject the shared thread-limit env (`thread-env.ts`): the
 thread-pool variables at `1`, and the worker-count variables at `floor(cpu)`.
 The rationale and the exact variable set are in the docker-sandbox-provider
 spec ("The cpu quota is visible inside the container").
-
-#### Scenario: K8s cpu files ride in a Job-owned ConfigMap
-
-- **GIVEN** a K8s sandbox with resources `{ cpu: 2 }`
-- **WHEN** `sandbox.create` runs
-- **THEN** a ConfigMap named after the Job SHALL hold the `online` and `cpuinfo` files
-- **AND** its owner reference SHALL point at the Job
-- **AND** the pod SHALL mount each key with `subPath` over the kernel path
-
-#### Scenario: A ConfigMap failure fails the launch with its cause
-
-- **GIVEN** a service account without `configmaps` permissions
-- **WHEN** `sandbox.create` runs
-- **THEN** the launch SHALL fail with the `k8s.createNamespacedConfigMap` operation named
-- **AND** the created Job SHALL be cleaned up
 
 ### Requirement: submitExec is a DBOS step keyed on execId
 
