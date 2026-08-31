@@ -146,12 +146,13 @@ BLAS/OpenMP thread pools default to **1 thread** (\`OMP_NUM_THREADS\`,
 \`OPENBLAS_NUM_THREADS\`, \`MKL_NUM_THREADS\`, …). A forked worker inherits its
 parent's pool size, so this default is what keeps \`mclapply\` /
 \`multiprocessing\` from running workers × threads on a quota sized for one of
-them. The rule: **workers × threads-per-worker must not exceed the quota —
-raise one, never both.**
+them. The rule: **workers × threads-per-worker must not exceed the quota.** A
+mix is fine while the product stays inside it.
 
 - **Fork/worker parallelism** (\`mclapply\`, \`BiocParallel\`, \`joblib\`,
-  \`multiprocessing\`): size the workers from the quota and leave the thread
-  defaults alone.
+  \`multiprocessing\`): size the workers from the reported core count and leave
+  the thread defaults alone — there is nothing to raise. \`joblib\` also
+  divides its own thread budget across its workers; do not manage it.
 - **Thread parallelism** (one process: xgboost, WGCNA, data.table, polars, a
   single large BLAS fit): raise the thread variables for that command through
   \`execute_command\`'s \`env\`, e.g.

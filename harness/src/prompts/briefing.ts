@@ -173,9 +173,9 @@ export function renderResources(resources: AnalysisStep["resources"]): string {
     const cores = Math.max(1, Math.floor(resources.cpu));
     const items = [
         `CPU: ${resources.cpu} ${resources.cpu === 1 ? "core" : "cores"} (hard quota). Memory: ${resources.memoryGb} GB (hard limit — exceeding it kills the process).`,
-        `Core-count calls (\`parallel::detectCores()\`, \`os.cpu_count()\`) report this quota — trust them for worker counts.`,
+        `Core-count calls (\`parallel::detectCores()\`, \`os.cpu_count()\`) report this quota — worker counts sized from them are already right, nothing to raise.`,
         `BLAS/OpenMP thread pools default to **1 thread** (\`OMP_NUM_THREADS\` etc.). For a thread-parallel single-process step, raise them per command via \`execute_command\`'s \`env\`, up to ${cores}.`,
-        `Keep workers × threads-per-worker ≤ ${cores}. Raise one, never both.`,
+        `The one rule: workers × threads-per-worker must stay ≤ ${cores}. A mix is fine while the product holds.`,
     ];
     if (resources.gpu) items.push(`GPU: ${resources.gpu.count}.`);
     return section("Resources (hard limits)", bullets(items));
