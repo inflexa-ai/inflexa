@@ -58,6 +58,9 @@ r:
         - remotes
         - optparse
         - matrixStats
+        - SNFtool # Similarity network fusion. The python snfpy does not work
+          # with scikit-learn 1.9 and has no maintained release, thus SNF
+          # lives on the R side.
         - Rcpp
         - RcppArmadillo
         - BiocManager
@@ -431,7 +434,6 @@ python:
               # re-embed the browser but strands us on an unmaintained release.
             - nbformat
             - Pillow
-            - upsetplot
 
             # ML / statistics
             - scikit-learn
@@ -468,7 +470,6 @@ python:
               # transitive is absent from every packages.txt fragment. Distinct
               # from the R `igraph` in the CRAN list — both are used, from their
               # own language.
-            - louvain
             - umap-learn
             - scikit-misc
             - name: pertpy
@@ -479,16 +480,10 @@ python:
             - harmonypy
             - scanorama # The third integration route the single-cell pack names
               # beside harmony and scVI. Pure Python; its annoy and fbpca deps
-              # publish no cp312 wheels and compile from source, which the
-              # builder stage already does for louvain.
+              # publish no cp312 wheels, and the builder stage compiles them
+              # from source.
             - celltypist
             - symphonypy
-            - pyscenic # INERT WITHOUT REFERENCE DATA. GRNBoost2 runs on the
-              # counts alone, but the cisTarget pruning step that makes a regulon
-              # a regulon needs ranking databases and a motif-to-TF table, which
-              # are opt-in downloads (`regulon-motifs` in the harness catalog),
-              # not part of this image. Skipping the pruning leaves raw
-              # co-expression, which is not what pySCENIC is for.
             - "cellrank>=2"
             - name: cell2location
               reason: "Spatial deconvolution; its warm run proves the regression entry point."
@@ -574,7 +569,9 @@ python:
             - Jinja2
             - python-pptx
             - orjson
-            - conorm
+            - rnanorm # TMM and CPM normalization. The well-known conorm calls a
+              # numpy API that numpy 2 removed, and it has no maintained release,
+              # thus rnanorm carries the job.
             - matplotlib-venn
             - adjustText
             - openpyxl
@@ -586,7 +583,6 @@ python:
 
             # Multi-omics integration (ensures MOFA+ works)
             - mofapy2
-            - snfpy
 
             # Multi-context cell-cell communication. Tensor-cell2cell is the
             # decomposition half of liana's CCC workflow: liana scores each
