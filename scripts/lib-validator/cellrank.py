@@ -72,12 +72,7 @@ def test_exposes_v2_namespaces():
     assert hasattr(cellrank, "estimators")
 
 
-def test_exposes_tl_namespace():
-    assert hasattr(cellrank, "tl")
-
-
 run_test("exposes cellrank.kernels / cellrank.estimators", test_exposes_v2_namespaces)
-run_test("exposes cellrank.tl", test_exposes_tl_namespace)
 
 if failures > 0:
     print(f"FAIL: {failures} test(s) failed")

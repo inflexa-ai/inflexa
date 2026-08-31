@@ -100,7 +100,9 @@ def test_deseq2_results():
     counts, metadata = _make_counts_and_metadata()
     dds = DeseqDataSet(counts=counts, metadata=metadata, design="~condition")
     dds.deseq2()
-    stats = DeseqStats(dds)
+    # DeseqStats of pydeseq2 0.5.x requires an explicit contrast. The design
+    # above is "~condition", thus the contrast tests B against A.
+    stats = DeseqStats(dds, contrast=["condition", "B", "A"])
     stats.summary()
     res = stats.results_df
     assert res.shape[0] == 30

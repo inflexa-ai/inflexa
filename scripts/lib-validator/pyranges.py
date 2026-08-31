@@ -9,13 +9,11 @@ every check passes, so it can be used as a pass/fail library validator:
 
 Install: pip install pyranges   (import name: pyranges; pulls in pandas)
 
-API NOTE (v0 vs v1): pyranges 1.x is a breaking rewrite. This script targets the
-CURRENT v1 API — a PyRanges IS a pandas.DataFrame subclass and overlapping
-intervals are collapsed with `.merge_overlaps()`. On the legacy v0.x API the
-constructor took keyword arrays (`pr.PyRanges(chromosomes=..., starts=...,
-ends=...)`) and the same operation was spelled `.merge()`. If you run this
-against a v0 install it will fail at `merge_overlaps` / column access — that is
-the API divergence, not a regression in the checks.
+API NOTE (v0 vs v1): pyranges 1.x is a breaking rewrite. The construction and
+the column access below work on both lines. One name differs: 1.x collapses
+overlapping intervals with `.merge_overlaps()`, and the 0.x line spells the
+same operation `.merge()`. The merge test calls the name that the installed
+line gives, because the smoke test validates the install, not one API era.
 
 This is the Python counterpart of data.table.R — same contract: a hard
 not-installed guard (exit 1), a per-test harness that isolates failures, and a
@@ -104,7 +102,9 @@ def test_overlap_and_intersect():
 def test_merge_overlaps():
     gr = _gr(["chr1", "chr1", "chr1"], [1, 5, 20], [10, 15, 30])
     # [1,10) and [5,15) overlap -> [1,15); [20,30) stands alone.
-    merged = gr.merge_overlaps()
+    # 1.x spells the collapse merge_overlaps, and the 0.x line spells it merge.
+    collapse = getattr(gr, "merge_overlaps", None) or gr.merge
+    merged = collapse()
     ranges = sorted(zip(merged.Start, merged.End))
     assert ranges == [(1, 15), (20, 30)]
 

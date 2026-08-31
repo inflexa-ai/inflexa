@@ -47,7 +47,9 @@ run_test <- function(name, fn) {
 # memory/stdstream providers keep everything local; we prefer the memory one so
 # nothing is even written to a stream.
 make_provider <- function() {
-  tracer_provider_memory()
+  # tracer_provider_memory is a constructor record in otelsdk 0.2, not a
+  # function. Its $new() builds the provider.
+  tracer_provider_memory$new()
 }
 
 run_test("tracer provider constructs offline", function() {

@@ -69,10 +69,11 @@ def test_ttest_columns_and_detects_difference():
     b = rng.normal(2.0, 1.0, size=40)  # clearly shifted mean
     res = pg.ttest(a, b)
     assert isinstance(res, pd.DataFrame)
-    for col in ("T", "p-val", "CI95%"):
+    # pingouin 0.6 names the columns p_val and CI95, without punctuation.
+    for col in ("T", "p_val", "CI95"):
         assert col in res.columns
     # A two-unit planted mean gap must register as significant.
-    assert float(res["p-val"].iloc[0]) < 0.01
+    assert float(res["p_val"].iloc[0]) < 0.01
 
 
 def test_corr_recovers_strong_relationship():
@@ -81,9 +82,9 @@ def test_corr_recovers_strong_relationship():
     y = 2.0 * x + rng.normal(0.0, 0.1, size=120)  # strong positive link
     res = pg.corr(x, y)
     assert isinstance(res, pd.DataFrame)
-    assert "r" in res.columns and "p-val" in res.columns
+    assert "r" in res.columns and "p_val" in res.columns
     assert float(res["r"].iloc[0]) > 0.9
-    assert float(res["p-val"].iloc[0]) < 1e-6
+    assert float(res["p_val"].iloc[0]) < 1e-6
 
 
 def test_anova_between_groups():
@@ -102,8 +103,8 @@ def test_anova_between_groups():
     )
     aov = pg.anova(data=df, dv="y", between="group")
     assert isinstance(aov, pd.DataFrame)
-    assert "F" in aov.columns and "p-unc" in aov.columns
-    assert float(aov["p-unc"].iloc[0]) < 0.01
+    assert "F" in aov.columns and "p_unc" in aov.columns
+    assert float(aov["p_unc"].iloc[0]) < 0.01
 
 
 run_test("ttest columns + detects diff", test_ttest_columns_and_detects_difference)

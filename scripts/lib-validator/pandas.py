@@ -65,7 +65,9 @@ def test_dataframe_construct_and_dtypes():
     assert list(df.columns) == ["i", "f", "s"]
     assert df["i"].dtype == "int64"
     assert df["f"].dtype == "float64"
-    assert df["s"].dtype == object
+    # pandas 3 stores a text column as the str dtype by default. The object
+    # dtype is the pre-3 default. Accept the default of the installed line.
+    assert df["s"].dtype in (object, "str")
     assert df["i"].sum() == 6
 
 

@@ -18,9 +18,9 @@
 #   - CONSTRUCTOR: MethylSet(Meth = <matrix>, Unmeth = <matrix>) -- the two
 #     assay args are capitalized "Meth"/"Unmeth". If those names drift the
 #     "constructs" test fails first, flagging it.
-#   - getBeta() OFFSET: beta = Meth / (Meth + Unmeth + offset) with the DEFAULT
-#     offset = 100. The expected-beta below hardcodes 100; a changed default
-#     would fail the beta test.
+#   - getBeta() OFFSET: beta = Meth / (Meth + Unmeth + offset). The default
+#     offset is 0, thus the test passes offset = 100 explicitly and the
+#     expected-beta below uses the same 100.
 #   - getM() DEFAULT: assumed to be log2(Meth / Unmeth) for a raw MethylSet (the
 #     type="" branch), NOT logit2(getBeta(...)). If minfi's default changed to a
 #     beta-derived M, the M-value test fails -- re-confirm the definition.
@@ -89,7 +89,9 @@ run_test("getMeth / getUnmeth round-trip the input intensities", function() {
 
 run_test("getBeta returns [0,1] matching Meth/(Meth+Unmeth+offset)", function() {
   ms <- MethylSet(Meth = meth, Unmeth = unmeth)
-  beta <- as.matrix(getBeta(ms))
+  # The default offset of getBeta() is 0, not the 100 of the Illumina
+  # formula. An explicit offset makes the expected matrix version-stable.
+  beta <- as.matrix(getBeta(ms, offset = beta_offset))
   stopifnot(identical(dim(beta), dim(meth)))
   stopifnot(all(is.finite(beta)), all(beta >= 0), all(beta <= 1))
   expected_beta <- meth / (meth + unmeth + beta_offset)

@@ -93,7 +93,9 @@ def test_writes_produces_json_string():
 
     parsed = json.loads(s)
     assert parsed["nbformat"] == 4
-    assert parsed["cells"][0]["source"] == "1+1"
+    # nbformat 5.11 normalizes the serialized source to a list of lines.
+    # Earlier lines keep the plain string. Accept both shapes.
+    assert parsed["cells"][0]["source"] in ("1+1", ["1+1"])
 
 
 def test_reads_roundtrips_cell_source():

@@ -74,8 +74,10 @@ def test_import_exposes_submodules():
 
 
 def test_exposes_run_palantir_entry_point():
-    assert hasattr(palantir, "run_palantir")
-    assert callable(palantir.run_palantir)
+    # palantir 1.4 exports run_palantir from palantir.core only. The package
+    # root re-exported it in earlier lines. Accept either home.
+    fn = getattr(palantir, "run_palantir", None) or getattr(palantir.core, "run_palantir", None)
+    assert callable(fn)
 
 
 run_test("import exposes palantir.utils / palantir.core", test_import_exposes_submodules)

@@ -102,6 +102,13 @@ run_test("dmrseq detects DMRs and returns a GRanges (SOFT -- see header)", funct
                 conditionMessage(res)))
     return(invisible(NULL))
   }
+  # dmrseq() returns NULL when the scan finds zero candidate regions. On this
+  # minimal synthetic set that outcome is legitimate, thus it takes the same
+  # soft path as an incomplete run.
+  if (is.null(res)) {
+    cat("  note dmrseq() found zero candidate regions on the synthetic set\n")
+    return(invisible(NULL))
+  }
   stopifnot(methods::is(res, "GRanges"))
   # A run can legitimately find zero DMRs; only check the metadata contract when
   # there are rows to carry it.
