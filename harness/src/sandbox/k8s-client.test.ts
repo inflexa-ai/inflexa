@@ -157,10 +157,10 @@ describe("k8s createSandbox", () => {
         expect(envMap.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
         expect(envMap.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
-        // The cgroup limit below is invisible to the libraries inside it, thus
-        // the same cpu request rides in as their thread count.
-        expect(envMap.OMP_NUM_THREADS).toBe("2");
-        expect(envMap.OPENBLAS_NUM_THREADS).toBe("2");
+        // The thread pools default to one thread, and the worker counts follow
+        // the cpu request. The agent raises a pool per command.
+        expect(envMap.OMP_NUM_THREADS).toBe("1");
+        expect(envMap.OPENBLAS_NUM_THREADS).toBe("1");
         expect(envMap.BIOCPARALLEL_WORKER_NUMBER).toBe("2");
         expect(envMap.MC_CORES).toBeUndefined();
 
