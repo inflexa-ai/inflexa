@@ -23,7 +23,7 @@ const runSession = {} as unknown as RunSession;
 
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
-import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
+import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "./prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
 
 // All factories below construct lazily (pg pools connect on first query; the
@@ -71,6 +71,13 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
     };
 }
 
+// The parent bundle takes its seam from the ONE installed object, the way the boot publishes it. A
+// test that reads the run emit off the deps must install a seam over the SAME composition first, or
+// the field is absent — which is what an un-booted process gives.
+function installSeamFor(comp: RunEngineComposition): void {
+    installProvenanceSeam(createProvenanceSeam({ emitters: comp.sandboxEmitters, sessionModel: () => "anthropic/claude-test" }));
+}
+
 // A minimal build context. `buildAgent` reads only the analysis/run/step ids,
 // the agent id, the write prefix, and the per-call accessors; the sandbox /
 // lineage-collector / blocker-holder are captured by tool closures at
@@ -101,6 +108,7 @@ describe("run-engine provenance wiring", () => {
     }
     afterEach(() => {
         Bus.off("inflexa", spy);
+        installProvenanceSeam(null);
     });
 
     // The bus adapter reads `getRecords()` + `getTrackedInputs()` off the collector and never touches
@@ -132,7 +140,9 @@ describe("run-engine provenance wiring", () => {
         // `sandboxStepCallable` + `runAuthorizer` are stored, never invoked by the builder.
         const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
         const authorizer = {} as unknown as RunAuthorizer;
-        const deps = buildExecuteAnalysisDeps(testComposition(), callable, authorizer);
+        const comp = testComposition();
+        installSeamFor(comp);
+        const deps = buildExecuteAnalysisDeps(comp, callable, authorizer);
 
         expect(deps.provenance!.emitRunEvent).toBeInstanceOf(Function);
 
@@ -163,7 +173,9 @@ describe("run-engine provenance wiring", () => {
         // produce it from the opaque model alias.
         const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
         const authorizer = {} as unknown as RunAuthorizer;
-        const deps = buildExecuteAnalysisDeps(testComposition({ sandbox: "some-alias-v2", modelProvider: "deepseek" }), callable, authorizer);
+        const comp = testComposition({ sandbox: "some-alias-v2", modelProvider: "deepseek" });
+        installSeamFor(comp);
+        const deps = buildExecuteAnalysisDeps(comp, callable, authorizer);
 
         captured = [];
         Bus.on("inflexa", spy);
@@ -191,6 +203,7 @@ describe("snapshot-safety — a captured deps field observes a live swap through
     }
     afterEach(() => {
         Bus.off("inflexa", spy);
+        installProvenanceSeam(null);
     });
 
     const noSession = {} as unknown as AgentSession;
@@ -199,6 +212,7 @@ describe("snapshot-safety — a captured deps field observes a live swap through
 
     test("the run emit captured at registration stamps the NEW name after a swap through that captured reference", () => {
         const comp = testComposition();
+        installSeamFor(comp);
         const deps = buildExecuteAnalysisDeps(comp, callable, authorizer);
         // The worst case: a consumer snapshots the field ONCE, before any switch. A field mutation on a
         // consumer-held object would leave this stale; a stable delegating handle does not.

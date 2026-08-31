@@ -23,10 +23,10 @@ import {
     createBusArtifactRegistry,
     createProvenanceSeam,
     createRunProvenanceEmitter,
+    createSessionEmit,
     createSwappableSandboxEmitters,
-    emitSessionObservation,
-    hostProvenanceSeam,
-    installReportSessionModel,
+    installProvenanceSeam,
+    provenanceSeam,
     readProvenanceExport,
 } from "./prov_bridge.ts";
 
@@ -557,16 +557,13 @@ function onlyEvent(): StampedEvent {
     return captured[0]!;
 }
 
-describe("emitSessionObservation", () => {
-    beforeEach(() => {
-        installReportSessionModel(() => sessionModelId);
-    });
-    afterEach(() => {
-        installReportSessionModel(null);
-    });
+// The emit over a fixed model name — the shape every mapping test drives, except the live-switch one
+// below, which builds its own emit over a source that changes.
+const emitSession = createSessionEmit(() => sessionModelId);
 
+describe("createSessionEmit", () => {
     test("a created report session carries the thread, the kind, and the parent", () => {
-        emitSessionObservation({
+        emitSession({
             type: "create-session",
             analysisId: sessionAnalysisId,
             threadId: reportThreadId,
@@ -581,7 +578,7 @@ describe("emitSessionObservation", () => {
     });
 
     test("a created conversation session carries its kind and no parent key", () => {
-        emitSessionObservation({ type: "create-session", analysisId: sessionAnalysisId, threadId: "thread-conv-1", sessionKind: "conversation" });
+        emitSession({ type: "create-session", analysisId: sessionAnalysisId, threadId: "thread-conv-1", sessionKind: "conversation" });
 
         const event = onlyEvent();
         if (event.type !== "prov.session_created") throw new Error("expected prov.session_created");
@@ -591,10 +588,10 @@ describe("emitSessionObservation", () => {
     });
 
     test("each block act maps onto its own member and carries the kind of the block", () => {
-        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
-        emitSessionObservation({ type: "change-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b2", blockKind: "chart" });
-        emitSessionObservation({ type: "remove-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b3", blockKind: "table" });
-        emitSessionObservation({ type: "move-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b4", blockKind: "figure" });
+        emitSession({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        emitSession({ type: "change-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b2", blockKind: "chart" });
+        emitSession({ type: "remove-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b3", blockKind: "table" });
+        emitSession({ type: "move-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b4", blockKind: "figure" });
 
         expect(captured.map((e) => e.type)).toEqual([
             "prov.report_block_added",
@@ -610,15 +607,15 @@ describe("emitSessionObservation", () => {
     });
 
     test("the title, the preview, and the version record carry the data of their act", () => {
-        emitSessionObservation({ type: "set-title", analysisId: sessionAnalysisId, threadId: reportThreadId, title: "Differential expression" });
-        emitSessionObservation({
+        emitSession({ type: "set-title", analysisId: sessionAnalysisId, threadId: reportThreadId, title: "Differential expression" });
+        emitSession({
             type: "preview",
             analysisId: sessionAnalysisId,
             threadId: reportThreadId,
             pagePath: "report-sessions/t/page.html",
             documentHash: "h-doc",
         });
-        emitSessionObservation({ type: "record-version", analysisId: sessionAnalysisId, threadId: reportThreadId, versionId: "v1", replaced: true });
+        emitSession({ type: "record-version", analysisId: sessionAnalysisId, threadId: reportThreadId, versionId: "v1", replaced: true });
 
         const [title, preview, version] = captured;
         if (title?.type !== "prov.report_title_set") throw new Error("expected prov.report_title_set");
@@ -634,7 +631,7 @@ describe("emitSessionObservation", () => {
             { path: "data/inputs/f1/counts.csv", hash: "h1" },
             { path: "runs/r1/s1/output/de.csv", hash: "h2" },
         ];
-        emitSessionObservation({
+        emitSession({
             type: "run-derivation",
             analysisId: sessionAnalysisId,
             threadId: reportThreadId,
@@ -656,7 +653,7 @@ describe("emitSessionObservation", () => {
     });
 
     test("every act stamps the system actor", () => {
-        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        emitSession({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
 
         const event = onlyEvent();
         if (event.type !== "prov.report_block_added") throw new Error("expected prov.report_block_added");
@@ -665,24 +662,16 @@ describe("emitSessionObservation", () => {
 
     test("the model is read at emit time, so a live switch re-stamps the later acts", () => {
         let live: ProvModelId = "anthropic/claude-sonnet-4-5";
-        installReportSessionModel(() => live);
+        const emitLive = createSessionEmit(() => live);
 
-        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        emitLive({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
         live = "openai/gpt-5";
-        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b2", blockKind: "text" });
+        emitLive({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b2", blockKind: "text" });
 
         const [first, second] = captured;
         if (first?.type !== "prov.report_block_added" || second?.type !== "prov.report_block_added") throw new Error("expected two block events");
         expect(first.model).toBe("anthropic/claude-sonnet-4-5");
         expect(second.model).toBe("openai/gpt-5");
-    });
-
-    test("with no live model the record is dropped rather than stamped with an invented name", () => {
-        installReportSessionModel(null);
-
-        emitSessionObservation({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
-
-        expect(captured.length).toBe(0);
     });
 });
 
@@ -708,7 +697,6 @@ describe("readProvenanceExport", () => {
         mkdirSync(tmpDir, { recursive: true });
         resetSigningForTests(join(tmpDir, "prov_key.json"));
         initProvenanceRecording(); // idempotent: subscribes once across the whole test run
-        installReportSessionModel(() => sessionModelId);
 
         insertAnchor({ id: "anchor1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysis(analysis)._unsafeUnwrap();
@@ -716,12 +704,11 @@ describe("readProvenanceExport", () => {
 
     afterEach(() => {
         resetSigningForTests(null);
-        installReportSessionModel(null);
         rmSync(tmpDir, { recursive: true, force: true });
     });
 
     test("a populated analysis gives the stored bytes and an attestation over them", async () => {
-        emitSessionObservation({ type: "add-block", analysisId: "a1", threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        emitSession({ type: "add-block", analysisId: "a1", threadId: reportThreadId, blockId: "b1", blockKind: "text" });
         await flushProvenanceAsync();
 
         const provenance = await readProvenanceExport("a1");
@@ -734,7 +721,7 @@ describe("readProvenanceExport", () => {
 
     test("the drain runs first, so a read gives the bytes that include the act", async () => {
         // The recorder writes the column on a debounced flush, and this read never awaits one itself.
-        emitSessionObservation({ type: "record-version", analysisId: "a1", threadId: reportThreadId, versionId: "v-drain", replaced: false });
+        emitSession({ type: "record-version", analysisId: "a1", threadId: reportThreadId, versionId: "v-drain", replaced: false });
 
         const provenance = await readProvenanceExport("a1");
         expect(provenance).toBeDefined();
@@ -753,7 +740,7 @@ describe("readProvenanceExport", () => {
     });
 
     test("a failed attestation build gives absence, and the document never reaches the page without its proof", async () => {
-        emitSessionObservation({ type: "add-block", analysisId: "a1", threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        emitSession({ type: "add-block", analysisId: "a1", threadId: reportThreadId, blockId: "b1", blockKind: "text" });
         await flushProvenanceAsync();
         expect(getAnalysisProvenance("a1")._unsafeUnwrap()).not.toBeNull();
 
@@ -768,14 +755,35 @@ describe("readProvenanceExport", () => {
 });
 
 describe("createProvenanceSeam", () => {
+    afterEach(() => {
+        installProvenanceSeam(null);
+    });
+
     test("the seam binds the three members, and its run emit is the holder's stable handle", () => {
         const emitters = createSwappableSandboxEmitters("anthropic/claude-old");
-        const seam = createProvenanceSeam(emitters);
+        const seam = createProvenanceSeam({ emitters, sessionModel: () => "openai/gpt-5" });
 
         expect(seam.emitRunEvent).toBe(emitters.emitProvenance);
-        // The chat turn reaches the SAME session emit and read, so one created session carries one
-        // claim whichever surface drives the turn.
-        expect(seam.emitSessionEvent).toBe(hostProvenanceSeam.emitSessionEvent);
-        expect(seam.readExport).toBe(hostProvenanceSeam.readExport);
+        expect(seam.readExport).toBe(readProvenanceExport);
+
+        // The session emit is bound over the source that the constructor took, thus a record of an act
+        // names the model of THIS seam and of no other.
+        seam.emitSessionEvent!({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        const event = onlyEvent();
+        if (event.type !== "prov.report_block_added") throw new Error("expected prov.report_block_added");
+        expect(event.model).toBe("openai/gpt-5");
+    });
+
+    test("the accessor gives the exact installed object, and a null install clears it", () => {
+        const emitters = createSwappableSandboxEmitters("anthropic/claude-old");
+        const seam = createProvenanceSeam({ emitters, sessionModel: () => sessionModelId });
+
+        installProvenanceSeam(seam);
+        // Reference equality is the whole point: the core bag, the run-engine deps, and the chat turn
+        // read ONE object, thus a created session carries one claim whichever surface drives it.
+        expect(provenanceSeam()).toBe(seam);
+
+        installProvenanceSeam(null);
+        expect(provenanceSeam()).toBeUndefined();
     });
 });

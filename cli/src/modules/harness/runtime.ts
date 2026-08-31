@@ -72,7 +72,7 @@ import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError 
 import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
-import { createProvenanceSeam, createSwappableSandboxEmitters, installReportSessionModel } from "./prov_bridge.ts";
+import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "./prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
 import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installAgentSwitch } from "./agent_switch.ts";
@@ -1004,10 +1004,21 @@ async function bootHarnessRuntimeOnce(
         // re-points only the cli-owned inner behind them via `emitters.swap`, so
         // no harness-held object is mutated and the swap lands regardless of the workflows' read discipline.
         const emitters = createSwappableSandboxEmitters(`${connection.provider}/${sandboxModel}`);
-        // The whole provenance seam over those emitters: the run emit is the holder's stable handle,
-        // and the session emit and the document read are the module-scope realizations the chat turn
-        // reaches on its own.
-        const provenance = createProvenanceSeam(emitters);
+        // The ONE provenance seam of this boot: the run emit is the holder's stable handle, the
+        // session emit names the model that drove each act, and the read gives the recorded document
+        // back. The conversation agent is the one that drives a report session, thus the source reads
+        // the agent switch AT ACT TIME: a live model change re-stamps every later act, the way a swap
+        // re-stamps the sandbox emitters. The boot model answers while the switch names nothing, thus
+        // an act that lands before the first swap still names the model that did it. The provider slug
+        // is the connection's, and a swap changes only the model half.
+        const provenance = createProvenanceSeam({
+            emitters,
+            sessionModel: () => `${connection.provider}/${currentAgentModels().conversation || conversationModel}`,
+        });
+        // Install it before the cohort assembles. The run-engine deps read the installed seam as they
+        // are built, and the chat turn reads it at each turn, thus one object answers each surface and
+        // a created session carries one claim whichever surface drives it.
+        installProvenanceSeam(provenance);
 
         const composition: RunEngineComposition = {
             pool,
@@ -1148,14 +1159,6 @@ async function bootHarnessRuntimeOnce(
                 modelProvider: connection.provider,
                 initialModels: { conversation: conversationModel, sandbox: sandboxModel, utility: utilityModel },
             });
-            // The session emit names the model that drove each act, and the conversation agent is the
-            // one that drives a report session. The source reads the switch AT EMIT TIME, thus a live
-            // model change re-stamps every later act, the way a swap re-stamps the sandbox emitters.
-            // It is installed right after the switch that it reads, thus the two stay in one order. The
-            // boot model answers while the switch names nothing, thus an act that lands before the
-            // first swap still names the model that did it. The provider slug is the connection's, and
-            // a swap changes only the model half.
-            installReportSessionModel(() => `${connection.provider}/${currentAgentModels().conversation || conversationModel}`);
             seams.registerReaper({ pool: composition.pool, sandboxClient, logger });
             seams.registerWatchdog({ queryActiveSandboxes: () => queryActiveSandboxes(composition.pool), sandboxClient, logger });
             seams.registerNotificationSweep({ pool: composition.pool, logger });
@@ -1184,9 +1187,9 @@ async function bootHarnessRuntimeOnce(
                 eyes: createEphemeralEyes({ runtime: pinnedRuntime }),
                 // The one provenance seam of the signed document: the run emit, the session emit that
                 // records each act of a session on the bus, and the read that gives the recorded
-                // document back for the page of a preview. The chat turn binds the SAME module-scope
-                // members itself, because the creation of a conversation thread happens there and this
-                // bag does not reach it.
+                // document back for the page of a preview. It is the SAME object that the install
+                // above published, because the chat turn reads that object for the creation of a
+                // conversation thread and this bag does not reach that call.
                 provenance,
             },
             pool: composition.pool,

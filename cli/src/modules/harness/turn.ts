@@ -25,7 +25,7 @@ import {
 
 import { getLogger, harnessLogger } from "../../lib/log.ts";
 import { enterChatTurn } from "./agent_switch.ts";
-import { hostProvenanceSeam } from "./prov_bridge.ts";
+import { provenanceSeam } from "./prov_bridge.ts";
 
 // The headless chat turn engine. One transport-free sequence —
 // `prepareChatTurn → runAgent → unconditional appendTurn` — shared by BOTH the
@@ -264,12 +264,12 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // heals silently and the writer defect it covers stays invisible.
         //
         // The provenance seam rides beside it, because preparation holds the one site that writes a
-        // conversation thread and thus the one site that knows the true moment of that creation. It
-        // is the SAME module-scope binding that the composition root spreads onto the core bag,
-        // imported the way the turn gauge above is: one realization, thus one claim about a created
-        // session, whichever surface drives the turn.
+        // conversation thread and thus the one site that knows the true moment of that creation. The
+        // turn reads the ONE seam that the boot installed, the same object that the composition root
+        // puts on the core bag. Thus a created session carries one claim whichever surface drives the
+        // turn. With no booted runtime the read gives nothing, which the harness reads as absence.
         const prepared = await ResultAsync.fromPromise(
-            seams.prepare({ pool, logger: harnessLogger("harness"), provenance: hostProvenanceSeam }, { analysisId, threadId, userInput }),
+            seams.prepare({ pool, logger: harnessLogger("harness"), provenance: provenanceSeam() }, { analysisId, threadId, userInput }),
             (e): unknown => e,
         ).match(
             (r) => r,

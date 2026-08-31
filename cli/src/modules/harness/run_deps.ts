@@ -21,7 +21,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import type { ResolvedHarnessConfig } from "./config.ts";
-import { createProvenanceSeam, type SwappableSandboxEmitters } from "./prov_bridge.ts";
+import { provenanceSeam, type SwappableSandboxEmitters } from "./prov_bridge.ts";
 import { emitRunObservation } from "./run_bridge.ts";
 
 /**
@@ -218,13 +218,14 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): CoreWorkflowDe
  * `runCharge` is the harness no-op bracket. Synthesis is selected per durable
  * workflow input, defaulting to enabled for legacy planned runs.
  *
- * `provenance` binds the seam over the composition's stable delegating run-lifecycle
- * emitter ({@link RunEngineComposition.sandboxEmitters}), so the run's start/terminal
- * boundaries land as `prov.run_started` / `prov.run_completed` in the signed
- * document — including on a DBOS recovery boot, where body re-execution re-fires
- * it. The run emit inside it is the SAME stable function the switch re-points on a live
- * model change, so the registered parent workflow observes the swap without re-registration.
- * The body reads that member alone; the other two ride along because the seam is one type.
+ * `provenance` is the ONE seam that the boot installed, over the composition's stable
+ * delegating run-lifecycle emitter, so the run's start/terminal boundaries land as
+ * `prov.run_started` / `prov.run_completed` in the signed document — including on a DBOS
+ * recovery boot, where body re-execution re-fires it. The run emit inside it is the SAME
+ * stable function the switch re-points on a live model change, so the registered parent
+ * workflow observes the swap without re-registration. The body reads that member alone;
+ * the other two ride along because the seam is one type. With no installed seam the field
+ * is absent, which the harness reads as absence and never as an error.
  */
 export function buildExecuteAnalysisDeps(
     comp: RunEngineComposition,
@@ -241,7 +242,7 @@ export function buildExecuteAnalysisDeps(
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
-        provenance: createProvenanceSeam(comp.sandboxEmitters),
+        provenance: provenanceSeam(),
         // The run-observation seam, injected beside the provenance one and sharing nothing with it.
         // Unlike the run emit this is NOT a swappable delegating handle: it binds no model and no
         // boot-resolved state, so a live model switch has nothing to re-point here.

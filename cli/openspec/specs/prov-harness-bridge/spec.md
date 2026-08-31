@@ -134,7 +134,7 @@ re-reading any clock.
 
 ### Requirement: The cli realizes the provenance seam as one bridge
 
-The cli MUST realize the whole `ProvenanceSeam` in `src/modules/harness/prov_bridge.ts`, and the composition root MUST bind one seam object on the core bag. The session emit maps each seam event onto its report bus member. It stamps the system actor, and it carries the model that drives the session at emit time. The run emit keeps its construction-time model stamp, refreshed through the swap of the agent switch. The cli MUST pass a seam with the same emit and read members into `PrepareChatTurnDeps` at its chat-turn call site. The conversation creation emits there, and the boot-scoped core bag is out of its reach, thus member identity is the sameness that counts.
+The cli MUST realize the whole `ProvenanceSeam` in `src/modules/harness/prov_bridge.ts`. The seam constructor MUST take the live model source, thus a seam with no model is unrepresentable. The boot MUST build one seam and install it. The core bag, the run-engine deps, and the chat turn read that one installed object. The session emit maps each seam event onto its report bus member. It stamps the system actor, and it carries the model that the source names at emit time. The run emit keeps its construction-time model stamp, refreshed through the swap of the agent switch. The conversation creation emits inside the turn, through the same installed object.
 
 #### Scenario: A created report session reaches the bus
 
