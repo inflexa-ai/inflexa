@@ -6,14 +6,15 @@ import { join } from "node:path";
 import { ok } from "neverthrow";
 
 import { env } from "../../lib/env.ts";
-import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
-import { claimStoreFlight, deleteStoreFlight, settleStoreFlightFailure } from "../../db/primary_mutation.ts";
+import { acquireInstanceLock, instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY, releaseInstanceLock } from "../../lib/lock.ts";
+import { claimStoreFlight, deleteStoreFlight, settleStoreFlightFailure, settleTransfer, startTransferRun } from "../../db/primary_mutation.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { CaptureResult } from "../../lib/container.ts";
 import { FARM_LOCK_KEY_PREFIX } from "./composition.ts";
 import type { ProvisionerRunner } from "./provisioner.ts";
 import { readStoreFlights } from "./store_flight.ts";
-import { collectStoreDebris, reclaimStore } from "./store.ts";
+import { transferLockKey } from "./transfers.ts";
+import { collectStoreDebris, reclaimStore, runStoreDownload } from "./store.ts";
 
 // The silent debris pass: it frees only the tier that nothing references — no
 // farm link AND no graph node — plus the stale acquire reports, and it yields
@@ -176,5 +177,50 @@ describe("collectStoreDebris", () => {
             holder.kill();
             await holder.exited;
         }
+    });
+});
+
+describe("runStoreDownload --foreground", () => {
+    afterEach(() => {
+        releaseInstanceLock(transferLockKey("catalog"));
+        settleTransfer("catalog", { state: "canceled", message: null }).unwrapOr(undefined);
+        process.exitCode = 0;
+    });
+
+    test("a failed settle exits 1 and prints the recorded message", async () => {
+        const transfer = async (): Promise<void> => {
+            startTransferRun("catalog", { state: "running", holderPid: process.pid })._unsafeUnwrap();
+            settleTransfer("catalog", { state: "failed", message: "resolve: the registry said no" })._unsafeUnwrap();
+        };
+
+        await runStoreDownload({ foreground: true }, { transfer });
+
+        expect(process.exitCode).toBe(1);
+    });
+
+    test("a live detached transfer refuses the foreground run", async () => {
+        startTransferRun("catalog", { state: "running", holderPid: process.pid })._unsafeUnwrap();
+        // This process holds the lock, thus the report reads the transfer as live.
+        expect(acquireInstanceLock(transferLockKey("catalog")).acquired).toBe(true);
+        let ran = 0;
+        const transfer = async (): Promise<void> => {
+            ran += 1;
+        };
+
+        await runStoreDownload({ foreground: true }, { transfer });
+
+        expect(process.exitCode).toBe(1);
+        expect(ran).toBe(0);
+    });
+
+    test("an installed settle exits clean", async () => {
+        const transfer = async (): Promise<void> => {
+            startTransferRun("catalog", { state: "running", holderPid: process.pid })._unsafeUnwrap();
+            settleTransfer("catalog", { state: "installed", message: null })._unsafeUnwrap();
+        };
+
+        await runStoreDownload({ foreground: true }, { transfer });
+
+        expect(process.exitCode ?? 0).toBe(0);
     });
 });

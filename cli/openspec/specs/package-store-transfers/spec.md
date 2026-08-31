@@ -15,6 +15,13 @@ totals, and its failure message. The lock family MUST give the liveness: a
 kind runs at a time. The command palette MUST offer the re-download of the
 images and of the catalog, through the same transfer children.
 
+One exception exists: `store download --foreground` MUST run the catalog
+transfer in the calling process, for a container whose primary process
+must hold the pod open. The exit code MUST carry the outcome, and a
+`failed` settle MUST print the recorded message. While a detached transfer
+is live, a foreground run MUST refuse with exit code 1, because a silent
+no-op in a Job reads as success.
+
 #### Scenario: Three transfers run detached
 
 - **WHEN** the setup starts the three transfers
@@ -25,6 +32,18 @@ images and of the catalog, through the same transfer children.
 - **GIVEN** a `running` row whose child process died
 - **WHEN** the state is read
 - **THEN** it reads as `failed`, with a retry command named
+
+#### Scenario: A foreground run carries the outcome in its exit code
+
+- **GIVEN** a catalog transfer that settles as `failed`
+- **WHEN** `store download --foreground` runs it
+- **THEN** the process exits 1, and the recorded message prints
+
+#### Scenario: A live transfer refuses a foreground run
+
+- **GIVEN** a live detached catalog transfer
+- **WHEN** `store download --foreground` runs
+- **THEN** the run refuses with exit code 1, and nothing transfers twice
 
 ### Requirement: The TUI shows one live row per transfer until it completes
 
