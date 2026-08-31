@@ -2095,18 +2095,20 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ]),
             },
             {
-                // What makes a pySCENIC regulon a regulon rather than a co-expression module:
-                // the motif-pruning step reads these and nothing substitutes for them. Rankings
-                // and annotation must come from the SAME version — the directory says
+                // A motif-ranking matrix plus the motif-to-TF table that reads with it. The
+                // pair answers one question: which transcription factors have motifs enriched
+                // near the genes of a set. No installed package reads these files, thus the
+                // caller writes the recovery-curve scoring over the ranking matrix itself.
+                // Rankings and annotation must come from the SAME version — the directory says
                 // `mc_v10_clust` and the annotation says `v10nr_clust`, which are the same
-                // release under two spellings, and pairing across releases yields empty regulons
-                // without erroring. Two window sizes ship because the choice is analytical, not a
-                // default: 500bp/100bp is promoter-proximal, 10kbp is distal-inclusive.
+                // release under two spellings, and a pair across releases matches nothing
+                // without erroring. Two window sizes ship because the choice is analytical, not
+                // a default: 500bp/100bp is promoter-proximal, 10kbp is distal-inclusive.
                 id: "cistarget-hg38",
                 version: "v10-clust",
                 title: "cisTarget motif rankings and annotations (human, hg38)",
                 description:
-                    "The motif-ranking databases and motif-to-TF annotation that gene regulatory network inference needs to prune co-expression modules down to motif-supported regulons. Human hg38, RefSeq r80, v10 clustered motif collection — two ranking databases at different regulatory window sizes plus the annotation table that maps each motif to its transcription factors. Roughly 723 MB combined. The publisher states no licence for this data, so it is fetched from them directly and never mirrored.",
+                    "The motif-ranking databases and motif-to-TF annotation behind cisTarget motif enrichment: score a gene set against the gene ranking of every motif, keep the enriched motifs, then read off their transcription factors. No installed package reads these files, thus the scoring is written per analysis. Human hg38, RefSeq r80, v10 clustered motif collection — two ranking databases at different regulatory window sizes plus the annotation table that maps each motif to its transcription factors. Roughly 723 MB combined. The publisher states no licence for this data, so it is fetched from them directly and never mirrored.",
                 organism: "human",
                 sourceUrl: "https://resources.aertslab.org/cistarget/",
                 license: { identifier: "LicenseRef-No-Declared-Licence", url: "https://resources.aertslab.org/cistarget/" },
@@ -2117,7 +2119,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                         url: "https://resources.aertslab.org/cistarget/databases/homo_sapiens/hg38/refseq_r80/mc_v10_clust/gene_based/hg38_500bp_up_100bp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
                         format: "feather",
                         contents:
-                            "Feather v2, ~313 MB: genes x motifs, each cell the rank of that gene for that motif. Promoter-proximal window (500bp upstream to 100bp downstream of the TSS) — the conservative choice, and the one to prefer when a regulon should reflect direct promoter binding. Must be a *.rankings.feather; the *.scores.feather files served beside these are inputs for building databases and produce nothing useful here.",
+                            "Feather v2, ~313 MB: genes x motifs, each cell the rank of that gene for that motif. Promoter-proximal window (500bp upstream to 100bp downstream of the TSS) — the conservative choice, and the one to prefer when the result must reflect direct promoter binding. Must be a *.rankings.feather; the *.scores.feather files served beside these are inputs for building databases and produce nothing useful here.",
                     },
                     {
                         path: "hg38_10kbp_up_10kbp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
@@ -2142,7 +2144,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 version: "v10-clust",
                 title: "cisTarget motif rankings and annotations (mouse, mm10)",
                 description:
-                    "Mouse mm10 counterpart of the human cisTarget set — one ranking database plus the MGI motif-to-TF annotation, for pruning co-expression modules into motif-supported regulons. RefSeq r80, v10 clustered motif collection, roughly 589 MB. mm10 is the current build here; there is no mm39 release. The publisher states no licence for this data, so it is fetched from them directly and never mirrored.",
+                    "Mouse mm10 counterpart of the human cisTarget set — one ranking database plus the MGI motif-to-TF annotation, for motif enrichment over a gene set and the mapping from each enriched motif to its transcription factors. No installed package reads these files, thus the scoring is written per analysis. RefSeq r80, v10 clustered motif collection, roughly 589 MB. mm10 is the current build here, and there is no mm39 release. The publisher states no licence for this data, so it is fetched from them directly and never mirrored.",
                 organism: "mouse",
                 sourceUrl: "https://resources.aertslab.org/cistarget/",
                 license: { identifier: "LicenseRef-No-Declared-Licence", url: "https://resources.aertslab.org/cistarget/" },
