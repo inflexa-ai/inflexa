@@ -892,11 +892,12 @@ export function buildProgram(): Command {
             .command("download")
             .description("Start the detached catalog transfer from GitHub Packages, or report why none is necessary")
             .option("--update", "Apply a moved catalog tag (replaces the dependency graph whole)")
+            .option("--foreground", "Run the transfer in this process and carry the outcome in the exit code (for a one-shot container)")
             .addOption(new Option("--run-transfer").hideHelp()),
         { kind: "approval" },
-        async (options: { update?: boolean; runTransfer?: boolean }) => {
+        async (options: { update?: boolean; runTransfer?: boolean; foreground?: boolean }) => {
             const { runStoreDownload } = await import("../modules/libs/store.ts");
-            await runStoreDownload({ update: options.update, runTransfer: options.runTransfer });
+            await runStoreDownload({ update: options.update, runTransfer: options.runTransfer, foreground: options.foreground });
         },
     );
 

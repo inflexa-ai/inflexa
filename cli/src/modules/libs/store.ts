@@ -1072,10 +1072,32 @@ function describeRequestRefusal(error: RequestResolutionError): string {
  * transfer a healthy store a second time: over a receipt that pins the
  * manifest the registry serves now, the flag leaves the store as it is.
  */
-export async function runStoreDownload(options: { update?: boolean; runTransfer?: boolean }): Promise<void> {
+export async function runStoreDownload(
+    options: { update?: boolean; runTransfer?: boolean; foreground?: boolean },
+    deps: { transfer?: (params: { storeRoot: string; update: boolean }) => Promise<void> } = {},
+): Promise<void> {
     const storeRoot = env.packageStoreDir;
     if (options.runTransfer === true) {
         await runCatalogTransfer({ storeRoot, update: options.update ?? false });
+        return;
+    }
+    if (options.foreground === true) {
+        // The foreground mode exists for a one-shot container: the pod lives as
+        // long as this process, and the exit code is the one signal it reports.
+        // A live detached transfer refuses the run, because the lock would turn
+        // the second run into a silent no-op — and a silent no-op reads as success.
+        const live = readTransferReport("catalog");
+        if (live.live) {
+            reportError({ message: `A package-store download is already running (pid ${live.holderPid ?? "unknown"}). A foreground run must not race it.` });
+            return;
+        }
+        await (deps.transfer ?? runCatalogTransfer)({ storeRoot, update: options.update ?? false });
+        const settled = readTransferReport("catalog");
+        if (settled.state === "installed") {
+            console.log("The catalog transfer settled as installed.");
+            return;
+        }
+        reportError({ message: `The catalog transfer settled as ${settled.state ?? "unknown"}${settled.row?.message ? `: ${settled.row.message}` : ""}` });
         return;
     }
     const result = await startCatalogTransfer({ storeRoot, update: options.update ?? false });
