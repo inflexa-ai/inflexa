@@ -85,7 +85,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -200,7 +200,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {
@@ -264,5 +264,43 @@ describe("migration 7 — the flight-table rebuild", () => {
             holder.close();
             rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("migration 8 — the transfer phase column", () => {
+    test("the column is nullable with no default", () => {
+        // The additive contract of the migration, stated where a rewrite would break it. A
+        // `NOT NULL DEFAULT 'download'` would turn "this row declares no phase" — an image
+        // transfer, and a row an older binary wrote — into the claim that the row downloads.
+        const column = migratedMemoryDb()
+            .query<{ name: string; notnull: number; dflt_value: string | null }, []>("PRAGMA table_info(transfers)")
+            .all()
+            .find((c) => c.name === "phase");
+        expect(column).toBeDefined();
+        expect(column?.notnull).toBe(0);
+        expect(column?.dflt_value).toBeNull();
+    });
+
+    test("an existing version-7 row gains a null phase and the CHECK holds", () => {
+        // The upgrade an installed user takes: a row that a previous binary wrote meets the
+        // appended column. No backfill runs, thus the row reads as "no phase known". The CHECK
+        // is what makes the cast of the reader sound, so a third word must be refused.
+        const db = new Database(":memory:");
+        runMigrations(
+            db,
+            migrations.filter((m) => m.version <= 7),
+        )._unsafeUnwrap();
+        db.run(
+            `INSERT INTO transfers (id, created_at, updated_at, state, bytes_transferred, total_bytes, layers_completed, total_layers, digest, message, holder_pid)
+             VALUES ('catalog', 1, 1, 'running', 512, NULL, 0, NULL, NULL, NULL, 4242)`,
+        );
+
+        runMigrations(db, migrations)._unsafeUnwrap();
+
+        const row = db.query<{ bytes_transferred: number; phase: string | null }, []>("SELECT bytes_transferred, phase FROM transfers").get();
+        expect(row).toEqual({ bytes_transferred: 512, phase: null });
+        db.run("UPDATE transfers SET phase = 'unpacking' WHERE id = 'catalog'");
+        expect(db.query<{ phase: string | null }, []>("SELECT phase FROM transfers").get()?.phase).toBe("unpacking");
+        expect(() => db.run("UPDATE transfers SET phase = 'staging' WHERE id = 'catalog'")).toThrow();
     });
 });

@@ -207,6 +207,10 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   orient-core prompt text. The harness never infers its host.
 - **Catalog** — The published default package set that the store download
   delivers, as the farm `farms/catalog` with its prepared caches.
+- **Unpacking** — The phase of the catalog download after the last byte:
+  the decompress of each layer, the `tar` extraction, and the member audit.
+  The word is not "staging". That word stays with the farm staging swap and
+  with the input staging of the CLI.
 - **Graph** (`deps.json`) — The resolved dependency edges at the store root.
   `emit_deps.py` of the provisioner writes it, and a farm composition walks
   it as a lookup, never a resolution.

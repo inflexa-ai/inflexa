@@ -338,6 +338,26 @@ export const migrations: Migration[] = [
                 WHERE analysis_id IS NULL;
         `,
     },
+    {
+        // The phase of a transfer: which part of the work the child does right now. A
+        // catalog transfer moves the bytes (`download`), and then it unpacks the layers
+        // (`unpacking`). The two parts read the same on the byte counters — the last
+        // byte lands before the unpacking starts — thus a surface cannot name the wait
+        // from the counters alone.
+        //
+        // The column is NULLABLE with no default, and no backfill runs. An image
+        // transfer declares no phase, and a row that a previous binary wrote knows none,
+        // thus NULL is a normal value and every reader treats it as "no phase known". A
+        // rollback drops nothing for the same reason.
+        //
+        // The CHECK names exactly the members of the union, the same as `state`, thus the
+        // cast of the reader cannot widen. An additive ADD COLUMN appends the column at
+        // the end of the table, and the phase belongs to the core-data group either way.
+        version: 8,
+        up: `
+            ALTER TABLE transfers ADD COLUMN phase TEXT CHECK (phase IN ('download', 'unpacking') OR phase IS NULL);
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {
