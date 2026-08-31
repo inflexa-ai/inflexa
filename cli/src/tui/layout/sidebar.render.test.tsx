@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,9 @@ import { __setClipboardWriterForTest } from "../../lib/clipboard.ts";
 import { __resetNoticesForTest, currentNotice } from "../hooks/notice.ts";
 import { __resetOpenThreadForTest, refreshOpenThread, type ThreadSeams } from "../hooks/thread.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
+import { __resetSandboxGateForTest, __setTransferReportsForTest } from "../hooks/sandbox_gate.tsx";
+import type { TransferReport } from "../../modules/libs/transfers.ts";
+import type { TransferPhase } from "../../types/store.ts";
 import { setChatStatus } from "../hooks/status.ts";
 import { entityFigureOf, Sidebar, usageSectionOf } from "./sidebar.tsx";
 import { tokenFigureDetail } from "../../lib/usage_format.ts";
@@ -70,6 +73,9 @@ afterEach(() => {
     // The chip's copy raises a toast into another module singleton, whose dismiss timer would otherwise
     // outlive the case that armed it.
     __resetNoticesForTest();
+    // The TRANSFERS rows read the sandbox-gate store, one more module singleton, so a seeded transfer
+    // must not survive into the next case and add a section it never asked for.
+    __resetSandboxGateForTest();
     setTheme(DEFAULT_THEME_ID);
 });
 
@@ -664,6 +670,81 @@ describe("Sidebar RUNS progress embed", () => {
             expect(frame).toContain("SESSION");
             expect(frame).toContain("ANALYSIS");
         }
+    });
+});
+
+/**
+ * A live `catalog` transfer whose bytes are complete, at one phase. Complete bytes are the whole
+ * point: the bar is already full, so only the tail can tell a working child from a dead one.
+ */
+function unpackedCatalogReport(phase: TransferPhase | null, updatedAt: number): TransferReport {
+    return {
+        kind: "catalog",
+        row: {
+            id: "catalog",
+            createdAt: updatedAt,
+            updatedAt,
+            state: "running",
+            bytesTransferred: 512,
+            totalBytes: 512,
+            layersCompleted: 1,
+            totalLayers: 1,
+            digest: null,
+            message: null,
+            holderPid: 4242,
+            phase,
+        },
+        state: "running",
+        live: true,
+        holderPid: 4242,
+    };
+}
+
+/** How many cells the rail's transfer bar carries — the row is full when every one of them paints `success`. */
+const FULL_BAR_CELLS = 16;
+
+/** The pinned wall clock of the age assertion below. Any instant does, because only the difference renders. */
+const NOW_MS = 1_700_000_000_000;
+
+describe("Sidebar TRANSFERS unpacking phase", () => {
+    test("a full bar carries the unpacking tail with the age of the last write", async () => {
+        // Pin the clock: the age is a live readout, and a real clock that crosses a second between the
+        // render and the assertion makes the expected token wrong for no reason the code owns.
+        const now = spyOn(Date, "now").mockReturnValue(NOW_MS);
+        const updatedAt = NOW_MS - 2_000;
+        __setTransferReportsForTest([unpackedCatalogReport("unpacking", updatedAt)]);
+        const setup = await testRender(liveNode(), { width: 44, height: 24 });
+        try {
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain("TRANSFERS");
+            // The row word names the phase, and the tail carries the age. The rail is 40 columns, so the
+            // meter line soft-wraps and the halves land on different rows — assert the words, not one line.
+            expect(frame).toContain("catalog unpacking");
+            expect(frame).not.toContain("downloading");
+            expect(frame).toContain("active 2s");
+            // The bar and the empty remainder paint the SAME glyph, so a character frame cannot tell a
+            // full bar from a half one. The `success` role is the only honest fullness signal.
+            let filled = 0;
+            for (const line of setup.captureSpans().lines) {
+                for (const span of line.spans) {
+                    if (span.fg && parseColor(themes[DEFAULT_THEME_ID].colors.success).equals(span.fg)) filled += span.text.length;
+                }
+            }
+            expect(filled).toBe(FULL_BAR_CELLS);
+        } finally {
+            setup.renderer.destroy();
+            now.mockRestore();
+        }
+    });
+
+    test("a running row with no phase keeps the byte meter alone", async () => {
+        __setTransferReportsForTest([unpackedCatalogReport(null, Date.now() - 2_000)]);
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("TRANSFERS");
+        expect(frame).toContain("512 B/512 B");
+        expect(frame).not.toContain("unpacking");
+        expect(frame).not.toContain("active");
     });
 });
 

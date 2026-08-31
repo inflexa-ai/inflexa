@@ -151,7 +151,12 @@ function describeTransferLine(report: TransferReport): string | null {
         case "running": {
             const row = report.row;
             const meter = row !== null && row.totalBytes !== null ? ` — ${formatBytes(row.bytesTransferred)} of ${formatBytes(row.totalBytes)}` : "";
-            return `  Transfer ${label}: running${meter}`;
+            // The catalog child unpacks the layers after the last byte, thus the byte
+            // meter stops at the total while the work continues. The age of the last
+            // write is the proof of motion. A terminal row names its own failure, thus
+            // only a live row carries the phase.
+            const phase = row !== null && row.phase === "unpacking" ? ` — unpacking · active ${Date.relativeAge(row.updatedAt)}` : "";
+            return `  Transfer ${label}: running${meter}${phase}`;
         }
         case "installed":
             return report.row?.message === null || report.row?.message === undefined ? null : `  Transfer ${label}: ${report.row.message}`;

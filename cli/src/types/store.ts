@@ -24,6 +24,16 @@ export type TransferKind = (typeof TRANSFER_KINDS)[number];
 export type TransferStatus = "pending" | "running" | "installed" | "failed" | "declined" | "canceled";
 
 /**
+ * The part of the work a live transfer does right now.
+ *
+ * `download` moves the bytes, and `unpacking` writes the moved layers onto the
+ * disk. The distinction does not ride the byte counters, because the last byte
+ * lands before the unpacking starts. The word is `unpacking` and not `staging`,
+ * because `staging` already names the farm swap and the analysis input root.
+ */
+export type TransferPhase = "download" | "unpacking";
+
+/**
  * The one persisted row of a transfer kind.
  *
  * The row is the truth of what the CHILD does, and it decides nothing about
@@ -54,6 +64,8 @@ export type TransferRow = {
     readonly message: string | null;
     /** The process identifier of the child, or `null` when no child holds the run. */
     readonly holderPid: number | null;
+    /** The part of the work the child does now, or `null` when the row declares none — an image transfer, and a row an older binary wrote. */
+    readonly phase: TransferPhase | null;
 };
 
 /** The package ecosystems a flight can acquire. The store carries the two tracks, and the key separates them. */

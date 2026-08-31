@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 
+import { recordTransferProgress, startTransferRun } from "../../db/primary_mutation.ts";
+import { getTransfer } from "../../db/primary_query.ts";
 import type { DownloadRetry, FetchLike } from "../../lib/download.ts";
 import { env } from "../../lib/env.ts";
 import { instanceLockPath, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../lib/lock.ts";
+import { freshDb } from "../../test_support/db.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { downloadPackageStore, storeDownloadPaths, type StoreDownloadOutcome } from "./store_download.ts";
+import type { TransferRow } from "../../types/store.ts";
+import { downloadPackageStore, runCatalogTransfer, storeDownloadPaths, type StoreDownloadOutcome } from "./store_download.ts";
+import { transferLockKey } from "./transfers.ts";
 
 // The scenarios of the `package-store-download` spec, against a fake registry on
 // the fetch seam. The layers are real zstd-compressed tars, because the module
@@ -38,16 +43,24 @@ function tempDir(prefix: string): string {
 
 type FakeLayer = { readonly bytes: Uint8Array; readonly digest: string; readonly mediaType: string; readonly size: number };
 
-/** Build one layer blob: a tree on disk, one tar over its top entries, then one zstd frame. */
-async function makeLayerBlob(mediaType: string, build: (root: string) => void): Promise<FakeLayer> {
+/** Build the tar of one layer: a tree on disk, then one tar over its top entries. */
+async function makeLayerTar(build: (root: string) => void): Promise<Buffer> {
     const root = tempDir("inflexa-layer-");
     build(root);
     const proc = Bun.spawn(["tar", "-cf", "-", "-C", root, ...readdirSync(root)], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const [tar, code] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited]);
     expect(code).toBe(0);
-    const bytes = new Uint8Array(zstdCompressSync(Buffer.from(tar)));
-    const digest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
-    return { bytes, digest, mediaType, size: bytes.byteLength };
+    return Buffer.from(tar);
+}
+
+/** Describe one layer blob to the fake registry: its digest, its media type, and its size. */
+function describeLayer(bytes: Uint8Array, mediaType: string): FakeLayer {
+    return { bytes, digest: `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`, mediaType, size: bytes.byteLength };
+}
+
+/** Build one layer blob: the tar of a tree on disk, in one zstd frame. */
+async function makeLayerBlob(mediaType: string, build: (root: string) => void): Promise<FakeLayer> {
+    return describeLayer(new Uint8Array(zstdCompressSync(await makeLayerTar(build))), mediaType);
 }
 
 /**
@@ -69,6 +82,56 @@ async function catalogLayers(version: 1 | 2): Promise<readonly FakeLayer[]> {
         writeFileSync(join(root, "deps.json"), JSON.stringify({ catalog: version }));
     });
     return [track, base];
+}
+
+/**
+ * One layer whose blob is a CHAIN of small zstd frames, plus the frames themselves.
+ *
+ * A decompressor writes out the content of each frame as that frame arrives. Thus a test that feeds
+ * the frames one at a time drives a decompress that is slow and alive at the same time, which is the
+ * state the unpacking heartbeat reports. One frame over the whole tar cannot do this: its output
+ * arrives in one burst.
+ */
+async function makeFramedLayer(
+    mediaType: string,
+    build: (root: string) => void,
+    frameCount: number,
+): Promise<{ readonly layer: FakeLayer; readonly frames: readonly Uint8Array[] }> {
+    const tar = await makeLayerTar(build);
+    const sliceBytes = Math.ceil(tar.byteLength / frameCount);
+    const frames: Uint8Array[] = [];
+    for (let start = 0; start < tar.byteLength; start += sliceBytes) {
+        frames.push(new Uint8Array(zstdCompressSync(tar.subarray(start, start + sliceBytes))));
+    }
+    return { layer: describeLayer(new Uint8Array(Buffer.concat(frames)), mediaType), frames };
+}
+
+/** The path of one cached blob. The digest becomes the file stem with its colon swapped, per the module's naming. */
+function blobPath(storeRoot: string, digest: string): string {
+    return join(storeDownloadPaths(storeRoot).blobs, `${digest.replace(":", "-")}.tar.zst`);
+}
+
+/** The writer ends the tests hold open. A pipe with no writer reads as an end of file, thus the fd is the whole stall. */
+const writers = new Set<number>();
+
+/**
+ * Replace a downloaded blob with a named pipe, and give back a writer end of it.
+ *
+ * A pipe is the one source a test can hold silent: a file always reads to its end, thus a decompress
+ * over a file never stops part way. `O_RDWR` opens the writer end with no reader present, thus
+ * neither the open nor a small write of the test blocks the process.
+ */
+function pipeBlob(path: string): number {
+    rmSync(path, { force: true });
+    expect(Bun.spawnSync(["mkfifo", path]).exitCode).toBe(0);
+    const fd = openSync(path, constants.O_RDWR);
+    writers.add(fd);
+    return fd;
+}
+
+/** Close one writer end, at most one time. The reader then reaches the end of the file. */
+function closeWriter(fd: number): void {
+    if (writers.delete(fd)) closeSync(fd);
 }
 
 type FakeRegistry = {
@@ -132,9 +195,16 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    // A pipe that keeps a writer end open also keeps a blocked read of the module pending, thus the
+    // close comes before the directory that holds the pipe goes away.
+    for (const fd of writers) closeSync(fd);
+    writers.clear();
     for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
     // The mutex releases in a finally, thus this only sweeps the record of a crashed test.
     rmSync(instanceLockPath(PACKAGE_STORE_METADATA_LOCK_KEY), { force: true });
+    // The lock of the transfer releases in a finally too. A record that stays would make the next
+    // run yield to this process, and the transfer of that test would then do nothing at all.
+    rmSync(instanceLockPath(transferLockKey("catalog")), { force: true });
 });
 
 describe("downloadPackageStore", () => {
@@ -249,5 +319,135 @@ describe("downloadPackageStore", () => {
         expect(registry.blobGets.get(track.digest)).toBe(1);
         expect(registry.blobGets.get(base.digest)).toBe(2);
         expect(existsSync(join(storeRoot, "store", ALPHA))).toBe(true);
+    });
+});
+
+// The scenarios of the unpacking watch, against the same fake registry. Each one drives the child
+// body in this process: it takes the transfer lock, writes the row, and settles it on every exit.
+
+describe("runCatalogTransfer", () => {
+    /** The transfer row as it stands, or `null` when no run wrote one. */
+    function catalogRow(): TransferRow | null {
+        return getTransfer("catalog").unwrapOr(null);
+    }
+
+    /** Whether the child still holds the lock of the catalog transfer. */
+    function lockHeld(): boolean {
+        return existsSync(instanceLockPath(transferLockKey("catalog")));
+    }
+
+    test("a decompress that stops for the window settles the row as failed, and the lock frees", async () => {
+        freshDb();
+        const storeRoot = tempDir("inflexa-store-dl-");
+        const layers = await catalogLayers(1);
+        const [track, base] = layers as [FakeLayer, FakeLayer];
+        const registry = makeRegistry(layers);
+        // The swap rides the GET of the SECOND layer: the first blob is on disk and hashed by then,
+        // and only the unpack reads it again. The head of a zstd frame carries no block, thus the
+        // decompressor emits nothing at all and the counter reports nothing.
+        const stalling: FetchLike = (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (url.endsWith(`/blobs/${base.digest}`)) writeSync(pipeBlob(blobPath(storeRoot, track.digest)), Buffer.from(track.bytes.subarray(0, 4)));
+            return registry.fetch(input, init);
+        };
+
+        await runCatalogTransfer({ storeRoot, update: false, fetch: stalling, retry: FAST_RETRY, arch: "arm64", unpackWindowMs: 200 });
+
+        const row = catalogRow();
+        expect(row?.state).toBe("failed");
+        expect(row?.message).toContain(track.digest);
+        expect(row?.message).toContain("unpacking");
+        expect(lockHeld()).toBe(false);
+    });
+
+    test("a `tar` run that lives past its bound settles the row as failed, and it names the retry", async () => {
+        freshDb();
+        const storeRoot = tempDir("inflexa-store-dl-");
+        // Enough members that no `tar` run over the archive can finish inside a millisecond: the
+        // bound of this test is shorter than the start of the child, thus the kill is the only end.
+        const layer = await makeLayerBlob(TRACK_MEDIA_TYPE, (root) => {
+            mkdirSync(join(root, "store", ALPHA), { recursive: true });
+            for (let member = 0; member < 400; member += 1) writeFileSync(join(root, "store", ALPHA, `member-${member}.txt`), "member\n");
+        });
+        const registry = makeRegistry([layer]);
+
+        await runCatalogTransfer({ storeRoot, update: false, fetch: registry.fetch, retry: FAST_RETRY, arch: "arm64", tarBoundMs: 1 });
+
+        const row = catalogRow();
+        expect(row?.state).toBe("failed");
+        expect(row?.message).toContain(layer.digest);
+        expect(row?.message).toContain("unpacking");
+        expect(row?.message).toContain("inflexa store download");
+        expect(lockHeld()).toBe(false);
+    });
+
+    test("the unpacking heartbeat moves the row while the counts hold still", async () => {
+        freshDb();
+        const storeRoot = tempDir("inflexa-store-dl-");
+        const framed = await makeFramedLayer(
+            TRACK_MEDIA_TYPE,
+            (root) => {
+                mkdirSync(join(root, "store", ALPHA), { recursive: true });
+                writeFileSync(join(root, "store", ALPHA, "content.txt"), "alpha\n".repeat(4000));
+            },
+            16,
+        );
+        const base = await makeLayerBlob(BASE_MEDIA_TYPE, (root) => {
+            mkdirSync(join(root, "farms", "catalog"), { recursive: true });
+            writeFileSync(join(root, "farms", "catalog", "inflexa.lock"), "catalog-v1\n");
+        });
+        const registry = makeRegistry([framed.layer, base]);
+
+        const samples: TransferRow[] = [];
+        const poll = setInterval(() => {
+            const row = catalogRow();
+            if (row !== null) samples.push(row);
+        }, 40);
+        // The phase as the row reads it while the bytes still move. A poll cannot catch this, because
+        // the fake registry serves a layer faster than any interval reads the row.
+        let phaseWhileBytesMove: TransferRow["phase"] | undefined;
+        // The feed starts on the GET of the second layer, thus the frames arrive while the unpack of
+        // the first layer reads the pipe. One frame each 100 ms outlives the write cadence of 500 ms.
+        const slow: FetchLike = (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (url.endsWith(`/blobs/${base.digest}`)) {
+                phaseWhileBytesMove = catalogRow()?.phase;
+                const fd = pipeBlob(blobPath(storeRoot, framed.layer.digest));
+                let next = 0;
+                const feed = setInterval(() => {
+                    if (next < framed.frames.length) {
+                        writeSync(fd, Buffer.from(framed.frames[next]!));
+                        next += 1;
+                        return;
+                    }
+                    clearInterval(feed);
+                    closeWriter(fd);
+                }, 100);
+            }
+            return registry.fetch(input, init);
+        };
+
+        await runCatalogTransfer({ storeRoot, update: false, fetch: slow, retry: FAST_RETRY, arch: "arm64" });
+        clearInterval(poll);
+
+        expect(catalogRow()?.state).toBe("installed");
+        const unpacking = samples.filter((row) => row.phase === "unpacking");
+        // The phase write, and then the heartbeats that the byte counter drives.
+        expect(new Set(unpacking.map((row) => row.updatedAt)).size).toBeGreaterThanOrEqual(3);
+        // The meter never moves backward: the byte count of the phase is the count the last layer left.
+        expect(new Set(unpacking.map((row) => row.bytesTransferred)).size).toBe(1);
+        expect(phaseWhileBytesMove).toBe("download");
+    });
+
+    test("an image transfer carries no phase", () => {
+        freshDb();
+        startTransferRun("runtime_image", { state: "running", holderPid: process.pid }).unwrapOr(undefined);
+        // The image child writes its counts and names no phase, exactly as `transfers.ts` does.
+        recordTransferProgress("runtime_image", { bytesTransferred: 4096, layersCompleted: 2 }).unwrapOr(0);
+
+        const row = getTransfer("runtime_image")._unsafeUnwrap();
+
+        expect(row?.phase).toBeNull();
+        expect(row?.bytesTransferred).toBe(4096);
     });
 });

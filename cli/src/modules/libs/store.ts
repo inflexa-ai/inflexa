@@ -67,7 +67,7 @@ import {
 } from "./store_flight.ts";
 import { readTransferReport } from "./transfers.ts";
 import { spawnDetachedSelf } from "./transfers.ts";
-import type { StoreEcosystem, StoreFlightStatus } from "../../types/store.ts";
+import type { StoreEcosystem, StoreFlightStatus, TransferPhase } from "../../types/store.ts";
 
 /** The pin marker the provisioner writes inside each store directory, recording its `name==version`. */
 const PIN_MARKER = ".inflexa-pin";
@@ -182,12 +182,16 @@ export type StorePendingInspection = {
 
 /** What the inspection reports about the catalog transfer. */
 export type StoreDownloadInspection = {
+    /** When the last write of the transfer row landed, epoch millis. Zero when no download ran. */
+    readonly updatedAt: number;
     /** The lifecycle state the reader acts on, or `null` when no download ran. */
     readonly state: "pending" | "running" | "installed" | "failed" | "declined" | "canceled" | null;
     /** The bytes the transfer has moved. */
     readonly bytesTransferred: number;
     /** The bytes the manifest declares, or `null` before the manifest resolves. */
     readonly totalBytes: number | null;
+    /** The part of the work the child does now, or `null` when the row declares none. */
+    readonly phase: TransferPhase | null;
     /** The user-facing message of a failure. */
     readonly message: string | null;
     /** True when the receipt pins a manifest that is not the one the last resolve saw. */
@@ -297,9 +301,11 @@ async function inspectStoreDownload(storeRoot: string): Promise<StoreDownloadIns
     const latest = report.row?.digest ?? null;
     const installed = latest === null ? null : await installedCatalogManifest(storeRoot);
     return {
+        updatedAt: report.row?.updatedAt ?? 0,
         state: report.state,
         bytesTransferred: report.row?.bytesTransferred ?? 0,
         totalBytes: report.row?.totalBytes ?? null,
+        phase: report.row?.phase ?? null,
         message: report.row?.message ?? null,
         updateAvailable: installed !== null && latest !== null && installed !== latest,
     };
@@ -1179,9 +1185,15 @@ function printDownload(download: StoreDownloadInspection): void {
         case "pending":
             console.log("  Download starting");
             break;
-        case "running":
-            console.log(`  Download running — ${describeTransfer(download.bytesTransferred, download.totalBytes)}`);
+        case "running": {
+            // The catalog child unpacks the layers after the last byte, thus the byte
+            // meter stops at the total while the work continues. The age of the last
+            // write is the proof of motion. A terminal state names its own failure,
+            // thus only a live state carries the phase.
+            const phase = download.phase === "unpacking" ? ` — unpacking · active ${Date.relativeAge(download.updatedAt)}` : "";
+            console.log(`  Download running — ${describeTransfer(download.bytesTransferred, download.totalBytes)}${phase}`);
             break;
+        }
         case "installed":
             console.log("  Download installed");
             break;

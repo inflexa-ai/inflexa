@@ -31,6 +31,7 @@
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { lstat, mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createZstdDecompress } from "node:zlib";
 
@@ -38,9 +39,19 @@ import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
 
 import { recordTransferProgress, recordTransferResolve, settleTransfer, startTransferRun } from "../../db/primary_mutation.ts";
-import { downloadToFile, type DownloadError, type DownloadProgress, type DownloadRetry, type FetchLike } from "../../lib/download.ts";
+import {
+    createLivenessWatch,
+    downloadToFile,
+    LIVENESS_WINDOW_MS,
+    type DownloadError,
+    type DownloadProgress,
+    type DownloadRetry,
+    type FetchLike,
+    type LivenessWatch,
+} from "../../lib/download.ts";
 import { sha256File } from "../../lib/hash.ts";
 import { acquireInstanceLock, releaseInstanceLock, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../lib/lock.ts";
+import type { TransferPhase } from "../../types/store.ts";
 import { readTransferReport, spawnDetachedSelf, stopTransferChild, transferLockKey, type TransferReport } from "./transfers.ts";
 
 /** The registry host the store publishes to. */
@@ -163,6 +174,10 @@ export type StoreDownloadOutcome =
  * `manifest_resolved` carries the two totals. The manifest declares the size of every layer before
  * the first byte arrives, thus an observer that records them records exact figures and never an
  * estimate.
+ *
+ * `unpack_bytes` counts the bytes that come OUT of the decompressor of a layer, and it is the only
+ * sign of life the staging gives. An observer must not add it to the transferred total: those bytes
+ * arrived already, and the last `layer_completed` counted them.
  */
 export type StoreDownloadProgress =
     | { readonly type: "resolving" }
@@ -170,7 +185,8 @@ export type StoreDownloadProgress =
     | { readonly type: "layer_started"; readonly digest: string; readonly declaredBytes?: number }
     | { readonly type: "layer_bytes"; readonly digest: string; readonly bytes: number }
     | { readonly type: "layer_completed"; readonly digest: string; readonly bytes: number }
-    | { readonly type: "staging" };
+    | { readonly type: "staging" }
+    | { readonly type: "unpack_bytes"; readonly digest: string; readonly bytes: number };
 
 /** The seams the CLI composition edge supplies. Production passes only `storeRoot`; a test injects the rest. */
 export type StoreDownloadDeps = {
@@ -194,6 +210,17 @@ export type StoreDownloadDeps = {
      * nothing.
      */
     readonly force?: boolean;
+    /**
+     * The silence that ends the decompress of a layer, in milliseconds; omitted means
+     * {@link LIVENESS_WINDOW_MS}. A test passes a small value, and production passes none.
+     */
+    readonly unpackWindowMs?: number;
+    /**
+     * The wall bound of one `tar` run, in milliseconds; omitted means the bound that
+     * {@link tarBoundMs} computes from the size of the tar. A test pins it, thus no test waits for
+     * the production floor.
+     */
+    readonly tarBoundMs?: number;
 };
 
 /** Resolve the host architecture to the publisher's arch label, or refuse an architecture with no store. */
@@ -440,19 +467,99 @@ const COMPLETENESS_WINDOW = 64;
 /** How many absent members a completeness failure names. The count carries the scale, thus a few examples are enough to act on. */
 const MISSING_EXAMPLE_LIMIT = 3;
 
-/** What one `tar` run produced. Both streams are read every time, because a warning is the only signal of a damaged archive. */
-type TarRun = { readonly code: number; readonly stdout: string; readonly stderr: string };
+/**
+ * The floor of the wall bound of one `tar` run.
+ *
+ * A small layer answers to the floor alone: five minutes is far past the time any archive of that
+ * size wants, thus a run that passes it is stopped and not slow.
+ */
+const TAR_BOUND_FLOOR_MS = 300_000;
 
 /**
- * Run `tar` and collect its exit code and both of its streams.
+ * The rate that scales the wall bound above the floor: 1024 bytes for each millisecond, which is
+ * 1 MiB for each second.
+ *
+ * The rate is deliberately generous. A disk that writes a store layer at less than 1 MiB per second
+ * is already a machine in trouble, thus the bound never cuts an extraction that works.
+ */
+const TAR_BOUND_BYTES_PER_MS = 1024;
+
+/**
+ * The wall bound of one `tar` run over a tar of `tarBytes`.
+ *
+ * `tar` reports no byte figure of its own, thus liveness cannot bound it and only the clock can. The
+ * bound scales with the archive, because a flat value is either too tight for a 4 GiB layer or too
+ * loose for a small one.
+ */
+function tarBoundMs(tarBytes: number): number {
+    return Math.max(TAR_BOUND_FLOOR_MS, Math.ceil(tarBytes / TAR_BOUND_BYTES_PER_MS));
+}
+
+/** Render a millisecond bound as whole seconds, for a message a user reads. */
+function describeSeconds(ms: number): string {
+    return `${Math.round(ms / 1000)}s`;
+}
+
+/** What one layer unpack needs beyond its two paths: the identity of the layer, and the bounds it runs under. */
+type LayerUnpack = {
+    /** The descriptor digest. Each failure names it, because the layers unpack in sequence and the row carries one message. */
+    readonly digest: string;
+    /** The silence that ends the decompress, in milliseconds. */
+    readonly windowMs: number;
+    /** The wall bound of one `tar` run, or `undefined` when the bound comes from the size of the tar. */
+    readonly tarBoundMs?: number;
+};
+
+/** How one decompress ended. `stalled` is the watch, and it is the answer that a pending pipeline cannot give. */
+type DecompressOutcome = { readonly type: "done" } | { readonly type: "failed"; readonly cause: unknown } | { readonly type: "stalled" };
+
+/**
+ * The failure of one layer unpack, as the row states it.
+ *
+ * Each message names the digest and the word `unpacking`. The phase word is what tells a reader that
+ * the bytes arrived and that the fault came after them, which is the one thing a byte meter at full
+ * cannot say.
+ */
+function unpackFailure(digest: string, detail: string): StoreDownloadError {
+    return { type: "extract_failed", message: `The unpacking of the store layer ${digest} ${detail}.` };
+}
+
+/** What one `tar` run produced. Both streams are read every time, because a warning is the only signal of a damaged archive. */
+type TarRun = {
+    readonly code: number;
+    readonly stdout: string;
+    readonly stderr: string;
+    /** True when the wall bound stopped the child. The exit code then reports the signal, not the archive. */
+    readonly boundFired: boolean;
+};
+
+/**
+ * Run `tar` under a wall bound, and collect its exit code and both of its streams.
  *
  * The two reads and the exit wait run together. A sequential read would let the other pipe fill and
  * stop the child, and a member list of a large layer is many megabytes.
+ *
+ * The bound sends SIGKILL and not SIGTERM, because the fault it answers is a child that makes no
+ * progress at all, and such a child can also miss a signal that it must handle itself.
+ *
+ * `keepAlive` ticks while the child runs. `tar` reports no byte figure, thus the tick is the one
+ * signal that keeps the row age honest over a run that the bound permits to hold for minutes.
  */
-async function runTar(args: readonly string[]): Promise<TarRun> {
+async function runTar(args: readonly string[], boundMs: number, keepAlive?: () => void): Promise<TarRun> {
     const proc = Bun.spawn(["tar", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-    return { code, stdout, stderr };
+    let boundFired = false;
+    const bound = setTimeout(() => {
+        boundFired = true;
+        proc.kill("SIGKILL");
+    }, boundMs);
+    const pulse = keepAlive === undefined ? undefined : setInterval(keepAlive, PROGRESS_WRITE_INTERVAL_MS);
+    try {
+        const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+        return { code, stdout, stderr, boundFired };
+    } finally {
+        clearTimeout(bound);
+        if (pulse !== undefined) clearInterval(pulse);
+    }
 }
 
 /** The first damage diagnostic in a `tar` stderr text, or `undefined` when the text holds none. */
@@ -488,9 +595,20 @@ function tarDamage(stderr: string): string | undefined {
  *
  * Exported so a test proves the guarantee directly against a tree that the test made partial. This
  * check is the only thing between a partial extraction and a receipt that calls it installed.
+ *
+ * The member list runs under the same wall bound as the extraction, because it is the same program
+ * over the same archive. `digest` names the layer in a failure, because the caller unpacks the
+ * layers in sequence and the row carries one message only.
  */
-export async function verifyStagedLayer(tarPath: string, stageRoot: string): Promise<Result<number, StoreDownloadError>> {
-    const listed = await runTar(["-tf", tarPath]);
+export async function verifyStagedLayer(
+    tarPath: string,
+    stageRoot: string,
+    digest: string,
+    boundMs: number,
+    keepAlive?: () => void,
+): Promise<Result<number, StoreDownloadError>> {
+    const listed = await runTar(["-tf", tarPath], boundMs, keepAlive);
+    if (listed.boundFired) return err(unpackFailure(digest, `passed its \`tar\` bound of ${describeSeconds(boundMs)} at the member list`));
     const listDamage = tarDamage(listed.stderr);
     if (listed.code !== 0 || listDamage !== undefined) {
         const detail = listDamage ?? listed.stderr.trim();
@@ -546,20 +664,30 @@ export async function verifyStagedLayer(tarPath: string, stageRoot: string): Pro
  * THE VERDICT. The exit code is not trusted on its own, and the stderr text is read on every run —
  * refer to {@link TAR_DAMAGE_MARKERS}. A clean run then goes to {@link verifyStagedLayer}, thus a
  * partial extraction returns an error and never an ok.
+ *
+ * THE BOUNDS. The decompress runs under a liveness watch on the bytes that leave the decompressor,
+ * and each `tar` run under a wall bound ({@link tarBoundMs}). Neither is decoration: a Bun 1.3.10
+ * fault lost the completion of this very pipeline, and the child then slept as a live transfer for
+ * an hour and held the sandbox gate with it.
  */
-async function extractLayer(blobPath: string, stageRoot: string): Promise<Result<void, StoreDownloadError>> {
+async function extractLayer(
+    blobPath: string,
+    stageRoot: string,
+    layer: LayerUnpack,
+    onProgress: ((event: StoreDownloadProgress) => void) | undefined,
+): Promise<Result<void, StoreDownloadError>> {
     // The temporary tar sits beside its blob, thus it lands on the filesystem of the store root rather
     // than on a small system temp volume. The uuid keeps two attempts over one blob apart.
     const tarPath = `${blobPath}.${randomUUIDv7()}.tar`;
+    const watch = createLivenessWatch(layer.windowMs);
     try {
-        try {
-            // `pipeline` propagates a decompressor fault and a write fault, thus a truncated zstd frame or
-            // a disk that ran out fails here and never reaches `tar` as a short archive.
-            await pipeline(createReadStream(blobPath), createZstdDecompress(), createWriteStream(tarPath));
-        } catch (cause) {
-            return err({ type: "extract_failed", message: `Could not decompress a store layer: ${errorText(cause)}.`, cause });
-        }
-        const extracted = await runTar(["-x", "-f", tarPath, "-C", stageRoot]);
+        const flowed = await decompressLayer(blobPath, tarPath, layer, watch, onProgress);
+        if (flowed.isErr()) return err(flowed.error);
+        const boundMs = layer.tarBoundMs ?? tarBoundMs((await stat(tarPath)).size);
+        // A zero-byte tick: the handler of the row ignores the count, and only `updated_at` moves.
+        const keepAlive = (): void => reportProgress(onProgress, { type: "unpack_bytes", digest: layer.digest, bytes: 0 });
+        const extracted = await runTar(["-x", "-f", tarPath, "-C", stageRoot], boundMs, keepAlive);
+        if (extracted.boundFired) return err(unpackFailure(layer.digest, `passed its \`tar\` bound of ${describeSeconds(boundMs)}`));
         const damage = tarDamage(extracted.stderr);
         if (extracted.code !== 0 || damage !== undefined) {
             const detail = damage ?? extracted.stderr.trim();
@@ -568,12 +696,68 @@ async function extractLayer(blobPath: string, stageRoot: string): Promise<Result
                 message: `Extracting a store layer failed (tar exit ${extracted.code})${detail === "" ? "" : `: ${detail}`}.`,
             });
         }
-        return (await verifyStagedLayer(tarPath, stageRoot)).map(() => undefined);
+        return (await verifyStagedLayer(tarPath, stageRoot, layer.digest, boundMs, keepAlive)).map(() => undefined);
     } catch (cause) {
         return err({ type: "extract_failed", message: `Extracting a store layer failed: ${errorText(cause)}.`, cause });
     } finally {
+        watch.close();
         await rm(tarPath, { force: true }).catch(() => undefined);
     }
+}
+
+/**
+ * Inflate one blob into `tarPath` under the liveness watch of its layer.
+ *
+ * The counter sits between the decompressor and the file write, because that is the one place where
+ * the bytes prove that the decompress still works. The read of the blob proves nothing: a file that
+ * the operating system serves reads fast whatever the decompressor does with it.
+ *
+ * THE RACE, AND THE REASON. The watch aborts the pipeline, and the pipeline is ALSO raced against
+ * the abort itself. An abort alone is not enough: a `pipeline` whose source waits on a read that
+ * never answers keeps its promise pending long after the abort, and the fault this bound answers is
+ * precisely a completion that never arrives. The race gives the layer an end in either case. The
+ * abandoned pipeline holds no lock and writes only the temporary tar, which the caller removes.
+ */
+async function decompressLayer(
+    blobPath: string,
+    tarPath: string,
+    layer: LayerUnpack,
+    watch: LivenessWatch,
+    onProgress: ((event: StoreDownloadProgress) => void) | undefined,
+): Promise<Result<void, StoreDownloadError>> {
+    // A pass-through Transform rather than a `data` listener: `pipeline` owns the flow, thus a
+    // listener would compete with it for the mode of the stream.
+    const counter = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+            watch.alive();
+            reportProgress(onProgress, { type: "unpack_bytes", digest: layer.digest, bytes: chunk.length });
+            callback(null, chunk);
+        },
+    });
+    // `pipeline` propagates a decompressor fault and a write fault, thus a truncated zstd frame or
+    // a disk that ran out fails here and never reaches `tar` as a short archive.
+    const source = createReadStream(blobPath);
+    const sink = createWriteStream(tarPath);
+    const flow = pipeline(source, createZstdDecompress(), counter, sink, { signal: watch.signal }).then(
+        (): DecompressOutcome => ({ type: "done" }),
+        (cause: unknown): DecompressOutcome => ({ type: "failed", cause }),
+    );
+    const stall = new Promise<DecompressOutcome>((resolve) => {
+        watch.signal.addEventListener("abort", () => resolve({ type: "stalled" }), { once: true });
+    });
+    const outcome = await Promise.race([flow, stall]);
+    if (outcome.type === "stalled" || watch.expired()) {
+        // The abandoned pipeline cannot be trusted with its own teardown: the fault this watch answers
+        // is a runtime that lost the completion, and the same machinery closes the file handles. The
+        // two ends hold the only descriptors, thus this drop releases them whatever the pipeline does.
+        source.destroy();
+        sink.destroy();
+        return err(unpackFailure(layer.digest, `moved no bytes for ${describeSeconds(layer.windowMs)}`));
+    }
+    if (outcome.type === "failed") {
+        return err({ type: "extract_failed", message: `Could not decompress a store layer: ${errorText(outcome.cause)}.`, cause: outcome.cause });
+    }
+    return ok(undefined);
 }
 
 /** Report whether a path is there. `lstat` reads the entry itself, so a dangling symlink counts as present. */
@@ -728,20 +912,29 @@ async function mergeStagedRoot(
     }
 }
 
-/** Extract every layer into a fresh staging root, then merge it into the store root. */
+/**
+ * Extract every layer into a fresh staging root, then merge it into the store root.
+ *
+ * `onProgress` carries the byte counter of each unpack out to the caller, thus the observer that
+ * writes the row learns that the child still works. The download events reach the same observer, so
+ * one channel states the whole life of the transfer.
+ */
 async function stageAndMerge(
     storeRoot: string,
     paths: StoreDownloadPaths,
     layers: readonly StoreLayer[],
     attemptId: string,
     replaceGraph: boolean,
+    bounds: { readonly windowMs: number; readonly tarBoundMs?: number },
+    onProgress: ((event: StoreDownloadProgress) => void) | undefined,
 ): Promise<Result<StoreMergeReport, StoreDownloadError>> {
     const attemptRoot = join(paths.staging, attemptId);
     try {
         await rm(attemptRoot, { recursive: true, force: true });
         await mkdir(attemptRoot, { recursive: true });
         for (const layer of layers) {
-            const extracted = await extractLayer(join(paths.blobs, blobFileName(layer.digest)), attemptRoot);
+            const unpack: LayerUnpack = { digest: layer.digest, ...bounds };
+            const extracted = await extractLayer(join(paths.blobs, blobFileName(layer.digest)), attemptRoot, unpack, onProgress);
             if (extracted.isErr()) return err(extracted.error);
         }
         return await mergeStagedRoot(attemptRoot, storeRoot, paths.metadataName, replaceGraph);
@@ -907,9 +1100,13 @@ export async function downloadPackageStore(deps: StoreDownloadDeps): Promise<Res
 
     reportProgress(deps.onProgress, { type: "staging" });
     const attemptId = deps.attemptId?.() ?? randomUUIDv7();
+    const bounds = {
+        windowMs: deps.unpackWindowMs ?? LIVENESS_WINDOW_MS,
+        ...(deps.tarBoundMs === undefined ? {} : { tarBoundMs: deps.tarBoundMs }),
+    };
     // `force` IS the `--update` consent, thus it is also the consent that replaces the dependency
     // graph: the new catalog resolved a different set, and the two graphs must not merge.
-    const staged = await stageAndMerge(deps.storeRoot, paths, manifest.value.layers, attemptId, deps.force === true);
+    const staged = await stageAndMerge(deps.storeRoot, paths, manifest.value.layers, attemptId, deps.force === true, bounds, deps.onProgress);
     if (staged.isErr()) return err(staged.error);
 
     const receipt: StoreReceipt = {
@@ -1097,6 +1294,10 @@ export async function runCatalogTransfer(params: {
     readonly retry?: DownloadRetry;
     /** The architecture to transfer; defaults to the host architecture. Injected by a test. */
     readonly arch?: StoreArch;
+    /** The silence that ends a layer decompress; defaults to the download window. Injected by a test. */
+    readonly unpackWindowMs?: number;
+    /** The wall bound of one `tar` run; defaults to the bound that scales with the tar. Injected by a test. */
+    readonly tarBoundMs?: number;
 }): Promise<void> {
     const lock = acquireInstanceLock(transferLockKey("catalog"));
     if (!lock.acquired) return;
@@ -1107,11 +1308,12 @@ export async function runCatalogTransfer(params: {
     let inFlightBytes = 0;
     let layersCompleted = 0;
     let lastWrite = 0;
+    let phase: TransferPhase = "download";
     const writeProgress = (force: boolean): void => {
         const now = Date.now();
         if (!force && now - lastWrite < PROGRESS_WRITE_INTERVAL_MS) return;
         lastWrite = now;
-        recordTransferProgress("catalog", { bytesTransferred: completedBytes + inFlightBytes, layersCompleted }).unwrapOr(0);
+        recordTransferProgress("catalog", { bytesTransferred: completedBytes + inFlightBytes, layersCompleted, phase }).unwrapOr(0);
     };
 
     try {
@@ -1121,6 +1323,8 @@ export async function runCatalogTransfer(params: {
             ...(params.fetch === undefined ? {} : { fetch: params.fetch }),
             ...(params.retry === undefined ? {} : { retry: params.retry }),
             ...(params.arch === undefined ? {} : { arch: params.arch }),
+            ...(params.unpackWindowMs === undefined ? {} : { unpackWindowMs: params.unpackWindowMs }),
+            ...(params.tarBoundMs === undefined ? {} : { tarBoundMs: params.tarBoundMs }),
             onProgress: (event) => {
                 switch (event.type) {
                     case "manifest_resolved":
@@ -1139,6 +1343,15 @@ export async function runCatalogTransfer(params: {
                         inFlightBytes = 0;
                         layersCompleted += 1;
                         writeProgress(true);
+                        return;
+                    case "staging":
+                        // Every byte is in, thus the meter stays where it is and only the phase word moves.
+                        phase = "unpacking";
+                        writeProgress(true);
+                        return;
+                    case "unpack_bytes":
+                        // The heartbeat of the unpacking: the counts do not change, and `updated_at` does.
+                        writeProgress(false);
                         return;
                     default:
                         return;

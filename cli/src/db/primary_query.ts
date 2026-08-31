@@ -12,7 +12,7 @@ import { type Result } from "neverthrow";
 // is dependency-free by construction, so this import costs nothing measurable. The barrel re-exports
 // the same constant; that export is the contract, this is the access path.
 import { DATA_PROFILE_RUN_LITERAL } from "@inflexa-ai/harness/contracts/data-profile.js";
-import type { StoreEcosystem, StoreFlightRow, StoreFlightStatus, TransferKind, TransferRow, TransferStatus } from "../types/store.ts";
+import type { StoreEcosystem, StoreFlightRow, StoreFlightStatus, TransferKind, TransferPhase, TransferRow, TransferStatus } from "../types/store.ts";
 import type { DbError } from "./errors.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
@@ -751,7 +751,7 @@ export function listSessionUsageByAgent(analysisId: string, threadId: string): R
  * The columns of `transfers`, in the house order: identity, then core data. The table has no foreign
  * key, and the id IS the transfer kind — one row per kind.
  */
-const TRANSFER_COLS = "id, created_at, updated_at, state, bytes_transferred, total_bytes, layers_completed, total_layers, digest, message, holder_pid";
+const TRANSFER_COLS = "id, created_at, updated_at, state, bytes_transferred, total_bytes, layers_completed, total_layers, digest, message, holder_pid, phase";
 
 /** A row of the columnar `transfers` table — one typed column per field, so a reader filters on the state in SQL. */
 type TransferDbRow = {
@@ -766,12 +766,14 @@ type TransferDbRow = {
     digest: string | null;
     message: string | null;
     holder_pid: number | null;
+    phase: string | null;
 };
 
 function transferFromRow(r: TransferDbRow): TransferRow {
     return {
-        // Each of the two cast columns carries a CHECK constraint that names exactly the members of its
-        // union, thus SQLite refuses any other value and neither cast can widen.
+        // Each of the three cast columns carries a CHECK constraint that names exactly the members of its
+        // union, thus SQLite refuses any other value and no cast can widen. `phase` also permits NULL,
+        // which the union carries as its own member.
         id: r.id as TransferKind,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
@@ -783,6 +785,7 @@ function transferFromRow(r: TransferDbRow): TransferRow {
         digest: r.digest,
         message: r.message,
         holderPid: r.holder_pid,
+        phase: r.phase as TransferPhase | null,
     };
 }
 

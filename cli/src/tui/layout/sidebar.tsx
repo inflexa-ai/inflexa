@@ -168,21 +168,28 @@ function transferLinesOf(reports: readonly TransferReport[]): LiveLine[] {
                     const filled = partial
                         ? Math.min(TRANSFER_BAR_CELLS - 1, Math.max(1, proportional))
                         : Math.min(TRANSFER_BAR_CELLS, Math.max(0, proportional));
+                    // The catalog child unpacks the layers after the last byte, thus
+                    // a full bar alone reads as stuck. The row word names the phase,
+                    // and the age of the last write is the proof of motion — the
+                    // heartbeat of the child moves it.
+                    const unpacks = row.phase === "unpacking";
+                    const phaseTail = unpacks ? ` ${GLYPHS.middot} active ${Date.relativeAge(row.updatedAt)}` : "";
                     lines.push({
                         glyph: GLYPHS.warning,
                         role: "warning",
-                        text: `${label} downloading`,
+                        text: `${label} ${unpacks ? "unpacking" : "downloading"}`,
                         meter: {
                             filled: GLYPHS.bar.repeat(filled),
                             empty: GLYPHS.bar.repeat(TRANSFER_BAR_CELLS - filled),
-                            tail: ` ${formatRailBytes(row.bytesTransferred)}/${formatRailBytes(row.totalBytes)}`,
+                            tail: ` ${formatRailBytes(row.bytesTransferred)}/${formatRailBytes(row.totalBytes)}${phaseTail}`,
                         },
                     });
                     break;
                 }
                 const moved = row !== null && row.bytesTransferred > 0 ? `${formatRailBytes(row.bytesTransferred)} moved ${GLYPHS.middot} ` : "";
                 const age = row === null ? "" : `active ${Date.relativeAge(row.updatedAt)}`;
-                lines.push({ glyph: GLYPHS.warning, role: "warning", text: `${label} downloading ${GLYPHS.middot} ${moved}${age}` });
+                const word = row?.phase === "unpacking" ? "unpacking" : "downloading";
+                lines.push({ glyph: GLYPHS.warning, role: "warning", text: `${label} ${word} ${GLYPHS.middot} ${moved}${age}` });
                 break;
             }
             case "failed":

@@ -28,6 +28,7 @@ function report(kind: TransferReport["kind"], state: TransferReport["state"], li
                   digest: null,
                   message,
                   holderPid: live ? 4242 : null,
+                  phase: null,
               };
     return { kind, row, state, live, holderPid: live ? 4242 : null };
 }

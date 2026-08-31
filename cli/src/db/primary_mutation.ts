@@ -2,7 +2,7 @@ import { randomUUIDv7 } from "bun";
 import { sep } from "node:path";
 import type { Result } from "neverthrow";
 import { tryMutation, withTransaction } from "./util.ts";
-import type { TransferKind } from "../types/store.ts";
+import type { TransferKind, TransferPhase } from "../types/store.ts";
 import type { DbError } from "./errors.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
@@ -327,8 +327,9 @@ export function updateAnalysisProvenance(id: string, provenance: string, chainHa
  * Begin a transfer run of one kind: reset every counter and write the starting state.
  *
  * Every counter resets here, because a run always begins with nothing transferred and the totals stay
- * absent until the resolve. This is the write that leaves a terminal state: `failed`, `declined`, and
- * `canceled` all move to `pending` through it, which is the retry the lifecycle permits.
+ * absent until the resolve. The phase resets with them: the new run declares none until its child names
+ * one. This is the write that leaves a terminal state: `failed`, `declined`, and `canceled` all move to
+ * `pending` through it, which is the retry the lifecycle permits.
  *
  * An upsert, because the very first run on a machine has no row and a retry rewrites the row it has.
  */
@@ -338,9 +339,9 @@ export function startTransferRun(kind: TransferKind, params: { state: "pending" 
         conn.query(
             `INSERT INTO transfers (
                  id, created_at, updated_at, state, bytes_transferred, total_bytes,
-                 layers_completed, total_layers, digest, message, holder_pid
+                 layers_completed, total_layers, digest, message, holder_pid, phase
              )
-             VALUES (?, ?, ?, ?, 0, NULL, 0, NULL, NULL, NULL, ?)
+             VALUES (?, ?, ?, ?, 0, NULL, 0, NULL, NULL, NULL, ?, NULL)
              ON CONFLICT(id) DO UPDATE SET
                  updated_at = excluded.updated_at,
                  state = excluded.state,
@@ -350,7 +351,8 @@ export function startTransferRun(kind: TransferKind, params: { state: "pending" 
                  total_layers = NULL,
                  digest = NULL,
                  message = NULL,
-                 holder_pid = excluded.holder_pid`,
+                 holder_pid = excluded.holder_pid,
+                 phase = NULL`,
         ).run(kind, now, now, params.state, params.holderPid);
     });
 }
@@ -378,12 +380,25 @@ export function recordTransferResolve(
     });
 }
 
-/** Record how far the live transfer has moved. Returns rows changed — `0` when no run holds the row. */
-export function recordTransferProgress(kind: TransferKind, params: { bytesTransferred: number; layersCompleted: number }): Result<number, DbError> {
+/**
+ * Record how far the live transfer has moved. Returns rows changed — `0` when no run holds the row.
+ *
+ * This is also the heartbeat: `updated_at` moves on every call, thus a caller that has no new byte to
+ * report still proves that the child is alive. A reader corrects a `running` row that stopped moving.
+ *
+ * `phase` is optional, and the `COALESCE` makes the two intents one statement. A call that names a
+ * phase writes it, and a call that names none keeps the stored value. Thus the phase survives the
+ * progress writes between the two phase changes, and the caller does not read the row first. The
+ * function cannot clear a phase, which is deliberate: only `startTransferRun` returns a row to none.
+ */
+export function recordTransferProgress(
+    kind: TransferKind,
+    params: { bytesTransferred: number; layersCompleted: number; phase?: TransferPhase },
+): Result<number, DbError> {
     return tryMutation("recordTransferProgress", (conn) => {
         return conn
-            .query("UPDATE transfers SET updated_at = ?, bytes_transferred = ?, layers_completed = ? WHERE id = ?")
-            .run(Date.now(), params.bytesTransferred, params.layersCompleted, kind).changes;
+            .query("UPDATE transfers SET updated_at = ?, bytes_transferred = ?, layers_completed = ?, phase = COALESCE(?, phase) WHERE id = ?")
+            .run(Date.now(), params.bytesTransferred, params.layersCompleted, params.phase ?? null, kind).changes;
     });
 }
 
