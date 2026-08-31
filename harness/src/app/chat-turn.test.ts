@@ -266,6 +266,21 @@ describe("prepareChatTurn", () => {
         expect(events).toEqual([]);
     });
 
+    it("emits nothing on a turn over an archived thread", async () => {
+        const events: SessionProvenanceEvent[] = [];
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: "t-archived", analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
+        (await store.archiveThread("t-archived"))._unsafeUnwrap();
+
+        const result = await prepareChatTurn(
+            { pool, provenance: { emitSessionEvent: (event) => events.push(event) } },
+            { analysisId: ANALYSIS_A, threadId: "t-archived", userInput: "hello again" },
+        );
+
+        expect(result.kind).toBe("ok");
+        expect(events).toEqual([]);
+    });
+
     it("emits nothing for a thread that another analysis owns", async () => {
         const events: SessionProvenanceEvent[] = [];
         (await createThreadStore(pool).createThread({ threadId: "t-foreign", analysisId: ANALYSIS_B, title: "Owned by B" }))._unsafeUnwrap();

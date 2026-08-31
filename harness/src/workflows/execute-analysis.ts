@@ -333,9 +333,9 @@ function emitStreamPart(part: unknown): Promise<void> {
  * host's own ledger, not here.
  */
 function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEvent, session: RunSession): void {
-    const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis");
     const emit = deps.provenance?.emitRunEvent;
     if (!emit) return;
+    const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis");
     try {
         emit(event, session);
     } catch (err) {
