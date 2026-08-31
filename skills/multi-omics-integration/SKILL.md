@@ -44,10 +44,11 @@ Choose the method based on your analytical question and data characteristics:
 
 ### 4. Similarity-based: Cluster patients across modalities
 
-- Use **SNF** (Similarity Network Fusion) via `snfpy`.
+- Use **SNF** (Similarity Network Fusion) through `SNFtool` (R, through rpy2).
 - Constructs per-modality patient similarity networks, then fuses into a single network.
-- Apply spectral clustering or Leiden on the fused network for patient stratification.
+- Apply `spectralClustering()` or Leiden on the fused network for patient stratification.
 - Best when each modality captures different aspects of patient heterogeneity.
+- The python `snfpy` port is broken against current scikit-learn and is not installed. Do not plan around it.
 
 ### 5. Causal/mechanistic modeling
 
@@ -121,4 +122,4 @@ Choose the method based on your analytical question and data characteristics:
 | `references/muon-mofa-api.md` | muon/MOFA+ API: factor analysis, variance decomposition |
 | `references/mixomics-rpy2-api.md` | mixOmics via rpy2 API: DIABLO block.splsda, tuning |
 | `references/prior-knowledge-networks.md` | Resolving and reading regulon, pathway-weight and interaction files: formats, `.rda` reading, column vocabulary, decoupler activity inference |
-| `references/snfpy-api.md` | snfpy API: similarity network fusion, affinity matrices, spectral clustering |
+| `references/snftool-rpy2-api.md` | SNFtool through rpy2: similarity network fusion, affinity matrices, spectral clustering |

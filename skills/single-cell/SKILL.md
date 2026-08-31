@@ -376,10 +376,6 @@ See CyTOF Output Conventions above.
 
 ## Additional Available Packages
 
-- **pyscenic**: TF regulon inference. Its `cisTarget` pruning step needs motif
-  ranking databases and a motif-to-TF annotation resolved from the reference
-  inventory — opt-in downloads that may not be staged, so confirm they resolve
-  before planning that step rather than after GRNBoost2 has run.
 - **pytometry**: FCS reading into AnnData, for lightweight exploration only.
   Production CyTOF goes through the CATALYST stack above.
 - **scran** / **batchelor** (R via rpy2): pooling normalization and MNN

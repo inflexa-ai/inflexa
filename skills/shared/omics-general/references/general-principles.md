@@ -98,14 +98,13 @@ modality-specific tool already handles random effects (e.g., MaAsLin2 for metage
 - **LIANA+** — meta-framework that wraps and benchmarks multiple CCC methods
 - Provides consensus scoring across CellPhoneDB, NATMI, SingleCellSignalR, etc.
 
-### Gene Regulatory Network Inference
-- **pySCENIC** — co-expression (GRNBoost2) then motif pruning (cisTarget). The pruning
-  step is what separates a regulon from a co-expression module, and it reads reference
-  data that is an opt-in download: resolve it first, and if it is absent say so rather
-  than reporting unpruned modules as regulons.
-- **decoupler** with a TF-target regulon resource, when the goal is scoring known
-  regulon activity rather than discovering regulons. Much cheaper, and its reference
-  data is a small download rather than a large one.
+### Gene Regulatory Network Analysis
+- **decoupler** with a TF-target regulon resource. It scores the activity of regulons
+  that the resource already curates, and its reference data is a small download.
+- **De novo regulon discovery is not available.** No tool here infers a TF-target
+  regulon from the data alone. Say so when a request asks for discovered regulons.
+- A co-expression module from PyWGCNA is not a regulon. It carries no motif evidence
+  and no direction. Report modules as modules.
 
 ### Trajectory / Pseudotime Inference
 - **scVelo** for RNA velocity (when spliced/unspliced info is available)

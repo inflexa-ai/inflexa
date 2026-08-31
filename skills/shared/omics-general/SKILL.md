@@ -78,10 +78,9 @@ When receiving input data, detect the format before processing:
 
 - **Differential analysis**: PyDESeq2 (bulk counts), limma via rpy2 (microarray/intensity), pseudobulk + PyDESeq2 (single-cell). Longitudinal: dream (variancePartition, R via rpy2)
 - **Pathway enrichment**: decoupler with gene sets or pathway weights from the reference store; gseapy for GSEA/ORA
-- **TF activity**: decoupler with a TF-target regulon network from the reference store
+- **TF activity**: decoupler with a TF-target regulon network from the reference store.
+  No tool here discovers a regulon from the data alone, thus say so when asked for one
 - **Cell-cell communication**: LIANA+
-- **GRN inference**: pySCENIC — its motif-pruning step needs cisTarget reference data,
-  which is an opt-in download and may not be staged; check before planning around it
 - **Trajectory**: scVelo, CellRank, Palantir
 - **Clustering**: Leiden (preferred over Louvain)
 - **Batch correction**: scVI (complex), Harmony (moderate), ComBat (bulk)
@@ -131,10 +130,9 @@ When you need gene ID conversion, annotation, or organism databases:
 ### Python
 - **matplotlib** + **seaborn**: Primary plotting (always available)
 - **plotly**: Interactive plots. HTML export is built in; static PNG/SVG/PDF export goes through `kaleido` (`write_image`)
-- **upsetplot**: UpSet plots for set intersections (enrichment overlap, shared genes)
 - **matplotlib-venn**: Venn diagrams (2-3 set comparisons)
 - **adjustText**: Automatic label positioning to avoid overlap in scatter/volcano plots
-- **conorm**: Count normalization utilities (CPM, TPM, RPKM/FPKM conversion)
+- **rnanorm**: Count normalization (CPM, TPM, FPKM, TMM, quantile)
 
 ### R (via rpy2)
 - **ggplot2** + **ggrepel**: Publication-quality plots with non-overlapping labels
