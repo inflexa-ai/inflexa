@@ -288,7 +288,7 @@ fps_array = np.array(fps)
 
 - `dm.parallelized()` uses joblib. RDKit `Mol` objects *are* picklable, so passing mol objects works -- but pickling large mol lists costs more than passing SMILES strings and re-parsing in the worker, so SMILES is usually faster.
 - Note that `dm.parallelized()` defaults to `n_jobs=-1`; pass `n_jobs=1` to run serially.
-- `n_jobs=-1` uses all CPUs. In sandbox environments, check available cores first.
+- `n_jobs=-1` resolves to the visible core count, which equals the CPU quota of the step. Each joblib worker keeps one thread, thus the default is safe.
 - For small datasets (<1K), parallelization overhead may exceed the benefit. Use serial processing instead.
 
 ## Complete Standardization + Profiling Workflow

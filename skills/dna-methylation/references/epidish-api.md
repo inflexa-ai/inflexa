@@ -339,7 +339,7 @@ celldmc_out <- CellDMC(
   cov.mod = cov_matrix,
   adjPMethod = "fdr",
   adjPThresh = 0.05,
-  mc.cores = 4
+  mc.cores = parallel::detectCores()  # forked workers — detectCores() reports the CPU quota of the step
 )
 
 # 3. Identify cell-type-specific DMPs

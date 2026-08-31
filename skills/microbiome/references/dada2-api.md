@@ -56,11 +56,15 @@ out <- filterAndTrim(
   minLen = 20,               # integer — discard reads shorter than this after trimming
   rm.phix = TRUE,            # logical — remove PhiX spike-in reads
   compress = TRUE,           # logical — gzip output files
-  multithread = TRUE,        # logical | integer — use multiple threads (TRUE = all cores)
+  multithread = TRUE,        # logical | integer — use multiple threads (TRUE = all visible cores)
   verbose = TRUE
 )
 # Returns: matrix with columns "reads.in" and "reads.out", one row per sample
 ```
+
+Parallelism: `multithread = TRUE` sizes from the visible core count, and that
+count equals the CPU quota of the step. Keep it on. Do not wrap a multithreaded
+DADA2 call in forked workers on top of it.
 
 ### Choosing truncLen
 

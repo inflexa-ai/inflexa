@@ -50,7 +50,7 @@ adata_loaded = ag.load(
 adata_result, results = ag.predict(
     adata_loaded,
     random_state=42,
-    n_threads=4,
+    n_threads=4,  # size from os.cpu_count(), which reports the CPU quota of the step
 )
 
 # Sort cell types by responsiveness

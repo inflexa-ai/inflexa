@@ -47,6 +47,9 @@ fit <- nlmixr2(one.cmt, theo_sd, est = "saem",
                control = saemControl(nBurn = 200, nEm = 300, print = 0))
 ```
 
+- SAEM estimation is thread-parallel (OpenMP), and the thread limit of the
+  process defaults to 1 in the sandbox. Raise the thread limit for the
+  estimation command to the full CPU budget of the step.
 - Parameters are estimated on the log scale and exponentiated in `model({})`, so
   they stay positive and IIV is lognormal — the standard PK parameterisation.
 - `linCmt()` picks the closed-form linear model implied by the parameter names

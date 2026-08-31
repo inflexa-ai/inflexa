@@ -295,8 +295,11 @@ result = AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
 # Optimize geometry with MMFF
 AllChem.MMFFOptimizeMolecule(mol, maxIters=500)
 
-# Multiple conformers
-cids = AllChem.EmbedMultipleConfs(mol, numConfs=50, params=AllChem.ETKDGv3())
+# Multiple conformers. The embedding is thread-parallel: numThreads = 0 uses
+# all visible cores, and the visible count equals the CPU quota of the step.
+params = AllChem.ETKDGv3()
+params.numThreads = 0
+cids = AllChem.EmbedMultipleConfs(mol, numConfs=50, params=params)
 # Optimize each. Returns one (not_converged, energy) tuple per
 # conformer, in conformer order: results[i] belongs to cids[i].
 results = AllChem.MMFFOptimizeMoleculeConfs(mol, maxIters=500)

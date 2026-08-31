@@ -89,9 +89,10 @@ dds = deseq2.DESeq(dds)                          # test="Wald", fitType="paramet
 # Likelihood ratio test (for multi-level factors, time series)
 dds = deseq2.DESeq(dds, test="LRT", reduced=Formula("~ 1"))
 
-# With parallelization
+# With parallelization — size the workers from the quota, not from a fixed count
 biocparallel = importr("BiocParallel")
-dds = deseq2.DESeq(dds, parallel=True, BPPARAM=biocparallel.MulticoreParam(4))
+workers = biocparallel.multicoreWorkers()  # sized from the CPU quota of the step
+dds = deseq2.DESeq(dds, parallel=True, BPPARAM=biocparallel.MulticoreParam(workers))
 ```
 
 ## Extracting Results

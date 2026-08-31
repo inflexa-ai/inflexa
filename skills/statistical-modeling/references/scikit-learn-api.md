@@ -253,5 +253,5 @@ perm_imp = permutation_importance(pipe, X_test, y_test, n_repeats=10, random_sta
 - `roc_auc_score` requires probability scores (`predict_proba`), not class labels.
 - `feature_importances_` (impurity-based) can be biased toward high-cardinality features; prefer `permutation_importance`.
 - Set `max_iter` on `LogisticRegression` (default 100 often insufficient).
-- `n_jobs=-1` uses all CPU cores -- set explicitly in resource-constrained environments.
+- `n_jobs=-1` resolves to the visible core count, which equals the CPU quota of the step. Each worker keeps one BLAS thread. Keep workers × threads inside the quota.
 - `GridSearchCV` refits on full training set by default (`refit=True`); access via `.best_estimator_`.

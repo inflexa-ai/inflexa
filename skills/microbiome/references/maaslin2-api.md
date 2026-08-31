@@ -59,7 +59,7 @@ result <- Maaslin2(
   plot_heatmap = TRUE,           # logical — generate heatmap of significant associations
   plot_scatter = TRUE,           # logical — generate scatter plots for significant pairs
   heatmap_first_n = 50,          # int — top N associations to show in heatmap
-  cores = 1                      # int — number of parallel threads
+  cores = 1                      # int — forked workers (not threads) — size from detectCores(), which reports the CPU quota
 )
 ```
 
