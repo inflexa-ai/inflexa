@@ -90,7 +90,7 @@ describe("collectStoreDebris", () => {
     test("the pass yields to a live flight, and it does not wait", async () => {
         const root = tempStore();
         mkdirSync(join(root, "store", DEBRIS_DIR), { recursive: true });
-        claimStoreFlight({ id: "any::live::", ecosystem: null, name: "live", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+        claimStoreFlight({ id: "any::live::", ecosystem: null, name: "live", rawName: "live", specifier: "", holderPid: process.pid })._unsafeUnwrap();
         const invocations: (readonly string[])[] = [];
 
         const outcome = (await collectStoreDebris(root, { run: countingRunner(invocations) }))._unsafeUnwrap();
@@ -102,7 +102,7 @@ describe("collectStoreDebris", () => {
     test("a failed flight row blocks nothing", async () => {
         const root = tempStore();
         mkdirSync(join(root, "store", DEBRIS_DIR), { recursive: true });
-        claimStoreFlight({ id: "any::gone::", ecosystem: null, name: "gone", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+        claimStoreFlight({ id: "any::gone::", ecosystem: null, name: "gone", rawName: "gone", specifier: "", holderPid: process.pid })._unsafeUnwrap();
         settleStoreFlightFailure({ id: "any::gone::", message: "resolve: the index timed out" })._unsafeUnwrap();
         const invocations: (readonly string[])[] = [];
 
@@ -117,7 +117,7 @@ describe("collectStoreDebris", () => {
         // A debris directory justifies the run: the fixture's advertised
         // directories are inventory now, and the reclaim must not touch them.
         mkdirSync(join(root, "store", DEBRIS_DIR), { recursive: true });
-        claimStoreFlight({ id: "any::gone::", ecosystem: null, name: "gone", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+        claimStoreFlight({ id: "any::gone::", ecosystem: null, name: "gone", rawName: "gone", specifier: "", holderPid: process.pid })._unsafeUnwrap();
         settleStoreFlightFailure({ id: "any::gone::", message: "resolve: the index timed out" })._unsafeUnwrap();
         const invocations: (readonly string[])[] = [];
 
@@ -144,7 +144,7 @@ describe("collectStoreDebris", () => {
 
     test("a live flight row still refuses the reclamation", async () => {
         const root = tempStore();
-        claimStoreFlight({ id: "any::live::", ecosystem: null, name: "live", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+        claimStoreFlight({ id: "any::live::", ecosystem: null, name: "live", rawName: "live", specifier: "", holderPid: process.pid })._unsafeUnwrap();
         const invocations: (readonly string[])[] = [];
 
         const outcome = await reclaimStore({ storeRoot: root }, { run: countingRunner(invocations), flightWaitMs: 30, flightPollMs: 5 });

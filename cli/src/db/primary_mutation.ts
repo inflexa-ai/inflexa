@@ -451,6 +451,7 @@ export function claimStoreFlight(params: {
     id: string;
     ecosystem: "python" | "r" | null;
     name: string;
+    rawName: string;
     specifier: string;
     holderPid: number;
 }): Result<boolean, DbError> {
@@ -460,19 +461,20 @@ export function claimStoreFlight(params: {
             conn
                 .query(
                     `INSERT INTO package_store_flights (
-                     id, created_at, updated_at, state, ecosystem, name, specifier, progress, message, holder_pid
+                     id, created_at, updated_at, state, ecosystem, name, raw_name, specifier, progress, message, holder_pid
                  )
-                 VALUES (?, ?, ?, 'queued', ?, ?, ?, NULL, NULL, ?)
+                 VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, NULL, NULL, ?)
                  ON CONFLICT(id) DO UPDATE SET
                      created_at = excluded.created_at,
                      updated_at = excluded.updated_at,
                      state = 'queued',
+                     raw_name = excluded.raw_name,
                      progress = NULL,
                      message = NULL,
                      holder_pid = excluded.holder_pid
                  WHERE package_store_flights.state = 'failed'`,
                 )
-                .run(params.id, now, now, params.ecosystem, params.name, params.specifier, params.holderPid).changes === 1
+                .run(params.id, now, now, params.ecosystem, params.name, params.rawName, params.specifier, params.holderPid).changes === 1
         );
     });
 }
@@ -580,20 +582,24 @@ export function unsubscribeStoreFlight(params: { flightId: string; analysisId: s
  */
 export function enqueuePendingStoreAdd(params: {
     name: string;
+    rawName: string;
     specifier: string;
     ecosystem: "python" | "r" | null;
     analysisId: string | null;
 }): Result<void, DbError> {
     const now = Date.now();
     return tryMutation("enqueuePendingStoreAdd", (conn) => {
+        // The dedupe stays on the canonical `name`: two spellings of one identity are
+        // one approved add, and the first raw spelling is the one the batch carries.
         conn.query(
-            "INSERT INTO pending_store_adds (id, created_at, name, specifier, ecosystem, analysis_id) " +
-                "SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (" +
+            "INSERT INTO pending_store_adds (id, created_at, name, raw_name, specifier, ecosystem, analysis_id) " +
+                "SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (" +
                 "SELECT 1 FROM pending_store_adds WHERE name = ? AND specifier = ? AND ecosystem IS ? AND analysis_id IS ?)",
         ).run(
             randomUUIDv7(),
             now,
             params.name,
+            params.rawName,
             params.specifier,
             params.ecosystem,
             params.analysisId,
@@ -613,15 +619,18 @@ export function enqueuePendingStoreAdd(params: {
  * the grace protects.
  */
 export function claimPendingStoreAdds(): Result<
-    { id: string; createdAt: number; name: string; specifier: string; ecosystem: "python" | "r" | null; analysisId: string | null }[],
+    { id: string; createdAt: number; name: string; rawName: string; specifier: string; ecosystem: "python" | "r" | null; analysisId: string | null }[],
     DbError
 > {
     return tryMutation("claimPendingStoreAdds", (conn) => {
         const take = conn.transaction(() => {
-            const rows = conn.query("SELECT id, created_at, name, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id").all() as {
+            const rows = conn
+                .query("SELECT id, created_at, name, raw_name, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id")
+                .all() as {
                 id: string;
                 created_at: number;
                 name: string;
+                raw_name: string | null;
                 specifier: string;
                 ecosystem: "python" | "r" | null;
                 analysis_id: string | null;
@@ -633,6 +642,8 @@ export function claimPendingStoreAdds(): Result<
             id: r.id,
             createdAt: r.created_at,
             name: r.name,
+            // A row from before the raw-name column knows only the canonical spelling.
+            rawName: r.raw_name ?? r.name,
             specifier: r.specifier,
             ecosystem: r.ecosystem,
             analysisId: r.analysis_id,

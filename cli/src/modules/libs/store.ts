@@ -640,7 +640,7 @@ async function waitForNoLiveWork(waitMs: number, pollMs: number): Promise<Result
         if (flights.length === 0 && compositions.length === 0) return ok(undefined);
         if (waited >= waitMs) {
             if (flights.length > 0) {
-                const names = flights.map((flight) => `${flight.row.name}${flight.row.specifier}`).join(", ");
+                const names = flights.map((flight) => `${flight.row.rawName}${flight.row.specifier}`).join(", ");
                 return err({
                     type: "acquisition_in_flight",
                     message: `A package acquisition is still in flight (${names}), and a reclaim must not free what it is about to reference. Wait for it to finish, then run this command again.`,
@@ -804,8 +804,8 @@ function printFlushOutcome(outcome: FlushSpecOutcome): void {
             const pair = outcome.candidates.map((candidate) => `--lang ${candidate.ecosystem}`).join(" or ");
             reportError({
                 message:
-                    `Both ecosystems hold "${outcome.spec.name}". Nothing was installed. ` +
-                    `Run \`inflexa store add ${outcome.spec.name}\` again with ${pair} to name the one you want.`,
+                    `Both ecosystems hold "${outcome.spec.rawName}". Nothing was installed. ` +
+                    `Run \`inflexa store add ${outcome.spec.rawName}\` again with ${pair} to name the one you want.`,
             });
             return;
         }

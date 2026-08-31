@@ -358,6 +358,24 @@ export const migrations: Migration[] = [
             ALTER TABLE transfers ADD COLUMN phase TEXT CHECK (phase IN ('download', 'unpacking') OR phase IS NULL);
         `,
     },
+    {
+        // The raw spelling of a store-add request, beside its canonical identity. The
+        // `name` column is PEP 503 canonical, which keys the flight and the pool — but
+        // an R installer needs the exact spelling (`GO.db`, not `go-db`), and a user
+        // recognizes only the name that they typed. The identity cannot carry both
+        // roles, thus the raw spelling gets its own column on the two request tables.
+        //
+        // The backfill copies `name`, because the canonical form is the only spelling
+        // an old row still knows. The column stays NULLABLE and the readers fall back
+        // to `name`, thus a rollback drops nothing and an unwritten row stays valid.
+        version: 9,
+        up: `
+            ALTER TABLE pending_store_adds ADD COLUMN raw_name TEXT;
+            UPDATE pending_store_adds SET raw_name = name;
+            ALTER TABLE package_store_flights ADD COLUMN raw_name TEXT;
+            UPDATE package_store_flights SET raw_name = name;
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

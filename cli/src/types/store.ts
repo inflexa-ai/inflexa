@@ -95,6 +95,12 @@ export type StoreFlightRow = {
     readonly ecosystem: StoreEcosystem | null;
     /** The PEP 503 canonical distribution name. */
     readonly name: string;
+    /**
+     * The spelling the user gave, which the installer and every render need. An R
+     * name is case-sensitive and can carry dots, thus the canonical form cannot
+     * serve as an installer ref. A row from before the column backfills from `name`.
+     */
+    readonly rawName: string;
     /** The exact-version specifier, or empty. */
     readonly specifier: string;
     /** The newest provisioner line, or `null` before the container writes one. */

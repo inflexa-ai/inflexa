@@ -1506,16 +1506,22 @@ function acquisitionPossible(): boolean {
     return true;
 }
 
-/** The `absent` outcome of one request that did not resolve, in the vocabulary of the seam. */
+/**
+ * The `absent` outcome of one request that did not resolve, in the vocabulary of the seam.
+ *
+ * The outcome echoes the REQUESTED spelling, never the canonical form. The caller
+ * quotes this name into a remedy (`inflexa store add <name>`), and an R installer
+ * needs the exact spelling — a canonical echo would teach the caller `go-db`.
+ */
 function absentOutcome(request: PackageRequest, failure: RequestResolutionError): PackageRequestOutcome {
     switch (failure.type) {
         case "unknown_distribution":
         case "unknown_version":
-            return { kind: "absent", name: failure.name, acquisitionPossible: acquisitionPossible() };
+            return { kind: "absent", name: request.name, acquisitionPossible: acquisitionPossible() };
         case "ambiguous_ecosystem":
             // The pair is terminal for the request: only its caller can name the
             // ecosystem. The two store directories ride back as the guidance.
-            return { kind: "collision", name: failure.name, storeDirs: failure.candidates };
+            return { kind: "collision", name: request.name, storeDirs: failure.candidates };
         default: {
             const unreachable: never = failure;
             throw new Error(`unhandled resolution failure: ${JSON.stringify(unreachable)}`);
@@ -1550,7 +1556,8 @@ export async function linkPackagesIntoFarm(
         // "absent" here would be a fabrication: it sends the agent after
         // packages the pool holds, while the true fault sits in the graph.
         const reason = describeFarmCompositionError(read.error);
-        return requests.map((request) => ({ kind: "unavailable", name: canonicalDistributionName(request.name), reason }));
+        // The requested spelling rides back, because a caller quotes it into a remedy.
+        return requests.map((request) => ({ kind: "unavailable", name: request.name, reason }));
     }
     const graph = read.value;
 
@@ -1576,7 +1583,8 @@ export async function linkPackagesIntoFarm(
         resolved.match(
             (answer): PackageRequestOutcome => {
                 if (extended === null || extended.isOk()) {
-                    return { kind: linkedAlready.has(answer.storeDir) ? "present" : "linked", name: answer.name, version: answer.version };
+                    // The requested spelling rides back — the caller reads its own vocabulary.
+                    return { kind: linkedAlready.has(answer.storeDir) ? "present" : "linked", name: request.name, version: answer.version };
                 }
                 const error = extended.error;
                 // A version collision names the two store directories WITH their
@@ -1588,7 +1596,7 @@ export async function linkPackagesIntoFarm(
                 // an "absent" there would misdirect the caller into asks.
                 return error.type === "version_collision"
                     ? { kind: "collision", name: error.name, storeDirs: [error.existing, error.incoming], detail: describeFarmCompositionError(error) }
-                    : { kind: "unavailable", name: answer.name, reason: describeFarmCompositionError(error) };
+                    : { kind: "unavailable", name: request.name, reason: describeFarmCompositionError(error) };
             },
             (failure) => absentOutcome(request, failure),
         ),

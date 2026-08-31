@@ -64,16 +64,20 @@ import { readTransferReport } from "./transfers.ts";
 import type { StoreEcosystem, StoreFlightRow } from "../../types/store.ts";
 
 /**
- * The normalized spec that keys a flight.
+ * The normalized spec that keys a flight, beside the spelling that the user gave.
  *
  * `name` is PEP 503 canonical, thus `Scanpy`, `scan_py`, and `scan.py` all key
- * one flight. `specifier` is the exact-version constraint (`==<v>`), or empty.
- * `ecosystem` is `null` for a name the acquire run resolves — a name that both
- * ecosystems satisfy then stops with the both-hit ask.
+ * one flight. `rawName` is the spelling of the request: the installer and every
+ * render need it, because an R name is case-sensitive and can carry dots —
+ * `GO.db` installs, and `go-db` names nothing. `specifier` is the exact-version
+ * constraint (`==<v>`), or empty. `ecosystem` is `null` for a name the acquire
+ * run resolves — a name that both ecosystems satisfy then stops with the
+ * both-hit ask, and that stop arms only when each probe gets the raw spelling.
  */
 export type StoreFlightSpec = {
     readonly ecosystem: StoreEcosystem | null;
     readonly name: string;
+    readonly rawName: string;
     readonly specifier: string;
 };
 
@@ -101,14 +105,18 @@ export function storeFlightKey(spec: StoreFlightSpec): string {
     return `${spec.ecosystem ?? "any"}::${spec.name}::${spec.specifier}`;
 }
 
-/** The spec as a user reads it: the requirement, with the ecosystem behind it when one was named. */
-export function describeStoreFlightSpec(spec: Pick<StoreFlightSpec, "ecosystem" | "name" | "specifier">): string {
-    return `${spec.name}${spec.specifier}${spec.ecosystem === null ? "" : ` (${spec.ecosystem})`}`;
+/** The spec as a user reads it: the raw requirement, with the ecosystem behind it when one was named. */
+export function describeStoreFlightSpec(spec: Pick<StoreFlightSpec, "ecosystem" | "rawName" | "specifier">): string {
+    return `${spec.rawName}${spec.specifier}${spec.ecosystem === null ? "" : ` (${spec.ecosystem})`}`;
 }
 
-/** The spec in the internal format of the provisioner: an ecosystem prefix when one is known, bare otherwise. */
-function provisionerSpec(spec: Pick<StoreFlightSpec, "ecosystem" | "name" | "specifier">): string {
-    const requirement = `${spec.name}${spec.specifier}`;
+/**
+ * The spec in the internal format of the provisioner: an ecosystem prefix when one
+ * is known, bare otherwise. The requirement carries the RAW spelling — pak needs
+ * `GO.db` verbatim, and the provisioner canonicalizes the Python side itself.
+ */
+function provisionerSpec(spec: Pick<StoreFlightSpec, "ecosystem" | "rawName" | "specifier">): string {
+    const requirement = `${spec.rawName}${spec.specifier}`;
     return spec.ecosystem === null ? requirement : `${spec.ecosystem}:${requirement}`;
 }
 
@@ -173,9 +181,16 @@ export function enqueueStoreAdd(entry: {
     const spec: StoreFlightSpec = {
         ecosystem: entry.ecosystem,
         name: canonicalDistributionName(entry.name),
+        rawName: entry.name.trim(),
         specifier: entry.version === null ? "" : `==${entry.version.trim()}`,
     };
-    return enqueuePendingStoreAdd({ name: spec.name, specifier: spec.specifier, ecosystem: spec.ecosystem, analysisId: entry.analysisId })
+    return enqueuePendingStoreAdd({
+        name: spec.name,
+        rawName: spec.rawName,
+        specifier: spec.specifier,
+        ecosystem: spec.ecosystem,
+        analysisId: entry.analysisId,
+    })
         .map(() => spec)
         .mapErr((cause): StoreEnqueueError => ({ type: "enqueue_failed", message: "Could not enqueue the add into the pending set.", cause }));
 }
@@ -425,7 +440,7 @@ type BatchEntry = { readonly key: string; readonly spec: StoreFlightSpec; readon
 function groupPendingAdds(entries: readonly PendingStoreAdd[]): BatchEntry[] {
     const byKey = new Map<string, BatchEntry>();
     for (const entry of entries) {
-        const spec: StoreFlightSpec = { ecosystem: entry.ecosystem, name: entry.name, specifier: entry.specifier };
+        const spec: StoreFlightSpec = { ecosystem: entry.ecosystem, name: entry.name, rawName: entry.rawName, specifier: entry.specifier };
         const key = storeFlightKey(spec);
         const existing = byKey.get(key) ?? { key, spec, analysisIds: new Set<string>() };
         if (entry.analysisId !== null) existing.analysisIds.add(entry.analysisId);
@@ -437,7 +452,13 @@ function groupPendingAdds(entries: readonly PendingStoreAdd[]): BatchEntry[] {
 /** Put a claimed batch back into the pending set, because the flush cannot run now and the approvals must not vanish. */
 function requeueBatch(entries: readonly PendingStoreAdd[]): void {
     for (const entry of entries) {
-        enqueuePendingStoreAdd({ name: entry.name, specifier: entry.specifier, ecosystem: entry.ecosystem, analysisId: entry.analysisId }).unwrapOr(undefined);
+        enqueuePendingStoreAdd({
+            name: entry.name,
+            rawName: entry.rawName,
+            specifier: entry.specifier,
+            ecosystem: entry.ecosystem,
+            analysisId: entry.analysisId,
+        }).unwrapOr(undefined);
     }
 }
 
@@ -495,6 +516,7 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
             id: entry.key,
             ecosystem: entry.spec.ecosystem,
             name: entry.spec.name,
+            rawName: entry.spec.rawName,
             specifier: entry.spec.specifier,
             holderPid: process.pid,
         });
@@ -602,8 +624,8 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
                         candidates.length > 0 ? candidates.map((candidate) => `--lang ${candidate.ecosystem}`).join(" or ") : "--lang python or --lang r";
                     failures.set(
                         entry.key,
-                        `resolve: both ecosystems hold "${entry.spec.name}" — nothing was installed. ` +
-                            `Run \`inflexa store add ${entry.spec.name}\` again with ${pair} to name the one you want.`,
+                        `resolve: both ecosystems hold "${entry.spec.rawName}" — nothing was installed. ` +
+                            `Run \`inflexa store add ${entry.spec.rawName}\` again with ${pair} to name the one you want.`,
                     );
                     break;
                 }
