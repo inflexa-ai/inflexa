@@ -93,12 +93,18 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
                 }),
             );
             threadType = created.threadType;
-            // This branch is the one site that writes a conversation thread, thus
-            // the emit lands one time for each analysis. The kind comes from the
-            // row and not from an assumption, because the insert is idempotent and
-            // the store tells a caller to read the type back. A root session has no
-            // parent, thus the event carries none.
-            observe({ type: "create-session", analysisId, threadId, sessionKind: created.threadType });
+            // The row that comes back is not proof that this call wrote it. The read
+            // above hides an archived thread, and the idempotent insert then reads
+            // that same row back. Thus a turn on an archived thread reaches here with
+            // a row that a different site created, and an emit would record a start
+            // that never happened.
+            //
+            // This site writes a live conversation thread and nothing else. An
+            // archived row, or a row of another kind, is therefore one that already
+            // existed. A root session has no parent, thus the event carries none.
+            if (created.deletedAt === null && created.threadType === "conversation") {
+                observe({ type: "create-session", analysisId, threadId, sessionKind: created.threadType });
+            }
         } else if (!existing.title || existing.title.length === 0) {
             unwrapOrThrow(await store.updateTitle(threadId, deriveThreadTitle(userInput)));
         }
