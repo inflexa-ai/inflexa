@@ -814,7 +814,7 @@ export function listTransfers(): Result<TransferRow[], DbError> {
 // --- Data model: the package-store acquisition flights ---
 
 /** The columns of `package_store_flights`, in the house order: identity, then core data. The table has no foreign key. */
-const STORE_FLIGHT_COLS = "id, created_at, updated_at, state, ecosystem, name, specifier, progress, message, holder_pid";
+const STORE_FLIGHT_COLS = "id, created_at, updated_at, state, ecosystem, name, raw_name, specifier, progress, message, holder_pid";
 
 /** A row of the columnar `package_store_flights` table — one typed column for each field, so a reader filters on the state in SQL. */
 type StoreFlightDbRow = {
@@ -824,6 +824,7 @@ type StoreFlightDbRow = {
     state: string;
     ecosystem: string | null;
     name: string;
+    raw_name: string | null;
     specifier: string;
     progress: string | null;
     message: string | null;
@@ -840,6 +841,8 @@ function storeFlightFromRow(r: StoreFlightDbRow): StoreFlightRow {
         state: r.state as StoreFlightStatus,
         ecosystem: r.ecosystem as StoreEcosystem | null,
         name: r.name,
+        // A row from before the raw-name column knows only the canonical spelling.
+        rawName: r.raw_name ?? r.name,
         specifier: r.specifier,
         progress: r.progress,
         message: r.message,
@@ -931,6 +934,7 @@ type PendingStoreAddDbRow = {
     id: string;
     created_at: number;
     name: string;
+    raw_name: string | null;
     specifier: string;
     ecosystem: string | null;
     analysis_id: string | null;
@@ -942,6 +946,8 @@ export type PendingStoreAdd = {
     readonly createdAt: number;
     /** The PEP 503 canonical distribution name. */
     readonly name: string;
+    /** The spelling the user gave — the installer ref and the render both need it. */
+    readonly rawName: string;
     /** The exact-version specifier (`==<v>`), or an empty string for the newest. */
     readonly specifier: string;
     /** The ecosystem when the add named one, or `null` for a name the acquire run resolves. */
@@ -954,12 +960,14 @@ export type PendingStoreAdd = {
 export function listPendingStoreAdds(): Result<PendingStoreAdd[], DbError> {
     return tryQuery("listPendingStoreAdds", (conn) => {
         const rows = conn
-            .query("SELECT id, created_at, name, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id")
+            .query("SELECT id, created_at, name, raw_name, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id")
             .all() as PendingStoreAddDbRow[];
         return rows.map((r) => ({
             id: r.id,
             createdAt: r.created_at,
             name: r.name,
+            // A row from before the raw-name column knows only the canonical spelling.
+            rawName: r.raw_name ?? r.name,
             specifier: r.specifier,
             // The CHECK constraint names exactly the members of the union, thus the cast cannot widen.
             ecosystem: r.ecosystem as StoreEcosystem | null,

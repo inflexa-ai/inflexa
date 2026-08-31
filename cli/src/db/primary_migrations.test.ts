@@ -85,7 +85,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -200,7 +200,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {
@@ -302,5 +302,28 @@ describe("migration 8 — the transfer phase column", () => {
         db.run("UPDATE transfers SET phase = 'unpacking' WHERE id = 'catalog'");
         expect(db.query<{ phase: string | null }, []>("SELECT phase FROM transfers").get()?.phase).toBe("unpacking");
         expect(() => db.run("UPDATE transfers SET phase = 'staging' WHERE id = 'catalog'")).toThrow();
+    });
+});
+
+describe("migration 9 — the raw spelling of a store-add request", () => {
+    test("a version-8 row backfills its raw name from the canonical one", () => {
+        // The upgrade an installed user takes: an old row knows only the canonical
+        // spelling, and the backfill copies it. The readers then never meet a null,
+        // and a render of an old failed flight stays a name rather than an empty cell.
+        const db = new Database(":memory:");
+        runMigrations(
+            db,
+            migrations.filter((m) => m.version <= 8),
+        )._unsafeUnwrap();
+        db.run("INSERT INTO pending_store_adds (id, created_at, name, specifier, ecosystem, analysis_id) VALUES ('p1', 1, 'go-db', '', 'r', NULL)");
+        db.run(
+            `INSERT INTO package_store_flights (id, created_at, updated_at, state, ecosystem, name, specifier, progress, message, holder_pid)
+             VALUES ('r::go-db::', 1, 1, 'queued', 'r', 'go-db', '', NULL, NULL, 4242)`,
+        );
+
+        runMigrations(db, migrations)._unsafeUnwrap();
+
+        expect(db.query<{ raw_name: string | null }, []>("SELECT raw_name FROM pending_store_adds").get()?.raw_name).toBe("go-db");
+        expect(db.query<{ raw_name: string | null }, []>("SELECT raw_name FROM package_store_flights").get()?.raw_name).toBe("go-db");
     });
 });

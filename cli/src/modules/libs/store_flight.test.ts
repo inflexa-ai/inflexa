@@ -16,6 +16,7 @@ import {
     classifyPoolMiss,
     commitStagedNodes,
     describeRecordedFlightFailure,
+    describeStoreFlightSpec,
     enqueueStoreAdd,
     flushPendingStoreAdds,
     readStoreFlights,
@@ -216,7 +217,7 @@ describe("flushPendingStoreAdds", () => {
         expect(result.outcomes).toEqual([
             {
                 kind: "both_hit",
-                spec: { ecosystem: null, name: "igraph", specifier: "" },
+                spec: { ecosystem: null, name: "igraph", rawName: "igraph", specifier: "" },
                 candidates: [
                     { ecosystem: "python", name: "igraph" },
                     { ecosystem: "r", name: "igraph" },
@@ -434,12 +435,26 @@ describe("classifyPoolMiss", () => {
         enqueueStoreAdd({ name: "Scanpy", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
         expect(classifyPoolMiss("scanpy")).toContain("in flight");
 
-        claimStoreFlight({ id: "python::igraph::", ecosystem: "python", name: "igraph", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+        claimStoreFlight({
+            id: "python::igraph::",
+            ecosystem: "python",
+            name: "igraph",
+            rawName: "igraph",
+            specifier: "",
+            holderPid: process.pid,
+        })._unsafeUnwrap();
         expect(classifyPoolMiss("igraph")).toContain("in flight");
     });
 
     test("a failed row carries its translated reason, and an unknown name carries nothing", () => {
-        claimStoreFlight({ id: "python::numba::", ecosystem: "python", name: "numba", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+        claimStoreFlight({
+            id: "python::numba::",
+            ecosystem: "python",
+            name: "numba",
+            rawName: "numba",
+            specifier: "",
+            holderPid: process.pid,
+        })._unsafeUnwrap();
         settleStoreFlightFailure({ id: "python::numba::", message: "resolve: the index timed out" })._unsafeUnwrap();
 
         const detail = classifyPoolMiss("numba");
@@ -451,7 +466,40 @@ describe("classifyPoolMiss", () => {
 
 describe("the flight key", () => {
     test("carries the ecosystem, the canonical name, and the specifier", () => {
-        expect(storeFlightKey({ ecosystem: "python", name: "scanpy", specifier: "==1.10" })).toBe("python::scanpy::==1.10");
-        expect(storeFlightKey({ ecosystem: null, name: "scanpy", specifier: "" })).toBe("any::scanpy::");
+        expect(storeFlightKey({ ecosystem: "python", name: "scanpy", rawName: "scanpy", specifier: "==1.10" })).toBe("python::scanpy::==1.10");
+        expect(storeFlightKey({ ecosystem: null, name: "scanpy", rawName: "scanpy", specifier: "" })).toBe("any::scanpy::");
+    });
+});
+
+describe("the raw spelling of a request", () => {
+    test("a flush of GO.db --lang r hands the provisioner the raw ref, and the row keeps both names", async () => {
+        const root = tempStore();
+        enqueueStoreAdd({ name: "GO.db", version: null, ecosystem: "r", analysisId: null })._unsafeUnwrap();
+        const invocations: string[][] = [];
+        const acquire = acquiringRunner({ "r:GO.db": { outcome: "refused", reason: "offline test" } }, {});
+        const run: ProvisionerRunner = async (invocation, onLine) => {
+            invocations.push([...invocation.args]);
+            return acquire(invocation, onLine);
+        };
+
+        (await flushPendingStoreAdds(root, { run, loadCheck: loadCheck([]) }))._unsafeUnwrap();
+
+        // The installer ref is the raw spelling — pak resolves `GO.db`, and `go-db` names nothing.
+        expect(invocations[0]).toContain("r:GO.db");
+        expect(invocations[0]?.join(" ")).not.toContain("go-db");
+        const flight = readStoreFlights().find((entry) => entry.row.id === "r::go-db::");
+        expect(flight?.row.name).toBe("go-db");
+        expect(flight?.row.rawName).toBe("GO.db");
+        expect(describeStoreFlightSpec(flight!.row)).toBe("GO.db (r)");
+    });
+
+    test("two spellings of one identity dedupe, and the first raw spelling wins", () => {
+        enqueueStoreAdd({ name: "GO.db", version: null, ecosystem: "r", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ name: "go.db", version: null, ecosystem: "r", analysisId: null })._unsafeUnwrap();
+
+        const pending = listPendingStoreAdds()._unsafeUnwrap();
+        expect(pending).toHaveLength(1);
+        expect(pending[0]?.name).toBe("go-db");
+        expect(pending[0]?.rawName).toBe("GO.db");
     });
 });

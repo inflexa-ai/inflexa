@@ -151,7 +151,7 @@ describe("awaitSandboxReady", () => {
 });
 
 describe("the pending flush gate", () => {
-    const PENDING = [{ ecosystem: "python" as const, name: "polars", specifier: "" }];
+    const PENDING = [{ ecosystem: "python" as const, rawName: "polars", specifier: "" }];
 
     test("the poll starts the flush child once the pending set outwaits the gate", async () => {
         const starts: number[] = [];
@@ -211,7 +211,7 @@ describe("the pending flush gate", () => {
         await Bun.sleep(25);
         // The set GROWS below the bound: a sliding anchor would restart the
         // wait here, and the fire below would prove it did not.
-        pending = [...PENDING, { ecosystem: "python" as const, name: "rpy2", specifier: "" }];
+        pending = [...PENDING, { ecosystem: "python" as const, rawName: "rpy2", specifier: "" }];
         refreshTransferState(gate);
         expect(started).toBe(0);
         await Bun.sleep(25);

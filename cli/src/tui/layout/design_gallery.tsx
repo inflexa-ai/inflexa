@@ -261,6 +261,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         <FailedFlightDialog
                             flight={{
                                 id: "python::scipy::==1.18.1",
+                                rawName: "scipy",
                                 createdAt: 0,
                                 updatedAt: 0,
                                 state: "failed",

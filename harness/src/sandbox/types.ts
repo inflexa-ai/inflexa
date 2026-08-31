@@ -78,6 +78,12 @@ export interface PackageRequest {
 
 /**
  * One outcome per request, index-aligned with the request array.
+ *
+ * `name` echoes the REQUESTED spelling verbatim, never a normalized form. A
+ * caller quotes it into a remedy (`inflexa store add <name>`), and an R name
+ * is case-sensitive with dots, thus a normalized echo would name a package
+ * that no repository holds.
+ *
  * - `linked` — the pool held the package, and this call linked it.
  * - `present` — the farm linked it already.
  * - `absent` — the pool does not hold it. `acquisitionPossible` states that
