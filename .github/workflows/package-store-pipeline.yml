@@ -1,12 +1,11 @@
-name: Store Pipeline
+name: Package Store Pipeline
 
-# TEMPORARY, remove before merge: the branch-side driver of the three store
-# workflows. GitHub creates runs only for workflows that its registry
-# knows, and this branch cannot register a new file. The lib-store.yml
-# PATH is registered from main, and a dispatch with --ref runs the file of
-# the given ref at that path. Thus the pipeline lives in this slot on the
-# branch, and the called workflows run INSIDE its run, in a strict
-# sequence on the shared builders.
+# The one-dispatch driver of the full store publication: the sandbox images,
+# then the package store, then the acceptance. The three called workflows run
+# INSIDE this run, in a strict sequence on the shared builders, thus one
+# dispatch replaces three manual ones and no pair races for a builder box.
+# Each stage also keeps its own workflow_dispatch, for a re-run of one stage
+# alone. Start the builders first (`just build-start [arch]`).
 
 on:
   workflow_dispatch:
