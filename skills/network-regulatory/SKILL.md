@@ -19,6 +19,9 @@ Choose the method based on your data type and analytical goal:
    - Soft-thresholding power is chosen inside `findModules()`; call
      `WGCNA.pickSoftThreshold()` directly only to inspect the fit table. The
      scale-free fit cut is `RsquaredCut`, default 0.9.
+   - PyWGCNA is thread-parallel. Give the one process the full CPU budget of
+     the step: raise the thread limit for that command. Do not add forked
+     workers on top of it.
 
 2. **Co-expression from single-cell data**
    - Aggregate to **pseudobulk** first (per cluster or per sample), then apply PyWGCNA.

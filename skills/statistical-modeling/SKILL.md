@@ -34,6 +34,7 @@ Escalate complexity only when simpler models underperform:
 - **Start**: `sklearn.LogisticRegression` (interpretable, baseline).
 - **If non-linear patterns**: `sklearn.RandomForestClassifier` (handles interactions, feature importance built in).
 - **If maximum performance needed**: `xgboost.XGBClassifier` (gradient boosting, tunable).
+  - xgboost is thread-parallel: raise the thread limit for the training command to the full CPU budget of the step. Do not run it under forked workers (for example joblib) at the same time.
 - **Metric**: Use **AUC-ROC** as primary metric. For imbalanced classes, also report **AUPRC** (precision-recall). Never use accuracy alone on imbalanced data.
 
 ### 3. Regression (predict continuous outcome)
