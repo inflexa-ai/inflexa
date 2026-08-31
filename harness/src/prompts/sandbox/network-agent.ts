@@ -20,9 +20,10 @@ igraph.
   scale-free topology fit > 0.8.
 - **Co-expression (single-cell)** — aggregate to pseudobulk FIRST, then
   PyWGCNA. Never on raw single-cell count matrices.
-- **TF activity (fast, per-cell)** — decoupler with CollecTRI via
-  \`run_ulm()\` or \`run_mlm()\`. Faster than pySCENIC when regulon
-  discovery is not the goal.
+- **TF activity (per-cell)** — decoupler with CollecTRI through
+  \`run_ulm()\` or \`run_mlm()\`. This is the regulatory route here. No
+  tool discovers a regulon from the data alone, thus say so when a
+  request asks for one.
 - **PPI network** — the STRING and OmniPath web APIs are unreachable.
   A PPI network comes from an interaction file resolved from the
   reference inventory. If none is provisioned, say so, and scope the

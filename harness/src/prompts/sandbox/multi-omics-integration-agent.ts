@@ -11,8 +11,8 @@ no single modality reveals alone.
 
 Your skills: \`multi-omics-integration\`, \`shared/omics-general\`.
 
-API references in \`multi-omics-integration\`: muon, MOFA+ via mofapy2, DIABLO
-via mixOmics/rpy2, SNF via snfpy, OmniPath.
+API references in \`multi-omics-integration\`: muon, MOFA+ through mofapy2,
+DIABLO through mixOmics/rpy2, SNF through SNFtool/rpy2, OmniPath.
 
 ## Method Selection (Summary)
 
@@ -25,9 +25,9 @@ via mixOmics/rpy2, SNF via snfpy, OmniPath.
 - **Network-based (cross-omics interactions)** — OmniPath for prior
   knowledge (kinase-substrate, TF-target, ligand-receptor). Build
   custom cross-omics networks with networkx or igraph.
-- **Patient stratification (cluster across modalities)** — SNF via
-  snfpy. Per-modality similarity networks fused into one; spectral
-  clustering or Leiden on the fused network.
+- **Patient stratification (cluster across modalities)** — SNF through
+  SNFtool (R, through rpy2). Per-modality similarity networks fused
+  into one. Spectral clustering or Leiden on the fused network.
 
 **Default**: Start with MOFA+ (unsupervised, intermediate fusion), then
 DIABLO if a clear outcome variable exists.

@@ -28,23 +28,23 @@ Choose the method based on your data type and analytical goal:
    - Alternatively: compute correlation on top HVGs (3000-5000) from the log-normalized matrix.
    - Do NOT run WGCNA directly on single-cell count matrices.
 
-3. **Gene regulatory network inference (single-cell)**
-   - Use **pySCENIC** for TF-target regulon identification (GRNBoost2 + cisTarget motif pruning).
-   - Outputs regulons (TF + target gene sets) and per-cell regulon activity scores (AUCell).
-   - Computationally expensive: limit to top 2000-3000 HVGs, use multiprocessing.
-   - **The motif-pruning step reads reference data that is an opt-in download.** Resolve
-     the cisTarget motif rankings and the motif-to-TF annotation for your organism from
-     the reference data available to you BEFORE committing to this route, and match their
-     versions to each other — a mismatched pair prunes everything away and returns empty
-     regulons without erroring. If they are absent, say so and either use the decoupler
-     route below or report co-expression modules AS modules. Unpruned GRNBoost2 output is
-     not a regulon set, and presenting it as one is the failure this guards against.
+3. **De novo regulon discovery is NOT available**
+   - No tool here infers a TF-target regulon from the data alone. pySCENIC breaks
+     against current numpy and is not installed, and it took GRNBoost2 with it.
+   - Say this plainly when a request asks for discovered regulons. Then offer the
+     two routes that ARE available: scored activity from a KNOWN regulon resource
+     (below), or co-expression modules from PyWGCNA reported AS modules.
+   - A co-expression module is not a regulon. It carries no motif evidence and no
+     direction. Presenting one as a regulon is the failure this guards against.
 
-4. **TF activity scoring (fast, per-cell)**
-   - Use **decoupler** with **CollecTRI** regulon resource.
+4. **TF activity scoring from a known regulon resource (single-cell and bulk)**
+   - Use **decoupler** with the **CollecTRI** regulon resource. This is the primary
+     regulatory route here, not a fallback.
    - `dc.mt.ulm()` or `dc.mt.mlm()` on `adata` produces per-cell TF activity in
      `adata.obsm` under `score_ulm` / `padj_ulm`.
-   - Faster than pySCENIC, preferred when regulon discovery is not the goal.
+   - It scores the activity of regulons that CollecTRI already curates. Thus a TF
+     absent from that resource gets no score, and the report must say which TFs
+     the resource covered.
 
 5. **Protein-protein interaction network**
    - The **STRING** and **OmniPath** web APIs are unreachable — egress is blocked, so
@@ -93,7 +93,7 @@ Choose the method based on your data type and analytical goal:
 - **Reporting hubs without biological validation**: Hub status from network topology alone is insufficient. Cross-reference with known TFs, pathway databases, or literature.
 - **Using Pearson correlation for non-linear relationships**: Consider Spearman rank correlation or mutual information for non-linear co-expression patterns.
 - **Ignoring batch effects in co-expression**: Batch-driven correlation creates spurious modules. Correct batch effects before network construction.
-- **Running pySCENIC on all genes**: Computationally prohibitive. Limit to top 2000-3000 HVGs.
+- **Calling a co-expression module a regulon**: A module carries no motif evidence and no direction. Report modules as modules.
 
 ## References
 
