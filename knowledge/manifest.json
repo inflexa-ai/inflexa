@@ -1,0 +1,5 @@
+{
+    "corpusId": "inflexa-knowledge",
+    "version": "0.1.0",
+    "ruleFiles": ["rules/bulk-transcriptomics.json", "rules/statistical-modeling.json"]
+}

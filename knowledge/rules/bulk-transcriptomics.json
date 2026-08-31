@@ -1,0 +1,146 @@
+[
+    {
+        "id": "INFLEXA-R-000101",
+        "title": "No inferential differential expression without biological replication",
+        "applies": { "omicsType": ["transcriptomics"], "omicsSubtype": ["bulk-rna-seq"], "minGroupN": { "lt": 2 } },
+        "effect": {
+            "severity": "reject",
+            "statement": "With one sample in a group there is no within-group variance to estimate, and a 1 vs 1 test produces confident-looking p-values with no inferential basis. Do not run an inferential differential-expression test."
+        },
+        "recommendation": "Report descriptive log2 fold changes only, state that no replication exists, and name the design that supports inference: n >= 2 for each group, n >= 3 preferred.",
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [
+                { "citation": "Conesa A et al. (2016) A survey of best practices for RNA-seq data analysis. Genome Biology 17:13", "doi": "10.1186/s13059-016-0881-8", "pmid": "26813401" },
+                { "citation": "Love MI, Huber W, Anders S (2014) Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2. Genome Biology 15:550", "doi": "10.1186/s13059-014-0550-8", "pmid": "25516281" }
+            ]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000102",
+        "title": "PyDESeq2 is the default DE method for a simple design at n 3 to 50 for each group",
+        "applies": { "omicsType": ["transcriptomics"], "omicsSubtype": ["bulk-rna-seq"], "minGroupN": { "gte": 3, "lt": 51 } },
+        "effect": {
+            "severity": "note",
+            "statement": "For raw integer counts, a simple two-condition design, and 3 to 50 samples for each group, use PyDESeq2. For interaction terms or nested factors, use DESeq2 through rpy2 for the full formula support."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [
+                { "citation": "Love MI, Huber W, Anders S (2014) DESeq2. Genome Biology 15:550", "doi": "10.1186/s13059-014-0550-8", "pmid": "25516281" },
+                { "citation": "Muzellec B et al. (2023) PyDESeq2: a python package for bulk RNA-seq differential expression analysis. Bioinformatics 39:btad547", "doi": "10.1093/bioinformatics/btad547", "pmid": "37669147" }
+            ]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000103",
+        "title": "edgeR quasi-likelihood at n = 2 for each group",
+        "applies": { "omicsType": ["transcriptomics"], "omicsSubtype": ["bulk-rna-seq"], "minGroupN": { "gte": 2, "lt": 3 } },
+        "effect": {
+            "severity": "note",
+            "statement": "At two samples for each group, use the edgeR quasi-likelihood pipeline, which has the better small-sample error control. State the low power in the report."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [
+                { "citation": "Robinson MD, McCarthy DJ, Smyth GK (2010) edgeR. Bioinformatics 26:139-140", "doi": "10.1093/bioinformatics/btp616", "pmid": "19910308" },
+                { "citation": "Chen Y, Lun ATL, Smyth GK (2016) From reads to genes to pathways: differential expression analysis of RNA-Seq experiments using Rsubread and the edgeR quasi-likelihood pipeline. F1000Research 5:1438", "doi": "10.12688/f1000research.8987.2", "pmid": "27508061" }
+            ]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000104",
+        "title": "limma-voom above 50 samples for each group",
+        "applies": { "omicsType": ["transcriptomics"], "omicsSubtype": ["bulk-rna-seq"], "minGroupN": { "gte": 51 } },
+        "effect": {
+            "severity": "note",
+            "statement": "Above 50 samples for each group, use limma-voom: the precision-weight model scales well, and the linear-model machinery carries many covariates."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [{ "citation": "Law CW, Chen Y, Shi W, Smyth GK (2014) voom: precision weights unlock linear model analysis tools for RNA-seq read counts. Genome Biology 15:R29", "doi": "10.1186/gb-2014-15-2-r29", "pmid": "24485249" }]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000108",
+        "title": "Mixed-effects voom for longitudinal or repeated-measures designs",
+        "applies": { "omicsType": ["transcriptomics"], "omicsSubtype": ["bulk-rna-seq"] },
+        "effect": {
+            "severity": "note",
+            "statement": "For a longitudinal or repeated-measures design, use dream (variancePartition) through rpy2: a mixed-effects voom that models the within-subject correlation. A fixed-effects DE model on repeated measures understates the variance."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [{ "citation": "Hoffman GE, Roussos P (2021) dream: powerful differential expression analysis for repeated measures designs. Bioinformatics 37:192-201", "doi": "10.1093/bioinformatics/btaa687", "pmid": "32730587" }]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000109",
+        "title": "Raw microarray CEL files are out of scope — ask for the normalized matrix",
+        "applies": { "omicsType": ["transcriptomics"], "omicsSubtype": ["microarray"] },
+        "effect": {
+            "severity": "note",
+            "statement": "A raw CEL read resolves a platform design package for each array design, and that package cannot be staged for every design. Report the condition and ask for the normalized expression matrix — every array platform publishes one. Then run limma on the intensities."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [{ "citation": "Irizarry RA et al. (2003) Exploration, normalization, and summaries of high density oligonucleotide array probe level data. Biostatistics 4:249-264", "doi": "10.1093/biostatistics/4.2.249", "pmid": "12925520" }]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000105",
+        "title": "Count-based DE methods require raw integer counts",
+        "applies": { "omicsType": ["transcriptomics"] },
+        "effect": {
+            "severity": "warn",
+            "statement": "DESeq2, PyDESeq2, and edgeR model raw counts with a negative binomial distribution. Do not give them TPM, FPKM, RPKM, or other normalized values — the statistical model breaks and the results are invalid. For pre-normalized expression values, use limma."
+        },
+        "recommendation": "Make sure that the input is raw integer counts before a count-based method runs. For normalized matrices, use limma, and do not pre-normalize counts for voom.",
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [
+                { "citation": "Love MI, Huber W, Anders S (2014) DESeq2. Genome Biology 15:550", "doi": "10.1186/s13059-014-0550-8", "pmid": "25516281" },
+                { "citation": "Soneson C, Delorenzi M (2013) A comparison of methods for differential expression analysis of RNA-seq data. BMC Bioinformatics 14:91", "doi": "10.1186/1471-2105-14-91", "pmid": "23497356" },
+                { "citation": "Law CW, Chen Y, Shi W, Smyth GK (2014) voom. Genome Biology 15:R29", "doi": "10.1186/gb-2014-15-2-r29", "pmid": "24485249" }
+            ]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000106",
+        "title": "Correct known batch effects before DE, with biological covariates in the model",
+        "applies": { "omicsType": ["transcriptomics"] },
+        "effect": {
+            "severity": "warn",
+            "statement": "If samples were processed in batches, do a check of the PCA colored by batch. Correct a known batch with ComBat-seq on raw counts, after filtering and before DE, and keep the biological variables in the model so real signal is not removed. For unknown confounders, estimate surrogate variables with svaseq and add them as covariates — do not adjust the counts."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [
+                { "citation": "Zhang Y, Parmigiani G, Johnson WE (2020) ComBat-seq: batch effect adjustment for RNA-seq count data. NAR Genomics and Bioinformatics 2:lqaa078", "doi": "10.1093/nargab/lqaa078", "pmid": "33015620" },
+                { "citation": "Leek JT (2014) svaseq: removing batch effects and other unwanted noise from sequencing data. Nucleic Acids Research 42:e161", "doi": "10.1093/nar/gku864", "pmid": "25294822" }
+            ]
+        },
+        "version": "1.0.0"
+    },
+    {
+        "id": "INFLEXA-R-000107",
+        "title": "Filter low-count genes against the smallest group size",
+        "applies": { "omicsType": ["transcriptomics"], "omicsSubtype": ["bulk-rna-seq"] },
+        "effect": {
+            "severity": "note",
+            "statement": "Remove low-count genes before DE, and key the filter to the smallest group size — for example, keep a gene with 10 or more counts in at least that many samples. A stricter filter reduces power."
+        },
+        "evidence": {
+            "eco": "ECO:0000212",
+            "sources": [{ "citation": "Chen Y, Lun ATL, Smyth GK (2016) From reads to genes to pathways. F1000Research 5:1438", "doi": "10.12688/f1000research.8987.2", "pmid": "27508061" }]
+        },
+        "version": "1.0.0"
+    }
+]

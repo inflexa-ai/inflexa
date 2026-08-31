@@ -28,6 +28,7 @@ import type { EnsureSessionStateResult } from "../app/report-session-runtime.js"
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import type { AcquireEyes } from "../lib/eyes.js";
+import type { KnowledgeBase } from "../knowledge/knowledge-base.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
@@ -163,6 +164,13 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      */
     readonly eyes?: AcquireEyes;
     /**
+     * The resolved knowledge source of the composition. `generate_plan` builds
+     * its knowledge brief and its grounded gate over it. Absent, the brief
+     * states the absence and the gate stays inert (the knowledge-base-seam
+     * spec). The assembly resolves it one time, like the eyes.
+     */
+    readonly knowledge?: KnowledgeBase;
+    /**
      * Host resource policy — per-step ceilings + machine budget. `generate_plan`
      * states the ceilings to the planner and validates against them;
      * `execute_analysis` snapshots the budget into the workflow input. Absent,
@@ -199,6 +207,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         packagesFile,
         usageRecorder,
         citationResolver,
+        knowledge,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
@@ -258,6 +267,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             resourcePolicy,
             usageRecorder,
             bioKeys,
+            ...(knowledge ? { knowledge } : {}),
             ...(refStorePath ? { refStorePath } : {}),
             ...(packagesFile ? { packagesFile } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),

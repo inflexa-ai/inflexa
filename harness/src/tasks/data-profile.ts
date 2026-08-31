@@ -29,6 +29,7 @@ import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorize
 import type { StagedInput } from "../execution/staged-input.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
 import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
+import type { KnowledgeBase } from "../knowledge/knowledge-base.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { durableStep } from "../loop/run-step.js";
@@ -132,6 +133,8 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
     readonly skillsDir: string;
     /** LLM usage-accounting seam for the profiler agent loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The resolved knowledge source, threaded from `assembleCoreRuntime` — one realization serves every consumer. */
+    readonly knowledge?: KnowledgeBase;
     /**
      * Host-supplied labels for the profiler's sandbox pod, resolved under the
      * profiling session. The map is opaque to the harness: it stamps each entry
@@ -640,6 +643,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 skillsDir: deps.skillsDir,
                 ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}),
                 ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
+                ...(deps.knowledge ? { knowledge: deps.knowledge } : {}),
                 bioKeys: deps.bioKeys,
                 step: {
                     sandbox,

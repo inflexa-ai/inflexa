@@ -10,7 +10,10 @@ import { withSchema } from "../../__tests__/setup/postgres.js";
 import { PLANNABLE_AGENT_IDS } from "../../agents/sandbox-catalog.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../../loop/__fixtures__/scripted-provider.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import type { DataProfileResult } from "../../state/index.js";
+import { loadPlan, type DataProfileResult } from "../../state/index.js";
+import { loadFileKnowledgeBase } from "../../knowledge/file-knowledge-base.js";
+import type { KnowledgeBase } from "../../knowledge/knowledge-base.js";
+import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import type { Tool, ToolContext } from "../define-tool.js";
 import { createGeneratePlanTool } from "./generate-plan.js";
 
@@ -702,6 +705,232 @@ describe("generatePlan loop-driving tool", () => {
             // structural `reason` (its finish reason) in any sink that filters by name.
             expect(blocker[0]!.fields).not.toHaveProperty("reason");
             expect(blocker[0]!.fields.modelAuthored).toMatchObject({ blockerReason: "measurement complete" });
+        });
+    });
+
+    // ── The knowledge plane ──────────────────────────────────────────
+    //
+    // These drive the real file-backed realization over a temp corpus rather
+    // than a stub. The brief, the gate, the stamp and the iteration block are
+    // one path through four modules, and a stub in the middle would leave the
+    // joins — which is where every review finding on this feature landed —
+    // covered by nothing.
+    describe("the knowledge plane", () => {
+        const REJECT_RULE = "INFLEXA-R-000101";
+        const WARN_RULE = "INFLEXA-R-000201";
+        const NOTE_RULE = "INFLEXA-R-000107";
+
+        let knowledge: KnowledgeBase;
+
+        function corpusRule(id: string, severity: string, applies: object, statement: string): object {
+            return {
+                id,
+                title: `Rule ${id}`,
+                applies,
+                effect: { severity, statement },
+                evidence: { sources: [{ citation: "A citation", doi: "10.1000/x" }] },
+                version: "1.0.0",
+            };
+        }
+
+        beforeAll(async () => {
+            const dir = await mkdtemp(join(tmpdir(), "plan-knowledge-"));
+            await mkdir(join(dir, "rules"), { recursive: true });
+            await writeFile(join(dir, "manifest.json"), JSON.stringify({ corpusId: "test-corpus", version: "1.0.0", ruleFiles: ["rules/all.json"] }));
+            await writeFile(
+                join(dir, "rules", "all.json"),
+                JSON.stringify([
+                    // Unknown until somebody supplies a group size — the shape of the
+                    // one rule in the shipped corpus that carries a numeric condition.
+                    corpusRule(
+                        REJECT_RULE,
+                        "reject",
+                        { omicsType: ["transcriptomics"], omicsSubtype: ["bulk-rna-seq"], minGroupN: { lt: 2 } },
+                        "No inferential DE without replication.",
+                    ),
+                    corpusRule(WARN_RULE, "warn", {}, "Select features inside the cross-validation loop."),
+                    corpusRule(NOTE_RULE, "note", { omicsSubtype: ["bulk-rna-seq"] }, "Filter low-count genes against the smallest group."),
+                ]),
+            );
+            knowledge = (await loadFileKnowledgeBase({ dir }))._unsafeUnwrap();
+        });
+
+        function knowledgeToolFor(provider: ScriptedProvider, logger?: CapturingLogger): Tool {
+            return createGeneratePlanTool({
+                conversation: { provider, model: "claude-test" },
+                pool,
+                bioKeys: TEST_BIO_KEYS,
+                knowledge,
+                ...(logger ? { logger } : {}),
+            });
+        }
+
+        /** A profiled bulk RNA-seq analysis — the facts the host brief queries on. */
+        async function profiled(analysisId: string): Promise<void> {
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: SEED_FILE_IDS });
+        }
+
+        function grounded(ids: string[]): object {
+            return validCandidate({ grounding: ids.map((id) => ({ id, note: "shaped the method" })) });
+        }
+
+        function submitCall(id: string, plan: unknown) {
+            return makeMessage([toolUseBlock(id, "submit_plan", { plan })], "tool_use");
+        }
+
+        function searchCall(id: string, args: Record<string, unknown>) {
+            return makeMessage([toolUseBlock(id, "knowledge_search", args)], "tool_use");
+        }
+
+        interface Advisory {
+            ruleId: string;
+            severity: string;
+            applicability: string;
+            message: string;
+        }
+
+        async function advisoriesOf(provider: ScriptedProvider, analysisId: string, logger?: CapturingLogger): Promise<Advisory[]> {
+            const result = (await knowledgeToolFor(provider, logger).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult & {
+                advisories?: Advisory[];
+            };
+            expect(result.event).toBe("plan_complete");
+            return result.advisories ?? [];
+        }
+
+        it("hands the planner a knowledge brief headed by the corpus identity", async () => {
+            const analysisId = "an-kb-brief";
+            await profiled(analysisId);
+            const provider = blockImmediately();
+
+            await knowledgeToolFor(provider).execute(INPUT, toolContext(analysisId));
+
+            const seed = plannerSeed(provider);
+            expect(seed).toContain("## Knowledge Rules (corpus test-corpus@1.0.0)");
+            expect(seed).toContain(WARN_RULE);
+            expect(seed).toContain(NOTE_RULE);
+            // Nobody has supplied a group size, thus the numeric rule rides as unknown
+            // rather than as a claim about this dataset.
+            expect(seed).toContain(`${REJECT_RULE} [reject] (unknown`);
+        });
+
+        it("says so in the seed when no source is bound, and never asks for a citation", async () => {
+            const analysisId = "an-kb-absent";
+            await profiled(analysisId);
+            const provider = blockImmediately();
+
+            await toolFor(provider).execute(INPUT, toolContext(analysisId));
+
+            const seed = plannerSeed(provider);
+            expect(seed).toContain("## Knowledge Plane");
+            // The prompt keys the citation duty on this exact heading. With no source
+            // there is no gate, thus a heading that triggered the duty would invite a
+            // citation into a plan that nothing can check.
+            expect(seed).not.toContain("## Knowledge Rules");
+        });
+
+        it("rejects a citation the source never returned, and accepts the corrected plan", async () => {
+            const analysisId = "an-kb-citation";
+            await profiled(analysisId);
+            const logger = createCapturingLogger();
+            const provider = scriptedProvider([
+                submitCall("t1", grounded(["INFLEXA-R-999999"])),
+                submitCall("t2", grounded([WARN_RULE])),
+                makeMessage([textBlock("Submitted.")], "end_turn"),
+            ]);
+
+            const result = (await knowledgeToolFor(provider, logger).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+
+            expect(result.event).toBe("plan_complete");
+            const rejections = logger.records.filter((r) => r.msg.endsWith("submit_plan rejected a plan"));
+            expect(rejections).toHaveLength(1);
+            expect(rejections[0]!.fields.codes).toMatchObject({ grounding: 1, schema: 0, semantic: 0 });
+            expect(JSON.stringify(rejections[0]!.fields.messages)).toContain("INFLEXA-R-999999");
+        });
+
+        it("carries the advisories out on an accepted plan, reject first, and logs their ids", async () => {
+            const analysisId = "an-kb-advisories";
+            await profiled(analysisId);
+            const logger = createCapturingLogger();
+            const provider = scriptedProvider([submitCall("t1", validCandidate()), makeMessage([textBlock("Submitted.")], "end_turn")]);
+
+            const advisories = await advisoriesOf(provider, analysisId, logger);
+
+            expect(advisories.map((a) => a.ruleId)).toEqual([REJECT_RULE, WARN_RULE, NOTE_RULE]);
+            expect(advisories[0]).toMatchObject({ severity: "reject", applicability: "not_evaluable" });
+            // The advisory names the remedy, because it is the only route by which the
+            // numeric verdict can ever be settled.
+            expect(advisories[0]!.message).toContain("minGroupN");
+
+            const accepted = logger.records.filter((r) => r.msg.endsWith("submit_plan accepted a plan"));
+            expect(accepted).toHaveLength(1);
+            expect(accepted[0]!.fields.advisories).toMatchObject({ total: 3, ruleIds: [REJECT_RULE, WARN_RULE, NOTE_RULE] });
+        });
+
+        it("raises no advisory for a rule the plan cites", async () => {
+            const analysisId = "an-kb-cited";
+            await profiled(analysisId);
+            const provider = scriptedProvider([submitCall("t1", grounded([WARN_RULE])), makeMessage([textBlock("Submitted.")], "end_turn")]);
+
+            const advisories = await advisoriesOf(provider, analysisId);
+
+            expect(advisories.map((a) => a.ruleId)).not.toContain(WARN_RULE);
+        });
+
+        it("settles an unknown verdict from a fact the planner supplies through the tool", async () => {
+            const analysisId = "an-kb-facts";
+            await profiled(analysisId);
+            const provider = scriptedProvider([
+                searchCall("k1", { omicsType: "transcriptomics", omicsSubtype: "bulk-rna-seq", minGroupN: 1 }),
+                submitCall("t1", validCandidate()),
+                makeMessage([textBlock("Submitted.")], "end_turn"),
+            ]);
+
+            const advisories = await advisoriesOf(provider, analysisId);
+
+            // The host brief could only ever report this rule as unknown. A verdict a
+            // tool call surfaces has to reach the gate, or the planner's own lookup
+            // buys the record nothing.
+            const reject = advisories.find((a) => a.ruleId === REJECT_RULE);
+            expect(reject).toMatchObject({ applicability: "applies" });
+            expect(reject!.message).toContain("cites it nowhere");
+        });
+
+        it("lets a later verdict replace an earlier one for the same rule", async () => {
+            const analysisId = "an-kb-latest";
+            await profiled(analysisId);
+            const provider = scriptedProvider([
+                searchCall("k1", { omicsType: "transcriptomics", omicsSubtype: "bulk-rna-seq", minGroupN: 1 }),
+                searchCall("k2", { omicsType: "transcriptomics", omicsSubtype: "bulk-rna-seq" }),
+                submitCall("t1", validCandidate()),
+                makeMessage([textBlock("Submitted.")], "end_turn"),
+            ]);
+
+            const advisories = await advisoriesOf(provider, analysisId);
+
+            // A map that only escalated left the first verdict standing for good, and a
+            // planner that probed with a wrong number could never take it back.
+            expect(advisories.find((a) => a.ruleId === REJECT_RULE)).toMatchObject({ applicability: "not_evaluable" });
+        });
+
+        it("stamps the corpus onto a stored citation, and shows that citation when the plan is iterated", async () => {
+            const analysisId = "an-kb-stamp";
+            await profiled(analysisId);
+            const first = scriptedProvider([submitCall("t1", grounded([WARN_RULE])), makeMessage([textBlock("Submitted.")], "end_turn")]);
+
+            const result = (await knowledgeToolFor(first).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            expect(result.event).toBe("plan_complete");
+
+            // The stamp is host-written. A stored id with no corpus behind it stops
+            // resolving the moment the corpus moves on.
+            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap();
+            const parsed = AnalysisPlanSchema.parse(stored);
+            expect(parsed.steps[0]?.grounding?.[0]).toMatchObject({ id: WARN_RULE, corpus: { id: "test-corpus", version: "1.0.0" } });
+
+            // Iteration rewrites the steps it keeps, thus a prior-plan block that
+            // dropped the citations would make the planner rebuild them from nothing.
+            const second = blockImmediately();
+            await knowledgeToolFor(second).execute({ ...INPUT, parentPlanId: result.planId! }, toolContext(analysisId));
+            expect(plannerSeed(second)).toContain(`[grounding: ${WARN_RULE}]`);
         });
     });
 });

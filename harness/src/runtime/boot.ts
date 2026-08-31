@@ -42,7 +42,7 @@ import type { Logger } from "../lib/logger.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
 import { initCortexState } from "../state/init.js";
-import { assembleCoreRuntime, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
+import { assembleCoreRuntime, resolveCompositionKnowledge, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
 import { assertConnectionBudget, type ConnectionBudgetConfig } from "./connection-budget.js";
 import { launchDbos, shutdownDbos, type DbosConfig } from "./dbos.js";
 import { markDraining } from "./lifecycle.js";
@@ -101,7 +101,17 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
     await initCortexState(pool);
     await assertConnectionBudget({ pool, logger, config: deps.connectionBudget });
 
-    const runtime = assembleCoreRuntime(core);
+    // The knowledge source resolves here because the corpus load reads files
+    // and `assembleCoreRuntime` stays sync. An absent source is a normal
+    // condition, thus this step never fails the boot.
+    const knowledge = await resolveCompositionKnowledge({
+        ...(core.knowledge ? { knowledge: core.knowledge } : {}),
+        ...(core.knowledgeDir !== undefined ? { knowledgeDir: core.knowledgeDir } : {}),
+        ...(core.observeKnowledge ? { observeKnowledge: core.observeKnowledge } : {}),
+        logger,
+    });
+
+    const runtime = assembleCoreRuntime({ ...core, ...(knowledge ? { knowledge } : {}) });
 
     await deps.beforeLaunch?.();
 

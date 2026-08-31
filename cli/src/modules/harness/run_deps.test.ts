@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { okAsync } from "neverthrow";
 import {
     createAnthropicProvider,
     createEmbeddingProvider,
@@ -138,14 +139,20 @@ describe("run-engine provenance wiring", () => {
 
         captured = [];
         Bus.on("inflexa", spy);
-        deps.emitProvenance!({ type: "run_started", analysisId: "an-1", runId: "run-1", planSummary: "plan", stepCount: 1, atMs: 1_700_000_000_000 }, runSession);
+        deps.emitProvenance!(
+            { type: "run_started", analysisId: "an-1", runId: "run-1", planSummary: "plan", stepCount: 1, atMs: 1_700_000_000_000 },
+            runSession,
+        );
 
         expect(captured).toHaveLength(1);
         expect(captured[0]!.type).toBe("prov.run_started");
 
         // The emitter closed over the composition's model id — a settled step records which model
         // drove it (the wiring half of the model-agent record; the mapping itself is prov_bridge's).
-        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_001_000 }, runSession);
+        deps.emitProvenance!(
+            { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_001_000 },
+            runSession,
+        );
         const stepEvent = captured[1]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(stepEvent.model).toBe("anthropic/claude-test");
@@ -161,7 +168,10 @@ describe("run-engine provenance wiring", () => {
 
         captured = [];
         Bus.on("inflexa", spy);
-        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_002_000 }, runSession);
+        deps.emitProvenance!(
+            { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_002_000 },
+            runSession,
+        );
 
         const stepEvent = captured[0]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
@@ -199,7 +209,10 @@ describe("snapshot-safety — a captured deps field observes a live swap through
 
         captured = [];
         Bus.on("inflexa", spy);
-        capturedEmit({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_000_000 }, runSession);
+        capturedEmit(
+            { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_000_000 },
+            runSession,
+        );
 
         const stepEvent = captured[0]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
@@ -278,6 +291,36 @@ describe("buildSandboxStepDeps", () => {
         // The returned definition is the catalog's own entry for that id.
         expect(agent.id).toBe("bulk-transcriptomics-agent");
         expect(Array.isArray(agent.tools)).toBe(true);
+    });
+
+    // The knowledge source reaches this builder on the BUILD CONTEXT, not on the
+    // composition: the harness resolves it once at assembly and hands it down per
+    // step. Both sides of that hop are optional, thus a dropped copy typechecks
+    // cleanly and shows up only as a step agent that answers `no_knowledge_source`
+    // while the planner and the profiler consult the corpus. The sibling
+    // `citationResolver` is dropped on this same builder today, so the failure
+    // mode is not hypothetical.
+    test("buildAgent forwards the knowledge source, thus a step agent can consult the plane", async () => {
+        const corpus = { corpusId: "test-corpus", version: "1.0.0" };
+        const knowledge = {
+            findRules: () => okAsync({ corpus, matches: [] }),
+            getRule: (id: string) => okAsync({ found: false as const, id }),
+            describeCorpus: () => corpus,
+        };
+        const ctx = {
+            ...fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"),
+            knowledge,
+        } as unknown as SandboxAgentBuildContext;
+
+        const agent = buildSandboxStepDeps(testComposition()).buildAgent(ctx);
+
+        const search = agent.tools.find((t) => t.id === "knowledge_search");
+        expect(search).toBeDefined();
+        const toolCtx = { session: {}, signal: new AbortController().signal, emit: () => {}, runStep: (_n: string, fn: () => unknown) => fn() };
+        const outcome = (await search!.execute({ query: "anything" }, toolCtx as never))._unsafeUnwrap() as { status: string };
+
+        // `no_knowledge_source` here would mean the forward was dropped.
+        expect(outcome.status).toBe("no_matches");
     });
 
     test("buildAgent throws for an unknown agent id, naming the id and the known catalog ids", () => {

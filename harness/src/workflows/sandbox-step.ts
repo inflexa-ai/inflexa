@@ -37,6 +37,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
+import type { KnowledgeBase } from "../knowledge/knowledge-base.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
@@ -247,6 +248,8 @@ export interface SandboxAgentBuildContext {
     readonly blockerHolder: BlockerHolder;
     /** Shared host-side citation resolver for allowlisted sandbox agents. */
     readonly citationResolver: CitationResolver;
+    /** The resolved knowledge source, threaded from `assembleCoreRuntime`. */
+    readonly knowledge?: KnowledgeBase;
 }
 
 /**
@@ -272,6 +275,8 @@ export interface SandboxStepDeps {
     readonly usageRecorder?: UsageRecorder;
     /** Shared resolver threaded from `assembleCoreRuntime`. */
     readonly citationResolver: CitationResolver;
+    /** The resolved knowledge source, threaded from `assembleCoreRuntime`. */
+    readonly knowledge?: KnowledgeBase;
     /** Non-streaming chat — drives the agent loop + the post-step sub-agents. */
     readonly provider: AgentChat;
     /** Write-side embedder for the post-step vector index. */
@@ -508,6 +513,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         lineageCollector,
         blockerHolder,
         citationResolver: deps.citationResolver,
+        ...(deps.knowledge ? { knowledge: deps.knowledge } : {}),
     });
 
     // Built over THIS agent's tools, not a shared table: a sandbox agent's roster
