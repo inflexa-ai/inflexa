@@ -445,9 +445,8 @@ describe("the provenance data assets", () => {
     }
 
     it("registers the document and the attestation under one global, byte for byte", () => {
-        const rendered = renderReportPage(pageDocument(), pageValues, undefined, undefined, {
-            document: DOCUMENT,
-            attestation: ATTESTATION,
+        const rendered = renderReportPage(pageDocument(), pageValues, {
+            provenance: { document: DOCUMENT, attestation: ATTESTATION },
         })._unsafeUnwrap();
 
         expect(provenanceAssets(rendered.dataAssets).length).toBe(2);
@@ -457,8 +456,8 @@ describe("the provenance data assets", () => {
     });
 
     it("names each asset by the hash of its own bytes, and two renders give one name", () => {
-        const first = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: DOCUMENT, attestation: ATTESTATION })._unsafeUnwrap();
-        const second = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: DOCUMENT, attestation: ATTESTATION })._unsafeUnwrap();
+        const first = renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } })._unsafeUnwrap();
+        const second = renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } })._unsafeUnwrap();
 
         const [documentAsset, attestationAsset] = provenanceAssets(first.dataAssets);
         expect(documentAsset.name).toMatch(/^prov-[0-9a-f]{12}\.data\.js$/);
@@ -468,10 +467,9 @@ describe("the provenance data assets", () => {
     });
 
     it("gives a new name for a changed document, and keeps the attestation name", () => {
-        const first = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: DOCUMENT, attestation: ATTESTATION })._unsafeUnwrap();
-        const changed = renderReportPage(pageDocument(), pageValues, undefined, undefined, {
-            document: '{"entity":{"e2":{"prov:type":"file"}}}',
-            attestation: ATTESTATION,
+        const first = renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } })._unsafeUnwrap();
+        const changed = renderReportPage(pageDocument(), pageValues, {
+            provenance: { document: '{"entity":{"e2":{"prov:type":"file"}}}', attestation: ATTESTATION },
         })._unsafeUnwrap();
 
         // The name carries the hash of the bytes, thus a changed document lands under a new name and the
@@ -481,9 +479,8 @@ describe("the provenance data assets", () => {
     });
 
     it("references each asset from a classic script tag, before the table assets and every bootstrap", () => {
-        const rendered = renderReportPage(pageDocument(), pageValues, undefined, undefined, {
-            document: DOCUMENT,
-            attestation: ATTESTATION,
+        const rendered = renderReportPage(pageDocument(), pageValues, {
+            provenance: { document: DOCUMENT, attestation: ATTESTATION },
         })._unsafeUnwrap();
         const [documentAsset, attestationAsset] = provenanceAssets(rendered.dataAssets);
         const tableAsset = rendered.dataAssets.find((asset) => asset.name.startsWith("t-"));
@@ -502,7 +499,7 @@ describe("the provenance data assets", () => {
     });
 
     it("carries the document alone when the export holds no attestation", () => {
-        const rendered = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: DOCUMENT })._unsafeUnwrap();
+        const rendered = renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT } })._unsafeUnwrap();
 
         // An unsigned document still rides the page, thus the reader finds the document and no attestation.
         expect(provenanceAssets(rendered.dataAssets).length).toBe(1);
@@ -512,7 +509,7 @@ describe("the provenance data assets", () => {
 
     it("keeps a document that names the script element as data", () => {
         const hostile = '{"note":"</script><img src=x>"}';
-        const rendered = renderReportPage(pageDocument(), pageValues, undefined, undefined, { document: hostile })._unsafeUnwrap();
+        const rendered = renderReportPage(pageDocument(), pageValues, { provenance: { document: hostile } })._unsafeUnwrap();
 
         // The text rides as a JSON string, thus a `</script` sequence inside it cannot close the element.
         expect(provenanceAssets(rendered.dataAssets)[0].bytes).not.toContain("</script");
@@ -526,7 +523,7 @@ describe("the provenance data assets", () => {
         expect(rendered.html).not.toContain(`window.${REPORT_PROVENANCE_GLOBAL}`);
         expect(rendered.html).not.toContain("prov-");
         // A page whose only payload is the table renders byte for byte as it did before the seam.
-        expect(rendered.html).toBe(renderReportPage(pageDocument(), pageValues, undefined, undefined, undefined)._unsafeUnwrap().html);
+        expect(rendered.html).toBe(renderReportPage(pageDocument(), pageValues, {})._unsafeUnwrap().html);
     });
 });
 
@@ -584,7 +581,7 @@ describe("the lineage stamp and the popover control", () => {
 
     /** The page of the grounded document, with a provenance document or without one. */
     function groundedPage(provenance?: { document: string }): string {
-        return renderReportPage(groundedDocument(), groundedValues, undefined, undefined, provenance)._unsafeUnwrap().html;
+        return renderReportPage(groundedDocument(), groundedValues, { provenance })._unsafeUnwrap().html;
     }
 
     /** The keys that one block stamped, read back from the container of the block. */
@@ -671,9 +668,7 @@ describe("the lineage stamp and the popover control", () => {
         const html = renderReportPage(
             document,
             { tbl: { type: "table", columns: ["gene"], rows: [{ gene: "TP53" }] } },
-            undefined,
-            undefined,
-            PROVENANCE,
+            { provenance: PROVENANCE },
         )._unsafeUnwrap().html;
 
         // The markup runtime escapes each attribute value, thus a hostile path reaches the page as text and
@@ -967,7 +962,7 @@ describe("the lineage stamp and the popover control", () => {
     });
 
     it("shows the control on the design fixture, which carries a document", () => {
-        const page = load(renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, undefined, undefined, FIXTURE_PROVENANCE)._unsafeUnwrap().html);
+        const page = load(renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance: FIXTURE_PROVENANCE })._unsafeUnwrap().html);
 
         // A person examines the fixture page after an edit of the design. A fixture with no control would
         // keep the panel out of that look.
@@ -989,7 +984,7 @@ describe("the page stands alone", () => {
                 },
             ],
         };
-        return renderReportPage(document, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap().html;
+        return renderReportPage(document, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } })._unsafeUnwrap().html;
     }
 
     /**
@@ -1024,7 +1019,7 @@ describe("the page stands alone", () => {
             scriptSource: `${ASSETS_DIR}/d-bbb.py`,
             outputSource: "derived/counts.csv",
         };
-        return renderReportPage(document, {}, undefined, [chain])._unsafeUnwrap().html;
+        return renderReportPage(document, {}, { derivations: [chain] })._unsafeUnwrap().html;
     }
 
     /**
@@ -1425,7 +1420,9 @@ describe("the citation card and its appendix entry", () => {
         const html = renderReportPage(
             twoOfEach,
             {},
-            { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } },
+            {
+                records: { "pmid:26997480": { citation: "Hugo et al. 2016", description: "The resistance paper." } },
+            },
         )._unsafeUnwrap().html;
         const card = load(html)("div.report-citation").last();
 
@@ -1445,14 +1442,14 @@ describe("the citation card and its appendix entry", () => {
     });
 
     it("adds no description line to a record that carries none", () => {
-        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap().html;
+        const html = renderReportPage(twoOfEach, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } })._unsafeUnwrap().html;
 
         expect(load(html)("li#ref-4").text()).toContain("Hugo et al. 2016");
         expect(load(html)("li#ref-4 div.report-cite-description").length).toBe(0);
     });
 
     it("shows the key and the note alone for a key that the record map does not hold", () => {
-        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap().html;
+        const html = renderReportPage(twoOfEach, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } })._unsafeUnwrap().html;
         const card = load(html)("div.report-citation").first();
 
         expect(card.find("a.report-citation-source").length).toBe(0);
@@ -1483,7 +1480,7 @@ describe("the citation card and its appendix entry", () => {
     });
 
     it("names PubMed as a navigation and never as a loaded resource", () => {
-        const html = renderReportPage(twoOfEach, {}, { "pmid:26997480": { citation: "Hugo et al. 2016" } })._unsafeUnwrap().html;
+        const html = renderReportPage(twoOfEach, {}, { records: { "pmid:26997480": { citation: "Hugo et al. 2016" } } })._unsafeUnwrap().html;
         const link = "https://pubmed.ncbi.nlm.nih.gov/26997480/";
 
         // A navigation costs no request when the page opens, thus the page still stands alone.
@@ -1492,7 +1489,7 @@ describe("the citation card and its appendix entry", () => {
 
     it("renders a stored pin that holds no record map as it did before", () => {
         const withNoRecords = renderReportPage(twoOfEach, {})._unsafeUnwrap().html;
-        const withEmptyRecords = renderReportPage(twoOfEach, {}, {})._unsafeUnwrap().html;
+        const withEmptyRecords = renderReportPage(twoOfEach, {}, { records: {} })._unsafeUnwrap().html;
 
         expect(withNoRecords).toBe(withEmptyRecords);
         expect(withNoRecords).not.toContain("pubmed.ncbi.nlm.nih.gov");
@@ -1699,7 +1696,7 @@ describe("the evidentiary bindings in the appendix", () => {
     /** One page whose section holds the given blocks. */
     function pageOf(blocks: Block[], values: RenderValues, derivations?: readonly (typeof chain)[]): string {
         const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] };
-        return renderReportPage(document, values, undefined, derivations)._unsafeUnwrap().html;
+        return renderReportPage(document, values, { derivations })._unsafeUnwrap().html;
     }
 
     /** One block of each evidentiary kind over the given artifact. Each one binds through its own kind. */

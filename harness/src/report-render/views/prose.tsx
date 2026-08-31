@@ -13,7 +13,7 @@ import { raw } from "hono/html";
 
 import type { ClaimBlock, SectionBlock, TextBlock, TextList } from "../../contracts/report-blocks.js";
 import type { ReferenceLedger } from "../references.js";
-import { lineagePlace, lineageStamp } from "./lineage.js";
+import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
 
 /** The paragraph class of a text block and a claim block. The paragraph fills the content column. */
@@ -76,13 +76,13 @@ export function renderText(block: TextBlock): string {
  * reference keeps one number across the page. An artifact binding and a citation binding read the same
  * bracket, because one ladder counts them both.
  *
- * `lineage` states that the page carries a provenance document. The claim renders as paragraphs and it has
- * no container of its own, thus one wrapper takes the stamp of the whole block. The wrapper carries no
+ * `view.lineage` states that the page carries a provenance document. The claim renders as paragraphs and it
+ * has no container of its own, thus one wrapper takes the stamp of the whole block. The wrapper carries no
  * class, thus it adds no rule to the design sheet and each paragraph keeps its own spacing. A page with no
  * document renders the paragraphs alone.
  */
-export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger, lineage = false): string {
-    const markers = block.bindings.map((reference, index) => <Marker n={ledger.mark(reference)} lineage={lineagePlace(lineage, reference, index)} />);
+export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger, view: ViewOptions = DEFAULT_VIEW_OPTIONS): string {
+    const markers = block.bindings.map((reference, index) => <Marker n={ledger.mark(reference)} lineage={lineagePlace(view.lineage, reference, index)} />);
     const paragraphs = splitParagraphs(block.content.prose);
     const last = paragraphs.length - 1;
     const body =
@@ -98,7 +98,7 @@ export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger, lineage 
                 ))}
             </>
         );
-    return String(lineage ? <div {...lineageStamp(lineage, block.id, block.bindings)}>{body}</div> : body);
+    return String(view.lineage ? <div {...lineageStamp(view.lineage, block.id, block.bindings)}>{body}</div> : body);
 }
 
 /** The heading class of a section, by heading level. A heading uses the sans family, never the mono family. */

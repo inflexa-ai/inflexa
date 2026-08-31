@@ -581,13 +581,11 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             // the renderer moves it into a data asset and no part of this path reads a field of it. Absence
             // gives a page with no provenance asset, and each other part of the render is unchanged.
             const provenance = await readProvenance(analysisId);
-            const rendered = renderReportPage(
-                document,
-                bridged.value,
-                snapshot.citationRecords,
-                used.map((record) => chainOf(record, sessionDir)),
+            const rendered = renderReportPage(document, bridged.value, {
+                records: snapshot.citationRecords,
+                derivations: used.map((record) => chainOf(record, sessionDir)),
                 provenance,
-            );
+            });
             if (rendered.isErr()) {
                 return ok({ outcome: "render-problems", problems: rendered.error });
             }

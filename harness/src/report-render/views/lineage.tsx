@@ -15,9 +15,32 @@
  *
  * The stamp is empty while the page carries no provenance document. Thus such a page holds no lineage
  * attribute, no control, and the markup that it held before the stamp existed.
+ *
+ * The module also declares `ViewOptions`. Each view of the page reads that bag, and the lineage condition
+ * is the one truth that it holds today.
  */
 
 import type { Reference } from "../../contracts/report-reference.js";
+
+/**
+ * The page-wide truths of one render.
+ *
+ * A truth of this kind is constant across the whole page, thus each view of one page decides it alike. The
+ * bag threads one time through the view layer. Thus the next truth joins this interface, and no view
+ * signature grows one more parameter for it.
+ *
+ * `lineage` states that the page carries a provenance document. Each grounded block then stamps its keys
+ * and shows its control, and a page with no document carries neither.
+ */
+export interface ViewOptions {
+    readonly lineage: boolean;
+}
+
+/**
+ * The options that a view takes when the caller gives none. Each truth is off, thus the view renders its
+ * plain form.
+ */
+export const DEFAULT_VIEW_OPTIONS: ViewOptions = { lineage: false };
 
 /** The attribute that names the block of one stamp. The page script reads the same name. */
 export const LINEAGE_BLOCK_ATTRIBUTE = "data-lineage-block";
