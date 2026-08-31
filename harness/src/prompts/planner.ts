@@ -6,7 +6,14 @@ export function resourceEstimationSection(policy?: ResourcePolicy): string {
     const base = `Use the data context to estimate cpu and memoryGb for each step. Consider
 total file size, per-file sizes, feature x sample dimensions, and what the
 step actually does in memory. Be conservative — a 14 MB dataset does not
-need 18 GB of RAM.`;
+need 18 GB of RAM.
+
+The resources you declare are enforced by the runtime, not by the step.
+Do not put core-discovery or thread-tuning choreography into a step
+description: no cgroup reads, no nproc/detectCores() reconciliation, no
+claims about what CPU count the container reports. The runtime owns
+resource reporting; a step that benefits from parallelism relies on
+standard core detection and each library's defaults.`;
     if (!policy) {
         return `${base} If data size is unknown, default to cpu: 4, memoryGb: 8.`;
     }
