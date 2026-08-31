@@ -1437,6 +1437,26 @@ export function catalogFarmPath(storeRoot: string): string {
 // --- The two seam realizations ------------------------------------------------
 
 /**
+ * The sandbox nests the farm bind and the cache bind INSIDE the read-only
+ * store bind, thus the kernel must find their mountpoint entries in the
+ * store root. crun makes a missing mountpoint itself, but runc refuses that
+ * mkdir inside a read-only mount, and the engine then refuses the whole
+ * sandbox. Empty host-side entries remove the class for every engine.
+ * `farm` serves the image toolchain, and `current` serves the old images
+ * (see farmContainerPath in the harness mount plan). A failure only warns,
+ * because a crun engine runs without the entries.
+ */
+function ensureStoreMountpoints(storeRoot: string): void {
+    for (const entry of ["farm", "current", "cache"] as const) {
+        try {
+            mkdirSync(join(storeRoot, entry), { recursive: true });
+        } catch (cause) {
+            getLogger("farm").warn({ err: cause, storeRoot, entry }, "could not make the mountpoint entry; a runc engine can refuse the sandbox mounts");
+        }
+    }
+}
+
+/**
  * The farm-source resolver that the composition root binds
  * (`farmSource: { kind: "per-analysis" }`): an analysis id in, the farm location
  * out.
@@ -1461,6 +1481,7 @@ export function catalogFarmPath(storeRoot: string): string {
  * never a boot failure.
  */
 export async function resolveAnalysisFarm(storeRoot: string, analysisId: string): Promise<FarmResolution> {
+    ensureStoreMountpoints(storeRoot);
     const farmPath = analysisFarmPath(storeRoot, analysisId);
     if (existsSync(join(farmPath, FARM_LOCK_FILE))) {
         // The cache directory can be gone when a user removed it by hand. The
