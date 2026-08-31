@@ -30,7 +30,7 @@ import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../
 import { declaredForColumn, type ArtifactTableReference } from "../../contracts/report-reference.js";
 import type { CitationRecord } from "../../report-model/reference-resolver.js";
 import { stagedSource, tableSidecarName } from "../assets.js";
-import { lineagePlace, lineageStamp } from "./lineage.js";
+import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
 import { formatNumberCell, formatTableCell, holdsANumber, selectColumnKind, selectNumberKind, smallestPositiveValue } from "../number-format.js";
 import { citationKeyOf, type ReferenceLedger } from "../references.js";
@@ -89,20 +89,20 @@ type FigureValue = Extract<RenderValue, { type: "figure" }>;
  * names the cell. The marker sits on the label and never on the value, because the value line is the one
  * figure that a reader takes from the card.
  *
- * `lineage` states that the page carries a provenance document. The card then stamps its keys, and the
+ * `view.lineage` states that the page carries a provenance document. The card then stamps its keys, and the
  * marker carries the control that opens the chain.
  */
-export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value: ScalarValue, lineage = false): string {
+export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value: ScalarValue, view: ViewOptions = DEFAULT_VIEW_OPTIONS): string {
     const n = ledger.mark(block.value);
     const shown = formatNumberCell(value.value, selectNumberKind(block.label, value.value));
     return String(
-        <div class="stat-card corner-accents" {...lineageStamp(lineage, block.id, [block.value])}>
+        <div class="stat-card corner-accents" {...lineageStamp(view.lineage, block.id, [block.value])}>
             <div class="stat-card-value" title={shown.full}>
                 {shown.text}
             </div>
             <div class="stat-card-label">
                 {block.label}
-                <Marker n={n} lineage={lineagePlace(lineage, block.value)} />
+                <Marker n={n} lineage={lineagePlace(view.lineage, block.value)} />
             </div>
         </div>,
     );
@@ -246,19 +246,19 @@ export function tableStatusText(shown: number, total: number): string {
  * appendix names the artifact. Every evidentiary block ledgers this way, and a card with no title still
  * shows its marker on the same line.
  *
- * `lineage` states that the page carries a provenance document. The card then stamps its keys, and the
+ * `view.lineage` states that the page carries a provenance document. The card then stamps its keys, and the
  * marker carries the control that opens the chain.
  */
-export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount: number, total?: number, lineage = false): string {
+export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount: number, total?: number, view: ViewOptions = DEFAULT_VIEW_OPTIONS): string {
     const binding = block.binding;
     const n = ledger.mark(binding);
     const download = tableSidecarName(binding.hash, binding.path);
     const bound = boundText(binding);
     return String(
-        <div class="report-table" {...lineageStamp(lineage, block.id, [binding])}>
+        <div class="report-table" {...lineageStamp(view.lineage, block.id, [binding])}>
             <div class="report-table-title">
                 {block.title}
-                <Marker n={n} lineage={lineagePlace(lineage, binding)} />
+                <Marker n={n} lineage={lineagePlace(view.lineage, binding)} />
             </div>
             <div class="corner-accents">
                 <div class="report-grid" {...{ [GRID_MOUNT_ATTRIBUTE]: block.id }}></div>
@@ -289,18 +289,18 @@ export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount
  * appendix names the image. A figure with no caption still shows its marker on that line. The marker stays
  * out of the `alt` text, because a screen reader reads the alt as the picture and not as a footnote.
  *
- * `lineage` states that the page carries a provenance document. The card then stamps its keys, and the
+ * `view.lineage` states that the page carries a provenance document. The card then stamps its keys, and the
  * marker carries the control that opens the chain.
  */
-export function renderFigure(block: FigureBlock, ledger: ReferenceLedger, value: FigureValue, lineage = false): string {
+export function renderFigure(block: FigureBlock, ledger: ReferenceLedger, value: FigureValue, view: ViewOptions = DEFAULT_VIEW_OPTIONS): string {
     const n = ledger.mark(block.binding);
     const caption = block.caption;
     return String(
-        <figure class="report-figure corner-accents" {...lineageStamp(lineage, block.id, [block.binding])}>
+        <figure class="report-figure corner-accents" {...lineageStamp(view.lineage, block.id, [block.binding])}>
             <img src={value.src} alt={caption !== undefined ? caption : ""} class="report-figure-image" />
             <figcaption class="report-caption">
                 {caption}
-                <Marker n={n} lineage={lineagePlace(lineage, block.binding)} />
+                <Marker n={n} lineage={lineagePlace(view.lineage, block.binding)} />
             </figcaption>
         </figure>,
     );
@@ -321,16 +321,16 @@ const PUBMED_BASE = "https://pubmed.ncbi.nlm.nih.gov/";
  * identifier space shows the citation as text. A key with no pinned record shows the key and the note
  * alone, because absence is a normal condition and no text stands in for the paper.
  *
- * `lineage` states that the page carries a provenance document. The card then stamps the identity of the
- * external record in place of a pin, because a paper is no artifact and no data chain reaches it.
+ * `view.lineage` states that the page carries a provenance document. The card then stamps the identity of
+ * the external record in place of a pin, because a paper is no artifact and no data chain reaches it.
  */
-export function renderCitation(block: CitationBlock, ledger: ReferenceLedger, record?: CitationRecord, lineage = false): string {
+export function renderCitation(block: CitationBlock, ledger: ReferenceLedger, record?: CitationRecord, view: ViewOptions = DEFAULT_VIEW_OPTIONS): string {
     const n = ledger.mark(block.binding);
     const binding = block.binding;
     const key = citationKeyOf(binding);
     return String(
-        <div class="report-citation corner-accents" {...lineageStamp(lineage, block.id, [binding])}>
-            <Marker n={n} lineage={lineagePlace(lineage, binding)} />
+        <div class="report-citation corner-accents" {...lineageStamp(view.lineage, block.id, [binding])}>
+            <Marker n={n} lineage={lineagePlace(view.lineage, binding)} />
             {record !== undefined ? (
                 <>
                     {" "}

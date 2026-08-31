@@ -64,7 +64,7 @@ describe("the rendered page validates as HTML and CSS", () => {
     it("passes the same validation with the lineage stamp and the controls", async () => {
         // The provenance adds a data attribute to each grounded block and a control beside each marker. Both
         // ride the same gate, thus a misspelled attribute and a control in an illegal place fail here.
-        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, undefined, undefined, FIXTURE_PROVENANCE)._unsafeUnwrap().html;
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance: FIXTURE_PROVENANCE })._unsafeUnwrap().html;
         expect(await htmlFindings(html)).toEqual([]);
     });
 

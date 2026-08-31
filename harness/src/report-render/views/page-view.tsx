@@ -102,6 +102,19 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
 }
 
 /**
+ * What one page loads: the table payloads, the grid condition, and the provenance assets.
+ *
+ * The two asset groups carry one type, and they land in different places of the skeleton. A positional pair
+ * of one type takes no fault at the build when a caller swaps the two. Thus the group rides one bag, and
+ * each member of it carries its own name.
+ */
+export interface PageAssets {
+    readonly dataAssets: readonly DataAsset[];
+    readonly grids: boolean;
+    readonly provenanceAssets: readonly DataAsset[];
+}
+
+/**
  * Assemble the page from the title, the navigation, the main content, the reference frame, and the data
  * assets. The title passes through the runtime as text, and the runtime escapes it. The reference frame is
  * optional, thus an empty frame adds no markup.
@@ -122,15 +135,7 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
  * `grids` states that the content holds a grid mount. The grid runtime weighs about two megabytes, thus a
  * page whose only payload feeds a chart references neither the runtime nor the grid boot.
  */
-export function assemblePage(
-    title: string,
-    nav: string,
-    content: string,
-    references: string,
-    dataAssets: readonly DataAsset[],
-    grids: boolean,
-    provenanceAssets: readonly DataAsset[],
-): string {
+export function assemblePage(title: string, nav: string, content: string, references: string, { dataAssets, grids, provenanceAssets }: PageAssets): string {
     return (
         "<!doctype html>" +
         String(

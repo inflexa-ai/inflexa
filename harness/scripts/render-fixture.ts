@@ -22,7 +22,7 @@ import { resolvePageAssetFromInstallation } from "../src/report-render/asset-loo
 
 // The provenance rides the render, thus the page carries the lineage stamp of each grounded block and the
 // control beside each marker.
-const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, undefined, undefined, FIXTURE_PROVENANCE);
+const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance: FIXTURE_PROVENANCE });
 if (rendered.isErr()) {
     throw new Error(`The fixture did not render: ${JSON.stringify(rendered.error)}`);
 }
