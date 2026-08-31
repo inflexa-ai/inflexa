@@ -139,7 +139,19 @@ jobs:
             --build-arg "TARGETARCH=${ARCH}" \
             -t "${IMAGE_BASE}:${VERSION}-${ARCH}" \
             .
-          docker push "${IMAGE_BASE}:${VERSION}-${ARCH}"
+          # GHCR sometimes refuses a fresh layer with "unknown blob" when the two
+          # arch jobs push an identical-digest layer at the same time. The class
+          # is transient, thus three tries with a pause make the push reliable.
+          # A durable fault still fails, after the third try.
+          for attempt in 1 2 3; do
+            docker push "${IMAGE_BASE}:${VERSION}-${ARCH}" && break
+            if [ "$attempt" = 3 ]; then
+              echo "the sandbox-base push failed three times" >&2
+              exit 1
+            fi
+            echo "push attempt $attempt failed — pause, then push again" >&2
+            sleep $((attempt * 20))
+          done
           {
             echo "## Image build ($ARCH)"
             echo "| Image | Result |"
@@ -187,7 +199,17 @@ jobs:
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
             -t "${IMAGE_PROVISIONER}:${VERSION}-${ARCH}" \
             .
-          docker push "${IMAGE_PROVISIONER}:${VERSION}-${ARCH}"
+          # The same transient class and the same three tries as the
+          # sandbox-base push above.
+          for attempt in 1 2 3; do
+            docker push "${IMAGE_PROVISIONER}:${VERSION}-${ARCH}" && break
+            if [ "$attempt" = 3 ]; then
+              echo "the sandbox-provisioner push failed three times" >&2
+              exit 1
+            fi
+            echo "push attempt $attempt failed — pause, then push again" >&2
+            sleep $((attempt * 20))
+          done
           {
             echo "| sandbox-provisioner | pushed |"
           } >> "$GITHUB_STEP_SUMMARY"
