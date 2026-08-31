@@ -98,7 +98,7 @@ sq.gr.spatial_autocorr(
     mode="moran",              # "moran" or "geary"
     genes=None,                # list of genes to test (None = all in .var)
     n_perms=100,               # permutations for p-value (None = analytical)
-    n_jobs=4                   # parallel jobs
+    n_jobs=4                   # parallel jobs — size from os.cpu_count(), which reports the CPU quota
 )
 # Results stored in adata.uns['moranI'] (DataFrame):
 #   columns: I, pval_norm, var_norm, pval_z_sim, pval_sim, var_sim

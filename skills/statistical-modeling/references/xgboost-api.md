@@ -199,3 +199,4 @@ loaded_bst = xgb.Booster(model_file='model.ubj')
 - `feature_importances_` uses 'gain' by default in sklearn API. Use `xgb.plot_importance(model, importance_type='weight')` for split count.
 - Cross-validation with early stopping requires manual fold splitting (sklearn's `cross_val_score` does not pass `eval_set` per fold).
 - `predict_proba` returns shape `(n_samples, n_classes)`. For binary, positive-class probabilities are at index 1.
+- Threading: xgboost obeys the thread limit of the process, and that limit defaults to 1 in the sandbox. For a single fit, raise the thread limit for that command to the full CPU budget. Keep it at 1 when a forked search (`GridSearchCV`, `cross_val_score` with `n_jobs`) wraps the estimator.

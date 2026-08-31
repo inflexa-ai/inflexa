@@ -165,6 +165,8 @@ def score_signatures_ssgsea(expression_df, signatures_dict):
     DataFrame
         Signatures (rows) x Samples (columns) with NES scores.
     """
+    import os
+
     import gseapy
 
     result = gseapy.ssgsea(
@@ -173,6 +175,7 @@ def score_signatures_ssgsea(expression_df, signatures_dict):
         outdir=None,
         no_plot=True,
         min_size=3,
+        threads=os.cpu_count() or 4,  # gseapy defaults to 4 — size from the visible cores
     )
     return result.res2d.pivot(
         index="Term", columns="Name", values="NES",

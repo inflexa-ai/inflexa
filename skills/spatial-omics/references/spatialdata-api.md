@@ -301,7 +301,7 @@ sc.tl.leiden(adata, resolution=0.5, key_added="clusters")
 # Spatial analysis with squidpy
 sq.gr.spatial_neighbors(adata, coord_type="generic", n_neighs=10)
 sq.gr.nhood_enrichment(adata, cluster_key="clusters")
-sq.gr.spatial_autocorr(adata, mode="moran", n_jobs=4)
+sq.gr.spatial_autocorr(adata, mode="moran", n_jobs=4)  # size n_jobs from os.cpu_count()
 ```
 
 ## Gotchas

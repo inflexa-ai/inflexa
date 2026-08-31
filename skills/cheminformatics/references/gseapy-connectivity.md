@@ -213,3 +213,5 @@ def score_drug_panel(query_up, query_down, drug_signatures,
   top hits with 1000.
 - Results are in `res2d` (DataFrame), not `results` (dict). Always
   use `.res2d` for consistent access.
+- `prerank` takes `threads=` (default 4). Size it from the visible
+  cores, which report the CPU quota of the step.

@@ -279,7 +279,7 @@ msstats.dataProcessPlots(processed, type="ProfilePlot", address="output/profile_
 
 ## Version Notes
 
-- MSstats >= 4.10 (Bioconductor 3.20+): uses `data.table` internally for performance.
+- MSstats >= 4.10 (Bioconductor 3.20+): uses `data.table` internally for performance. The thread limit of the process defaults to 1 in the sandbox. For a large `dataProcess` run, raise the thread limit for that command to the full CPU budget of the step.
 - MSstatsTMT >= 2.10: supports `moderated=TRUE` for empirical Bayes in `groupComparisonTMT`.
 - Converter functions vary by version -- check available converters with `dir(msstats)`.
 - `groupComparison` contrast matrix column names must match `Condition` values exactly.

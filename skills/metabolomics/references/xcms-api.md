@@ -90,7 +90,10 @@ cwp <- CentWaveParam(
   integrate = 1L
 )
 
-# Run peak detection across all samples
+# Run peak detection across all samples.
+# findChromPeaks, adjustRtime, and fillChromPeaks fork BiocParallel workers from
+# the default bpparam(), which is sized from the CPU quota of the step. Pass
+# BPPARAM only to reduce the workers. Leave the thread limits at their default.
 xdata <- findChromPeaks(raw_data, param = cwp)
 
 # Inspect results

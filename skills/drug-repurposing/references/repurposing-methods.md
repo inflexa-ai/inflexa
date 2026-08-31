@@ -77,6 +77,8 @@ def connectivity_score_prerank(disease_signature, drug_gene_sets,
 
     rnk = disease_signature.set_index("gene")["rank_metric"]
 
+    # gseapy defaults to 4 threads. Size threads= from the visible cores,
+    # which report the CPU quota of the step.
     result = gseapy.prerank(
         rnk=rnk,
         gene_sets=drug_gene_sets,

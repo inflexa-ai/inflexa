@@ -58,6 +58,8 @@ Filter to top variable genes before WGCNA to manage memory and noise.
 ```python
 # CRITICAL: Filter to top variable genes before WGCNA
 # PyWGCNA can be very slow/memory-hungry with >5000 genes
+# PyWGCNA is thread-parallel. Raise the thread limit for this command to the
+# full CPU budget of the step, and do not add forked workers.
 n_top = 5000
 gene_var = expr_df.var(axis=0).sort_values(ascending=False)
 top_genes = gene_var.head(n_top).index.tolist()
