@@ -304,7 +304,7 @@ describe("docker createSandbox — transport modes", () => {
         expect(registered).toEqual([{ runId: "run-1", stepId: "step-a", sandboxId: ref.sandboxId }]);
     });
 
-    test("the cpu request is published as the thread count of each parallel library", async () => {
+    test("the thread pools default to one thread and the worker counts to the cpu request", async () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
@@ -317,18 +317,19 @@ describe("docker createSandbox — transport modes", () => {
 
         (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
 
-        // Without these the libraries size their pools from the core count of the
-        // host and oversubscribe the cgroup that the same call sets NanoCpus on.
+        // A fork copies the pool size of its parent, thus a pool at the quota
+        // runs workers * quota threads. One thread per pool is the safe
+        // default, and the agent raises it per command through the exec env.
         const env = envMapOf(sandboxOf(created)!);
-        expect(env.OMP_NUM_THREADS).toBe("2");
-        expect(env.OPENBLAS_NUM_THREADS).toBe("2");
+        expect(env.OMP_NUM_THREADS).toBe("1");
+        expect(env.OPENBLAS_NUM_THREADS).toBe("1");
         expect(env.BIOCPARALLEL_WORKER_NUMBER).toBe("2");
         expect(env.LOKY_MAX_CPU_COUNT).toBe("2");
         // R defaults mclapply to 2 workers. A value here raises the fork count.
         expect(env.MC_CORES).toBeUndefined();
     });
 
-    test("a fractional cpu request floors to one thread, and extraEnv overrides the derived count", async () => {
+    test("a fractional cpu request floors to one worker, and extraEnv overrides the defaults", async () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
@@ -344,6 +345,7 @@ describe("docker createSandbox — transport modes", () => {
         )._unsafeUnwrap();
 
         const env = envMapOf(sandboxOf(created)!);
+        expect(env.BIOCPARALLEL_WORKER_NUMBER).toBe("1");
         expect(env.OPENBLAS_NUM_THREADS).toBe("1");
         expect(env.OMP_NUM_THREADS).toBe("8");
     });

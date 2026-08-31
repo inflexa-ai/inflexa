@@ -136,6 +136,32 @@ up front.
   \`AnnotationHub\` — they all reach for the network and will fail. Load from an
   inventory path instead. Do NOT download data or install packages at runtime.
 
+## CPU Budget and Parallelism
+
+Your briefing names this step's CPU quota and memory limit. The container's
+core-count calls (\`parallel::detectCores()\`, \`os.cpu_count()\`) report the
+quota, so worker counts sized from them are safe.
+
+BLAS/OpenMP thread pools default to **1 thread** (\`OMP_NUM_THREADS\`,
+\`OPENBLAS_NUM_THREADS\`, \`MKL_NUM_THREADS\`, …). A forked worker inherits its
+parent's pool size, so this default is what keeps \`mclapply\` /
+\`multiprocessing\` from running workers × threads on a quota sized for one of
+them. The rule: **workers × threads-per-worker must not exceed the quota —
+raise one, never both.**
+
+- **Fork/worker parallelism** (\`mclapply\`, \`BiocParallel\`, \`joblib\`,
+  \`multiprocessing\`): size the workers from the quota and leave the thread
+  defaults alone.
+- **Thread parallelism** (one process: xgboost, WGCNA, data.table, polars, a
+  single large BLAS fit): raise the thread variables for that command through
+  \`execute_command\`'s \`env\`, e.g.
+  \`env: { "OMP_NUM_THREADS": "4", "OPENBLAS_NUM_THREADS": "4" }\` on a 4-CPU
+  quota.
+
+Exceeding the quota does not kill the step — the cgroup throttles it — but an
+oversubscribed step runs slower and can starve the exec server that runs your
+commands.
+
 ## Output Contract — Persisted Files Are the Deliverable
 
 This is a hard requirement, not a convention. **Your deliverable is persisted

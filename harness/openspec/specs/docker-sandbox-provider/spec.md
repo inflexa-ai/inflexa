@@ -259,6 +259,47 @@ container `HostConfig`: `NanoCpus` set to `round(cpu * 1e9)` and `Memory` set to
 - **WHEN** the Docker container is created
 - **THEN** the `HostConfig` has no `DeviceRequests` entry
 
+### Requirement: The cpu quota is visible inside the container
+
+A cgroup quota is invisible to the runtimes inside it. `parallel::detectCores()`
+greps `/proc/cpuinfo`, and `os.cpu_count()` reads
+`/sys/devices/system/cpu/online`, and the two files describe the host. Thus the
+Docker backend SHALL bind-mount two host-written files, read-only, over the two
+paths. The files describe `floor(cpu)` cores (minimum 1): an `online` file with
+`0-{n-1}`, and a `cpuinfo` file with the first `n` processor blocks of the
+host's `/proc/cpuinfo`, when that file is readable. The backend SHALL also set
+`MemorySwap` equal to `Memory`, thus a memory storm ends in an OOM kill and not
+in a swap thrash.
+
+The backend SHALL inject the shared thread-limit env (`thread-env.ts`). Each
+thread-pool variable (`OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`,
+`MKL_NUM_THREADS`, `R_DATATABLE_NUM_THREADS`, `NUMBA_NUM_THREADS`,
+`NUMEXPR_MAX_THREADS`, `POLARS_MAX_THREADS`, `RAYON_NUM_THREADS`) SHALL be `1`.
+Each worker-count variable (`BIOCPARALLEL_WORKER_NUMBER`, `LOKY_MAX_CPU_COUNT`)
+SHALL be `floor(cpu)` (minimum 1). A fork copies the thread-pool size of its
+parent, thus a pool at the quota runs `workers * quota` threads. One thread for
+each pool is the safe default, and the agent raises it per command through the
+exec `env`. `MC_CORES` SHALL NOT be set. `plan.env` and `extraEnv` SHALL
+override these defaults.
+
+#### Scenario: Core-count calls report the quota
+
+- **GIVEN** resources `{ cpu: 2 }` on a 12-core host
+- **WHEN** the container runs `parallel::detectCores()` or `os.cpu_count()`
+- **THEN** both report `2`
+
+#### Scenario: Thread pools default to one thread
+
+- **GIVEN** resources `{ cpu: 2 }`
+- **WHEN** the container is created
+- **THEN** the env has `OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`, `BIOCPARALLEL_WORKER_NUMBER=2`, and no `MC_CORES`
+
+#### Scenario: No swap
+
+- **GIVEN** resources `{ memoryGb: 1 }`
+- **WHEN** the container is created
+- **THEN** `MemorySwap` equals `Memory`
+
 ### Requirement: Sandbox containers labeled for managed-sweep cleanup
 
 Sandbox containers created by the Docker backend SHALL carry the labels

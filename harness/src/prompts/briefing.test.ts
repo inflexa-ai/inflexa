@@ -239,6 +239,19 @@ describe("composeStepBriefing", () => {
         expect(seed).toContain("/an-1");
     });
 
+    it("renders the resource budget and the workers-times-threads rule", () => {
+        const seed = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [] });
+        expect(seed).toContain("Resources (hard limits)");
+        expect(seed).toContain("workers × threads-per-worker");
+    });
+
+    it("omits the resources section for a historical step that carries none", () => {
+        const step = { ...fullyPopulatedStep(), resources: undefined };
+        const seed = composeStepBriefing({ step, workspace: WORKSPACE, profile: null, upstream: [] });
+        expect(seed).not.toContain("Resources (hard limits)");
+        expect(seed).not.toMatch(/\n{3,}/);
+    });
+
     it("is byte-identical when recomposed from the same data (replay stability)", () => {
         const briefing = {
             step: fullyPopulatedStep(),
