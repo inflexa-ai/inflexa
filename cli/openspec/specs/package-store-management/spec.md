@@ -363,7 +363,9 @@ Both MUST run only when no acquisition flight, no farm composition, and no
 transfer is live. A sandbox run needs no gate of its own. A run reaches
 store content only through the links of its farm, and a linked directory
 is never debris. Both MUST hold the reclaim exclusivity, and both MUST
-yield to live work. The collection MUST NOT touch a directory that the
+yield to live work. Within one process, a second collection MUST join the
+live one, because the exclusivity lock is re-entrant for one pid. An entry
+beside the first would release the lock under it. The collection MUST NOT touch a directory that the
 graph references, thus a pre-fetched package survives. `store reclaim`
 keeps its approval gate, and it removes the same tier plus the graph
 prune.

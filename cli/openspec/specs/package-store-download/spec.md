@@ -73,3 +73,25 @@ it serves stale template subtrees.
 - **GIVEN** a moved tag and the `--update` flag
 - **WHEN** the merge completes
 - **THEN** `farms/catalog` holds the staged catalog farm, and each farm of an analysis is untouched
+
+### Requirement: The cancel drops the staged tree only after the child is gone
+
+`store cancel` MUST signal the live child and wait, with a bound. When the
+child frees its lock inside the bound, the cancel removes the staged tree
+and settles `canceled`. When the child still holds the lock at the bound,
+the cancel MUST keep the staged tree and MUST name the live holder. The
+reason: a removal under a live writer can tear a rename mid-flight, and a
+torn merge can read back as a complete local store. A kept tree costs
+nothing — the next run merges it or repairs it through the receipt.
+
+#### Scenario: A stopped child frees the staged tree
+
+- **GIVEN** a live catalog transfer whose child exits on the signal
+- **WHEN** `store cancel` runs
+- **THEN** the staged tree is removed, and the row settles `canceled`
+
+#### Scenario: A child that outlives the bound keeps the staged tree
+
+- **GIVEN** a child that still holds the transfer lock at the wait bound
+- **WHEN** `store cancel` returns
+- **THEN** the staged tree stays, the row stays live, and the answer names the holder

@@ -688,6 +688,23 @@ export type DebrisDeps = {
  * preview names something, thus a quiet pass costs no engine start.
  */
 export async function collectStoreDebris(storeRoot: string, deps: DebrisDeps = {}): Promise<Result<DebrisSweepOutcome, StoreActionError>> {
+    // One pass per process, and a second caller JOINS the live one. The
+    // reclaim lock is re-entrant for one pid, thus a second in-process entry
+    // would pass the acquire, run beside the first, and free the lock under
+    // it — a waiter in another process then reads a live reclamation as gone.
+    if (debrisInflight !== null) return debrisInflight;
+    debrisInflight = runDebrisPass(storeRoot, deps);
+    try {
+        return await debrisInflight;
+    } finally {
+        debrisInflight = null;
+    }
+}
+
+/** The live debris pass of this process, while one runs. */
+let debrisInflight: Promise<Result<DebrisSweepOutcome, StoreActionError>> | null = null;
+
+async function runDebrisPass(storeRoot: string, deps: DebrisDeps): Promise<Result<DebrisSweepOutcome, StoreActionError>> {
     const lock = acquireInstanceLock(PACKAGE_STORE_RECLAIM_LOCK_KEY);
     if (!lock.acquired) return ok({ swept: false, dirs: [], reports: 0 });
     try {
@@ -1150,6 +1167,11 @@ export async function runStoreCancel(): Promise<void> {
     const outcome = await cancelCatalogTransfer(env.packageStoreDir);
     if (outcome.type === "no_run") {
         console.log("No package-store download is running. Nothing changed.");
+        return;
+    }
+    if (outcome.type === "timed_out") {
+        console.log(`The download child (pid ${outcome.holderPid}) did not stop inside the wait. Nothing was removed.`);
+        console.log("The child drains its shutdown. Run `inflexa store cancel` again in a moment.");
         return;
     }
     console.log(`Stopped the package-store download (pid ${outcome.holderPid}) and removed the partial transfer.`);

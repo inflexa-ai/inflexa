@@ -460,8 +460,14 @@ export async function runImageTransfer(kind: "runtime_image" | "provisioner_imag
     }
 }
 
-/** What a stop of a live child did. `no_run` is a normal answer, not a failure. */
-export type TransferStop = { readonly type: "stopped"; readonly holderPid: number } | { readonly type: "no_run" };
+/**
+ * What a stop of a live child did. `no_run` is a normal answer, not a failure.
+ * `timed_out` reports a child that still holds the lock at the wait bound: the
+ * child traps SIGTERM and runs a full shutdown chain, thus a slow drain is a
+ * representable state and never a false `stopped`.
+ */
+export type TransferStop =
+    { readonly type: "stopped"; readonly holderPid: number } | { readonly type: "timed_out"; readonly holderPid: number } | { readonly type: "no_run" };
 
 /** How long the stop waits for the signalled child to go away. */
 const STOP_EXIT_WAIT_MS = 3000;
@@ -475,9 +481,13 @@ const STOP_POLL_MS = 50;
  * The child is detached, thus a signal is the only thing that reaches it from
  * another terminal. The wait is bounded, and the CALLER settles the row and
  * drops what the kind staged — the catalog cancel owns its staged tree, and an
- * image pull stages nothing the engine does not own.
+ * image pull stages nothing the engine does not own. On `timed_out` the caller
+ * MUST leave the staged tree alone, because the child still writes into it.
+ *
+ * `waitMs` exists for a test: a live holder that survives the signal otherwise
+ * costs the full bound on every run of the suite.
  */
-export async function stopTransferChild(kind: TransferKind): Promise<TransferStop> {
+export async function stopTransferChild(kind: TransferKind, waitMs: number = STOP_EXIT_WAIT_MS): Promise<TransferStop> {
     const report = readTransferReport(kind);
     if (!report.live || report.holderPid === null) return { type: "no_run" };
     const holderPid = report.holderPid;
@@ -486,9 +496,9 @@ export async function stopTransferChild(kind: TransferKind): Promise<TransferSto
     } catch {
         // The child went away between the probe and the signal. The wait below settles it.
     }
-    for (let waited = 0; waited < STOP_EXIT_WAIT_MS; waited += STOP_POLL_MS) {
-        if (instanceLockHolder(transferLockKey(kind)) === null) break;
+    for (let waited = 0; waited < waitMs; waited += STOP_POLL_MS) {
+        if (instanceLockHolder(transferLockKey(kind)) === null) return { type: "stopped", holderPid };
         await Promise.sleep(STOP_POLL_MS);
     }
-    return { type: "stopped", holderPid };
+    return instanceLockHolder(transferLockKey(kind)) === null ? { type: "stopped", holderPid } : { type: "timed_out", holderPid };
 }
