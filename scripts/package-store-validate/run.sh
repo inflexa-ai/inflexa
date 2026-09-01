@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 # Acceptance driver — run the validation suite
-# (scripts/package-store-validate/validate.py) against a library store the way a
-# user's sandbox actually consumes it, in one of two modes:
-#
-#   --image <ref>   Boot a published sandbox image directly (the OSS path). The
-#                   store is baked at /mnt/libs/current and the resolver env is
-#                   baked into the image, so nothing is mounted or injected.
-#   --store <path>  Mount a store dir read-only at /mnt/libs in sandbox-base (the
-#                   managed path — mounted tarballs) and inject the resolver env.
+# (scripts/package-store-validate/validate.py) against a package store the way a
+# user's sandbox actually consumes it: the store dir mounts read-only at
+# /mnt/libs in sandbox-base, the catalog farm binds at /mnt/libs/farm, and the
+# resolver env is injected. The image bakes NO package — a store mount is the
+# one mode, and there is no baked-image path.
 #
 # The suite runs import-all (advertised ⊆ loadable) plus the per-library
 # smoke-test suite (scripts/lib-validator/run_all.py, mounted at /opt/lib-validator).
@@ -15,13 +12,12 @@
 #
 # Usage:
 #   scripts/package-store-validate/run.sh [--no-validators] [--summary-md <file>] \
-#       (--image <ref> | --store <path>)
+#       [--store <path>]
 #
 #   (default)         import-all + per-library validators
 #   --no-validators   import-all only (quick core check)
 #   --summary-md F    write the markdown results table to host file F (rendered
 #                     into the CI step summary by package-store-acceptance.sh)
-#   --image REF       boot this baked image (no mount)
 #   --store PATH      store dir to mount (default: $INFLEXA_LIB_STORE or
 #                     $XDG_DATA_HOME/inflexa/libs)
 #
@@ -35,15 +31,16 @@ SUITE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VALIDATOR_DIR="$(cd "$SUITE_DIR/../lib-validator" && pwd)"
 LIB_PATH="${INFLEXA_LIB_STORE:-${XDG_DATA_HOME:-${HOME:-/root}/.local/share}/inflexa/libs}"
 MOUNT_IMAGE="${SANDBOX_BASE_IMAGE:-sandbox-base:latest}"
-BAKED_IMAGE=""
 SUMMARY_MD=""
-SUITE_ARGS=()  # expanded with the ${arr[@]+...} guard: bash 3.2 (macOS) errors on an empty array under set -u
+# The suite validates a farm-backed store — that is the ONE mode — thus the
+# farm-store rule of validate.py is always on: each advertised Python module
+# must resolve from the content store, not from a shadow tree.
+SUITE_ARGS=("--farm")  # expanded with the ${arr[@]+...} guard: bash 3.2 (macOS) errors on an empty array under set -u
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-validators) SUITE_ARGS+=("--no-validators"); shift ;;
     --summary-md)    SUMMARY_MD="$2"; shift 2 ;;
-    --image)         BAKED_IMAGE="$2"; shift 2 ;;
     --store)         LIB_PATH="$2"; shift 2 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
@@ -62,28 +59,6 @@ if [ -n "$SUMMARY_MD" ]; then
   SUMMARY_ARGS=( -v "$SUMMARY_DIR:/out" -e PACKAGE_STORE_SUMMARY_MD="/out/$(basename "$SUMMARY_MD")" )
 fi
 
-if [ -n "$BAKED_IMAGE" ]; then
-  # OSS path: the store is baked into the image and the resolver env is baked in
-  # too, so mount only the suite + the per-library validators + a writable
-  # /mnt/refs stub (celltypist and friends probe $CELLTYPIST_FOLDER=/mnt/refs/...
-  # at import time).
-  #
-  # --entrypoint "" because sandbox images inherit sandbox-base's ENTRYPOINT,
-  # which boots sandbox-server and exits non-zero without SANDBOX_CALLBACK_SECRET.
-  # Without the override the probe dies before validate.py is ever reached.
-  echo "Validating baked store inside $BAKED_IMAGE ..."
-  docker run --rm --entrypoint "" \
-    -v "$SUITE_DIR:/opt/package-store-validate:ro" \
-    -v "$VALIDATOR_DIR:/opt/lib-validator:ro" \
-    --tmpfs /mnt/refs \
-    -e LIB_VALIDATOR_DIR=/opt/lib-validator \
-    -e PACKAGE_STORE_VERSION="${PACKAGE_STORE_VERSION:-}" \
-    ${SUMMARY_ARGS[@]+"${SUMMARY_ARGS[@]}"} \
-    "$BAKED_IMAGE" \
-    python3 /opt/package-store-validate/validate.py ${SUITE_ARGS[@]+"${SUITE_ARGS[@]}"}
-  exit $?
-fi
-
 # The store carries no active-farm pointer. A farm is a property of the sandbox,
 # thus the invoker names the farm and binds it at the container path. The catalog
 # farm is what a published store brings, and it is what a consumer of the artifact
@@ -93,7 +68,7 @@ FARM_PATH="$LIB_PATH/farms/$FARM_NAME"
 
 if [ ! -d "$FARM_PATH" ]; then
   echo "Error: no farm at $FARM_PATH" >&2
-  echo "Pass --image <ref> to validate a baked image, or --store PATH for a mounted store." >&2
+  echo "Pass --store PATH at a store root that holds farms/$FARM_NAME." >&2
   exit 1
 fi
 
@@ -131,7 +106,12 @@ echo "Validating farm $FARM_NAME of the store at $LIB_PATH in $MOUNT_IMAGE ..."
 # mountpoint is host-side state of the invoker's store COPY, never part of the
 # packed artifact — the build removes it from the volume before the pack.
 mkdir -p "$LIB_PATH/farm"
+# The posture of a real sandbox, because a green run here must predict a green
+# import there: no network (an import that dials out passes an open run and
+# fails a real step), no capability, and no privilege escalation. The image
+# already runs as the unprivileged sandbox user.
 docker run --rm --entrypoint "" \
+  --network none --cap-drop ALL --security-opt no-new-privileges \
   -v "$LIB_PATH:/mnt/libs:ro" \
   -v "$FARM_PATH:/mnt/libs/farm:ro" \
   -v "$SUITE_DIR:/opt/package-store-validate:ro" \

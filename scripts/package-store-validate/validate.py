@@ -503,9 +503,9 @@ def main() -> int:
             print(f"ERROR: --farm given, but {STORE} is not backed by a content store "
                   f"(no sibling store/ directory found)", file=sys.stderr)
             return 2
-        # The per-library smoke suite is a baked-image concern and its tree is not
-        # mounted for a farm. Import-all is the whole of the farm rule.
-        args.validators = False
+        # The flag ADDS the farm-store rule beside the suite. The driver mounts
+        # the per-library validators on the store path too, and the spec wants
+        # both: import-all with the farm-store proof, plus the smoke suite.
 
     this_arch = arch()
     try:

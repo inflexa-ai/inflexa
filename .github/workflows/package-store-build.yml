@@ -35,6 +35,10 @@ on:
         description: "Cap on parallel R source compiles (empty = auto/detectCores). Set for example 4 if the R build runs out of memory."
         required: false
         default: ""
+      version_suffix:
+        description: "Optional tag suffix, for example rerun2. A version tag is immutable in content, and a store build is not byte-reproducible. Thus a same-day re-dispatch at one commit needs its own tag."
+        required: false
+        default: ""
   # The store pipeline calls this workflow as a job. On a call, `inputs`
   # is empty and R_NCPUS resolves to auto.
   workflow_call:
@@ -62,10 +66,14 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Compute version + parse base image
+        env:
+          # Empty under a workflow_call: the pipeline carries no suffix input.
+          VERSION_SUFFIX: ${{ inputs.version_suffix }}
         id: meta
         run: |
           BASE_IMAGE=$(grep '^base_image:' "$MANIFEST" | awk '{print $2}' | tr -d '"')
           VERSION=$(date +%Y%m%d)-$(echo "${{ github.sha }}" | head -c 7)
+          if [ -n "$VERSION_SUFFIX" ]; then VERSION="${VERSION}-${VERSION_SUFFIX}"; fi
           {
             echo "version=$VERSION"
             echo "base_image=$BASE_IMAGE"
@@ -342,11 +350,9 @@ jobs:
         # package from the advertised inventory of the lock; a track in which
         # zero packages loaded fails the build. The lock rewrite runs through
         # the provisioner image, because the volume is root-owned.
-        env:
-          FARM_DIR: ${{ steps.farm.outputs.dir }}
         run: |
           docker run --rm -i \
-            -e ARCH \
+            -e ARCH -e FARM \
             -v "${STORE_VOLUME}:/mnt/libs:rw" \
             -v "${GITHUB_WORKSPACE}/load-check.json:/load-check.json:ro" \
             -v "${GITHUB_WORKSPACE}/images/package-store:/package-store:ro" \
@@ -355,7 +361,7 @@ jobs:
           import json, os, sys
           from pathlib import Path
           import yaml
-          lock_path = Path("/mnt/libs/farms/catalog/inflexa.lock")
+          lock_path = Path(f"/mnt/libs/farms/{os.environ['FARM']}/inflexa.lock")
           lock = json.loads(lock_path.read_text())
           results = json.loads(Path("/load-check.json").read_text()).get("results", [])
           failed = {(r.get("track"), r.get("package")) for r in results if not r.get("ok")}
@@ -446,8 +452,6 @@ jobs:
         # The report diffs the advertised inventory against the last published
         # artifact of THIS arch. The previous lock comes out of the published
         # base layer, fetched by digest — no full pull.
-        env:
-          FARM_DIR: ${{ steps.farm.outputs.dir }}
         run: |
           set -euo pipefail
           MT_BASE="application/vnd.inflexa.package-store.base.v1.tar+zstd"

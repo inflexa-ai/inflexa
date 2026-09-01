@@ -10,8 +10,9 @@
 #   ./scripts/sandbox-images-build-local.sh --base-only           # sandbox-base only
 #   ./scripts/sandbox-images-build-local.sh --platform linux/amd64
 #
-# After a build, validate the runtime image directly (it bakes no package):
-#   scripts/package-store-validate/run.sh --image sandbox-base:local
+# A runtime image bakes no package. To validate one, mount a store into it:
+#   SANDBOX_BASE_IMAGE=sandbox-base:local \
+#     scripts/package-store-validate/run.sh --store <extracted store root>
 
 set -euo pipefail
 

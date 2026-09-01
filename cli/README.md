@@ -53,18 +53,20 @@ Run `inflexa config` (or `bun run dev config`) to view and edit configuration af
 
 ## Sandbox image
 
-Analyses run inside a **sandbox image** that bakes the R / Python / conda / Node packages at `/mnt/libs/current`. You choose a variant and pull it from GitHub Packages:
+Analyses run inside the one **sandbox image**, `sandbox-base`. It carries the language runtimes, the bioconda command-line tools, and the Node packages — and NO R or Python package. The packages come from the local **package store**:
 
 | Command | Does |
 |-|-|
-| `inflexa sandbox pull [variant]` | Pull a sandbox image (`python` = Python + bioconda CLI tools + Node; `python-r` = that plus R) from `ghcr.io/inflexa-ai/sandbox-<variant>` and configure sandboxes to use it |
-| `inflexa sandbox status` | Show the configured variant, its GHCR reference, whether the image is present locally, and its digest |
+| `inflexa sandbox pull` | Pull `ghcr.io/inflexa-ai/sandbox-base` and configure sandboxes to use it |
+| `inflexa sandbox status` | Show the images, the live transfers, and the store state |
+| `inflexa store download` | Install the published package store (the catalog) |
+| `inflexa store add <pkg>` | Acquire one more package into the store pool |
 
-`inflexa sandbox pull` also runs during `inflexa setup`. Before a sandbox launches, a missing image is offered and pulled (`inflexa profile` needs it). The published images are multi-arch manifests, so `docker pull` resolves the host architecture automatically — you pick only the variant, never the architecture. Flags: `--yes` skips the download confirmation.
+`inflexa setup` offers the image pulls and the catalog download as one consent, and they run detached. The published image is a multi-arch manifest, thus `docker pull` resolves the host architecture automatically.
 
-- **No local store** — the packages ship inside the pulled image, so there is no `~/.local/share/inflexa/libs` tree, no `/mnt/libs` bind mount, and no architecture-forcing. `harness.sandboxImage` (in `config.json`) records the pulled image tag; set it to a custom `FROM`-extended image to run your own.
-- **Extend it** — `FROM ghcr.io/inflexa-ai/sandbox-python-r` then `RUN pip install …` / `install.packages(…)` lands in the store automatically (the image exports `PIP_TARGET`/`R_LIBS_USER`/`INFLEXA_LIB_ROOT`); run `inflexa-libs-refresh` afterward so the additions show up in `list_available_packages`. See [`images/README.md`](../images/README.md).
-- **Managed deployments** still mount per-track tarballs read-only (cold-start friendly); those tarballs are extracted from these same images by the build pipeline and are infra-managed, not a CLI concern.
+- **The local store** — the packages live under `$XDG_DATA_HOME/inflexa/package-store`. Each sandbox mounts them read-only at `/mnt/libs`, beside the farm of its analysis.
+- **Extend it** — `inflexa store add <pkg>` acquires from PyPI, CRAN, or Bioconductor, and `inflexa store link` connects a pool package into the farm of an analysis.
+- **Managed deployments** mount the same store from a shared volume, and the refresher fetches it with this CLI.
 
 ## Reference data
 

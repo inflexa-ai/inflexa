@@ -305,8 +305,12 @@ carry over.
 ### Requirement: Acceptance is a non-gating post-publish validation
 
 After a build publishes, an acceptance run MUST validate the published
-artifacts on a fresh machine. The run has no network at run time, and it
-has the correct arch. It MUST pull the published store with ORAS, extract each layer, and
+artifacts, on the correct arch. The run MUST obtain them only from the
+registry, never from a build volume of its own box. That source is what
+makes the run fresh, not the machine. The suite MUST run with no network,
+no capability, and no privilege escalation inside the sandbox. The arm64
+leg is best-effort, the same rule as the build, because its store is
+best-effort too. It MUST pull the published store with ORAS, extract each layer, and
 mount the store read-only into the published `sandbox-base`. Inside that
 sandbox it MUST run the import-all invariant over the advertised inventory
 and the per-library smoke-test suite. It MUST confirm that each advertised
