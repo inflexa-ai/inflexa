@@ -145,12 +145,20 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
     //    a store directory in a plan would publish an installer detail as an
     //    interface — the link pass resolves names against the pool. An absent
     //    array passes, because stored plans from before the field carry none.
+    //    The specifier check exists because the link pass splits on `==` only:
+    //    an unrefused `numpy>=1.26` becomes a package NAME, and the pool then
+    //    refuses a package it holds.
     for (const step of plan.steps) {
         for (const entry of step.packages ?? []) {
             if (/^[.~]|[/\\]|:\/\//.test(entry)) {
                 errors.push(
                     `Step "${step.id}" names a package location "${entry}" — name each package as a requirement ` +
                         `(a bare name, or name==version), never a path, a URL, or a store directory`,
+                );
+            } else if (/[<>!~]/.test(entry) || (entry.includes("=") && !entry.includes("=="))) {
+                errors.push(
+                    `Step "${step.id}" pins "${entry}" with a specifier the link pass cannot honor — ` +
+                        `use a bare name, or name==version with one exact version`,
                 );
             }
         }

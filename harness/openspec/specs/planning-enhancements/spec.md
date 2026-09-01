@@ -267,6 +267,11 @@ stored plan. The issue MUST name the step and the offending entry. An absent
 `packages` array MUST pass, because the stored plans from before this change
 carry none.
 
+The validation MUST also refuse a version specifier that is not `==`. The
+two permitted forms are a bare name and `name==version`. A range such as
+`numpy>=1.26` otherwise becomes a package NAME, and the link pass then
+refuses a package that the pool holds.
+
 #### Scenario: A path is refused
 
 - **GIVEN** a candidate plan step whose packages include `/mnt/libs/store/scanpy-1.12.3-e71bae79`
@@ -278,6 +283,12 @@ carry none.
 - **GIVEN** a step whose packages are `["scanpy", "numpy==1.26.4"]`
 - **WHEN** the plan validates
 - **THEN** no package-form issue is reported
+
+#### Scenario: A range specifier is refused
+
+- **GIVEN** a step whose packages include `numpy>=1.26`
+- **WHEN** the plan validates
+- **THEN** an issue names the step and the entry, and it names the two permitted forms
 
 ### Requirement: The planner prompt teaches the package field
 

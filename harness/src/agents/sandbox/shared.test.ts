@@ -289,6 +289,29 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         expect(boundOne.systemPrompt).not.toBe(unbound.systemPrompt);
     });
 
+    it("a realization throw reads as unavailable per request, never as a raw tool error", async () => {
+        const def = createSandboxAgent(
+            {
+                ...makeFakeSandboxAgentDeps(),
+                extendAnalysisFarm: async () => {
+                    throw new Error("the dependency graph is unreadable");
+                },
+            },
+            meta,
+            body,
+        );
+        const tool = def.tools.find((t) => t.id === "link_packages")!;
+
+        const result = (await tool.execute({ packages: [{ name: "scanpy" }, { name: "Seurat" }] }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result).toEqual({
+            outcomes: [
+                { kind: "unavailable", name: "scanpy", reason: "the dependency graph is unreadable" },
+                { kind: "unavailable", name: "Seurat", reason: "the dependency graph is unreadable" },
+            ],
+        });
+    });
+
     it("link_packages calls the seam with the analysis of the step and returns the outcomes verbatim", async () => {
         const calls: Array<{ analysisId: string; names: string[] }> = [];
         const def = createSandboxAgent(

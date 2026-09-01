@@ -119,8 +119,9 @@ is present, both backends MUST mount it read-write at `/mnt/libs/cache`,
 after the two store binds. With `toolchainSource: "image"` and a present
 cache mount, `NUMBA_CACHE_DIR` and `MPLCONFIGDIR` MUST point into
 `/mnt/libs/cache`. A missing cache location MUST degrade: no cache mount,
-and the entrypoint fallback serves. The cache is per analysis, because a
-loaded numba entry executes machine code.
+and the entrypoint fallback serves. A cache location that the backend
+cannot mount safely MUST degrade the same way, with a logged warning. The
+cache is per analysis, because a loaded numba entry executes machine code.
 
 #### Scenario: The cache mount rides the farm resolution
 

@@ -133,11 +133,24 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
     const union = new Map<string, PackageRequest>();
     for (const step of plan.steps) {
         for (const entry of step.packages ?? []) {
-            union.set(entry.trim().toLowerCase(), parseRequirement(entry));
+            // The FIRST spelling of the plan rides the request. An outcome
+            // echoes the requested spelling, and a last-writer fold could
+            // echo `seurat` where the plan said `Seurat` — a remedy in that
+            // case names a package that no repository holds.
+            const key = entry.trim().toLowerCase();
+            if (!union.has(key)) union.set(key, parseRequirement(entry));
         }
     }
     if (union.size === 0) return;
-    const outcomes = await extendAnalysisFarm(analysisId, [...union.values()]);
+    let outcomes: Awaited<ReturnType<ExtendAnalysisFarm>>;
+    try {
+        outcomes = await extendAnalysisFarm(analysisId, [...union.values()]);
+    } catch (cause) {
+        // A realization throw is an `unavailable` answer, not a driver error.
+        // The sibling resolver seam maps a throw the same way (farm.ts), and
+        // the planner can act on "the store cannot answer" — not on a stack.
+        throw new PlanPackagesMissingError([], [], cause instanceof Error ? cause.message : String(cause));
+    }
     // An `unavailable` outcome preempts everything: the link pass could not
     // answer at all (an unreadable graph, a locked farm), so a per-package
     // absence list would be a fabrication. One reason covers the batch.
