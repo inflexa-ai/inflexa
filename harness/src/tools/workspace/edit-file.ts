@@ -95,8 +95,12 @@ export interface EditFileDeps {
     readonly mutator: WorkspaceMutator;
     /** Read seam used to fetch current file content for search/replace. */
     readonly workspaceFilesystem: WorkspaceFilesystem;
-    /** Absolute host working directory — relative read/write paths resolve here. */
-    readonly workingDir: string;
+    /**
+     * Absolute host working directory — relative read paths resolve here. Omit
+     * for the conversation agent: the read seam then defaults to the analysis
+     * root, matching the session-scoped mutator's write prefix.
+     */
+    readonly workingDir?: string;
 }
 
 function replaceString(
@@ -203,7 +207,7 @@ export function createEditFileTool(deps: EditFileDeps) {
                 await deps.workspaceFilesystem.readFile({
                     session: ctx.session,
                     path,
-                    workingDir: deps.workingDir,
+                    ...(deps.workingDir !== undefined ? { workingDir: deps.workingDir } : {}),
                 }),
             );
             if (read.kind === "not_found") return ok({ status: "file_not_found" as const, path });
@@ -235,6 +239,7 @@ export function createEditFileTool(deps: EditFileDeps) {
                 content: replaced.content,
                 toolName: "edit_file",
                 runStep: ctx.runStep,
+                session: ctx.session,
             });
             if (result.status !== "ok") return ok(result);
             const lines: readonly number[] | undefined = replaced.lines;

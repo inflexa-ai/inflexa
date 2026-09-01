@@ -19,6 +19,7 @@ import type {
     ProvReportPreviewRef,
     ProvReportTitleRef,
     ProvReportVersionRef,
+    ProvSessionFileWriteRef,
     ProvSessionRef,
 } from "./types.js";
 
@@ -714,6 +715,42 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         doc.wasAttributedTo(reportQn, action.agentQn);
     }
 
+    /**
+     * Append the records of a file a session wrote with a file tool — the chat-route counterpart of
+     * {@link appendCommandExecuted}'s `file_tool` arm plus {@link appendFileWritten}, with no run or
+     * step to anchor to. The act keeps the lifecycle shape (a fresh action activity per write — a
+     * host emits it from a live bus, one time, never from a durable replay), typed
+     * `inflexa:FileToolWrite` so a lineage reader classifies it with the step-scoped file-tool
+     * activities. The file entity lives in the shared `(path, hash)` QName space, and its
+     * generation edge carries the SAME `gen-{fileDigest}` id every other generation authority
+     * uses — so one file entity keeps exactly one generation record even when a later step
+     * rewrites the identical bytes.
+     */
+    function appendSessionFileWritten(doc: ProvDocument, analysisId: string, actor: ProvActor, write: ProvSessionFileWriteRef, model: ProvModelId): void {
+        const { analysisQn, actionQn, agentQn } = appendLifecycleAction(doc, analysisId, actor, "inflexa:FileToolWrite");
+        // A second declaration of the freshly minted activity, because `appendLifecycleAction` owns
+        // the first one. No formal time — both slots are stamped already (see `appendReportAction`).
+        doc.activity(actionQn, undefined, undefined, {
+            "inflexa:tool": write.tool,
+            ...(write.threadId !== undefined ? { "inflexa:threadId": write.threadId } : {}),
+        });
+        appendActionModelAgent(doc, model, agentQn, actionQn);
+
+        const file = write.file;
+        const suffix = fileDigest(file);
+        const fQn = fileQName(file);
+        doc.entity(fQn, {
+            "prov:type": "inflexa:File",
+            "inflexa:path": file.path,
+            "inflexa:hash": file.hash,
+            "inflexa:size": file.size,
+            "inflexa:producer": file.producer,
+        });
+        doc.wasGeneratedBy(fQn, actionQn, undefined, `${NS_PREFIX}:gen-${suffix}`);
+        doc.wasAttributedTo(fQn, agentQn, `${NS_PREFIX}:attr-${suffix}-${agentDigest(agentQn)}`);
+        doc.wasDerivedFrom(fQn, analysisQn, undefined, undefined, undefined, `${NS_PREFIX}:deriv-${suffix}`);
+    }
+
     /** Append the records of one block act. The four acts share one payload, thus they differ only in the activity type they name. */
     function appendReportBlockAct(
         doc: ProvDocument,
@@ -822,6 +859,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         appendFileWritten,
         appendInputUsed,
         appendSessionCreated,
+        appendSessionFileWritten,
         appendReportBlockAdded,
         appendReportBlockChanged,
         appendReportBlockRemoved,

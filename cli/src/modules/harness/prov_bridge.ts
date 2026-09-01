@@ -533,6 +533,21 @@ export function createSessionEmit(sessionModel: ReportSessionModel): (event: Ses
                     version: { threadId: event.threadId, versionId: event.versionId, replaced: event.replaced },
                 });
                 return;
+            case "write-file":
+                Bus.emit("inflexa", {
+                    type: "prov.session_file_written",
+                    analysisId,
+                    actor,
+                    model,
+                    write: {
+                        // A chat scope can carry no thread; the key then stays absent rather than
+                        // carrying `undefined` into the record.
+                        ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
+                        tool: event.tool,
+                        file: { path: event.path, hash: event.hash, size: event.size, producer: "file_tool" },
+                    },
+                });
+                return;
             default: {
                 // Exhaustiveness: a new session event must add its mapping here.
                 const never: never = event;

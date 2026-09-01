@@ -109,6 +109,8 @@ describe("createConversationAgent", () => {
             "workspace_search",
             "read_file",
             "grep",
+            "write_file",
+            "edit_file",
             "update_working_memory",
             "inspect_run",
             "inspect_data_profile",

@@ -289,7 +289,8 @@ is an embedder concern.
 ### Key Components
 
 - **Conversation Agent** (`agents/conversation-agent.ts`): the single user-facing
-  agent. It has the bio-lookup tools, the workspace search, `inspectRun`,
+  agent. It has the bio-lookup tools, the workspace search, the two file tools
+  (`write_file`, `edit_file`), `inspectRun`,
   `inspectDataProfile`, `updateWorkingMemory`, `generatePlan`, `executePlan`,
   `runEphemeral`, `startReportSession`, `generateAnalogyReport`, and `showUser`.
   `createConversationAgent(deps)` is the composition root that wires the deps of
@@ -323,7 +324,9 @@ is an embedder concern.
   search) is sandbox-independent, and it is available to the conversation agent.
   In the mutate surface (`write_file`, `edit_file`, `execute_command`), only
   `execute_command` is sandbox-gated. The two file tools write with the host
-  filesystem after the `resolveForWrite` confinement.
+  filesystem after the `resolveForWrite` confinement. The conversation agent
+  also holds the two file tools, confined to the analysis root. Each of its
+  successful writes emits one `write-file` provenance session event.
 - **Composition root** (`runtime/assemble.ts`): `assembleCoreRuntime` is the
   host-neutral assembly point. It registers the durable workflows, and it builds
   the conversation agent over them. The local seam realizations that it can be

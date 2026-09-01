@@ -105,8 +105,9 @@ A written file carries `prov:type` `inflexa:File`, `inflexa:path`,
 is a random UUID. The model clock (`now`) defaults to the wall clock. Both are
 injectable, and a lifecycle action (`inflexa:CreateAnalysis`,
 `inflexa:AddInput`, `inflexa:RemoveInput`, one of the nine session and report
-types below, or a host-defined type through the generic lifecycle-action
-builder) is deliberately not deterministic by default.
+types below, `inflexa:FileToolWrite` for a session file write, or a
+host-defined type through the generic lifecycle-action builder) is
+deliberately not deterministic by default.
 
 The command group digest is:
 
@@ -446,6 +447,33 @@ entity. It appends the generation edge, the attribution, and the specialization
 only when the count is zero. Each of the three relations is anonymous, and the
 generation edge lands on a fresh action id. `unified()` merges by identifier
 alone, thus it cannot collapse a second copy, and the guard is the only dedupe.
+
+### session_file_written
+
+Payload: the write ref and the model id. The write ref carries the tool name,
+the file ref, and an optional thread id.
+
+The event records a file that an agent session wrote with a file tool,
+outside a run and outside a step. The producer appends these statements, in
+this order:
+
+1. the action activity `inflexa:action-{mintActionId()}`, `prov:type`
+   `inflexa:FileToolWrite`, start = end = the model clock
+2. `wasAssociatedWith(action, actor)` — anonymous
+3. the same action activity again, with `inflexa:tool` and with the optional
+   `inflexa:threadId`, and with no formal time
+4. the model agent and its delegation, per the model-agent statements above
+5. `wasAssociatedWith(action, model)` — anonymous
+6. the file entity `inflexa:file-{fileDigest}`, with the same attributes as
+   the `file_written` entity
+7. `wasGeneratedBy(file, action)`, id `inflexa:gen-{fileDigest}`
+8. `wasAttributedTo(file, actor)`, id `inflexa:attr-{fileDigest}-{aDigest}`
+9. `wasDerivedFrom(file, analysis)`, id `inflexa:deriv-{fileDigest}`
+
+The file entity is in the same `(path, hash)` QName space as a step output.
+The generation edge carries the shared `inflexa:gen-{fileDigest}` id. Thus
+one file entity keeps exactly one generation record, also when a later step
+writes the identical bytes to the same path.
 
 ## The chain rule
 

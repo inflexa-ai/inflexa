@@ -10,6 +10,7 @@ import type {
     ProvUsedInputRef,
     ProvFileRef,
     ProvCommandRef,
+    ProvSessionFileWriteRef,
     ProvSessionRef,
     ProvReportBlockRef,
     ProvReportTitleRef,
@@ -135,6 +136,8 @@ export type BusEvent =
      * reaches this contract only through the pin, never silently.
      */
     | { type: "prov.session_created"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; session: ProvSessionRef }
+    /** A file a conversation turn wrote with a file tool — a session-scoped write with no run or step to anchor to. */
+    | { type: "prov.session_file_written"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; write: ProvSessionFileWriteRef }
     | { type: "prov.report_block_added"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
     | { type: "prov.report_block_changed"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
     | { type: "prov.report_block_removed"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }

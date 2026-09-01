@@ -177,7 +177,13 @@ describe("write_file tool", () => {
             return value;
         };
 
-        const first = await mutator.writeFile({ path: "output/replay.txt", content: "v1", toolName: "write_file", runStep: cachingStep });
+        const first = await mutator.writeFile({
+            path: "output/replay.txt",
+            content: "v1",
+            toolName: "write_file",
+            runStep: cachingStep,
+            session: makeToolContext().ctx.session,
+        });
         expect(first.status).toBe("ok");
         expect(bodyRuns).toBe(1);
 
@@ -185,7 +191,13 @@ describe("write_file tool", () => {
         // returns ok without touching the disk again.
         const hostPath = resolvePath(workingDir, "output", "replay.txt");
         await writeFile(hostPath, "changed-on-disk");
-        const replayed = await mutator.writeFile({ path: "output/replay.txt", content: "v1", toolName: "write_file", runStep: cachingStep });
+        const replayed = await mutator.writeFile({
+            path: "output/replay.txt",
+            content: "v1",
+            toolName: "write_file",
+            runStep: cachingStep,
+            session: makeToolContext().ctx.session,
+        });
         expect(replayed.status).toBe("ok");
         expect(bodyRuns).toBe(1);
         expect(await readFile(hostPath, "utf8")).toBe("changed-on-disk");

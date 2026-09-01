@@ -136,7 +136,8 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
     `file_stat`, `grep`, and the semantic `workspace_search`. It operates on the
     file system and the index directly, and it is **sandbox-independent**. It is
     available to an agent with no sandbox. The conversation agent reads and
-    searches the workspace and never holds a sandbox.
+    searches the workspace, holds the two file tools, and never holds a
+    sandbox.
   - **Mutate surface** (`WorkspaceMutator`) — `write_file` and `edit_file`, plus
     the raw `execute_command` chokepoint. Only `execute_command` is
     **sandbox-gated**. `write_file` and `edit_file` resolve the path, confine it
@@ -149,9 +150,10 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   directory** that the composition root supplies. A plannable step gets
   `runs/{runId}/{stepId}`. The data profiler gets `runs/data-profile/profile`. A
   report-session derivation gets `report-sessions/{threadId}/derived`. The conversation agent gets the analysis
-  root, which is read-only, because chat cannot write. The working directory is
-  the `cwd` of `execute_command` for that agent, and it is the confinement root
-  for its writes.
+  root. Thus a chat turn can write each file of its own analysis tree, and
+  each successful write emits one `write-file` provenance session event. The
+  working directory is the `cwd` of `execute_command` for that agent, and it
+  is the confinement root for its writes.
 - **Workspace path model** — One resolution rule across each file tool
   (`read_file`, `list_files`, `file_stat`, `grep`, `write_file`, `edit_file`,
   `execute_command`) and the scripts that agents run:

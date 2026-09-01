@@ -232,6 +232,70 @@ chokepoint as the exact-string mode.
 - **THEN** `old_string` is a literal string, and the exact-string rules
   (`not_found`, `not_unique`, `replace_all`) apply unchanged
 
+### Requirement: The conversation agent holds the write pair confined to the analysis root
+
+The conversation agent MUST hold `write_file` and `edit_file`. The
+composition root MUST wire the two tools over a session-scoped
+`WorkspaceMutator` realization. That realization MUST resolve the workspace
+root per call, from the analysis scope of the session. The working directory
+of the conversation agent is the analysis root, thus a write can land at each
+path inside its own analysis tree.
+
+The confinement MUST NOT become weaker. A `..` traversal, a foreign analysis,
+and an out-of-tree path give `out_of_scope`. The symlink checks of the mutate
+seam refuse a symlink escape. The chat route holds no sandbox, and the write
+path uses none.
+
+A scope that is not an analysis scope has no workspace tree. A write under
+such a scope MUST give `out_of_scope` before any I/O.
+
+#### Scenario: A chat write lands inside the analysis tree
+
+- **GIVEN** the conversation agent on the chat route
+- **WHEN** the model invokes `write_file` with the path `notes/summary.md`
+- **THEN** the mutator resolves the path against the analysis root and writes
+  the bytes with the host filesystem
+- **AND** the result is an `ok` data variant with the `/{resourceId}/...`
+  path and `bytesWritten`
+
+#### Scenario: A chat write that escapes the tree is refused
+
+- **WHEN** the model invokes `write_file` with `../other/x.csv` or with
+  `/{otherAnalysisId}/x.csv`
+- **THEN** the result is an `out_of_scope` data variant and no write occurs
+
+#### Scenario: A symlink escape is refused in the chat context
+
+- **GIVEN** a symbolic link inside the analysis tree with a target outside it
+- **WHEN** the model invokes `write_file` with a path through that link
+- **THEN** the mutator refuses the write, and no byte lands outside the tree
+
+### Requirement: A conversation-agent write records provenance
+
+Each successful conversation-agent write MUST emit one `write-file` session
+event through the provenance seam. The event MUST carry:
+
+- the analysis id
+- the thread id, when the scope holds one
+- the analysis-root-relative path of the landed file
+- the SHA-256 hash of the exact bytes that landed, computed in-process
+- the size in bytes
+- the name of the file tool that did the write
+
+A refused write and a failed write MUST emit nothing. An unbound session emit
+records nothing, and the write itself continues unchanged.
+
+#### Scenario: A chat write emits one session event
+
+- **WHEN** `write_file` succeeds on the chat route
+- **THEN** the session emit of the seam receives one `write-file` event with
+  the path, the hash, the size, and the tool `write_file`
+
+#### Scenario: A refused chat write emits nothing
+
+- **WHEN** a chat write returns `out_of_scope` or `out_of_prefix`
+- **THEN** the session emit receives no event
+
 ## REMOVED Requirements
 
 ### Requirement: write_file is sandbox-gated and confined to the working directory
