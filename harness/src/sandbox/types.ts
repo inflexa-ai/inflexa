@@ -54,7 +54,16 @@ export interface FarmLocation {
 /** The answer of a farm resolver: a usable farm, or a refusal that carries the reason of the embedder. */
 export type FarmResolution = { readonly kind: "available"; readonly location: FarmLocation } | { readonly kind: "unavailable"; readonly reason: string };
 
-/** Resolve the farm of one analysis. A backend calls this at each `createSandbox`, thus a new farm reaches the next sandbox with no restart. */
+/**
+ * Resolve the farm of one analysis. A backend calls this at each
+ * `createSandbox`, thus a new farm reaches the next sandbox with no restart.
+ *
+ * The resolver carries the mount gate when the backend cannot. On a
+ * volume-backed farm (K8s) the host cannot stat `farmPath`, thus the
+ * resolver MUST answer `unavailable` when the `inflexa.lock` of the farm
+ * does not parse. A backend with a host-readable path (Docker) proves the
+ * lock itself, after the resolution.
+ */
 export type ResolveAnalysisFarm = (analysisId: string) => Promise<FarmResolution>;
 
 /**

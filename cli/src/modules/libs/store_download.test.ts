@@ -252,7 +252,7 @@ describe("downloadPackageStore", () => {
         expect(existsSync(join(storeRoot, "store", BETA))).toBe(false);
     });
 
-    test("the update consent replaces the graph whole, and the merge removes nothing", async () => {
+    test("the update replaces the graph and the catalog farm, and keeps each farm of the user", async () => {
         const storeRoot = tempDir("inflexa-store-dl-");
         expectDownloaded((await download(storeRoot, makeRegistry(await catalogLayers(1))))._unsafeUnwrap());
         // State a user builds between the two versions: a farm, a local acquisition,
@@ -271,11 +271,16 @@ describe("downloadPackageStore", () => {
         expect(existsSync(join(storeRoot, "store", ALPHA))).toBe(true);
         expect(existsSync(join(storeRoot, "store", LOCAL))).toBe(true);
         expect(existsSync(join(storeRoot, "store", BETA))).toBe(true);
-        // Each farm of the user is kept whole, the catalog farm included.
-        expect(outcome.merge.farmsKept).toEqual(["catalog"]);
+        // The catalog farm travels WITH the graph: the old closure names the
+        // store directories of the old graph, and a kept catalog farm beside
+        // the new graph refuses every farm-less compose. Content inside it is
+        // publisher territory, thus the note goes with the old farm.
+        expect(outcome.merge.farmsReplaced).toEqual(["catalog"]);
+        expect(outcome.merge.farmsKept).toEqual([]);
+        expect(readFileSync(join(storeRoot, "farms", "catalog", "inflexa.lock"), "utf8")).toBe("catalog-v2\n");
+        expect(existsSync(join(storeRoot, "farms", "catalog", "user-note.txt"))).toBe(false);
+        // The farm of the analysis is untouched.
         expect(readFileSync(join(storeRoot, "farms", "my-analysis", "marker.txt"), "utf8")).toBe("mine\n");
-        expect(readFileSync(join(storeRoot, "farms", "catalog", "user-note.txt"), "utf8")).toBe("note\n");
-        expect(readFileSync(join(storeRoot, "farms", "catalog", "inflexa.lock"), "utf8")).toBe("catalog-v1\n");
         const receipt = JSON.parse(readFileSync(storeDownloadPaths(storeRoot).receipt, "utf8")) as { manifestDigest: string };
         expect(receipt.manifestDigest).toBe(registryV2.manifestDigest);
     });

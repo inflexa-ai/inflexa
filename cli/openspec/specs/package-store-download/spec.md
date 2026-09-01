@@ -29,12 +29,12 @@ MUST drop the staged tree and keep the blob cache.
 
 ### Requirement: The merge is add-only and keeps user state
 
-The merge into the store root MUST remove nothing. A `store/` name that both
-sides hold is skipped, because the store is content-addressed. An existing
-farm MUST be kept, because the download never replaces a farm of the user.
-The graph moves in only when the root has none. Old versions stay until
-`store reclaim` frees the unreferenced ones. `store add` MUST refuse while
-a merge runs.
+The merge into the store root MUST remove nothing of the user. A `store/`
+name that both sides hold is skipped, because the store is content-addressed.
+An existing farm of an analysis MUST be kept, but the catalog farm belongs
+to the publisher — the update requirement below governs it. The graph moves in only when
+the root has none. Old versions stay until `store reclaim` frees the
+unreferenced ones. `store add` MUST refuse while a merge runs.
 
 #### Scenario: A user farm survives the download
 
@@ -50,6 +50,12 @@ nothing. A moved `latest-<arch>` tag MUST report `update_available`, and
 MUST replace the old one whole, under the metadata lock, because two graphs
 must not merge.
 
+On `--update`, the staged catalog farm MUST replace `farms/catalog` in the
+same run, and each other farm stays untouched. The old catalog closure
+names the store directories of the old graph. Thus a kept catalog farm
+beside a new graph refuses every farm-less compose with `unknown_root`, and
+it serves stale template subtrees.
+
 #### Scenario: A repeat download is a no-op
 
 - **GIVEN** a valid receipt at the current tag
@@ -61,3 +67,9 @@ must not merge.
 - **GIVEN** a moved tag and the `--update` flag
 - **WHEN** the merge completes
 - **THEN** the new `deps.json` replaces the old one, and no node-level merge happens
+
+#### Scenario: The update replaces the catalog farm
+
+- **GIVEN** a moved tag and the `--update` flag
+- **WHEN** the merge completes
+- **THEN** `farms/catalog` holds the staged catalog farm, and each farm of an analysis is untouched

@@ -52,6 +52,7 @@ import {
 import { sha256File } from "../../lib/hash.ts";
 import { acquireInstanceLock, releaseInstanceLock, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../lib/lock.ts";
 import type { TransferPhase } from "../../types/store.ts";
+import { CATALOG_FARM } from "./composition.ts";
 import { readTransferReport, spawnDetachedSelf, stopTransferChild, transferLockKey, type TransferReport } from "./transfers.ts";
 
 /** The registry host the store publishes to. */
@@ -154,6 +155,8 @@ export type StoreMergeReport = {
     readonly farmsAdded: readonly string[];
     /** The farm names the download left alone, because the store root already holds a farm of each name. */
     readonly farmsKept: readonly string[];
+    /** The farm names the update swapped whole — the catalog farm on `--update`, and nothing else. */
+    readonly farmsReplaced: readonly string[];
 };
 
 /**
@@ -795,6 +798,44 @@ async function mergeChildren(stagedDir: string, targetDir: string): Promise<{ re
 }
 
 /**
+ * Merge the staged farms into `farms/`, with the one publisher-owned exception.
+ *
+ * A farm of an analysis merges add-only, exactly as {@link mergeChildren} does: it belongs to the
+ * user, and the download never replaces it. The catalog farm belongs to the publisher, and on an
+ * update it must travel WITH the graph. Its closure names store directories of one resolved set, so
+ * a kept catalog farm beside a new graph fails `graph.nodes.has` on every farm-less compose, and
+ * {@link readTemplate} then serves the subtrees of the old catalog.
+ */
+async function mergeFarms(
+    stagedDir: string,
+    targetDir: string,
+    replaceCatalog: boolean,
+): Promise<{ readonly added: readonly string[]; readonly kept: readonly string[]; readonly replaced: readonly string[] }> {
+    const added: string[] = [];
+    const kept: string[] = [];
+    const replaced: string[] = [];
+    await mkdir(targetDir, { recursive: true });
+    for (const child of await readdir(stagedDir)) {
+        const to = join(targetDir, child);
+        if (await entryExists(to)) {
+            if (child === CATALOG_FARM && replaceCatalog) {
+                // A crash between the removal and the rename leaves no catalog farm, and the
+                // receipt is then unwritten — the next run merges again and lands it whole.
+                await rm(to, { recursive: true, force: true });
+                await rename(join(stagedDir, child), to);
+                replaced.push(child);
+                continue;
+            }
+            kept.push(child);
+            continue;
+        }
+        await rename(join(stagedDir, child), to);
+        added.push(child);
+    }
+    return { added, kept, replaced };
+}
+
+/**
  * Take the store-level metadata mutex, run `fn`, and release it.
  *
  * Two writers touch the dependency graph at the store root: a download with `--update` replaces it,
@@ -861,8 +902,9 @@ async function mergeStoreGraph(stagedGraph: string, target: string, replace: boo
  * store add` acquires into the same `store/` pool, and the composition writes an analysis farm
  * beside the published one. A replacement would destroy that work, so the download moves in only
  * what the root does not have. `store/` and `farms/` merge one level deeper, because both owners
- * write into them. `deps.json` is the one record with its own rule ({@link mergeStoreGraph}). Any
- * other top-level entry moves in only when it is absent.
+ * write into them. Two records ride the update rule instead: `deps.json` ({@link mergeStoreGraph}),
+ * and the catalog farm ({@link mergeFarms}), because the template and the graph describe one
+ * resolved set and must move together. Any other top-level entry moves in only when it is absent.
  *
  * The merge keeps the crash safety of the receipt pattern. Each move is a `rename` inside one
  * filesystem, thus a child is complete or absent and never half-written. A crash part-way leaves the
@@ -885,6 +927,7 @@ async function mergeStagedRoot(
     const storeDirsAdded: string[] = [];
     const farmsAdded: string[] = [];
     const farmsKept: string[] = [];
+    const farmsReplaced: string[] = [];
     try {
         for (const name of ordered) {
             const to = join(storeRoot, name);
@@ -893,9 +936,10 @@ async function mergeStagedRoot(
                 continue;
             }
             if (name === "farms") {
-                const merged = await mergeChildren(join(stageRoot, name), to);
+                const merged = await mergeFarms(join(stageRoot, name), to, replaceGraph);
                 farmsAdded.push(...merged.added);
                 farmsKept.push(...merged.kept);
+                farmsReplaced.push(...merged.replaced);
                 continue;
             }
             if (name === STORE_GRAPH) {
@@ -906,7 +950,7 @@ async function mergeStagedRoot(
             if (await entryExists(to)) continue;
             await rename(join(stageRoot, name), to);
         }
-        return ok({ storeDirsAdded, farmsAdded, farmsKept });
+        return ok({ storeDirsAdded, farmsAdded, farmsKept, farmsReplaced });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not merge the staged store into ${storeRoot}.`, cause });
     }
