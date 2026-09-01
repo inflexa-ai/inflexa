@@ -26,7 +26,7 @@ import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { ProvenanceCollector } from "../provenance/collector.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import { computeSha256File, hasValidContentHash } from "../lib/fs-helpers.js";
+import { classifyWithinRoot, computeSha256File, hasValidContentHash } from "../lib/fs-helpers.js";
 import { artifactReconcileDropped, lineageInputDropped } from "../lib/metrics.js";
 
 export interface ReconcileManifestInput {
@@ -76,6 +76,18 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
         // against a host file the step never produced.
         if (!absPath.startsWith(stepRoot + path.sep) && absPath !== stepRoot) {
             logger.warn("skipping out-of-bounds entry", { path: entry.path });
+            continue;
+        }
+        // Physical bound: the check above compares path strings, and `entry.path`
+        // can name a symlink the step planted — the `stat`/`computeSha256File`
+        // below both follow it. A real target outside the analysis tree is not
+        // attestable; same verdict as the lexical skip above. An `absent`
+        // verdict (a dangling link, a missing file) falls through to the stat,
+        // which drops it as a phantom. The sandbox is destroyed before
+        // reconcile runs, so the tree is quiescent and a checked link cannot be
+        // swapped under the hash.
+        if ((await classifyWithinRoot(workspaceRoot, absPath)) === "escaped") {
+            logger.warn("skipping symlink-escape entry", { path: entry.path });
             continue;
         }
         let info;
@@ -186,6 +198,18 @@ async function fillInputHashesFromDisk(
         if (hostPath !== resourceRoot && !hostPath.startsWith(resourceRoot + path.sep)) {
             logger.warn("dropping out-of-tree input from lineage", { ...attestation, hostPath, boundSite: "workspace-root" });
             lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "workspace-root" });
+            collector.dropInput(ref);
+            continue;
+        }
+        // Physical bound: the two checks above compare path strings, and a
+        // symlink at `hostPath` turns an in-tree string into an out-of-tree
+        // target that `stat`/`computeSha256File` would follow. An escaping
+        // target is not an attestable edge — drop it from lineage exactly like
+        // the lexical out-of-tree reads above; it is not drift. An `absent`
+        // verdict (a dangling link) falls through to the ENOENT drop below.
+        if ((await classifyWithinRoot(resourceRoot, hostPath)) === "escaped") {
+            logger.warn("dropping out-of-tree input from lineage", { ...attestation, hostPath, boundSite: "realpath" });
+            lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "symlink-escape" });
             collector.dropInput(ref);
             continue;
         }

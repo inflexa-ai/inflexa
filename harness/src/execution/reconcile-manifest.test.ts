@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -240,6 +240,129 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
             const warns = logger.records.filter((r) => r.level === "warn");
             expect(warns).toHaveLength(1);
             expect(warns[0]!.fields).toMatchObject({ path: "/etc/passwd", boundSite: "container-prefix" });
+            expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("does not attest an output entry whose symlink escapes the tree, and the run continues", async () => {
+        // The sandbox can plant `output/leak.csv -> <outside secret>`; the lexical
+        // step-root bound passes (the string is in-bounds), so only the realpath
+        // classification keeps the escaping bytes out of the attested manifest.
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        const logger = createCapturingLogger();
+        try {
+            const secret = join(sessionPath, "outside-secret.txt");
+            await writeFile(secret, "PRIVATE KEY\n");
+            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
+            await writeFile(join(root, "runs/run-001/de/output/result.csv"), "result\n1\n");
+            await symlink(secret, join(root, "runs/run-001/de/output/leak.csv"));
+
+            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001" });
+            feedExecFrame({
+                collector,
+                mountRoot: `/${RID}`,
+                command: ["python3", "scripts/de.py"],
+                exitCode: 0,
+                durationMs: 100,
+                provenance: {
+                    disabled: false,
+                    reads: [],
+                    writes: [
+                        { path: `/${RID}/runs/run-001/de/output/result.csv`, layers: ["inotify"] },
+                        { path: `/${RID}/runs/run-001/de/output/leak.csv`, layers: ["inotify"] },
+                    ],
+                    deletes: [],
+                },
+            });
+            const manifest: ArtifactManifestEntry[] = [
+                { stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" },
+                { stepId: "de", runId: "run-001", path: "output/leak.csv", size: 0, type: "output", hash: "" },
+            ];
+
+            const result = await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+                logger,
+            });
+
+            // The escaping entry is skipped — no hash of the outside bytes is
+            // recorded anywhere — while the real output still reconciles.
+            expect(result.manifest.map((e) => e.path)).toEqual(["output/result.csv"]);
+            const outsideHash = await computeSha256File(secret);
+            expect(result.manifest.some((e) => e.hash === outsideHash)).toBe(false);
+
+            const warns = logger.records.filter((r) => r.level === "warn");
+            expect(warns).toHaveLength(1);
+            expect(warns[0]!.msg).toBe("[reconcile-manifest] skipping symlink-escape entry");
+            expect(warns[0]!.fields).toMatchObject({ path: "output/leak.csv" });
+            // A skip is not a failure: the reconcile completes without an error.
+            expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("drops an input whose symlink escapes the tree from lineage", async () => {
+        // Same hole on the input side: the tracked read names an in-tree path,
+        // but the path is a symlink to an outside file, so hashing through it
+        // would attest outside bytes as this analysis's lineage.
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        const logger = createCapturingLogger();
+        const upstreamRel = "runs/run-001/qc/output/qc.csv";
+        try {
+            const secret = join(sessionPath, "outside-secret.txt");
+            await writeFile(secret, "PRIVATE KEY\n");
+            await mkdir(join(root, "runs/run-001/qc/output"), { recursive: true });
+            await symlink(secret, join(root, upstreamRel));
+            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
+            await writeFile(join(root, "runs/run-001/de/output/result.csv"), "result\n1\n");
+
+            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001", dependsOn: ["qc"] });
+            feedExecFrame({
+                collector,
+                mountRoot: `/${RID}`,
+                command: ["python3", "scripts/de.py"],
+                exitCode: 0,
+                durationMs: 100,
+                provenance: {
+                    disabled: false,
+                    reads: [{ path: `/${RID}/${upstreamRel}`, layers: ["python"] }],
+                    writes: [{ path: `/${RID}/runs/run-001/de/output/result.csv`, layers: ["inotify"] }],
+                    deletes: [],
+                },
+            });
+            const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
+
+            const result = await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+                logger,
+            });
+
+            // The step survives; the escaping ref leaves the tracked inputs and
+            // every record, so registration never sees the outside bytes' edge.
+            expect(result.manifest).toHaveLength(1);
+            expect(collector.getTrackedInputs()).toEqual([]);
+            expect(collector.getRecords().flatMap((r) => r.inputs)).toHaveLength(0);
+
+            const warns = logger.records.filter((r) => r.level === "warn");
+            expect(warns).toHaveLength(1);
+            expect(warns[0]!.msg).toBe("[reconcile-manifest] dropping out-of-tree input from lineage");
+            expect(warns[0]!.fields).toMatchObject({ path: `/${RID}/${upstreamRel}`, boundSite: "realpath" });
             expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
         } finally {
             await rm(sessionPath, { recursive: true, force: true });

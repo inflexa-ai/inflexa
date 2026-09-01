@@ -143,6 +143,29 @@ describe("createWorkspaceFilesystem", () => {
         if (viaHardlink.kind === "ok") expect(viaHardlink.content.toString("utf8")).toContain("hardlinked");
     });
 
+    it("reads through an in-tree symlinked parent directory", async () => {
+        // O_NOFOLLOW guards only the FINAL component; an intermediate symlinked
+        // directory is followed, and `classifyWithinRoot` keeps it allowed as
+        // long as the real target stays under the workspace root.
+        const realDir = join(sessions, ANALYSIS, "data", "inputs", "actual");
+        await mkdir(realDir, { recursive: true });
+        await writeFile(join(realDir, "inner.csv"), "gene\nBRCA1\n");
+        await symlink(realDir, join(sessions, ANALYSIS, "data", "inputs", "linkdir"));
+
+        const viaLink = (await fs.readFile({ session, path: "data/inputs/linkdir/inner.csv" }))._unsafeUnwrap();
+        expect(viaLink.kind).toBe("ok");
+        if (viaLink.kind === "ok") expect(viaLink.content.toString("utf8")).toContain("BRCA1");
+        expect((await fs.stat({ session, path: "data/inputs/linkdir/inner.csv" }))._unsafeUnwrap().kind).toBe("ok");
+    });
+
+    it("treats a dangling symlink as not_found — the absent-path outcome", async () => {
+        // A symlink to a target that does not exist leaks nothing:
+        // `classifyWithinRoot` verdicts it `absent`, and the caller's ordinary
+        // not-found handling runs, exactly as for a path that was never there.
+        await symlink(join(sessions, ANALYSIS, "data", "inputs", "gone.csv"), join(sessions, ANALYSIS, "data", "inputs", "dangling.csv"));
+        expect((await fs.readFile({ session, path: "data/inputs/dangling.csv" }))._unsafeUnwrap().kind).toBe("not_found");
+    });
+
     it("falls back to presigned fetch when local is missing", async () => {
         const fallback: PresignedFallback = {
             async fetch({ relativePath }) {
