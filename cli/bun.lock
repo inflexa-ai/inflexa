@@ -7,7 +7,7 @@
       "dependencies": {
         "@clack/core": "1.4.3",
         "@clack/prompts": "^1.7.0",
-        "@inflexa-ai/harness": "0.31.1",
+        "@inflexa-ai/harness": "0.32.0",
         "@inflexa-ai/prov-kernel": "^0.6.0",
         "@inflexa-ai/tsprov": "0.5.1",
         "@opentelemetry/api": "^1.9.1",
@@ -168,7 +168,7 @@
 
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, "sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ=="],
 
-    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.31.1", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.38", "@ai-sdk/openai": "^4.0.39", "@ai-sdk/openai-compatible": "^3.0.30", "@ai-sdk/provider": "^4.0.7", "@ai-sdk/provider-utils": "5.0.27", "@anthropic-ai/sdk": "^0.116.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@fontsource-variable/space-grotesk": "5.1.1", "@fontsource/ibm-plex-mono": "5.1.1", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ag-grid-community": "36.1.0", "ai": "^7.0.61", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "echarts": "5.5.1", "fast-xml-parser": "^5.10.1", "hono": "^4.12.34", "hyparquet": "^1.28.1", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "openai": "^7.4.0", "p-queue": "^9.3.3", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-Sd5uhbLbOS9Rt6wBe5QCUtgiNzAvLCqQDrxKz/S09WijumPLT6d7huZZT4Dphclt9XGVgcw57CZtqXHEYoJYtQ=="],
+    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.32.0", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.38", "@ai-sdk/openai": "^4.0.39", "@ai-sdk/openai-compatible": "^3.0.30", "@ai-sdk/provider": "^4.0.7", "@ai-sdk/provider-utils": "5.0.27", "@anthropic-ai/sdk": "^0.116.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@fontsource-variable/space-grotesk": "5.1.1", "@fontsource/ibm-plex-mono": "5.1.1", "@inflexa-ai/tsprov": "0.6.0", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ag-grid-community": "36.1.0", "ai": "^7.0.61", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "echarts": "5.5.1", "fast-xml-parser": "^5.10.1", "hono": "^4.12.34", "hyparquet": "^1.28.1", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "openai": "^7.4.0", "p-queue": "^9.3.3", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-sZDos1qYJmUz/JcCARHi55mGLErdq24Fuu7i4eOS0lr1Lg67stRtfOhNEVzP2pnf2HkxMyhMVJYTaPa3DRfiug=="],
 
     "@inflexa-ai/prov-kernel": ["@inflexa-ai/prov-kernel@0.6.0", "", { "dependencies": { "@noble/hashes": "^2.3.0", "neverthrow": "^8.2.0", "zod": "^4.4.3" }, "peerDependencies": { "@inflexa-ai/tsprov": "^0.5.1" } }, "sha512-/7nhPht0G5PutI5g1r8xLNn8817QF9uPSmBPPzSKXaIdb/UPB8OngmUAKn3MYCv6qCwx6yDtSFo+7eZVbhAemQ=="],
 
@@ -1029,6 +1029,8 @@
     "@eslint-community/eslint-utils/eslint-visitor-keys": ["eslint-visitor-keys@3.4.3", "", {}, "sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag=="],
 
     "@grpc/grpc-js/@grpc/proto-loader": ["@grpc/proto-loader@0.8.1", "", { "dependencies": { "lodash.camelcase": "^4.3.0", "long": "^5.0.0", "protobufjs": "^7.5.5", "yargs": "^17.7.2" }, "bin": { "proto-loader-gen-types": "build/bin/proto-loader-gen-types.js" } }, "sha512-wtF6h+DY6M3YaDBPAmvuuA6jV8Sif9MjtOI5euKFWRgCDl5PeDpPsHR9u2l6St5ceY8AZgoNDww5+HvEsXFsGg=="],
+
+    "@inflexa-ai/harness/@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.6.0", "", { "dependencies": { "luxon": "^3.7.2" } }, "sha512-lbpZWYauO+WHUt1hMR0jX+0A0/3EjWpEK2j7osc07F5wpMkc4n1Wqm0fB9vCKjafTuCEYN9+6xE1lc0xG4CAJg=="],
 
     "@kubernetes/client-node/@types/node": ["@types/node@24.13.2", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-fRa09kZTgu8o71KFcDjUFuc7F+dEbZYZmkI0mg5YBTRs0yMKjYHsq/c0urDKeDb+D5qVgXOdFcuu+DZPKOITwA=="],
 
