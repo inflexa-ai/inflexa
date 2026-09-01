@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { okAsync } from "neverthrow";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
+import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { GREP_LIMITS, createGrepTool } from "./grep.js";
 
 interface FakeTree {
@@ -107,6 +110,36 @@ describe("createGrepTool", () => {
         const { ctx } = makeToolContext();
         const r = (await tool.execute({ pattern: "x", path: "/etc/passwd" }, ctx))._unsafeUnwrap();
         expect(r.status).toBe("out_of_scope");
+    });
+
+    it("does not surface content through an escaping symlink (real seam over a real tree)", async () => {
+        // The fake-fs tests above exercise grep's own logic; this one drives the
+        // real seam so the symlink-following containment is what stands between
+        // grep's per-file reads and an off-tree secret. `makeToolContext`'s
+        // default session scopes analysis-001.
+        const sessions = await mkdtemp(join(tmpdir(), "grep-symlink-"));
+        try {
+            const secret = join(sessions, "outside-secret.txt");
+            await writeFile(secret, "SECRET_TOKEN=abc\n");
+            const stepDir = join(sessions, "analysis-001", "runs", "r1", "s1");
+            await mkdir(stepDir, { recursive: true });
+            await writeFile(join(stepDir, "clean.txt"), "no match here\n");
+            await symlink(secret, join(stepDir, "leak.txt"));
+
+            const realFs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessions, id) });
+            const tool = createGrepTool(realFs);
+            const { ctx } = makeToolContext();
+
+            // A directory walk skips the escaping link — the secret never matches.
+            const walk = (await tool.execute({ pattern: "SECRET_TOKEN", path: "runs/r1/s1" }, ctx))._unsafeUnwrap();
+            expect(walk.status).toBe("no_matches");
+
+            // Naming the link directly is out_of_scope, not the secret's content.
+            const direct = (await tool.execute({ pattern: "SECRET_TOKEN", path: "runs/r1/s1/leak.txt" }, ctx))._unsafeUnwrap();
+            expect(direct.status).toBe("out_of_scope");
+        } finally {
+            await rm(sessions, { recursive: true, force: true });
+        }
     });
 
     it("returns invalid_pattern for a malformed regex", async () => {

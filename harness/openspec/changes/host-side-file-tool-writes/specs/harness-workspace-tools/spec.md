@@ -130,6 +130,56 @@ throw — and no bytes land.
 - **THEN** the seam makes those directories inside the write prefix only, and
   the write then succeeds
 
+### Requirement: The read seam refuses a symlink escape
+
+The read seam MUST refuse a read whose real target escapes the analysis tree.
+The lexical resolver compares path strings, and a symbolic link can turn an
+in-tree string into an out-of-tree target. Thus, after the lexical resolution,
+the seam MUST compare the realpath of the resolved path against the realpath
+of the workspace root. If the real target escapes the workspace root, the
+seam MUST return the `out_of_scope` data variant.
+
+One seam chokepoint MUST hold the check. Thus the check covers `read_file`,
+`grep`, `list_files`, and `file_stat`. A content read MUST open the final
+component with `O_NOFOLLOW`. Thus the seam refuses a symbolic link in the
+final component in the same operation that opens the file. As a result, a
+link swap after the realpath check cannot open an out-of-tree target. The
+refusal is the same `out_of_scope` data variant.
+
+A symbolic link in a parent segment of the path, with a real target inside
+the tree, stays readable. A symbolic link with a target that does not exist
+MUST map to the `not_found` data variant, the same as an absent path. Each
+refusal MUST be a data variant — never a throw.
+
+#### Scenario: A symlink that escapes the tree is out_of_scope
+
+- **GIVEN** a symbolic link in the writable step directory that points to a
+  file outside the analysis tree
+- **WHEN** the model invokes `read_file` with the path of that link
+- **THEN** the result is an `out_of_scope` data variant, and no out-of-tree
+  content reaches the model
+
+#### Scenario: grep does not read through an escaping symlink
+
+- **GIVEN** the same escaping link inside a directory
+- **WHEN** the model invokes `grep` over that directory
+- **THEN** no match from the target of the link appears in the result
+
+#### Scenario: An in-tree symlink stays readable
+
+- **GIVEN** a path with a parent segment that is a symbolic link to a
+  directory inside the analysis tree
+- **WHEN** the model invokes `read_file` with that path
+- **THEN** the read succeeds, because the real target stays under the
+  workspace root
+
+#### Scenario: A dangling symlink is the absent-path outcome
+
+- **GIVEN** a symbolic link with a target that does not exist
+- **WHEN** the model invokes `read_file` with the path of that link
+- **THEN** the result is a `not_found` data variant, the same as a path that
+  is not there
+
 ### Requirement: edit_file supports a bulk regex mode
 
 `edit_file` MUST accept an optional `regex` flag. When `regex` is true, the
