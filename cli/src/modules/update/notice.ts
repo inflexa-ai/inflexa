@@ -47,15 +47,16 @@ function writeAskState(version: string, now: number): void {
 }
 
 /**
- * Whether a surface may show the ask for `version` now. A `true` also records the ask, thus the
- * decision and the record are one step, and no caller can forget the write.
+ * Whether the TUI may open the update dialog for `version` now. A `true` also records the ask, thus
+ * the decision and the record are one step, and no caller can forget the write.
  *
- * A `version` newer than the recorded one passes inside the day. The read behind this runs at each
- * startup (latest.ts), and a release from the same day must not wait behind a record about an older
- * release.
+ * Only the dialog is under this record, because a dialog interrupts. The stderr line and the TUI toast
+ * are passive, so they show at each run. A `version` newer than the recorded one passes inside the
+ * day: the read runs at each startup (latest.ts), and a same-day release must not wait behind a record
+ * about an older release.
  *
- * Call it only at the moment the message really shows. A claim from a run whose message a later guard
- * drops would burn the day with nothing shown.
+ * Call it only at the moment the dialog really opens. A claim that a later guard drops would burn the
+ * day with nothing shown.
  */
 export function claimDailyAsk(version: string, now: number = Date.now()): boolean {
     const recorded = readAskState();
@@ -112,14 +113,11 @@ export function __releaseUpdateNoticeClaimForTest(): void {
  * Silent unless stderr is a terminal. A redirected stream is a file or a pipe that some other program
  * reads, and this text means nothing to it.
  *
- * Shown one time a day for a version ({@link claimDailyAsk}), because the person runs `inflexa` many
- * times an hour and the same line on each run is noise.
+ * Shown at each run: one line on stderr does not interrupt, so it carries no daily record. The dialog
+ * of the TUI is the one surface under that record ({@link claimDailyAsk}).
  */
 export function printUpdateNotice(version: string | null): void {
     if (version === null || claimed || !process.stderr.isTTY) return;
-
-    // Behind the guards above, so a run whose message cannot show does not burn the day.
-    if (!claimDailyAsk(version)) return;
 
     // An installer install updates itself, so it gets the command that does that. Every other channel gets
     // the command of the tool that owns the file.

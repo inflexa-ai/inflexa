@@ -119,14 +119,15 @@ async function renderChat(target: ChatTarget): Promise<void> {
 async function offerUpdate(): Promise<void> {
     const offer = updateOffer(await pendingUpdate(), installChannel());
     if (offer.kind === "none") return;
-    // One ask a day: the read above runs at each startup, and this claim is what keeps the dialog and
-    // the toast from opening on each launch. Claimed past the "none" gate, so only a shown message
-    // burns the day.
-    if (!claimDailyAsk(offer.version)) return;
     if (offer.kind === "tell") {
         notify({ kind: "info", text: `inflexa ${offer.version} is out. Update with: ${offer.instruction}` }, 8000, { queue: true });
         return;
     }
+
+    // One ask a day: the read above runs at each startup, and this claim is what keeps the dialog from
+    // opening on each launch. The toast above is not under the record, because a toast does not
+    // interrupt.
+    if (!claimDailyAsk(offer.version)) return;
 
     const version = offer.version;
     dialogPush(() => (

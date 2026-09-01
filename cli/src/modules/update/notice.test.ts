@@ -64,12 +64,11 @@ describe("printUpdateNotice", () => {
         expect(out).toContain("git pull");
     });
 
-    test("prints one time inside a day, and a run with no terminal does not burn the day", () => {
+    test("prints at each run, with no daily hold", () => {
+        // The line is passive, so the once-a-day record of the TUI dialog does not cover it.
         __setCompiledBinaryForTest(true);
-        // The no-terminal run shows nothing, so the ask record must stay untouched.
-        expect(captureStderr(false, () => printUpdateNotice("99.0.0"))).toBe("");
         expect(captureStderr(true, () => printUpdateNotice("99.0.0"))).toContain("99.0.0");
-        expect(captureStderr(true, () => printUpdateNotice("99.0.0"))).toBe("");
+        expect(captureStderr(true, () => printUpdateNotice("99.0.0"))).toContain("99.0.0");
     });
 });
 
