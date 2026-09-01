@@ -1425,22 +1425,30 @@ export async function runCatalogTransfer(params: {
     }
 }
 
-/** What a cancel did. `no_run` is a normal answer, not a failure: a cancel of nothing changes nothing. */
-export type CatalogTransferCancel = { readonly type: "canceled"; readonly holderPid: number } | { readonly type: "no_run" };
+/**
+ * What a cancel did. `no_run` is a normal answer, not a failure: a cancel of
+ * nothing changes nothing. `timed_out` names a child that outlived the wait —
+ * the staged tree and the row then stay, because the child still owns both.
+ */
+export type CatalogTransferCancel =
+    { readonly type: "canceled"; readonly holderPid: number } | { readonly type: "timed_out"; readonly holderPid: number } | { readonly type: "no_run" };
 
 /**
  * Stop the live catalog transfer, record `canceled`, and remove the partial staged tree.
  *
  * The child is detached, thus it outlives both `inflexa setup` and the app, and a command is the
  * only thing that reaches it from another terminal. The staged tree is dropped only after the holder
- * is gone, so a rename that is in flight is never raced.
+ * is gone, so a rename that is in flight is never raced. A stop that timed out therefore removes
+ * nothing: a removal under a live writer can tear a rename mid-flight, and the torn merge can read
+ * back as a complete local store.
  *
  * It removes NO installed content. The staged tree is per-attempt debris under the installer-owned
  * metadata directory, and each child that the store root holds stays where it is.
  */
-export async function cancelCatalogTransfer(storeRoot: string): Promise<CatalogTransferCancel> {
-    const stopped = await stopTransferChild("catalog");
+export async function cancelCatalogTransfer(storeRoot: string, stop: typeof stopTransferChild = stopTransferChild): Promise<CatalogTransferCancel> {
+    const stopped = await stop("catalog");
     if (stopped.type === "no_run") return { type: "no_run" };
+    if (stopped.type === "timed_out") return { type: "timed_out", holderPid: stopped.holderPid };
     await rm(storeDownloadPaths(storeRoot).staging, { recursive: true, force: true }).catch(() => undefined);
     settleTransfer("catalog", { state: "canceled", message: null }).unwrapOr(undefined);
     return { type: "canceled", holderPid: stopped.holderPid };

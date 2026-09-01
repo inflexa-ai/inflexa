@@ -66,6 +66,7 @@ import {
     listProjects,
     listAnalysisInputs,
     listAnchors,
+    listStoreFlights,
     countAnalysesByProject,
     listAnalysisUsageByRun,
     listRunUsageByStep,
@@ -2899,7 +2900,13 @@ export const commands: Command[] = [
         title: "Failed package flights",
         description: "Open a failed acquisition flight: the recorded reason, with copy, retry, and delete",
         category: "Sandbox",
-        enabled: () => readStoreFlights().some((flight) => flight.row.state === "failed"),
+        // A pure read: `readStoreFlights` DELETES dead-holder rows, and an
+        // `enabled` predicate re-evaluates per render. The deliberate open in
+        // `run` below keeps the sweep.
+        enabled: () =>
+            listStoreFlights()
+                .unwrapOr([])
+                .some((entry) => entry.flight.state === "failed"),
         run: (ctx) => {
             const failed = readStoreFlights()
                 .filter((flight) => flight.row.state === "failed")

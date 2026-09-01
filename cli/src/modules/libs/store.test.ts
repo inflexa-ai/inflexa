@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +14,7 @@ import { FARM_LOCK_KEY_PREFIX } from "./composition.ts";
 import type { ProvisionerRunner } from "./provisioner.ts";
 import { readStoreFlights } from "./store_flight.ts";
 import { transferLockKey } from "./transfers.ts";
+import { cancelCatalogTransfer, storeDownloadPaths } from "./store_download.ts";
 import { collectStoreDebris, describeRequestRefusal, reclaimStore, runStoreDownload } from "./store.ts";
 
 // The silent debris pass: it frees only the tier that nothing references — no
@@ -245,5 +246,44 @@ describe("describeRequestRefusal", () => {
         // The two candidates are store directories, and they stay verbatim —
         // only the requested NAME obeys the echo rule.
         expect(both).toContain("--lang python");
+    });
+});
+
+describe("cancelCatalogTransfer", () => {
+    test("a timed-out stop keeps the staged tree and settles nothing", async () => {
+        const root = tempStore();
+        // The child still writes into this tree — a removal here can tear a
+        // rename mid-flight, and the torn merge can read back as complete.
+        const staging = storeDownloadPaths(root).staging;
+        mkdirSync(staging, { recursive: true });
+        writeFileSync(join(staging, "half-written.tar"), "bytes\n");
+
+        const outcome = await cancelCatalogTransfer(root, async () => ({ type: "timed_out" as const, holderPid: 4242 }));
+
+        expect(outcome).toEqual({ type: "timed_out", holderPid: 4242 });
+        expect(existsSync(join(staging, "half-written.tar"))).toBe(true);
+    });
+});
+
+describe("the in-process debris single-flight", () => {
+    test("a second concurrent collection joins the live pass, and one container runs", async () => {
+        const root = tempStore();
+        mkdirSync(join(root, "store", DEBRIS_DIR), { recursive: true });
+        let runs = 0;
+        const run: ProvisionerRunner = async () => {
+            runs += 1;
+            // The pause holds the pass live while the second caller arrives.
+            await Promise.sleep(50);
+            return ok({ code: 0, stdout: "", stderr: "" });
+        };
+
+        const [first, second] = await Promise.all([collectStoreDebris(root, { run }), collectStoreDebris(root, { run })]);
+
+        // The joiner gets the outcome of the live pass, and no second pass
+        // enters beside it — an entry beside the first would free the
+        // re-entrant reclaim lock under it.
+        expect(runs).toBe(1);
+        expect(first._unsafeUnwrap()).toEqual(second._unsafeUnwrap());
+        expect(first._unsafeUnwrap().swept).toBe(true);
     });
 });
