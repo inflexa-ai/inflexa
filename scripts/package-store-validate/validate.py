@@ -197,16 +197,52 @@ def _modules_by_dist() -> dict[str, list[str]]:
     return _MODULES_BY_DIST
 
 
+def _module_shaped(files, mod: str) -> bool:
+    """Report whether the dist ships `mod` as an importable module or package.
+
+    The candidate names come from the dist metadata, and that metadata carries
+    junk: a `top_level.txt` with sdist artifacts (`build`, `testing`), and a
+    RECORD whose script entries yield roots such as `bin`. A junk name still
+    imports as an accidental namespace package, and the farm rule then reads
+    it as a shadow. The shape test keeps a name only when the dist ships real
+    Python under it: a package file inside `mod/`, a root `mod.py`, or a root
+    compiled `mod.*`."""
+    for f in files:
+        parts = f.parts
+        if not parts:
+            continue
+        if parts[0] == mod and len(parts) > 1 and f.suffix in (".py", ".so", ".pyd"):
+            return True
+        if len(parts) == 1 and (f.name == f"{mod}.py" or (f.name.startswith(f"{mod}.") and f.suffix in (".so", ".pyd"))):
+            return True
+    return False
+
+
 def modules_for(dist: str) -> list[str]:
     """Return the public top-level modules that a distribution provides.
 
     An empty list means the dist provides no importable module. A stub dist is one
     such case (for example `python-levenshtein`, which only pulls in `Levenshtein`).
-    The caller treats an empty list as a skip, and not as a failure."""
-    return _modules_by_dist().get(_norm_dist(dist), [])
+    The caller treats an empty list as a skip, and not as a failure. A dist whose
+    RECORD is unreadable keeps its unfiltered candidates, because a lost filter
+    must widen the check and never silence it."""
+    mods = _modules_by_dist().get(_norm_dist(dist), [])
+    try:
+        files = im.distribution(dist).files or []
+    except im.PackageNotFoundError:
+        return mods
+    if not files:
+        return mods
+    return [m for m in mods if _module_shaped(files, m)]
 
 
 # --- farm-backed store detection --------------------------------------------
+
+# The system python of the image owns the packaging toolchain, and its copies
+# sit ahead of the farm on `sys.path`. That shadow is a property of the BASE
+# IMAGE, not of the store artifact this suite proves — the remedy is a path
+# reorder in the image, and this suite must not go red on the image's choice.
+FARM_RULE_EXEMPT_DISTS = {"setuptools", "pip", "wheel"}
 
 def find_store_dir(store_root: Path) -> Path | None:
     """Return the content-addressed ``store/`` directory that backs a farm, or None.
@@ -227,25 +263,31 @@ def find_store_dir(store_root: Path) -> Path | None:
     return None
 
 
-def _loaded_from_store(mod, store_dir: Path) -> bool:
-    """Report whether an imported module resolves into the content store.
+def _loaded_from_store(mod, store_dir: Path, farm_dir: Path) -> bool:
+    """Report whether an imported module resolves into the farm-backed store.
 
     A farm link points a top-level name at a ``store/`` directory, so the real
-    path of a module the farm serves is under ``store_dir``. A module that
-    resolves elsewhere came from a baked or system location, not from the farm."""
+    path of a module the farm serves is under ``store_dir``. A namespace parent
+    (`sphinxcontrib`, the `rpy2` split dists) is a REAL directory that the farm
+    owns, thus a path under the resolved farm root passes too. A module with no
+    path at all is unverifiable, and it passes: an absence proves no shadow. A
+    module that resolves elsewhere came from a baked or system location."""
     paths = []
     f = getattr(mod, "__file__", None)
     if f:
         paths.append(f)
     for p in getattr(mod, "__path__", []) or []:
         paths.append(p)
+    if not paths:
+        return True
     for p in paths:
         try:
             real = Path(p).resolve()
         except OSError:
             continue
-        if real == store_dir or store_dir in real.parents:
-            return True
+        for root in (store_dir, farm_dir):
+            if real == root or root in real.parents:
+                return True
     return False
 
 
@@ -254,6 +296,7 @@ def _loaded_from_store(mod, store_dir: Path) -> bool:
 def check_python(names: list[str], farm_store: Path | None = None) -> list[str]:
     failed = []
     skipped = []
+    farm_dir = STORE.resolve()
     for name in names:
         try:
             im.distribution(name)
@@ -285,7 +328,7 @@ def check_python(names: list[str], farm_store: Path | None = None) -> list[str]:
             # FROM the farm, not from a stray baked or system copy. A module that
             # resolves outside the store means packages.txt names a package the farm
             # does not actually serve.
-            if farm_store is not None and not _loaded_from_store(imported, farm_store):
+            if farm_store is not None and _norm_dist(name) not in FARM_RULE_EXEMPT_DISTS and not _loaded_from_store(imported, farm_store, farm_dir):
                 src = getattr(imported, "__file__", "no __file__")
                 print(f"  FAIL python {name}: {mod} imported from outside the farm store ({src})")
                 failed.append(name)
