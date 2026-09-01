@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { isPublishedSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
+import { isPublishedSandboxImage, isRetiredSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
 
 describe("SANDBOX_IMAGE", () => {
     test("is the one published runtime image at its moving tag", () => {
@@ -37,5 +37,21 @@ describe("isPublishedSandboxImage", () => {
     test("refuses a custom image", () => {
         expect(isPublishedSandboxImage("sandbox-base:latest")).toBe(false);
         expect(isPublishedSandboxImage("my-registry/my-sandbox:latest")).toBe(false);
+    });
+});
+
+describe("isRetiredSandboxImage", () => {
+    test("names the two retired variants of our registry, with any tag or digest", () => {
+        expect(isRetiredSandboxImage("ghcr.io/inflexa-ai/sandbox-python-r:latest")).toBe(true);
+        expect(isRetiredSandboxImage("ghcr.io/inflexa-ai/sandbox-python:v3")).toBe(true);
+        expect(isRetiredSandboxImage("ghcr.io/inflexa-ai/sandbox-python-r@sha256:deadbeef")).toBe(true);
+        expect(isRetiredSandboxImage("ghcr.io/inflexa-ai/sandbox-python")).toBe(true);
+    });
+
+    test("keeps the current image, a custom registry, and a near-name", () => {
+        expect(isRetiredSandboxImage("ghcr.io/inflexa-ai/sandbox-base:latest")).toBe(false);
+        expect(isRetiredSandboxImage("my-registry/sandbox-python-r:latest")).toBe(false);
+        expect(isRetiredSandboxImage("ghcr.io/inflexa-ai/sandbox-pythonic:latest")).toBe(false);
+        expect(isRetiredSandboxImage("sandbox-python-r:latest")).toBe(false);
     });
 });

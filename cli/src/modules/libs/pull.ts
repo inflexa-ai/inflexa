@@ -18,10 +18,10 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { fail } from "../../lib/cli.ts";
-import { ensureRuntime, readConfig, selectedRuntime } from "../../lib/config.ts";
+import { ensureRuntime, readConfig, selectedRuntime, writeConfig } from "../../lib/config.ts";
 import { capture, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
-import { isPublishedSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
+import { isPublishedSandboxImage, isRetiredSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
 import { inspectStoreContent } from "./store_download.ts";
 import { readTransferReports, startImageTransfer, type TransferReport } from "./transfers.ts";
 
@@ -41,6 +41,65 @@ export function configuredSandboxImage(): string {
         if (typeof img === "string" && img.trim() !== "") return img;
     }
     return SANDBOX_IMAGE;
+}
+
+/**
+ * Clear a `harness.sandboxImage` override that names a retired variant image.
+ *
+ * An upgraded machine can carry that record from the baked-image model, where
+ * each pull wrote the pulled reference into the config. The field is a pure
+ * override in the store model: absent means the default pair. A kept retired
+ * record pins every sandbox to an image with no farm contract, and it derives
+ * a provisioner reference that no registry holds. A custom reference outside
+ * the retired set stays, because that is a deliberate choice of the user.
+ *
+ * The cleared reference returns for the one notice of the caller, and `null`
+ * means that nothing changed. A config that cannot be written degrades to
+ * `null`, and the stale override then still wins this run.
+ */
+export function migrateRetiredSandboxImageOverride(): string | null {
+    const cfg = readConfig();
+    const harness = cfg.harness;
+    if (typeof harness !== "object" || harness === null) return null;
+    const img = (harness as Record<string, unknown>).sandboxImage;
+    if (typeof img !== "string" || !isRetiredSandboxImage(img)) return null;
+    const rest = { ...(harness as Record<string, unknown>) };
+    delete rest.sandboxImage;
+    return writeConfig({ ...cfg, harness: rest }).match(
+        () => img,
+        () => null,
+    );
+}
+
+/**
+ * The retired variant images the engine still holds — the input of the one
+ * removal hint. The hint exists because a retired image keeps ~20 GB of
+ * layers that nothing launches any more, and nothing removes an image
+ * without the user.
+ */
+export async function retiredImagesOnEngine(rt: ContainerRuntime): Promise<{ readonly ref: string; readonly size: string }[]> {
+    try {
+        const listed = await capture(rt, ["image", "ls", "--format", "{{.Repository}}:{{.Tag}} {{.Size}}"]);
+        if (listed.code !== 0) return [];
+        const rows: { ref: string; size: string }[] = [];
+        for (const line of listed.stdout.split("\n")) {
+            const trimmed = line.trim();
+            const space = trimmed.indexOf(" ");
+            if (space < 0) continue;
+            const ref = trimmed.slice(0, space);
+            if (isRetiredSandboxImage(ref)) rows.push({ ref, size: trimmed.slice(space + 1) });
+        }
+        return rows;
+    } catch {
+        return [];
+    }
+}
+
+/** Print one removal hint per retired image the engine holds. It removes nothing. */
+export async function printRetiredImageHints(rt: ContainerRuntime): Promise<void> {
+    for (const image of await retiredImagesOnEngine(rt)) {
+        console.log(`  The retired image ${image.ref} (${image.size}) stays on the engine. Run \`${rt.bin} rmi ${image.ref}\` to free the space.`);
+    }
 }
 
 /** Whether `rt` already has `image` locally. */
@@ -98,6 +157,10 @@ export async function ensureSandboxImage(image: string): Promise<void> {
 
 /** `inflexa sandbox pull` — start the two detached image transfers and return at once. */
 export async function sandboxPull(): Promise<void> {
+    const migrated = migrateRetiredSandboxImageOverride();
+    if (migrated !== null) {
+        console.log(`The config named the retired image ${migrated}. The override is removed, and the default sandbox-base pair serves.`);
+    }
     const kinds = ["runtime_image", "provisioner_image"] as const;
     for (const kind of kinds) {
         const label = kind === "runtime_image" ? "runtime image" : "provisioner image";
@@ -221,6 +284,10 @@ export async function sandboxStatus(): Promise<void> {
             console.log("    Present  no — run `inflexa sandbox pull` to download it");
         }
     }
+
+    // The removal hint of the retired baked images. Status is read-only, thus
+    // it hints and never removes — and it never migrates the config either.
+    if (rt !== null) await printRetiredImageHints(rt);
 
     for (const report of readTransferReports()) {
         const line = describeTransferLine(report);

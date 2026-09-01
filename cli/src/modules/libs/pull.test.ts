@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { sandboxStatus } from "./pull.ts";
+import { configuredSandboxImage, migrateRetiredSandboxImageOverride, sandboxStatus } from "./pull.ts";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
@@ -60,4 +60,38 @@ describe("sandboxStatus — read-only, never pins", () => {
         },
         RUNTIME_PROBE_TIMEOUT_MS,
     );
+});
+
+describe("migrateRetiredSandboxImageOverride", () => {
+    test("clears a retired override, keeps the rest of the harness block, and the default serves", () => {
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(
+            env.configPath,
+            JSON.stringify({ telemetry: false, harness: { sandboxImage: "ghcr.io/inflexa-ai/sandbox-python-r:latest", adminPort: 4141 } }),
+        );
+
+        expect(migrateRetiredSandboxImageOverride()).toBe("ghcr.io/inflexa-ai/sandbox-python-r:latest");
+
+        const harness = readConfig().harness as Record<string, unknown>;
+        expect(harness.sandboxImage).toBeUndefined();
+        expect(harness.adminPort).toBe(4141);
+        expect(configuredSandboxImage()).toBe("ghcr.io/inflexa-ai/sandbox-base:latest");
+        // A second run finds nothing: the migration is one-shot by content.
+        expect(migrateRetiredSandboxImageOverride()).toBeNull();
+    });
+
+    test("keeps a custom override, because that is a deliberate choice", () => {
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, harness: { sandboxImage: "my-registry/my-sandbox:latest" } }));
+
+        expect(migrateRetiredSandboxImageOverride()).toBeNull();
+        expect(configuredSandboxImage()).toBe("my-registry/my-sandbox:latest");
+    });
+
+    test("a config with no harness block changes nothing", () => {
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false }));
+
+        expect(migrateRetiredSandboxImageOverride()).toBeNull();
+    });
 });
