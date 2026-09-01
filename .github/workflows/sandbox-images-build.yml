@@ -85,16 +85,23 @@ jobs:
     strategy:
       fail-fast: false
       # Arch list — keep in lock-step with the workflow-level ARCHES env (manifest
-      # combine loop) and the acceptance workflow matrix.
+      # combine loop) and the acceptance workflow matrix. amd64 is the primary
+      # leg, and arm64 is best-effort — the rule of the store build. Under the
+      # pipeline, a red arm64 image leg must not stop the amd64 store
+      # publication behind it. The manifest job runs on `if: always()`, and it
+      # combines only the arch tags that exist.
       matrix:
         include:
           - arch: amd64
             platform: linux/amd64
             runner: '["self-hosted", "inflexa-builder"]'
+            best_effort: false
           - arch: arm64
             platform: linux/arm64
             runner: '["self-hosted", "inflexa-builder-arm64"]'
+            best_effort: true
     runs-on: ${{ fromJSON(matrix.runner) }}
+    continue-on-error: ${{ matrix.best_effort }}
     env:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}

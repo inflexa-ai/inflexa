@@ -245,9 +245,21 @@ a host action. They MUST direct the agent to report a missing package, not
 to retry an install. The lookup is targeted and conditional — a catalog dump
 up front is exactly what it is not.
 
+When the composition binds the `ExtendAnalysisFarm` seam, the instructions
+MUST route an absent package through `link_packages` first. The agent then
+reports the package as missing only after the link tool answers `absent` or
+`unavailable`. The reason: the pool is staged on the same mount, thus a farm
+lookup alone does not bound what an import can reach.
+
 #### Scenario: Sandbox standards forbid runtime installs
 
 - **GIVEN** the shared sandbox-agent standards prompt
 - **THEN** it directs the agent to call `list_available_packages` before an uncertain import
 - **AND** it states that an acquisition is a host action
 - **AND** it directs the agent to report a missing package
+
+#### Scenario: A bound link seam routes an absent package through the link tool
+
+- **GIVEN** a composition with the `ExtendAnalysisFarm` seam bound
+- **WHEN** the composed system prompt is inspected
+- **THEN** it directs the agent to call `link_packages` before it reports a package missing

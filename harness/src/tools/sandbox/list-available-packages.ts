@@ -263,7 +263,14 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
     return { available: true, total, returned, hasMore: returned < total, content };
 }
 
-export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory">;
+export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory"> & {
+    /**
+     * True when the composition also attaches the `link_packages` tool. The
+     * framing sentence must not close the world on the farm then: a package
+     * absent from the farm lock can still link in from the pool.
+     */
+    readonly linkToolPresent?: boolean;
+};
 
 /**
  * Create the package inventory over the bound source: the pool-scope reader
@@ -277,10 +284,15 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
     const readPoolInventory = deps.readPoolInventory;
     // The scope decides the framing sentence: a sandbox agent reads what it can
     // import NOW, and a conversation surface reads what the store HOLDS — a
-    // package absent from the pool needs an acquisition, not a shrug.
+    // package absent from the pool needs an acquisition, not a shrug. A sandbox
+    // composition with the link seam gets a third framing. There the farm is
+    // not the boundary of an import, and a closed-world sentence would send the
+    // agent to report a package that one link call supplies.
     const scopeSentence = readPoolInventory
         ? "Query the R, Python, CLI, and Node packages the package pool holds — the set a run can link into an analysis. A package reported present needs no acquisition; a package absent here is not in the store yet. "
-        : "Query the R, Python, CLI, and Node packages installed in the sandbox. No packages can be installed at runtime — only what this tool reports is importable. ";
+        : deps.linkToolPresent
+          ? "Query the R, Python, CLI, and Node packages importable in the sandbox right now. Nothing installs at runtime; a package absent here can still be linkable from the host's staged pool — call `link_packages` before treating it as missing. "
+          : "Query the R, Python, CLI, and Node packages installed in the sandbox. No packages can be installed at runtime — only what this tool reports is importable. ";
     return defineTool({
         id: "list_available_packages",
         description:

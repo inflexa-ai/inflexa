@@ -179,6 +179,9 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         listAvailablePackages: createListAvailablePackagesTool({
             ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
             ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
+            // The bound seam adds `link_packages` below, and the description of
+            // the listing must then stop at "absent", not at "missing".
+            linkToolPresent: deps.extendAnalysisFarm !== undefined,
         }),
         listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
         scanInputs: createScanInputsTool({

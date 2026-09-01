@@ -864,8 +864,10 @@ export function App(props: AppProps) {
             // The retry of a transfer row: the sidebar renders a terminal
             // failure row, and this key starts that transfer again through the
             // same detached children. The palette carries the same retry.
+            // `f` for a FAILED transfer — `t` belongs to the theme picker, and
+            // one chord dispatches its first full match only.
             {
-                chord: leaderSeq("t"),
+                chord: leaderSeq("f"),
                 run: () =>
                     void retryTerminalTransfers().then((started) =>
                         notify(

@@ -419,6 +419,8 @@ export type FlushDeps = {
     readonly pollMs?: number;
     /** How long the flush waits for a live reclamation. Default: {@link RECLAIM_WAIT_MS}. */
     readonly reclaimWaitMs?: number;
+    /** The cap promotion over the ledger. Default: {@link promoteStoreFlightBatch}. A test injects a failing one. */
+    readonly promote?: typeof promoteStoreFlightBatch;
     /** Report one line of the run. */
     readonly onProgress?: (line: string) => void;
 };
@@ -550,11 +552,25 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
         }
     };
     try {
-        // One slot per RUN under the cap. The wait ends when the batch promotes whole.
+        // One slot per RUN under the cap. The wait ends when the batch promotes
+        // whole, and it carries no deadline on purpose: a slot behind a LIVE
+        // flight frees when that acquisition ends, and a compile holds one for
+        // many minutes. The two other stalls end here instead. Each poll sweeps
+        // the ledger first, because a slot of a dead process frees only through
+        // the sweep — a headless flush child has no TUI poll beside it. And a
+        // promote that cannot read the ledger fails the batch, because a broken
+        // ledger does not heal while this loop spins: the rows settle `failed`
+        // through the tail below.
         const cap = deps.cap ?? storeFlightConcurrency();
         for (;;) {
-            const promoted = promoteStoreFlightBatch({ ids: keys, holderPid: process.pid, cap }).unwrapOr(0);
-            if (promoted >= keys.length) break;
+            readStoreFlights();
+            const promoted = (deps.promote ?? promoteStoreFlightBatch)({ ids: keys, holderPid: process.pid, cap });
+            if (promoted.isErr()) {
+                const message = `the flight ledger could not be read for the concurrency cap (${describeDbError(promoted.error)}) — nothing was acquired`;
+                failWholeBatch("resolve", message);
+                return err({ type: "provisioner_failed", code: 0, message });
+            }
+            if (promoted.value >= keys.length) break;
             await Promise.sleep(pollMs);
         }
 
