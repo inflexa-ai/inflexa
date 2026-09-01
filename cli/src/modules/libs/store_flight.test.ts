@@ -3,13 +3,14 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 
 import { env } from "../../lib/env.ts";
 import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
 import { db } from "../../db/primary.ts";
+import type { DbError } from "../../db/errors.ts";
 import { listPendingStoreAdds } from "../../db/primary_query.ts";
-import { claimPendingStoreAdds, claimStoreFlight, deleteStoreFlight, settleStoreFlightFailure } from "../../db/primary_mutation.ts";
+import { claimPendingStoreAdds, claimStoreFlight, deleteStoreFlight, promoteStoreFlightBatch, settleStoreFlightFailure } from "../../db/primary_mutation.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { CaptureResult } from "../../lib/container.ts";
 import {
@@ -325,6 +326,73 @@ describe("flushPendingStoreAdds", () => {
             holder.kill();
             await holder.exited;
         }
+    });
+
+    test("a dead holder's running flight frees its cap slot through the per-poll sweep", async () => {
+        const root = tempStore();
+        // The cap blocker must land AFTER the pre-claim sweep, thus it rides
+        // in through the promote seam: the first promote seeds a RUNNING
+        // flight whose holder is dead, and answers "no slot". A headless
+        // flush child has no TUI poll beside it, thus only the sweep inside
+        // the promote loop frees the slot. Without that sweep this test hangs.
+        const dead = Bun.spawnSync(["true"]);
+        let calls = 0;
+        const promote: typeof promoteStoreFlightBatch = (params) => {
+            calls += 1;
+            if (calls === 1) {
+                claimStoreFlight({
+                    id: "any::blocker::",
+                    ecosystem: null,
+                    name: "blocker",
+                    rawName: "blocker",
+                    specifier: "",
+                    holderPid: dead.pid,
+                })._unsafeUnwrap();
+                promoteStoreFlightBatch({ ids: ["any::blocker::"], holderPid: dead.pid, cap: 1 })._unsafeUnwrap();
+            }
+            return promoteStoreFlightBatch(params);
+        };
+
+        enqueueStoreAdd({ name: "alpha", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        const DIR = "alpha-1.0-0000000000alpha1";
+        const run = acquiringRunner(
+            { "python:alpha": { outcome: "acquired", store_dirs: [DIR] } },
+            { [DIR]: { track: "python", name: "alpha", version: "1.0", order: "0a", edges: [] } },
+        );
+
+        const result = (await flushPendingStoreAdds(root, { run, loadCheck: loadCheck([]), cap: 1, pollMs: 5, promote }))._unsafeUnwrap();
+
+        if (result.type !== "flew") throw new Error(`expected a flight, got ${result.type}`);
+        expect(result.outcomes.map((outcome) => outcome.kind)).toEqual(["acquired"]);
+        // The first poll found the slot held, and the second poll ran only
+        // because the sweep freed it.
+        expect(calls).toBeGreaterThanOrEqual(2);
+        expect(readStoreFlights().map((flight) => flight.row.id)).not.toContain("any::blocker::");
+    });
+
+    test("a promote that cannot read the ledger fails the batch and settles the rows failed", async () => {
+        const root = tempStore();
+        enqueueStoreAdd({ name: "alpha", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        let ran = 0;
+        const run: ProvisionerRunner = async () => {
+            ran += 1;
+            return ok({ code: 0, stdout: "", stderr: "" });
+        };
+        // The ledger refuses every promote — the SQLITE_BUSY shape past the
+        // busy timeout. The loop must fail the batch, not spin on it.
+        const promote: typeof promoteStoreFlightBatch = () =>
+            err<number, DbError>({ type: "mutation_failed", op: "promoteStoreFlightBatch", cause: new Error("SQLITE_BUSY") });
+
+        const result = await flushPendingStoreAdds(root, { run, promote, pollMs: 5 });
+
+        expect(result.isErr()).toBe(true);
+        expect(ran).toBe(0);
+        // The row is the durable surface of a detached flush: it must read
+        // `failed` with the ledger reason, not stay `queued` under a live pid.
+        const flights = readStoreFlights();
+        expect(flights).toHaveLength(1);
+        expect(flights[0]?.row.state).toBe("failed");
+        expect(flights[0]?.row.message ?? "").toContain("flight ledger");
     });
 });
 

@@ -319,17 +319,23 @@ export function sandboxOrientCorePromptFor(toolchainSource: ToolchainSource | un
  */
 export const sandboxPackageLinkPrompt = `# Linking Packages
 
-The host keeps a pool of staged packages beside the farm of this analysis. The
+The host keeps a pool of staged packages beside the farm of this analysis — the
+pool is part of what the host staged before this container started. The
 \`link_packages\` tool links a staged package into your farm — live, with no
-restart. It never installs or downloads anything.
+restart. A link adds no new bytes and downloads nothing; it connects your farm
+to a directory that is already on the mount. So a package your farm lacks is
+not missing until the pool has answered:
 
-- After a failed import, call \`link_packages\` with the module name verbatim.
+- After a failed import, and when \`list_available_packages\` reports a package
+  absent, call \`link_packages\` with the module name verbatim.
 - \`linked\` and \`present\` mean the import works now — run it again.
 - \`absent\` is a real answer: the pool does not hold the package. When
   \`acquisitionPossible\` is true, report the package as missing so the host can
   acquire it. Do not retry the link, and do not attempt an install.
 - \`collision\` is terminal for that package: the request resolves to two store
   directories. Report it and continue without the package.
+- Report a package as missing only after \`link_packages\` answered \`absent\` or
+  \`unavailable\` for it.
 `;
 
 export const sandboxAnalysisStepStandardsPrompt = `# Sandbox Analysis-Step Conventions

@@ -979,7 +979,10 @@ export async function runStoreLink(packages: string[], options: { readonly analy
         return;
     }
 
-    const resolved: ResolvedRequest[] = [];
+    // Each answer keeps the spelling of its request. The graph speaks the
+    // canonical name, and an R name is case- and dot-sensitive, thus every
+    // render below echoes the raw spelling — the rule of the mgmt spec.
+    const resolved: { readonly answer: ResolvedRequest; readonly rawName: string }[] = [];
     const refusals: string[] = [];
     for (const requirement of packages) {
         const split = requirement.indexOf("==");
@@ -990,7 +993,7 @@ export async function runStoreLink(packages: string[], options: { readonly analy
         };
         const answer = resolvePackageRequest(graph.value, request);
         if (answer.isOk()) {
-            resolved.push(answer.value);
+            resolved.push({ answer: answer.value, rawName: request.name });
             continue;
         }
         // The both-hit stops with an ask on a terminal, because an interactive
@@ -998,7 +1001,7 @@ export async function runStoreLink(packages: string[], options: { readonly analy
         // the two candidates as guidance, and it re-runs with `--lang`.
         if (answer.error.type === "ambiguous_ecosystem" && process.stdin.isTTY) {
             const chosen = await clackSelect({
-                message: `Both ecosystems hold "${answer.error.name}". Which one do you mean?`,
+                message: `Both ecosystems hold "${request.name}". Which one do you mean?`,
                 options: [
                     { value: "python" as const, label: `Python (${answer.error.candidates[0]})` },
                     { value: "r" as const, label: `R (${answer.error.candidates[1]})` },
@@ -1007,14 +1010,14 @@ export async function runStoreLink(packages: string[], options: { readonly analy
             if (!isCancel(chosen)) {
                 const retried = resolvePackageRequest(graph.value, { ...request, ecosystem: chosen });
                 if (retried.isOk()) {
-                    resolved.push(retried.value);
+                    resolved.push({ answer: retried.value, rawName: request.name });
                     continue;
                 }
-                refusals.push(describeRequestRefusal(retried.error));
+                refusals.push(describeRequestRefusal(retried.error, request.name));
                 continue;
             }
         }
-        refusals.push(describeRequestRefusal(answer.error));
+        refusals.push(describeRequestRefusal(answer.error, request.name));
     }
     if (refusals.length > 0) {
         reportError({ message: refusals.join("\n\n  ") });
@@ -1022,10 +1025,10 @@ export async function runStoreLink(packages: string[], options: { readonly analy
     }
 
     const analysis = target.value;
-    const extended = await extendFarm({ storeRoot, analysisId: analysis.id, roots: resolved.map((answer) => answer.storeDir) });
+    const extended = await extendFarm({ storeRoot, analysisId: analysis.id, roots: resolved.map((item) => item.answer.storeDir) });
     extended.match(
         (composition) => {
-            for (const answer of resolved) console.log(`Linked ${answer.name}==${answer.version} into the farm of "${analysis.name}".`);
+            for (const item of resolved) console.log(`Linked ${item.rawName}==${item.answer.version} into the farm of "${analysis.name}".`);
             console.log(`That farm links ${composition.storeDirs.length} store directories now.`);
             console.log("A live sandbox of the analysis resolves them at its next import, thus no restart is necessary.");
         },
@@ -1037,19 +1040,24 @@ export async function runStoreLink(packages: string[], options: { readonly analy
  * One refusal that a person, or an agent, can act on. A bare "not found" is
  * what sends a caller around the same loop for ever, thus each message names
  * the remedy.
+ *
+ * `rawName` is the spelling of the request, and each render echoes it. The
+ * error carries the canonical form, and a remedy in that form breaks: `store
+ * add go-db` resolves nothing, because the R name is `GO.db`. Exported for
+ * the test that pins the echo rule.
  */
-function describeRequestRefusal(error: RequestResolutionError): string {
+export function describeRequestRefusal(error: RequestResolutionError, rawName: string): string {
     switch (error.type) {
         case "unknown_distribution":
-            return `The package pool holds nothing named "${error.name}". Run \`inflexa store add ${error.name}\` to acquire it — the acquisition covers PyPI, CRAN, and Bioconductor.`;
+            return `The package pool holds nothing named "${rawName}". Run \`inflexa store add ${rawName}\` to acquire it — the acquisition covers PyPI, CRAN, and Bioconductor.`;
         case "unknown_version":
             return (
-                `The package pool holds no version ${error.version} of "${error.name}". It holds ${error.available.join(", ")}. ` +
-                `Link one of those versions, or run \`inflexa store add ${error.name} --version ${error.version}\` to acquire the one you named.`
+                `The package pool holds no version ${error.version} of "${rawName}". It holds ${error.available.join(", ")}. ` +
+                `Link one of those versions, or run \`inflexa store add ${rawName} --version ${error.version}\` to acquire the one you named.`
             );
         case "ambiguous_ecosystem":
             return (
-                `Both ecosystems hold "${error.name}" (${error.candidates.join(" and ")}), and the request names none. ` +
+                `Both ecosystems hold "${rawName}" (${error.candidates.join(" and ")}), and the request names none. ` +
                 "Run the command again with `--lang python` or `--lang r`."
             );
         default: {

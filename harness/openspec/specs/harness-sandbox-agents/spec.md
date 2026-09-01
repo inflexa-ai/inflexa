@@ -175,16 +175,27 @@ The tool description MUST state these facts.
 
 A static prompt layer for the link tool MUST append to the sandbox system
 prompt only when the seam is bound. The layer MUST teach: call
-`link_packages` after a failed import, pass the module name verbatim, a
-refusal is a real answer, and a version collision is terminal. The layer is a
-composition-time constant, thus the prompt stays byte-identical across the
-steps of one composition.
+`link_packages` after a failed import, and after `list_available_packages`
+reports a package absent. It MUST teach: pass the module name verbatim, a
+refusal is a real answer, and a version collision is terminal. It MUST place
+the report of a missing package after an `absent` or `unavailable` answer of
+the link tool. With the seam bound, the description of
+`list_available_packages` MUST NOT state that only its own report is
+importable. The reason: the link tool can extend the farm from the pool. The
+layer is a composition-time constant, thus the prompt stays byte-identical
+across the steps of one composition.
 
 #### Scenario: The layer follows the seam
 
 - **GIVEN** two compositions, one with the seam bound and one without
 - **WHEN** the two system prompts are compared
 - **THEN** only the bound one carries the package-link layer, and each is stable across its own steps
+
+#### Scenario: An absent lookup routes through the link tool
+
+- **GIVEN** a composition with the seam bound
+- **WHEN** the system prompt and the description of `list_available_packages` are inspected
+- **THEN** both direct the agent to call `link_packages` before it reports a package missing
 
 ### Requirement: Sandbox agent system prompt is a pure function of the agent type
 

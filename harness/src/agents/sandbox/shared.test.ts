@@ -258,6 +258,28 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         expect(def.systemPrompt).not.toContain(sandboxPackageLinkPrompt.trim());
     });
 
+    it("the layer teaches the absent-lookup trigger and gates the missing report on the link answer", () => {
+        // The spec scenario "An absent lookup routes through the link tool": a
+        // negative listing must route to `link_packages` BEFORE a missing
+        // report — the pool can hold what the farm lock does not.
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
+
+        expect(def.systemPrompt).toContain("After a failed import, and when `list_available_packages`");
+        expect(def.systemPrompt).toContain("Report a package as missing only after");
+    });
+
+    it("the description of list_available_packages stops at absent only when the seam is bound", () => {
+        const closedWorld = "only what this tool reports is importable";
+        const descriptionOf = (def: ReturnType<typeof createSandboxAgent>): string =>
+            def.tools.find((tool) => tool.id === "list_available_packages")!.description;
+        const bound = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
+        const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+
+        expect(descriptionOf(unbound)).toContain(closedWorld);
+        expect(descriptionOf(bound)).not.toContain(closedWorld);
+        expect(descriptionOf(bound)).toContain("call `link_packages` before treating it as missing");
+    });
+
     it("the layer follows the seam, and each composition stays byte-stable across its own steps", () => {
         const boundOne = createSandboxAgent({ ...makeFakeSandboxAgentDeps({ stepId: "s1" }), extendAnalysisFarm }, meta, body);
         const boundTwo = createSandboxAgent({ ...makeFakeSandboxAgentDeps({ stepId: "s2" }), extendAnalysisFarm }, meta, body);

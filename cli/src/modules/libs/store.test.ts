@@ -14,7 +14,7 @@ import { FARM_LOCK_KEY_PREFIX } from "./composition.ts";
 import type { ProvisionerRunner } from "./provisioner.ts";
 import { readStoreFlights } from "./store_flight.ts";
 import { transferLockKey } from "./transfers.ts";
-import { collectStoreDebris, reclaimStore, runStoreDownload } from "./store.ts";
+import { collectStoreDebris, describeRequestRefusal, reclaimStore, runStoreDownload } from "./store.ts";
 
 // The silent debris pass: it frees only the tier that nothing references — no
 // farm link AND no graph node — plus the stale acquire reports, and it yields
@@ -222,5 +222,28 @@ describe("runStoreDownload --foreground", () => {
         await runStoreDownload({ foreground: true }, { transfer });
 
         expect(process.exitCode ?? 0).toBe(0);
+    });
+});
+
+describe("describeRequestRefusal", () => {
+    // The graph speaks the PEP 503 canonical name, and an R name is case- and
+    // dot-sensitive. Each refusal and each remedy must echo the spelling of
+    // the request: `store add go-db` acquires nothing, `store add GO.db` does.
+    test("each refusal echoes the raw spelling, never the canonical form", () => {
+        const unknown = describeRequestRefusal({ type: "unknown_distribution", name: "go-db" }, "GO.db");
+        expect(unknown).toContain('"GO.db"');
+        expect(unknown).toContain("store add GO.db");
+        expect(unknown).not.toContain("go-db");
+
+        const version = describeRequestRefusal({ type: "unknown_version", name: "go-db", version: "3.18", available: ["3.19"] }, "GO.db");
+        expect(version).toContain('"GO.db"');
+        expect(version).toContain("store add GO.db --version 3.18");
+        expect(version).not.toContain("go-db");
+
+        const both = describeRequestRefusal({ type: "ambiguous_ecosystem", name: "go-db", candidates: ["go-db-1.0-py", "go-db-1.0-r"] }, "GO.db");
+        expect(both).toContain('"GO.db"');
+        // The two candidates are store directories, and they stay verbatim —
+        // only the requested NAME obeys the echo rule.
+        expect(both).toContain("--lang python");
     });
 });

@@ -138,6 +138,19 @@ jobs:
         # runner user has no sudo on the self-hosted builders, so fail loudly.
         run: command -v zstd >/dev/null || { echo "::error::zstd not found on the builder"; exit 1; }
 
+      - name: Prove the python of the coverage gate
+        # The coverage step imports yaml AFTER the multi-hour build. A missing
+        # module there wastes the full compile. Thus this step proves the
+        # import early, in seconds. The install tries the user scheme first,
+        # then the PEP 668 override. The last import is the verdict, and it
+        # fails loudly.
+        run: |
+          python3 -c "import yaml" 2>/dev/null \
+            || pip install --quiet --user pyyaml \
+            || pip install --quiet --user --break-system-packages pyyaml \
+            || true
+          python3 -c "import yaml"
+
       - name: Log in to GHCR
         # The ORAS push and the ORAS manifest resolve both read the docker
         # credential store, so this one login authenticates ORAS as well.
@@ -333,12 +346,15 @@ jobs:
           FARM_DIR: ${{ steps.farm.outputs.dir }}
         run: |
           docker run --rm -i \
+            -e ARCH \
             -v "${STORE_VOLUME}:/mnt/libs:rw" \
             -v "${GITHUB_WORKSPACE}/load-check.json:/load-check.json:ro" \
+            -v "${GITHUB_WORKSPACE}/images/package-store:/package-store:ro" \
             --entrypoint python3 \
             "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" - <<'PY'
-          import json, sys
+          import json, os, sys
           from pathlib import Path
+          import yaml
           lock_path = Path("/mnt/libs/farms/catalog/inflexa.lock")
           lock = json.loads(lock_path.read_text())
           results = json.loads(Path("/load-check.json").read_text()).get("results", [])
@@ -357,8 +373,24 @@ jobs:
           per_track = {}
           for pkg in kept:
               per_track[pkg["track"]] = per_track.get(pkg["track"], 0) + 1
-          had_tracks = {pkg["track"] for pkg in lock.get("packages", [])}
-          empty = sorted(t for t in had_tracks if per_track.get(t, 0) == 0)
+          # The floor measures against the MANIFEST, never against the lock. A
+          # lock that lost a track names no track of its own, and a floor that
+          # asks the lock what to expect never fires on the loss. An empty lock
+          # is the extreme of the same fault, and it must fail here.
+          manifest = yaml.safe_load(Path("/package-store/manifest.yaml").read_text()) or {}
+          arch = os.environ["ARCH"]
+          pip = (manifest.get("python") or {}).get("pip") or {}
+          r = manifest.get("r") or {}
+          expected = set()
+          if list(pip.get("common") or []) + list(pip.get(arch) or []):
+              expected.add("python")
+          if r.get("cran"):
+              expected.add("cran")
+          if list(r.get("bioconductor") or []) + list(r.get("git") or []):
+              expected.add("bioconductor")
+          if r.get("github"):
+              expected.add("github")
+          empty = sorted(t for t in expected if per_track.get(t, 0) == 0)
           if dropped:
               print("dropped from the advertised inventory:", ", ".join(sorted(dropped)))
           if empty:
@@ -439,7 +471,6 @@ jobs:
           fi
           read_lock() { docker run --rm -v "${STORE_VOLUME}:/mnt/libs:ro" --entrypoint cat "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" "/mnt/libs/farms/${FARM}/inflexa.lock"; }
           read_lock > current-lock.json
-          pip install --quiet --user pyyaml 2>/dev/null || true
           python3 scripts/package-store-coverage.py \
             --manifest "$MANIFEST" \
             --lock current-lock.json \
@@ -649,17 +680,21 @@ jobs:
           merge-multiple: true
 
       - name: Commit the locks back, signed off
+        # The copy fails loudly: a lost artifact download must not read as
+        # "the pins held". The staged diff decides the commit, because a lock
+        # of a first build is an UNTRACKED file, and a plain `git diff` does
+        # not see it.
         run: |
           set -euo pipefail
           mkdir -p images/package-store
-          cp locks/lock.*.json images/package-store/ 2>/dev/null || true
-          if git diff --quiet -- images/package-store; then
+          cp locks/lock.*.json images/package-store/
+          git add images/package-store/lock.*.json
+          if git diff --cached --quiet; then
             echo "the locks did not change; nothing to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add images/package-store/lock.*.json
           git commit -s -m "chore(package-store): commit the resolved per-arch locks back" \
             -m "The build resolved the manifest with the committed lock second. The workflow writes the updated pins back, thus the next build reuses them."
           git push
