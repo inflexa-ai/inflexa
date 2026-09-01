@@ -1,10 +1,10 @@
 /**
- * `write_file` — sandbox-gated workspace write, confined to the agent's
- * writable working directory.
+ * `write_file` — workspace write, confined to the agent's writable working
+ * directory.
  *
  * A thin adapter over the `WorkspaceMutator` seam (see the harness-durable-runtime / harness-workspace-tools specs): the
- * mutator owns resolve + confine + sandbox write + provenance. This tool only
- * declares the input schema and forwards. `edit_file` rides the same seam.
+ * mutator owns resolve + confine + hardened host write + provenance. This tool
+ * only declares the input schema and forwards. `edit_file` rides the same seam.
  */
 
 import { ok } from "neverthrow";
@@ -32,7 +32,8 @@ export interface WriteFileDeps {
 export function createWriteFileTool(deps: WriteFileDeps) {
     return defineTool({
         id: "write_file",
-        // Body-only `awaitExec`-recv → runs unwrapped in the workflow body (see the harness-tools spec).
+        // The mutator wraps the disk mutation in `ctx.runStep` itself, so the
+        // body runs unwrapped in the workflow body (see the harness-tools spec).
         executionMode: "workflow",
         description:
             "Write a UTF-8 text file in your working directory. Relative paths " +
@@ -43,6 +44,6 @@ export function createWriteFileTool(deps: WriteFileDeps) {
         // The path only. `content` is a whole file and must never ride a display
         // channel, which the emit-site length cap enforces regardless.
         describeCall: ({ path }) => path,
-        execute: async ({ path, content }, ctx) => ok(await deps.mutator.writeFile({ path, content, toolName: "write_file", emit: ctx.emit })),
+        execute: async ({ path, content }, ctx) => ok(await deps.mutator.writeFile({ path, content, toolName: "write_file", runStep: ctx.runStep })),
     });
 }

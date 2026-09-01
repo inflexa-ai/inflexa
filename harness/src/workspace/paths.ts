@@ -196,7 +196,7 @@ export function tailWritePrefix(args: { readonly workspaceRoot: string; readonly
  * in-sandbox absolute path. The tree is bind-mounted at `/{resourceId}`, so
  * the sandbox path is the resource id plus the root-relative tail — the host
  * location of the root never leaks into the container. Single source of truth
- * for the `execute_command` / `write_file` cwd and for the working directory
+ * for the `execute_command` cwd and for the working directory
  * a step briefing names (see the harness-workspace-tools spec).
  */
 export function toSandboxPath(workspaceRoot: string, resourceId: string, hostAbsPath: string): string {

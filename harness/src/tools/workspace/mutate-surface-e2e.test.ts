@@ -3,13 +3,12 @@
  * round-trip with the shared resolver, prefix-gated rejection, execute_command
  * stream bounding, and stable execId derivation across multiple calls.
  *
- * Uses a fake `SandboxClient` that materialises `write_file`/`edit_file` Python
- * commands on the host so the read seam can verify path agreement.
+ * `write_file` lands on the host filesystem; a fake `SandboxClient` backs
+ * `execute_command` only.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,7 +18,7 @@ import { createReadFileTool } from "./read-file.js";
 import { createWriteFileTool } from "./write-file.js";
 import { createWorkspaceMutator } from "./mutator.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
-import { stepWritePrefix, toSandboxPath } from "../../workspace/paths.js";
+import { stepWritePrefix } from "../../workspace/paths.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 import { EXEC_STREAM_BYTE_CAP } from "./result-bounds.js";
@@ -42,7 +41,7 @@ interface FakeClient extends SandboxClient {
     readonly submits: SubmitExecBody[];
 }
 
-function makeFakeClient(opts: { sessionsBasePath: string; lsResult?: { stdout: string; stderr: string } }): FakeClient {
+function makeFakeClient(opts: { lsResult?: { stdout: string; stderr: string } } = {}): FakeClient {
     const submits: SubmitExecBody[] = [];
     return {
         submits,
@@ -51,31 +50,13 @@ function makeFakeClient(opts: { sessionsBasePath: string; lsResult?: { stdout: s
         },
         async submitExec(_ref, body) {
             submits.push(body);
-            const cmd = body.command;
-            if (cmd[0] === "python3" && cmd[2]?.includes("base64.b64decode")) {
-                const sandboxPath = cmd[3]!;
-                const contentBytes = Buffer.from(cmd[4]!, "base64");
-                const hostPath = join(opts.sessionsBasePath, sandboxPath.replace(/^\/+/, ""));
-                await mkdir(join(hostPath, ".."), { recursive: true });
-                await writeFile(hostPath, contentBytes);
-            }
         },
         async awaitExec(_ref: SandboxRef, execId: string, _emit: ExecEmit, _deadlineMs: number): Promise<ExecResult> {
-            if (opts.lsResult) {
-                return {
-                    execId,
-                    exitCode: 0,
-                    stdout: opts.lsResult.stdout,
-                    stderr: opts.lsResult.stderr,
-                    durationMs: 4,
-                    timedOut: false,
-                };
-            }
             return {
                 execId,
                 exitCode: 0,
-                stdout: "",
-                stderr: "",
+                stdout: opts.lsResult?.stdout ?? "",
+                stderr: opts.lsResult?.stderr ?? "",
                 durationMs: 1,
                 timedOut: false,
             };
@@ -110,25 +91,16 @@ describe("mutate surface — end-to-end", () => {
             stepId: STEP,
         });
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessionsBasePath, id) });
-        const sandboxWorkingDir = toSandboxPath(workspaceRoot, ANALYSIS, workingDir);
-        return { sandbox, workspaceRoot, workingDir, sandboxWorkingDir, fs };
+        return { sandbox, workspaceRoot, workingDir, fs };
     }
 
     it("relative write resolves into the working dir; read_file agrees", async () => {
-        const { sandbox, workspaceRoot, workingDir, sandboxWorkingDir, fs } = setup();
-        const client = makeFakeClient({ sessionsBasePath });
+        const { workspaceRoot, workingDir, fs } = setup();
 
         const mutator = createWorkspaceMutator({
-            sandboxClient: client,
-            sandbox,
             workspaceRoot,
             analysisId: ANALYSIS,
-            stepId: STEP,
-            workflowId: "wf1",
             workingDir,
-            sandboxWorkingDir,
-            nextFunctionId: () => "fn1",
-            deadlineMs: () => 9_999_999,
         });
         const writeTool = createWriteFileTool({ mutator });
         const readTool = createReadFileTool(fs);
@@ -147,7 +119,6 @@ describe("mutate surface — end-to-end", () => {
         const { sandbox, workingDir } = setup();
         const big = "x".repeat(EXEC_STREAM_BYTE_CAP + 10);
         const client = makeFakeClient({
-            sessionsBasePath,
             lsResult: { stdout: big, stderr: "" },
         });
 
@@ -172,19 +143,11 @@ describe("mutate surface — end-to-end", () => {
     });
 
     it("absolute write outside the working dir rejected as out_of_prefix + read_file returns not_found (no leak)", async () => {
-        const { sandbox, workspaceRoot, workingDir, sandboxWorkingDir, fs } = setup();
-        const client = makeFakeClient({ sessionsBasePath });
+        const { workspaceRoot, workingDir, fs } = setup();
         const mutator = createWorkspaceMutator({
-            sandboxClient: client,
-            sandbox,
             workspaceRoot,
             analysisId: ANALYSIS,
-            stepId: STEP,
-            workflowId: "wf1",
             workingDir,
-            sandboxWorkingDir,
-            nextFunctionId: () => "fn1",
-            deadlineMs: () => 9_999_999,
         });
         const writeTool = createWriteFileTool({ mutator });
         const readTool = createReadFileTool(fs);
@@ -192,7 +155,7 @@ describe("mutate surface — end-to-end", () => {
 
         const out = (await writeTool.execute({ path: `/${ANALYSIS}/data/inputs/leak.csv`, content: "leak" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("out_of_prefix");
-        expect(client.submits.length).toBe(0);
+        expect(existsSync(join(workspaceRoot, "data", "inputs", "leak.csv"))).toBe(false);
 
         const read = (await readTool.execute({ path: `/${ANALYSIS}/data/inputs/leak.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("not_found");
@@ -200,7 +163,7 @@ describe("mutate surface — end-to-end", () => {
 
     it("two execute_command calls in the same step produce distinct execIds", async () => {
         const { sandbox } = setup();
-        const client = makeFakeClient({ sessionsBasePath });
+        const client = makeFakeClient();
         let counter = 0;
         const tool = createExecuteCommandTool({
             sandboxClient: client,
