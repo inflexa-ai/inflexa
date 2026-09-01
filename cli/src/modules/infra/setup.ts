@@ -808,24 +808,18 @@ async function runTransfersSetup(answered: SetupAnswers["sandbox"], canPrompt: b
     const { TRANSFER_KINDS } = await import("../../types/store.ts");
     const { inspectStoreContent, startCatalogTransfer } = await import("../libs/store_download.ts");
     const { settleTransfer } = await import("../../db/primary_mutation.ts");
-    const { migrateRetiredSandboxImageOverride, retiredImagesOnEngine } = await import("../libs/pull.ts");
-    const { selectedRuntime } = await import("../../lib/config.ts");
+    const { migrateRetiredSandboxImageOverride } = await import("../libs/pull.ts");
 
     // The migration comes before the transfers, because the transfers pull the
     // configured image — a kept retired override would pull the baked image
-    // and derive a provisioner reference that no registry holds.
+    // and derive a provisioner reference that no registry holds. The engine
+    // stays untouched here: setup reaches it only through its probe seams,
+    // and the retired-image removal hint lives on `sandbox status`, where a
+    // live engine scan belongs.
     const migrated = migrateRetiredSandboxImageOverride();
-    const lines: string[] = [];
     if (migrated !== null) {
-        lines.push(`The config named the retired image ${migrated}.`, "The override is removed, and the default sandbox-base pair serves.");
+        note(`The config named the retired image ${migrated}.\nThe override is removed, and the default sandbox-base pair serves.`, "Images");
     }
-    const rt = selectedRuntime();
-    if (rt !== null) {
-        for (const image of await retiredImagesOnEngine(rt)) {
-            lines.push(`The retired image ${image.ref} (${image.size}) stays on the engine. Run \`${rt.bin} rmi ${image.ref}\` to free the space.`);
-        }
-    }
-    if (lines.length > 0) note(lines.join("\n"), "Images");
 
     // A second setup during a live transfer reports the run and opens no
     // second consent, and it never waits.

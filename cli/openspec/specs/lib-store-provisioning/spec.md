@@ -83,9 +83,11 @@ and its derived provisioner reference exists in no registry. `inflexa
 setup` and `inflexa sandbox pull` MUST delete the field, with one notice,
 thus the default image pair serves. A reference outside the retired set
 MUST stay, because a custom image is a deliberate override. When the
-engine still holds a retired variant image, setup and `inflexa sandbox
-status` MUST print one removal hint. The hint names the image, its size,
-and the remove command. Nothing removes an image without the user.
+engine still holds a retired variant image, `inflexa sandbox status`
+MUST print one removal hint. The hint names the image, its size, and the
+remove command. Nothing removes an image without the user. Setup MUST
+NOT reach the engine for the hint: setup touches the engine only through
+its probe seams, and the hint is a diagnostic of the status surface.
 
 #### Scenario: A retired override clears at setup
 
