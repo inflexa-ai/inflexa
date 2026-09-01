@@ -233,6 +233,21 @@ export type ProvCommandRef =
       };
 
 /**
+ * A file an agent session wrote with a file tool, outside any run or step — the chat-route
+ * counterpart of a step's file-tool write. Recorded as a fresh `inflexa:FileToolWrite` action
+ * activity that generates the file entity, in the SAME `(path, hash)` QName space as
+ * {@link ProvFileRef} step outputs — so a later read of the file resolves to this very entity.
+ */
+export type ProvSessionFileWriteRef = {
+    /** The thread of the session that wrote the file. Absent when the host scoped no thread. */
+    threadId?: string;
+    /** The agent file-tool that authored the content (e.g. `write_file`), an OPEN vocabulary. */
+    tool: string;
+    /** The file that landed — the shared file-entity identity plus its attributes. */
+    file: ProvFileRef;
+};
+
+/**
  * A started agent session of an analysis. One shape carries both kinds, because to start a session
  * is one action and the kind is data of that action. Recorded as a PROV **activity**; a `report`
  * session also mints the report entity every later act operates on.

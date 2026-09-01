@@ -79,6 +79,16 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 sessionKind: event.session.kind,
                 model: event.model,
             };
+        case "prov.session_file_written":
+            // The hash and the size stay out — the path and the tool identify the write for telemetry.
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                threadId: event.write.threadId,
+                filePath: event.write.file.path,
+                tool: event.write.tool,
+                model: event.model,
+            };
         case "prov.report_block_added":
         case "prov.report_block_changed":
         case "prov.report_block_removed":

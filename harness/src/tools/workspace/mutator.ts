@@ -9,6 +9,14 @@
  * invariant is concentrated in one place instead of being a per-tool
  * convention.
  *
+ * Two realizations serve the two agent contexts. `createWorkspaceMutator`
+ * closes over fixed per-step coordinates and records into the step-scoped
+ * lineage collector (the sandbox agents). `createSessionWorkspaceMutator`
+ * resolves its coordinates per call from the session's analysis scope — the
+ * write prefix is the analysis root — and emits a `write-file` session event
+ * through the provenance seam (the conversation agent, which runs under no
+ * run and no step).
+ *
  * The landing is hardened beyond the lexical resolver: missing parent
  * directories are created only inside the write prefix, the deepest existing
  * ancestor is realpath-checked against the realpath'd prefix (a symlinked
@@ -20,12 +28,16 @@ import { constants, type Stats } from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { basename, dirname, join as joinPath, relative as relativePath, resolve as resolvePath, sep } from "node:path";
 
+import type { AgentSession } from "../../auth/types.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import { tryFs, tryFsWrite } from "../../lib/fs-result.js";
+import type { Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { RunStep } from "../../loop/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
-import { resolveForWrite } from "../../workspace/paths.js";
+import { bindSessionEmit, type ProvenanceSeam } from "../../provenance/seam.js";
+import { resolveForWrite, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 
 /** Outcome of a confined write. Expected outcomes are data variants — never throws on them. */
 export type WriteFileResult =
@@ -64,13 +76,17 @@ export interface WorkspaceMutator {
      * directory, and land `content` on the host filesystem. `toolName` names
      * the invoking tool so a successful write is attributed to it in
      * provenance. `runStep` wraps the disk mutation in a replay-cached step —
-     * pass the tool context's `runStep`.
+     * pass the tool context's `runStep`. `session` is the calling agent's
+     * session — pass the tool context's `session`: the step-scoped realization
+     * ignores it, the session-scoped one resolves its coordinates and its
+     * provenance attribution from it.
      */
     writeFile(args: {
         readonly path: string;
         readonly content: string;
         readonly toolName: MutateToolName;
         readonly runStep: RunStep;
+        readonly session: AgentSession;
     }): Promise<WriteFileResult>;
 }
 
@@ -138,32 +154,70 @@ async function landBytes(prefix: string, absolute: string, bytes: Buffer): Promi
     return "ok";
 }
 
+/** One landed confined write: the paths in both frames, and the exact bytes on disk. */
+type ConfinedWriteOk = {
+    readonly status: "ok";
+    /** Analysis-root-relative, forward-slashed — the provenance-facing form. */
+    readonly relative: string;
+    /** The `/{analysisId}/…` frame-independent form — the agent-facing result path. */
+    readonly agentPath: string;
+    readonly bytes: Buffer;
+};
+
+/**
+ * The shared write gauntlet both realizations run: resolve + confine
+ * (`resolveForWrite`), then the hardened landing wrapped in `runStep`. A
+ * refusal comes back as data; an ok carries what the caller's provenance
+ * record needs — the analysis-relative path and the exact bytes that landed.
+ */
+async function confinedWrite(args: {
+    readonly workspaceRoot: string;
+    readonly analysisId: string;
+    readonly workingDir: string;
+    readonly path: string;
+    readonly content: string;
+    readonly runStep: RunStep;
+}): Promise<{ readonly status: Exclude<LandingStatus, "ok"> | "out_of_scope" } | ConfinedWriteOk> {
+    const scoped = resolveForWrite({
+        workspaceRoot: args.workspaceRoot,
+        analysisId: args.analysisId,
+        workingDir: args.workingDir,
+        path: args.path,
+    });
+    if (scoped.kind === "out_of_scope") return { status: "out_of_scope" };
+    if (scoped.kind === "out_of_prefix") return { status: "out_of_prefix" };
+
+    // Analysis-root-relative, forward-slashed: the agent-facing result
+    // path prepends the `/{analysisId}` frame; a provenance record uses
+    // the bare tail (the collector normalizes it step-relative itself).
+    const relative = scoped.relative.split("\\").join("/");
+    const agentPath = `/${args.analysisId}/${relative}`;
+    const bytes = Buffer.from(args.content, "utf8");
+    const prefix = resolvePath(args.workingDir);
+
+    // The loop dispatches a workflow-mode tool body unwrapped (see
+    // `dispatchTools` in loop/run-agent.ts), so a DBOS replay re-runs
+    // this body. The step wrapper caches the landing: a replay returns
+    // the recorded outcome instead of touching the disk again. On the
+    // chat route the injected `runStep` is the passthrough — the same
+    // call, no durability, no fork of this path.
+    const landed = await args.runStep("write", () => landBytes(prefix, scoped.absolute, bytes));
+    if (landed !== "ok") return { status: landed };
+    return { status: "ok", relative, agentPath, bytes };
+}
+
 export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMutator {
     return {
         async writeFile({ path, content, toolName, runStep }) {
-            const scoped = resolveForWrite({
+            const landed = await confinedWrite({
                 workspaceRoot: deps.workspaceRoot,
                 analysisId: deps.analysisId,
                 workingDir: deps.workingDir,
                 path,
+                content,
+                runStep,
             });
-            if (scoped.kind === "out_of_scope") return { status: "out_of_scope", path };
-            if (scoped.kind === "out_of_prefix") return { status: "out_of_prefix", path };
-
-            // Analysis-root-relative, forward-slashed: the agent-facing result
-            // path prepends the `/{analysisId}` frame; the provenance record uses
-            // the bare tail (the collector normalizes it step-relative itself).
-            const relative = scoped.relative.split("\\").join("/");
-            const agentPath = `/${deps.analysisId}/${relative}`;
-            const contentBytes = Buffer.from(content, "utf8");
-            const prefix = resolvePath(deps.workingDir);
-
-            // The loop dispatches a workflow-mode tool body unwrapped (see
-            // `dispatchTools` in loop/run-agent.ts), so a DBOS replay re-runs
-            // this body. The step wrapper caches the landing: a replay returns
-            // the recorded outcome instead of touching the disk again.
-            const landed = await runStep("write", () => landBytes(prefix, scoped.absolute, contentBytes));
-            if (landed !== "ok") return { status: landed, path };
+            if (landed.status !== "ok") return { status: landed.status, path };
 
             // Attest the write in-process from the exact bytes just written — the
             // seam owns write provenance the same way it owns confinement. The
@@ -180,15 +234,81 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
             // formal PROV position without making it replay-stable first.
             if (deps.lineageCollector) {
                 deps.lineageCollector.recordFileToolWrite({
-                    path: relative,
-                    hash: computeSha256(contentBytes),
-                    size: contentBytes.length,
+                    path: landed.relative,
+                    hash: computeSha256(landed.bytes),
+                    size: landed.bytes.length,
                     toolName,
                     timestamp: new Date().toISOString(),
                 });
             }
 
-            return { status: "ok", path: agentPath, bytesWritten: contentBytes.length };
+            return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length };
+        },
+    };
+}
+
+/** Construction deps of the session-scoped realization — see {@link createSessionWorkspaceMutator}. */
+export interface SessionWorkspaceMutatorDeps {
+    /** Workspace-root resolution seam — the write coordinates resolve per call from the session's analysis scope. */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
+    /**
+     * The provenance seam. On a successful confined write the seam's session
+     * emit receives one `write-file` event — hash and size computed in-process
+     * from the exact bytes written, attributed to the session's analysis and
+     * thread. An unbound session emit records nothing; the write itself
+     * proceeds unchanged.
+     */
+    readonly provenance?: ProvenanceSeam;
+    readonly logger?: Logger;
+}
+
+/**
+ * The session-scoped `WorkspaceMutator` realization — the conversation agent's
+ * write path. Where `createWorkspaceMutator` closes over fixed per-step
+ * coordinates, this one serves every analysis from one construction: each call
+ * resolves the workspace root from the session's analysis scope, and the write
+ * prefix IS that root — the agent modifies its own analysis tree freely, while
+ * `..` traversal, a foreign analysis, and the symlink escapes stay refused by
+ * the same gauntlet.
+ *
+ * A write here runs under no run and no step, so its provenance is a session
+ * observation, not a collector record: each successful write emits one
+ * `write-file` session event (see `provenance/seam.ts`).
+ */
+export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps): WorkspaceMutator {
+    const logger = (deps.logger ?? createNoopLogger()).named("workspace-mutator");
+    const observe = bindSessionEmit(deps.provenance, logger);
+    return {
+        async writeFile({ path, content, toolName, runStep, session }) {
+            // Only an analysis scope has a workspace tree; under any other
+            // scope there is nothing in scope to write.
+            const scope = session.scope;
+            if (scope.kind !== "analysis") return { status: "out_of_scope", path };
+
+            // Throws on an unknown analysis — the loop's dispatch catch maps
+            // it to an error tool result, like any unexpected host failure.
+            const workspaceRoot = deps.resolveWorkspaceRoot(scope.analysisId);
+            const landed = await confinedWrite({
+                workspaceRoot,
+                analysisId: scope.analysisId,
+                workingDir: workspaceRoot,
+                path,
+                content,
+                runStep,
+            });
+            if (landed.status !== "ok") return { status: landed.status, path };
+
+            observe({
+                type: "write-file",
+                analysisId: scope.analysisId,
+                ...(scope.threadId !== undefined ? { threadId: scope.threadId } : {}),
+                path: landed.relative,
+                hash: computeSha256(landed.bytes),
+                size: landed.bytes.length,
+                tool: toolName,
+            });
+
+            return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length };
         },
     };
 }

@@ -28,17 +28,19 @@ target everywhere.
   `WorkspaceMutator` interface and its data variants.
 - The confinement becomes stronger, not weaker: the prefix check stays, and
   symlink checks close the realpath gap.
-- The provenance is byte-identical to today: a `file_written` event with
-  `producer: "file_tool"`, and hashes that reconcile from disk.
+- The provenance of a step write is byte-identical to today: a `file_written`
+  event with `producer: "file_tool"`, and hashes that reconcile from disk.
 - `edit_file` gains a bulk regex mode with an explicit match contract.
+- The conversation agent gains the write pair, confined to the analysis root,
+  and each successful chat write records provenance.
 
 **Non-Goals:**
 
 - No change to `execute_command`, to the sandbox, to its mount plan, or to the
   read-only analysis mount.
-- No change to the agent rosters. Only a sandbox agent holds the mutate
-  surface, and `readOnly` mode still omits the write pair.
-- No change to the shape of a provenance record or a run event.
+- No change to the sandbox-agent rosters, and `readOnly` mode still omits the
+  write pair. The report agent stays without a mutate surface.
+- No change to the shape of a step provenance record or a run event.
 
 ## Decisions
 
@@ -85,6 +87,28 @@ numbers of the matches. A bulk edit without a declared count can silently
 rewrite the wrong places. The contract makes the model state its intent, and
 the mismatch report lets it correct.
 
+**7. The conversation agent writes through a session-scoped mutator.** One
+construction serves every analysis: each call resolves the workspace root
+from the analysis scope of the session, and the write prefix is that root.
+The same tool factories serve both contexts, because the chat route injects
+the passthrough `runStep` into the loop. Thus the workflow path is unchanged
+to the byte.
+
+Rejected: a per-analysis construction of the conversation agent. The agent is
+one `AgentDefinition` for the whole process, and the session already carries
+the analysis.
+
+**8. A chat write emits a session event, not a collector record.** A chat
+write runs under no run and no step. The step-scoped `file_written` event
+demands a step ref, thus the kernel gains one minimal `session_file_written`
+event. The event carries the file entity in the same `(path, hash)` QName
+space, the tool name, and the thread of the session. The generation edge
+carries the shared `gen-{fileDigest}` id, thus one file entity keeps one
+generation record.
+
+Rejected: a synthetic run and step ref on `file_written`. A run that never
+ran must not enter a signed document.
+
 ## Risks / Trade-offs
 
 - [A symbolic link appears between the realpath re-check and the write] → The
@@ -94,9 +118,9 @@ the mismatch report lets it correct.
 - [The harness uid differs from the sandbox uid] → The file mode of a new file
   must let the sandbox user read it. The tests make sure that a script reads a
   file that `write_file` wrote.
-- [A host write no longer needs a live sandbox] → The rosters are unchanged,
-  thus no new caller appears. The observable surface of each agent is the same
-  as today.
+- [A host write no longer needs a live sandbox] → The one new caller is the
+  conversation agent. Its writes stay inside its own analysis tree. Each of
+  its writes records provenance, thus the audit trail stays complete.
 
 ## Migration Plan
 

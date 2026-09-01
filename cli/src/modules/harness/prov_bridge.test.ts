@@ -626,6 +626,37 @@ describe("createSessionEmit", () => {
         expect(version.version).toEqual({ threadId: reportThreadId, versionId: "v1", replaced: true });
     });
 
+    test("a conversation file write maps onto prov.session_file_written with the file identity", () => {
+        emitSession({
+            type: "write-file",
+            analysisId: sessionAnalysisId,
+            threadId: "thread-conv-1",
+            path: "notes/summary.md",
+            hash: "sha256:abc",
+            size: 42,
+            tool: "write_file",
+        });
+
+        const event = onlyEvent();
+        if (event.type !== "prov.session_file_written") throw new Error(`expected prov.session_file_written, got ${event.type}`);
+        expect(event.analysisId).toBe(sessionAnalysisId);
+        expect(event.model).toBe(sessionModelId);
+        expect(event.write).toEqual({
+            threadId: "thread-conv-1",
+            tool: "write_file",
+            file: { path: "notes/summary.md", hash: "sha256:abc", size: 42, producer: "file_tool" },
+        });
+    });
+
+    test("a file write with no thread carries no threadId key", () => {
+        emitSession({ type: "write-file", analysisId: sessionAnalysisId, path: "notes/a.md", hash: "sha256:aaa", size: 1, tool: "edit_file" });
+
+        const event = onlyEvent();
+        if (event.type !== "prov.session_file_written") throw new Error("expected prov.session_file_written");
+        expect("threadId" in event.write).toBe(false);
+        expect(event.write.tool).toBe("edit_file");
+    });
+
     test("a derivation carries its chain, restated pair by pair", () => {
         const sources = [
             { path: "data/inputs/f1/counts.csv", hash: "h1" },

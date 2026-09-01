@@ -53,3 +53,22 @@
 
 - [ ] 6.1 `npx tsc --noEmit`, lint on the touched files, and the full harness
   test suite.
+
+## 7. The conversation agent
+
+- [x] 7.1 Add the `session` argument to `WorkspaceMutator.writeFile`, and add
+  the session-scoped realization `createSessionWorkspaceMutator`
+  (`src/tools/workspace/mutator.ts`).
+- [x] 7.2 Add the `write-file` member to the session event union
+  (`src/provenance/seam.ts`). The mutate seam emits it on each successful
+  chat write.
+- [x] 7.3 Wire `write_file` and `edit_file` into the conversation roster
+  (`src/agents/conversation-agent.ts`).
+- [x] 7.4 Add the `session_file_written` event to `@inflexa-ai/prov-kernel`:
+  the ref type, the `applyProvEvent` arm, the document builder, the tests,
+  and the `SPEC.md` section.
+- [x] 7.5 Map the `write-file` session event onto the
+  `prov.session_file_written` bus event in the cli provenance bridge.
+- [x] 7.6 Tests: the roster holds the write pair, and a chat write lands the
+  bytes and emits the event. The refusals emit nothing. The symlink checks
+  hold in the chat context.

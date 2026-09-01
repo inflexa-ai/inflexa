@@ -18,7 +18,10 @@
  * It starts a report thread as a child of the conversation, and the Report
  * Builder composes the report in that thread.
  * The workspace read surface (`read_file`, `grep`, `workspace_search`) is
- * wired here over the `WorkspaceFilesystem` seam.
+ * wired here over the `WorkspaceFilesystem` seam, and the write pair
+ * (`write_file`, `edit_file`) over the session-scoped `WorkspaceMutator` —
+ * confined to the analysis root, with one provenance session event per
+ * successful write.
  */
 
 import type { Pool } from "pg";
@@ -64,12 +67,15 @@ import {
     searchArxivTool,
 } from "../tools/research/index.js";
 import {
+    createEditFileTool,
     createFileStatTool,
     createGrepTool,
     createListFilesTool,
     createReadFileTool,
+    createSessionWorkspaceMutator,
     createShowPlanTool,
     createWorkspaceSearchTool,
+    createWriteFileTool,
     showFileTool,
 } from "../tools/workspace/index.js";
 import { showUserTool } from "../tools/display/index.js";
@@ -166,8 +172,9 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
     readonly eyes?: AcquireEyes;
     /**
      * The provenance seam. `start_report_session` hands it to its spawn, which
-     * emits the creation of the session at the moment that the child lands. No
-     * other tool of this roster reads it.
+     * emits the creation of the session at the moment that the child lands.
+     * The session-scoped mutator behind `write_file` and `edit_file` emits one
+     * `write-file` session event for each successful write.
      */
     readonly provenance?: ProvenanceSeam;
     /**
@@ -220,6 +227,14 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
     const chemDb = createChemDbTools(bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
+    // The write path of this agent: coordinates resolve per call from the
+    // session's analysis scope, the write prefix is the analysis root, and
+    // every successful write emits a `write-file` provenance session event.
+    const mutator = createSessionWorkspaceMutator({
+        resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
+        ...(deps.provenance ? { provenance: deps.provenance } : {}),
+        ...(deps.logger ? { logger: deps.logger } : {}),
+    });
 
     const tools: Tool[] = [
         // Identifier resolution — the ENSG most other bio tools key off.
@@ -321,6 +336,13 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createListFilesTool(workspaceFs),
         createFileStatTool(workspaceFs),
         createGrepTool(workspaceFs),
+        // Workspace write pair over the session-scoped mutate seam. The working
+        // directory of this agent is the analysis root, so a write lands
+        // anywhere inside its own analysis tree; `..`, a foreign analysis, and
+        // a symlink escape stay refused. No sandbox is involved — the mutator
+        // writes host-side, exactly as it does for a sandbox agent.
+        createWriteFileTool({ mutator }),
+        createEditFileTool({ mutator, workspaceFilesystem: workspaceFs }),
         // Working memory.
         createUpdateWorkingMemoryTool(workingMemory, pool),
         // Host-contributed tools ride the same context and dispatch path as the

@@ -295,4 +295,61 @@ describe("applyProvEvent — the session and report family", () => {
             "inflexa:blockKind": "chart",
         });
     });
+
+    test("a session file write mints a FileToolWrite action that generates the shared file entity", () => {
+        const model = makeModel();
+        const chatFileDigest = defaultProvDigest("notes/summary.md|sha256:ccc");
+        const doc = serialize(model, [
+            {
+                type: "session_file_written",
+                analysisId: "a1",
+                actor,
+                model: "anthropic/test-model",
+                write: {
+                    threadId: "t-chat",
+                    tool: "write_file",
+                    file: { path: "notes/summary.md", hash: "sha256:ccc", size: 20, producer: "file_tool" },
+                },
+            },
+        ]);
+
+        expect(doc.activity?.["inflexa:action-evt-1"]).toMatchObject({
+            "prov:type": "inflexa:FileToolWrite",
+            "inflexa:tool": "write_file",
+            "inflexa:threadId": "t-chat",
+        });
+        expect(doc.entity?.[`inflexa:file-${chatFileDigest}`]).toMatchObject({
+            "prov:type": "inflexa:File",
+            "inflexa:path": "notes/summary.md",
+            "inflexa:hash": "sha256:ccc",
+            "inflexa:size": { $: 20, type: "xsd:int" },
+            "inflexa:producer": "file_tool",
+        });
+        // The generation edge carries the shared `gen-{fileDigest}` id, so one file
+        // entity keeps exactly one generation record across every authority.
+        expect(doc.wasGeneratedBy?.[`inflexa:gen-${chatFileDigest}`]).toMatchObject({
+            "prov:entity": `inflexa:file-${chatFileDigest}`,
+            "prov:activity": "inflexa:action-evt-1",
+        });
+        expect(doc.wasAttributedTo?.[`inflexa:attr-${chatFileDigest}-${systemAgentDigest}`]).toMatchObject({ "prov:agent": "inflexa:agent-system" });
+        expect(doc.wasDerivedFrom?.[`inflexa:deriv-${chatFileDigest}`]).toMatchObject({ "prov:usedEntity": "inflexa:analysis-a1" });
+        // The model agent is associated with the write action, so the record names
+        // the intelligence that authored the content.
+        expect(Object.keys(doc.agent ?? {})).toContain(model.modelAgentQName("anthropic/test-model"));
+    });
+
+    test("a session file write with no thread stamps no threadId attribute", () => {
+        const doc = serialize(makeModel(), [
+            {
+                type: "session_file_written",
+                analysisId: "a1",
+                actor,
+                model: "anthropic/test-model",
+                write: { tool: "edit_file", file: { path: "notes/summary.md", hash: "sha256:ccc", size: 20, producer: "file_tool" } },
+            },
+        ]);
+
+        expect(doc.activity?.["inflexa:action-evt-1"]).toMatchObject({ "prov:type": "inflexa:FileToolWrite", "inflexa:tool": "edit_file" });
+        expect(doc.activity?.["inflexa:action-evt-1"]).not.toHaveProperty("inflexa:threadId");
+    });
 });

@@ -46,12 +46,16 @@ the member is bound:
 - run a derivation
 - preview the page
 - record a version
+- write a file with a file tool, from a conversation turn
 
-Each event carries the analysis id, the thread id, and the data of its
-action. A block event names the block id and the kind of the block. On a
-change, the event records the kind after the act, because a kind change is
-permitted. On a remove, the event records the kind of the removed block. The
-set-title event targets the document, and it carries no block id.
+Each event carries the analysis id and the data of its action. Each event
+except `write-file` carries the thread id. The `write-file` event carries the
+thread id when the scope of the session holds one.
+
+A block event names the block id and the kind of the block. On a change, the
+event records the kind after the act, because a kind change is permitted. On
+a remove, the event records the kind of the removed block. The set-title
+event targets the document, and it carries no block id.
 
 The `create-session` event MUST come from the site that writes the thread
 row, one time for each session. The site emits it after the row lands, and
@@ -63,6 +67,11 @@ The `create-session` event MUST name the kind of the session, and it MUST
 name the parent thread of a child session. Thus the document of the analysis
 tells the whole tree of the sessions. A reader walks that tree with no second
 read of the seam. A root session has no parent, thus the event carries none.
+
+The `write-file` event MUST come from the mutate seam of the conversation
+agent, after the bytes land. It carries the analysis-root-relative path, the
+SHA-256 hash of the exact bytes, the size in bytes, and the tool name. A
+refused write and a failed write emit nothing.
 
 #### Scenario: The creation of a conversation emits
 
@@ -93,6 +102,13 @@ read of the seam. A root session has no parent, thus the event carries none.
 - **WHEN** the agent sets the title and the member is bound
 - **THEN** the member receives one event that targets the document, with no
   block id
+
+#### Scenario: A conversation file write emits
+
+- **WHEN** a `write_file` call of the conversation agent lands its bytes and
+  the member is bound
+- **THEN** the member receives one `write-file` event with the analysis id,
+  the thread id, the path, the hash, the size, and the tool `write_file`
 
 ### Requirement: The emits are fire-and-forget
 

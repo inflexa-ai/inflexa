@@ -24,6 +24,7 @@ export type {
     ProvFileKey,
     ProvCommandInputRef,
     ProvCommandRef,
+    ProvSessionFileWriteRef,
     ProvSessionRef,
     ProvReportBlockRef,
     ProvReportTitleRef,

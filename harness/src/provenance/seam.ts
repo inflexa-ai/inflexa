@@ -96,8 +96,9 @@ type BlockAct = {
  * One observation of a session.
  *
  * The union names one event for each act: the start of a session, the four block operations, the title,
- * the derivation, the preview, and the record. Each event carries the analysis and the thread, thus a
- * consumer places it with no lookup. The title sits on the document, thus the title event names no block.
+ * the derivation, the preview, the record, and the file write of a conversation turn. Each event carries
+ * the analysis and the thread, thus a consumer places it with no lookup. The title sits on the document,
+ * thus the title event names no block.
  *
  * Each member carries what its own site holds at the moment that the act lands, and nothing more. The
  * derivation carries the chain of the table, because the site pins it and a consumer cannot rebuild it
@@ -132,7 +133,26 @@ export type SessionProvenanceEvent =
           sources: ReadonlyArray<{ path: string; hash: string }>;
       }
     | { type: "preview"; analysisId: string; threadId: string; pagePath: string; documentHash: string }
-    | { type: "record-version"; analysisId: string; threadId: string; versionId: string; replaced: boolean };
+    | { type: "record-version"; analysisId: string; threadId: string; versionId: string; replaced: boolean }
+    | {
+          /**
+           * One file that a conversation turn wrote with a file tool — a write under no run and no
+           * step, thus a session observation rather than a collector record. The hash and the size
+           * come from the exact bytes written, computed in-process at the write site.
+           */
+          type: "write-file";
+          analysisId: string;
+          /** The conversation thread whose turn wrote the file. Absent when the scope carries none. */
+          threadId?: string;
+          /** Analysis-root-relative path of the landed file. */
+          path: string;
+          /** SHA-256 of the bytes written. */
+          hash: string;
+          /** Size in bytes. */
+          size: number;
+          /** The agent-visible file tool that authored the content (`write_file` / `edit_file`). */
+          tool: string;
+      };
 
 /**
  * The provenance seam of the harness. An embedder realizes the members that it records, and the harness

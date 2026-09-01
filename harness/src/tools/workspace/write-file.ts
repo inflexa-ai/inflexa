@@ -44,6 +44,7 @@ export function createWriteFileTool(deps: WriteFileDeps) {
         // The path only. `content` is a whole file and must never ride a display
         // channel, which the emit-site length cap enforces regardless.
         describeCall: ({ path }) => path,
-        execute: async ({ path, content }, ctx) => ok(await deps.mutator.writeFile({ path, content, toolName: "write_file", runStep: ctx.runStep })),
+        execute: async ({ path, content }, ctx) =>
+            ok(await deps.mutator.writeFile({ path, content, toolName: "write_file", runStep: ctx.runStep, session: ctx.session })),
     });
 }
