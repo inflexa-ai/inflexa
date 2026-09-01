@@ -669,12 +669,26 @@ jobs:
     if: needs.build-store.result == 'success' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      # The push rides the app token below, never the workflow GITHUB_TOKEN:
+      # the main ruleset requires a pull request with its checks, and only a
+      # dedicated app can be a bypass actor. citation-sync.yml carries the
+      # same recipe, with the same app.
+      contents: read
     steps:
+      - name: Mint a repo-scoped token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: inflexa-ai
+          repositories: inflexa
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.ref }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Download the per-arch locks
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -688,6 +702,14 @@ jobs:
         # "the pins held". The staged diff decides the commit, because a lock
         # of a first build is an UNTRACKED file, and a plain `git diff` does
         # not see it.
+        #
+        # [skip ci] is load-bearing: the lint and test groups cancel the runs
+        # of their ref, and the release gate waits on the checks of the LAST
+        # commit. The pins are machine output that this build already proved,
+        # thus a CI run of their own buys nothing and can cancel a gate.
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
           set -euo pipefail
           mkdir -p images/package-store
@@ -697,8 +719,16 @@ jobs:
             echo "the locks did not change; nothing to commit"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -s -m "chore(package-store): commit the resolved per-arch locks back" \
+          # The commit belongs to the app's bot user. The numeric id in the
+          # noreply address is what links the identity, and -s keeps the
+          # Signed-off-by trailer in step with the author.
+          bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git commit -s -m "chore(package-store): commit the resolved per-arch locks back [skip ci]" \
             -m "The build resolved the manifest with the committed lock second. The workflow writes the updated pins back, thus the next build reuses them."
+          # Absorb a commit that landed since the checkout. A push that still
+          # loses the race fails the run, and the next build heals from
+          # wherever the branch ends up.
+          git pull --rebase origin "${GITHUB_REF_NAME}"
           git push
