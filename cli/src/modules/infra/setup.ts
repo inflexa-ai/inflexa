@@ -806,7 +806,7 @@ export async function setup(options: SetupOptions): Promise<void> {
 async function runTransfersSetup(answered: SetupAnswers["sandbox"], canPrompt: boolean): Promise<void> {
     const { readTransferReports, startImageTransfer } = await import("../libs/transfers.ts");
     const { TRANSFER_KINDS } = await import("../../types/store.ts");
-    const { startCatalogTransfer } = await import("../libs/store_download.ts");
+    const { inspectStoreContent, startCatalogTransfer } = await import("../libs/store_download.ts");
     const { settleTransfer } = await import("../../db/primary_mutation.ts");
 
     // A second setup during a live transfer reports the run and opens no
@@ -832,7 +832,18 @@ async function runTransfersSetup(answered: SetupAnswers["sandbox"], canPrompt: b
     }
 
     if (!consent) {
-        for (const kind of TRANSFER_KINDS) settleTransfer(kind, { state: "declined", message: null }).unwrapOr(undefined);
+        // A decline records a refused offer, and an installed kind got no
+        // offer. A `declined` over an installed store also never clears: the
+        // retry answers `up_to_date` and writes no row.
+        const installed = new Set(
+            readTransferReports()
+                .filter((report) => report.state === "installed")
+                .map((report) => report.kind),
+        );
+        if ((await inspectStoreContent(env.packageStoreDir)) === "installed") installed.add("catalog");
+        for (const kind of TRANSFER_KINDS) {
+            if (!installed.has(kind)) settleTransfer(kind, { state: "declined", message: null }).unwrapOr(undefined);
+        }
         log.info("Downloads declined. Run `inflexa sandbox pull` and `inflexa store download` later.");
         return;
     }

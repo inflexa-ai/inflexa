@@ -6,6 +6,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BatchV1Api, CoreV1Api, V1Job, V1Pod } from "@kubernetes/client-node";
 
 import { createK8sSandboxOps, sanitizeLabelValue } from "./k8s-client.js";
@@ -499,6 +502,70 @@ describe("k8s createSandbox", () => {
         const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
         expect(envMap.R_LIBS_SITE).toBeUndefined();
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
+    });
+});
+
+describe("k8s host-side lock gate (libStorePvcRoot)", () => {
+    // With the root set, the backend proves the `inflexa.lock` of the farm
+    // itself — the spec scenario "A host-readable volume root restores the
+    // backend gate". The degrade mirrors Docker: the store mounts drop, and
+    // the Job is still made.
+    async function createWithRoot(root: string) {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-x-abc" } }]);
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://cortex.example.com:443",
+            namespace: "sandbox",
+            farmSource: FIXED_FARM,
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            libStorePvc: "cortex-libs",
+            libStorePvcRoot: root,
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+        (
+            await ops.createSandbox(
+                {
+                    runId: "run-1",
+                    stepId: "step-a",
+                    analysisId: "an-1",
+                    childWorkflowId: "run-1-0",
+                    resources: { cpu: 2, memoryGb: 4 },
+                },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+        return stub.createdJobs[0]!.spec!.template.spec!;
+    }
+
+    test("a farm with no usable lock drops the store mounts, and the Job is still made", async () => {
+        const root = mkdtempSync(join(tmpdir(), "k8s-libs-root-"));
+        try {
+            const podSpec = await createWithRoot(root);
+
+            expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session"]);
+            const env = Object.fromEntries((podSpec.containers[0]!.env ?? []).map((e) => [e.name, e.value]));
+            expect(env.R_LIBS_SITE).toBeUndefined();
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test("a parsable lock keeps the gate open, and the mounts land", async () => {
+        const root = mkdtempSync(join(tmpdir(), "k8s-libs-root-"));
+        try {
+            mkdirSync(join(root, "farms", "catalog"), { recursive: true });
+            writeFileSync(join(root, "farms", "catalog", "inflexa.lock"), JSON.stringify({ schema: 1, arch: "amd64", packages: [], languages: {} }));
+
+            const podSpec = await createWithRoot(root);
+
+            expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session", "libs"]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 });
 

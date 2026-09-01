@@ -80,6 +80,14 @@ only when `inflexa.lock` parses and its schema version is known. The legacy
 markers `packages.txt`, `meta.json`, and `lock.json` MUST NOT be part of the
 farm contract.
 
+The gate belongs to the party that can read the farm. A backend with a
+host-readable farm path MUST prove the lock itself, before the mount. A
+backend whose farm rides a volume the host cannot read MUST get the proof
+from the farm resolver. There the resolver MUST answer `unavailable` when
+the lock does not parse, and the backend mounts only a resolved farm. A K8s
+configuration CAN name the host mountpoint of the libs volume, and the
+backend then proves the lock itself, through the joined path.
+
 #### Scenario: The gate reads the lock
 
 - **GIVEN** a farm directory with a valid `inflexa.lock`
@@ -90,6 +98,18 @@ farm contract.
 
 - **GIVEN** a farm directory with no `inflexa.lock`
 - **WHEN** the mount gate runs
+- **THEN** the sandbox degrades to `available: false` with a logged warning, and no store mount is made
+
+#### Scenario: A volume-backed farm is proved by its resolver
+
+- **GIVEN** a backend whose farm path is relative to a volume the host cannot read
+- **WHEN** the resolver cannot parse the `inflexa.lock` of the farm
+- **THEN** the resolution answers `unavailable` with the reason, and no container is made
+
+#### Scenario: A host-readable volume root restores the backend gate
+
+- **GIVEN** a K8s backend whose config names the host mountpoint of the libs volume
+- **WHEN** the `inflexa.lock` of the resolved farm does not parse
 - **THEN** the sandbox degrades to `available: false` with a logged warning, and no store mount is made
 
 ### Requirement: The per-analysis cache mounts read-write

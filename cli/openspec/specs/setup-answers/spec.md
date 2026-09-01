@@ -192,8 +192,10 @@ and the catalog — and no size confirmation follows. The transfers start at
 the START of setup, detached, thus the user continues through the setup
 while they run. Setup MUST exit without a wait on them. Absent an answer,
 batch setup skips the transfers with the pull-later hint — nothing
-downloads implicitly. A decline writes the `declined` state, thus the app
-asks nothing at open. A second setup during a live transfer reports the run
+downloads implicitly. A decline writes the `declined` state only for a kind
+that is not installed, thus the app asks nothing at open. An installed kind
+keeps its state: a decline records a refused offer, and an installed kind
+gets no offer. A second setup during a live transfer reports the run
 and opens no second consent. `resources.sharePct` (flag `--resource-share
 <pct>`, 1-100) answers the machine-allowance question as a percentage. The
 value persists as the absolute budget computed from the detected machine,

@@ -13,7 +13,7 @@
  * the step tree under, so both sides address one directory by construction.
  */
 
-import { relative as relativePath, sep } from "node:path";
+import { join, relative as relativePath, sep } from "node:path";
 
 import {
     BatchV1Api,
@@ -30,7 +30,7 @@ import { ResultAsync, err, ok } from "neverthrow";
 
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
-import { resolveFarmSource } from "./farm.js";
+import { readFarmLock, resolveFarmSource } from "./farm.js";
 import { buildMountPlan, buildSessionSubPaths } from "./mount-plan.js";
 import { threadLimitEnv } from "./thread-env.js";
 import type {
@@ -121,6 +121,15 @@ export interface K8sClientConfig {
     /** PVC claim mounted read-only at `/mnt/libs` when set. */
     libStorePvc?: string;
     /**
+     * Absolute mountpoint of `libStorePvc` on THIS process's filesystem, for
+     * a host that mounts the same volume (cortex mounts it at `/mnt/libs`).
+     * With the root set, the backend proves the `inflexa.lock` of the
+     * resolved farm before the mount — the same gate, and the same degrade,
+     * as the Docker backend. Without it, the proof duty stays whole on the
+     * farm resolver — see {@link ResolveAnalysisFarm}.
+     */
+    libStorePvcRoot?: string;
+    /**
      * Where the farm of an analysis comes from. Required — the harness never
      * invents a farm location. The farm is a `subPath` into `libStorePvc`,
      * thus `FarmLocation.farmPath` is PVC-relative here. Consulted only when
@@ -210,13 +219,24 @@ function pvcSubPath(value: string, what: string): string {
     return value;
 }
 
-function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity: SandboxIdentity, farm: FarmLocation | undefined): V1Job {
+function buildJobSpec(
+    meta: CreateSandboxMeta,
+    config: K8sClientConfig,
+    identity: SandboxIdentity,
+    farm: FarmLocation | undefined,
+    libsMounted: boolean,
+): V1Job {
     const { sandboxId } = identity;
+    // The lock gate of the package-store spec: `farmPath` is PVC-relative,
+    // thus this host can prove the lock only through `libStorePvcRoot`. The
+    // caller runs that proof and hands the verdict in `libsMounted`. Without
+    // the root, the proof duty stays whole on the farm resolver — see
+    // {@link ResolveAnalysisFarm}.
     const plan = buildMountPlan(meta, {
-        libs: !!config.libStorePvc,
+        libs: libsMounted,
         refs: !!config.refStorePvc,
         toolchainSource: config.toolchainSource,
-        cache: farm?.cachePath !== undefined,
+        cache: libsMounted && farm?.cachePath !== undefined,
     });
 
     const transport = config.transport ?? "poll";
@@ -593,7 +613,28 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                         farm = resolved.value;
                     }
 
-                    const job = buildJobSpec(meta, config, identity, farm);
+                    // The `inflexa.lock` gate, for a host that mounts the libs
+                    // volume itself. The resolver owes the proof either way,
+                    // but a farm half-written between the resolution and this
+                    // create still mounts without a second look. A gate failure
+                    // degrades exactly as the Docker backend does: no store
+                    // mount, the Job is still made, and the sandbox reports the
+                    // store as unavailable.
+                    let libsMounted = !!config.libStorePvc;
+                    if (config.libStorePvc && config.libStorePvcRoot && farm) {
+                        const lock = readFarmLock(join(config.libStorePvcRoot, farm.farmPath));
+                        libsMounted = lock.isOk();
+                        if (lock.isErr()) {
+                            (config.logger ?? createNoopLogger())
+                                .named("k8s-client")
+                                .warn(
+                                    "the farm of the analysis has no usable inflexa.lock at sandbox creation — mounting no package store (sandbox degrades to available:false)",
+                                    { libStorePvc: config.libStorePvc, farmPath: farm.farmPath, lockError: lock.error.type, sandboxId },
+                                );
+                        }
+                    }
+
+                    const job = buildJobSpec(meta, config, identity, farm, libsMounted);
 
                     const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, meta.childWorkflowId, job);
                     if (adopted.isErr()) return err(adopted.error);
