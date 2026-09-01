@@ -42,19 +42,21 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # A PR can change cli and harness together, and its checks must run
-      # against that pair. The npm pin cannot see an unpublished harness. Thus
-      # this step links the working-copy harness over the installed one, the
-      # same as `bun run harness:local` on a developer machine. The harness
-      # install comes first, because the link script builds the harness. A push
-      # to main keeps the npm pin: release.yml waits on the push checks as its
-      # release gate, and they must run against the harness version that the
-      # shipped binary bundles.
-      - name: Use the local harness
-        if: github.event_name == 'pull_request'
+      # A change can touch cli, harness, and prov-kernel together, and its
+      # checks must run against that set. The npm pins cannot see an
+      # unpublished harness or prov-kernel. Thus every run — pull request and
+      # push alike — links the working copies over the installed ones, the
+      # same as `bun run harness:local` and `bun run kernel:local` on a
+      # developer machine. The installs come first, because the link scripts
+      # build each package. The npm pins are proven at release time instead:
+      # release.yml installs them and runs the cli checks against that
+      # install before it ships a binary.
+      - name: Use the local harness and prov-kernel
         run: |
           bun install --frozen-lockfile --cwd ../harness
+          bun install --frozen-lockfile --cwd ../prov-kernel
           bun run harness:local
+          bun run kernel:local
 
       - name: Run tests
         run: bun test
