@@ -1,11 +1,12 @@
 name: Package Store Acceptance
 
-# Acceptance — the after-build, "as a user" validation (see design.md). It runs on
-# a FRESH machine with none of the builder's affordances and obtains the store the
-# way it is actually consumed: it PULLS the published store artifact from GHCR
+# Acceptance — the after-build, "as a user" validation (see design.md). It obtains
+# the store the way a user does: it PULLS the published store artifact from GHCR
 # (ghcr.io/<owner>/package-store, published by package-store-build.yml), extracts it,
 # and mounts it read-only into the published sandbox-base image. It then runs the
-# suite (scripts/package-store-validate).
+# suite (scripts/package-store-validate). The SOURCE is what makes the run fresh:
+# the legs run on the builder boxes for their disk, but nothing here reads a build
+# volume — the artifacts arrive only through the registry.
 #
 # No runtime image bakes an R library or a Python library, thus the published store
 # artifact is the one honest source for the import-all invariant and the
@@ -60,14 +61,21 @@ jobs:
     strategy:
       fail-fast: false
       # Arch list — keep in lock-step with the build workflow matrix and its
-      # workflow-level ARCHES env (sandbox-images-build.yml).
+      # workflow-level ARCHES env (sandbox-images-build.yml). Both legs run on
+      # the builder boxes, because the extracted store plus the pulled layers
+      # do not fit the ~14 GB disk of a hosted runner. The store still arrives
+      # only through the registry. arm64 is best-effort, the rule of the
+      # build: its store publish is best-effort, thus its acceptance is too.
       matrix:
         include:
           - arch: amd64
             runner: '["self-hosted", "inflexa-builder"]'
+            best_effort: false
           - arch: arm64
-            runner: '"ubuntu-24.04-arm"'
+            runner: '["self-hosted", "inflexa-builder-arm64"]'
+            best_effort: true
     runs-on: ${{ fromJSON(matrix.runner) }}
+    continue-on-error: ${{ matrix.best_effort }}
     permissions:
       contents: read
       actions: read
@@ -174,9 +182,13 @@ jobs:
           rm -rf layers store
           mkdir -p layers store
           oras pull "$REF" --output layers
+          # Each layer drops after its extraction, thus the compressed set and
+          # the extracted tree never coexist whole — the peak disk use stays
+          # near the extracted tree alone.
           for f in layers/*.tar.zst; do
             echo "extracting $(basename "$f")"
             zstd -dc "$f" | tar -xf - -C store
+            rm -f "$f"
           done
           # The store carries no active-farm pointer. What makes it usable is the
           # catalog farm with its one metadata file, and the graph that names
@@ -198,3 +210,9 @@ jobs:
           SANDBOX_BASE_IMAGE: ${{ steps.candidate.outputs.image }}
           STORE_DIR: ${{ steps.store.outputs.store_dir }}
         run: scripts/package-store-acceptance.sh "$ARCH" "${{ steps.candidate.outputs.version }}" --store "$STORE_DIR"
+
+      - name: Cleanup
+        # The legs run on the self-hosted builder boxes, and an extracted store
+        # left behind eats the disk of the next run.
+        if: always()
+        run: rm -rf layers store candidate

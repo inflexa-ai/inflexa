@@ -64,7 +64,7 @@ tech-debt/
 
 .old_ideas/
 
-# Python bytecode (e.g. scripts/lib-store-validate)
+# Python bytecode (e.g. scripts/package-store-validate)
 __pycache__/
 *.pyc
 

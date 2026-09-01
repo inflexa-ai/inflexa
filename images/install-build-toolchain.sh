@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Common apt build toolchain for the sandbox-python and sandbox-python-r builder
-# stages: base build tools plus the -dev headers that Python C extensions and
+# Common apt build toolchain for the sandbox-base builder stages: base build
+# tools plus the -dev headers that Python C extensions and
 # Bioconductor source compiles link against. Stage-specific extra package names
 # may be passed as arguments (e.g. python3-yaml for the R toolchain) so they
 # install in the same apt transaction as the common set.

@@ -5,24 +5,16 @@
 # was already advanced by the build (see the build workflow). A red run
 # surfaces a failing status for a maintainer to review; it rolls nothing back.
 #
-# The store is obtained one of two ways (design.md "acceptance obtains the store
-# from the published store artifact"):
-#
-#   * mounted store artifact (the store path): pass --store <dir> pointing at a
-#     store extracted from the published store artifact, to mount it read-only into
-#     sandbox-base. This is the store a user pulls, thus it is the honest source for
-#     the import-all invariant.
-#   * baked image (SANDBOX_IMAGE, no mount): boot the published sandbox image
-#     directly. The one runtime image bakes no R library and no Python library,
-#     thus this route validates the image itself, not a package set.
-#
-# No runtime image bakes a package set after the retirement of the variants, thus a
-# store validation mounts the published store artifact.
+# The store arrives one way (design.md "acceptance obtains the store from the
+# published store artifact"): pass --store <dir> at a store extracted from the
+# published artifact, and the suite mounts it read-only into sandbox-base. This
+# is the store a user pulls, thus it is the honest source for the import-all
+# invariant. The image bakes no package, thus no baked-image route exists.
 #
 # Runs from the repo root with Docker available.
 #
-# Usage: package-store-acceptance.sh <amd64|arm64> <version> [--store <dir>]
-# Env:   SANDBOX_IMAGE  the published sandbox image ref for this arch (baked path)
+# Usage: package-store-acceptance.sh <amd64|arm64> <version> --store <dir>
+# Env:   SANDBOX_BASE_IMAGE  the published sandbox-base ref to mount into
 
 set -euo pipefail
 
@@ -48,15 +40,11 @@ export PACKAGE_STORE_VERSION="$VERSION"
 
 echo "::group::Acceptance — $ARCH_DIR @ $VERSION"
 
+# A store mount is the ONE mode: the image bakes no package, thus a baked-image
+# path has nothing to validate and cannot pass.
+: "${STORE_DIR:?STORE_DIR (an extracted store root with farms/catalog) is required}"
 RC=0
-if [ -n "$STORE_DIR" ]; then
-  # Managed path: mount the assembled tarball store read-only into sandbox-base.
-  "$REPO_ROOT/scripts/package-store-validate/run.sh" --summary-md "$SUMMARY_MD" --store "$STORE_DIR" || RC=$?
-else
-  # OSS path: boot the published image directly (baked store, no mount).
-  : "${SANDBOX_IMAGE:?SANDBOX_IMAGE (published sandbox image ref for $ARCH) is required for the baked path}"
-  "$REPO_ROOT/scripts/package-store-validate/run.sh" --summary-md "$SUMMARY_MD" --image "$SANDBOX_IMAGE" || RC=$?
-fi
+"$REPO_ROOT/scripts/package-store-validate/run.sh" --summary-md "$SUMMARY_MD" --store "$STORE_DIR" || RC=$?
 
 # Render the per-arch results table into the CI run summary (no-op locally where
 # GITHUB_STEP_SUMMARY is unset).

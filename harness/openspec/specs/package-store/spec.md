@@ -74,8 +74,10 @@ fields:
 - `merge_conflicts` — the top-level entries that the link merge kept-first
   or skipped.
 
-A dedicated JSON schema file MUST validate the shape, and the mount gate and
-the inventory MUST read this one file. The mount gate MUST accept a farm
+One schema definition MUST validate the shape at each read, and the mount
+gate and the inventory MUST read this one file. The zod shape of the
+harness is that definition — a second copy in another format can drift,
+and nothing would read it. The mount gate MUST accept a farm
 only when `inflexa.lock` parses and its schema version is known. The legacy
 markers `packages.txt`, `meta.json`, and `lock.json` MUST NOT be part of the
 farm contract.
