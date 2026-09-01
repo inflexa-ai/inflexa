@@ -623,6 +623,68 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
     });
 
+    it("two spellings of one name send one request, with the first spelling of the plan", async () => {
+        setEnv();
+        const spelledPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["Seurat"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["seurat"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: spelledPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const seamCalls: Array<{ requests: Array<{ name: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: async (_analysisId, requests) => {
+                seamCalls.push({ requests: [...requests] });
+                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: "1.0.0" }));
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        // An outcome echoes the requested spelling, thus the folded key must
+        // not decide it: the first spelling of the plan rides the request.
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0]!.requests).toEqual([{ name: "Seurat" }]);
+    });
+
+    it("a realization throw refuses the launch as the one store reason, not as a raw error", async () => {
+        setEnv();
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
+        });
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: async () => {
+                throw new Error("the graph file is locked by another process");
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("should not be called");
+            },
+        });
+
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(PlanPackagesMissingError);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/the store cannot answer/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.toThrow(/locked by another process/);
+        expect(launches).toHaveLength(0);
+    });
+
     it("a plan with no packages calls the seam not at all", async () => {
         setEnv();
         const { pool } = fakePool({

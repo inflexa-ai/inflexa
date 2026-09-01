@@ -369,6 +369,19 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         }
                     }
 
+                    // The cache path is the one farm value with no gate of its
+                    // own: the lock gate proves `farmPath`, and this bind string
+                    // would carry a malformed cache path verbatim. An unusable
+                    // value degrades to no cache mount — the rule of a missing
+                    // one — because the entrypoint fallback covers the caches.
+                    const cacheBindable = farm?.cachePath !== undefined && farm.cachePath.startsWith("/") && !farm.cachePath.includes(":");
+                    if (farm?.cachePath !== undefined && !cacheBindable) {
+                        logger.warn("the farm cache path cannot ride a docker bind — mounting no cache", {
+                            cachePath: farm.cachePath,
+                            sandboxId,
+                        });
+                    }
+
                     // Re-checked here too, so a ref store installed after boot is mounted into
                     // the next sandbox. Unlike libs, a missing ref store is NOT warned: a missing
                     // lib store is a degradation (it was configured and working, then broke),
@@ -381,7 +394,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         libs: libsMounted,
                         refs: refsMounted,
                         toolchainSource: config.toolchainSource,
-                        cache: farm?.cachePath !== undefined,
+                        cache: cacheBindable,
                     });
 
                     const hostTreePath = config.resolveWorkspaceRoot(meta.analysisId);
@@ -410,7 +423,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             : []),
                         ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
                         ...(libsMounted && farm && plan.farmPath ? [`${farm.farmPath}:${plan.farmPath}:ro`] : []),
-                        ...(libsMounted && farm?.cachePath && plan.cachePath ? [`${farm.cachePath}:${plan.cachePath}:rw`] : []),
+                        ...(libsMounted && cacheBindable && farm?.cachePath && plan.cachePath ? [`${farm.cachePath}:${plan.cachePath}:rw`] : []),
                         ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
                         ...cpuBinds,
                     ];

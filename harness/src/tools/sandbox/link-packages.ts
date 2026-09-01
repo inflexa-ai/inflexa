@@ -53,8 +53,16 @@ export function createLinkPackagesTool(deps: LinkPackagesDeps) {
         }),
         describeCall: ({ packages }) => packages.map((p) => p.name).join(", "),
         execute: async (input): Promise<Result<LinkPackagesResult, ToolError>> => {
-            const outcomes = await deps.extendAnalysisFarm(deps.analysisId, input.packages);
-            return ok({ outcomes });
+            // A realization throw reads as `unavailable` per request. The loop
+            // would render the throw as a raw tool error, and a raw driver
+            // message teaches the agent nothing that `reason` does not.
+            try {
+                const outcomes = await deps.extendAnalysisFarm(deps.analysisId, input.packages);
+                return ok({ outcomes });
+            } catch (cause) {
+                const reason = cause instanceof Error ? cause.message : String(cause);
+                return ok({ outcomes: input.packages.map((request) => ({ kind: "unavailable" as const, name: request.name, reason })) });
+            }
         },
     });
 }

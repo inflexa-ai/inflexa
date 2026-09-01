@@ -144,8 +144,9 @@ acquire anything. It MUST return one outcome per request: `linked`,
 detail MUST name the packages that pull each side. An `unavailable` outcome
 MUST carry the reason that the link pass cannot answer. It MUST NOT render
 as an absence, because a false absence sends the agent after packages the
-pool holds. A link MUST be live in the running sandbox, with no restart.
-The tool description MUST state these facts.
+pool holds. A realization throw MUST read as `unavailable` with the thrown
+reason, at each call site of the seam. A link MUST be live in the running
+sandbox, with no restart. The tool description MUST state these facts.
 
 #### Scenario: A bound seam adds the tool
 
@@ -170,6 +171,12 @@ The tool description MUST state these facts.
 - **GIVEN** a store whose dependency graph the realization cannot read
 - **WHEN** `link_packages` returns
 - **THEN** each outcome is `unavailable` with the graph reason, and no outcome is `absent`
+
+#### Scenario: A realization throw reads as unavailable
+
+- **GIVEN** a realization that throws at the link call
+- **WHEN** `link_packages` returns
+- **THEN** each outcome is `unavailable` with the thrown reason, and the loop sees no raw error
 
 ### Requirement: The package-link prompt layer appends only with the seam
 

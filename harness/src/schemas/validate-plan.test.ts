@@ -152,4 +152,14 @@ describe("validatePlan package entries", () => {
         const result = validatePlan(plan([step({ id: "T1S1", packages: ["./vendor/pkg"] })]));
         expect(result.valid).toBe(false);
     });
+
+    it("refuses a version specifier that is not ==, naming the two permitted forms", () => {
+        // The link pass splits on `==` only, thus an unrefused range becomes a
+        // package NAME and the pool refuses a package it holds.
+        for (const entry of ["numpy>=1.26", "numpy<2", "scanpy~=1.10", "scanpy!=1.9", "numpy=1.26"]) {
+            const result = validatePlan(plan([step({ id: "T1S1", packages: [entry] })]));
+            expect(result.valid).toBe(false);
+            expect(result.errors.some((e) => e.includes("T1S1") && e.includes(entry) && e.includes("name==version"))).toBe(true);
+        }
+    });
 });

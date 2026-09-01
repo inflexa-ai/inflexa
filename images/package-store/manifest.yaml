@@ -625,9 +625,10 @@ node:
 #
 # This manifest is the single package-set source of truth: it only lists the R,
 # Python, and Node packages and the bioinformatics tools of the sandbox. The
-# provisioner builds the R track and the Python track into the package store at
-# /mnt/libs/current. The runtime image builds the conda track and the Node track,
-# at /opt/conda and /opt/node.
+# provisioner builds the R track and the Python track into the content-addressed
+# pool at /mnt/libs/store, with the catalog farm beside it under /mnt/libs/farms.
+# The runtime image builds the conda track and the Node track, at /opt/conda and
+# /opt/node.
 
 # Bioinformatics CLI tools from bioconda. `common` builds on every arch;
 # `amd64` holds tools with no linux-aarch64 bioconda package (the arm64 conda
