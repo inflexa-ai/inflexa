@@ -1,9 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { describe, expect, test } from "bun:test";
 
 import pkg from "../../../package.json";
-import { env } from "../../lib/env.ts";
 import type { FetchLike } from "../../lib/download.ts";
 import { fetchLatestVersion, isNewerVersion, readNewerVersion, updateReadAllowed } from "./latest.ts";
 
@@ -11,16 +8,6 @@ import { fetchLatestVersion, isNewerVersion, readNewerVersion, updateReadAllowed
 function redirectTo(version: string): FetchLike {
     return async () => new Response(null, { status: 302, headers: { location: `https://github.com/inflexa-ai/inflexa/releases/tag/v${version}` } });
 }
-
-/** Record a read of `version` at `at`, the way a previous run would have left it. */
-function recordRead(version: string, at: number): void {
-    mkdirSync(dirname(env.updateStatePath), { recursive: true });
-    writeFileSync(env.updateStatePath, JSON.stringify({ checkedAt: at, version }));
-}
-
-afterEach(() => {
-    rmSync(env.updateStatePath, { force: true });
-});
 
 describe("isNewerVersion", () => {
     test("ranks by major, then minor, then patch", () => {
@@ -78,61 +65,22 @@ describe("updateReadAllowed", () => {
 });
 
 describe("readNewerVersion", () => {
-    test("a recorded read from within the day answers without touching the network", async () => {
-        const now = 1_000_000_000_000;
-        recordRead("99.0.0", now - 60_000);
-        const found = await readNewerVersion({
-            now,
-            fetch: () => {
-                throw new Error("the network must not be read");
-            },
-        });
-        expect(found).toBe("99.0.0");
+    test("a newer release than the running version is the answer", async () => {
+        expect(await readNewerVersion(redirectTo("99.1.0"))).toBe("99.1.0");
     });
 
-    test("a recorded read older than a day is read again", async () => {
-        const now = 1_000_000_000_000;
-        recordRead("0.0.1", now - 25 * 60 * 60 * 1000);
-        expect(await readNewerVersion({ now, fetch: redirectTo("99.1.0") })).toBe("99.1.0");
+    test("a release that is not newer is nothing to say", async () => {
+        expect(await readNewerVersion(redirectTo(pkg.version))).toBeNull();
     });
 
-    test("a read that finds nothing newer answers null and still holds the next read for a day", async () => {
-        const now = 1_000_000_000_000;
-        expect(await readNewerVersion({ now, fetch: redirectTo(pkg.version) })).toBeNull();
-
-        // The record's job is to hold the NEXT read, and that job does not depend on what this one found.
-        const later = await readNewerVersion({
-            now: now + 60_000,
-            fetch: () => {
-                throw new Error("the network must not be read");
-            },
-        });
-        expect(later).toBeNull();
+    test("a failed read is nothing to say, never a failure", async () => {
+        expect(await readNewerVersion(async () => new Response("", { status: 503 }))).toBeNull();
     });
 
-    test("a failed read answers null and records nothing, so the next run reads again", async () => {
-        const now = 1_000_000_000_000;
-        expect(
-            await readNewerVersion({
-                now,
-                fetch: async () => new Response("", { status: 503 }),
-            }),
-        ).toBeNull();
-
-        let reads = 0;
-        await readNewerVersion({
-            now: now + 60_000,
-            fetch: (...args) => {
-                reads += 1;
-                return redirectTo("99.2.0")(...args);
-            },
-        });
-        expect(reads).toBe(1);
-    });
-
-    test("an unreadable record costs one network read, never a failure", async () => {
-        mkdirSync(dirname(env.updateStatePath), { recursive: true });
-        writeFileSync(env.updateStatePath, "{ this is not json");
-        expect(await readNewerVersion({ now: 1_000_000_000_000, fetch: redirectTo("99.3.0") })).toBe("99.3.0");
+    test("the network is read at each call, so a same-day release is seen", async () => {
+        // No record holds the second call: a release that lands after the first read of the day must
+        // not wait out that day.
+        expect(await readNewerVersion(redirectTo(pkg.version))).toBeNull();
+        expect(await readNewerVersion(redirectTo("99.1.0"))).toBe("99.1.0");
     });
 });

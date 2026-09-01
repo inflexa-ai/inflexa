@@ -1,5 +1,68 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
+import { Result } from "neverthrow";
+import { z } from "zod";
+
 import pkg from "../../../package.json";
+import { env } from "../../lib/env.ts";
 import { installChannel, upgradeInstruction, type InstallChannel } from "./channel.ts";
+import { isNewerVersion } from "./latest.ts";
+
+/** How long one shown ask holds the next one. One day, the interval `gh` and `update-notifier` settled on. */
+const ASK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/** The on-disk record of the last shown ask. `version` is the release that the ask named. */
+const askStateSchema = z.object({ promptedAt: z.number(), version: z.string() });
+
+type AskState = z.infer<typeof askStateSchema>;
+
+/**
+ * The recorded ask, or `null`. Absence is the NORMAL condition — no run showed an ask yet — so every
+ * fault resolves to `null`: no file, bad bytes, a foreign schema. The cost of an unreadable record is
+ * one extra ask, never a failure.
+ */
+function readAskState(): AskState | null {
+    return Result.fromThrowable(
+        () => askStateSchema.safeParse(JSON.parse(readFileSync(env.updateStatePath, "utf8"))),
+        () => undefined,
+    )().match(
+        (parsed) => (parsed.success ? parsed.data : null),
+        () => null,
+    );
+}
+
+/** Record `version` as what the ask at `now` named. A write fault is swallowed for the reason {@link readAskState} gives. */
+function writeAskState(version: string, now: number): void {
+    Result.fromThrowable(
+        () => {
+            mkdirSync(dirname(env.updateStatePath), { recursive: true });
+            writeFileSync(env.updateStatePath, JSON.stringify({ promptedAt: now, version } satisfies AskState, null, 4) + "\n");
+        },
+        () => undefined,
+    )().match(
+        () => undefined,
+        () => undefined,
+    );
+}
+
+/**
+ * Whether a surface may show the ask for `version` now. A `true` also records the ask, thus the
+ * decision and the record are one step, and no caller can forget the write.
+ *
+ * A `version` newer than the recorded one passes inside the day. The read behind this runs at each
+ * startup (latest.ts), and a release from the same day must not wait behind a record about an older
+ * release.
+ *
+ * Call it only at the moment the message really shows. A claim from a run whose message a later guard
+ * drops would burn the day with nothing shown.
+ */
+export function claimDailyAsk(version: string, now: number = Date.now()): boolean {
+    const recorded = readAskState();
+    const allowed = recorded === null || isNewerVersion(version, recorded.version) || now - recorded.promptedAt >= ASK_INTERVAL_MS;
+    if (allowed) writeAskState(version, now);
+    return allowed;
+}
 
 /** What a surface with a person in front of it must do about a newer release. See {@link updateOffer}. */
 export type UpdateOffer =
@@ -48,9 +111,15 @@ export function __releaseUpdateNoticeClaimForTest(): void {
  *
  * Silent unless stderr is a terminal. A redirected stream is a file or a pipe that some other program
  * reads, and this text means nothing to it.
+ *
+ * Shown one time a day for a version ({@link claimDailyAsk}), because the person runs `inflexa` many
+ * times an hour and the same line on each run is noise.
  */
 export function printUpdateNotice(version: string | null): void {
     if (version === null || claimed || !process.stderr.isTTY) return;
+
+    // Behind the guards above, so a run whose message cannot show does not burn the day.
+    if (!claimDailyAsk(version)) return;
 
     // An installer install updates itself, so it gets the command that does that. Every other channel gets
     // the command of the tool that owns the file.
