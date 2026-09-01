@@ -340,7 +340,7 @@ function escapeHtml(s: string): string {
 
 /**
  * Build the self-contained echart HTML: the spec embedded inline, ECharts loaded from an exact-version CDN
- * URL guarded by Subresource Integrity (`echarts@5.5.1`, the version the report templates pin) so a CDN or
+ * URL guarded by Subresource Integrity (`echarts@6.1.0`, the version the report templates pin) so a CDN or
  * package compromise cannot swap arbitrary JS into a chart page the user opens, and a VISIBLE fallback
  * notice shown when the script cannot load (offline, or refused by the browser on an integrity mismatch) so
  * a blank tab is never mysterious. `dataUrl`, when present, is the RELATIVE URL of the chart's data
@@ -384,7 +384,7 @@ export function echartHtml(spec: Record<string, unknown>, dataUrl: string | null
   <p>The chart library could not load (are you offline?). The chart spec is shown below.</p>
   <pre id="spec"></pre>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" integrity="sha384-Mx5lkUEQPM1pOJCwFtUICyX45KNojXbkWdYhkKUKsbv391mavbfoAmONbzkgYPzR" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js" integrity="sha384-C2iskrW/uPW46KzOjrvJIQo4YkV8lkD+QS0CrDN18IIPIpT/g2USu8bTP3nvmIAD" crossorigin="anonymous"></script>
 ${papaScript}<script>
   var spec = ${specJson};
   var dataUrl = ${dataUrlJson};

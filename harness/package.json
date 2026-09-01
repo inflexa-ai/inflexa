@@ -71,7 +71,7 @@
         "ai": "^7.0.61",
         "cheerio": "^1.2.0",
         "dockerode": "^4.0.12",
-        "echarts": "5.5.1",
+        "echarts": "6.1.0",
         "fast-xml-parser": "^5.10.1",
         "hono": "^4.12.34",
         "hyparquet": "^1.28.1",

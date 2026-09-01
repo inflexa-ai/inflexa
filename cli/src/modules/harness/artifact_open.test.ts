@@ -73,7 +73,7 @@ describe("readFileReference", () => {
 describe("echartHtml", () => {
     test("embeds the spec, an SRI-pinned exact-version CDN script, and a visible offline fallback notice", () => {
         const html = echartHtml({ series: [{ type: "line" }] }, null, null);
-        expect(html).toContain('cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" integrity="sha384-');
+        expect(html).toContain('cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js" integrity="sha384-');
         expect(html).toContain('crossorigin="anonymous"');
         expect(html).toContain('"series"');
         expect(html).toContain("could not load"); // offline fallback notice
