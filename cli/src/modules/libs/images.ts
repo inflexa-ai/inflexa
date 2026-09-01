@@ -30,6 +30,26 @@ const PROVISIONER_BASENAME = "sandbox-provisioner";
 /** The one published runtime image a sandbox launches on, at its moving `:latest` tag. */
 export const SANDBOX_IMAGE = `${SANDBOX_REPOSITORY}:latest`;
 
+/** The retired variant basenames of the baked-image model that the package store replaced. */
+const RETIRED_SANDBOX_BASENAMES = new Set(["sandbox-python", "sandbox-python-r"]);
+
+/**
+ * True when `ref` names a retired variant image of our registry, with any tag
+ * or digest. A `harness.sandboxImage` that names one is migration debris, not
+ * a choice: the retired image bakes a package set, it carries no farm
+ * contract, and {@link provisionerImageFor} derives a reference that no
+ * registry holds. A reference outside our namespace is a custom image, and it
+ * is never retired here.
+ */
+export function isRetiredSandboxImage(ref: string): boolean {
+    if (!ref.startsWith(`${GHCR_NAMESPACE}/`)) return false;
+    const name = ref.slice(GHCR_NAMESPACE.length + 1);
+    const at = name.indexOf("@");
+    const colon = name.indexOf(":");
+    const cut = at >= 0 ? at : colon >= 0 ? colon : name.length;
+    return RETIRED_SANDBOX_BASENAMES.has(name.slice(0, cut));
+}
+
 /**
  * The provisioner image reference, DERIVED from the configured runtime image:
  * the same registry and the same tag, with the repository basename swapped.

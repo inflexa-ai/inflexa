@@ -73,6 +73,38 @@ thus the image pair cannot skew.
 - **WHEN** a sandbox launches
 - **THEN** the container comes from `harness.sandboxImage`, with the store at `/mnt/libs` and the farm at `/mnt/libs/farm`
 
+### Requirement: A retired image override migrates away
+
+An upgraded machine can carry a `harness.sandboxImage` value that names a
+retired variant image (`sandbox-python` or `sandbox-python-r` of our
+registry, with any tag or digest). That record is migration debris, not a
+choice: the retired image bakes a package set, it carries no farm contract,
+and its derived provisioner reference exists in no registry. `inflexa
+setup` and `inflexa sandbox pull` MUST delete the field, with one notice,
+thus the default image pair serves. A reference outside the retired set
+MUST stay, because a custom image is a deliberate override. When the
+engine still holds a retired variant image, setup and `inflexa sandbox
+status` MUST print one removal hint. The hint names the image, its size,
+and the remove command. Nothing removes an image without the user.
+
+#### Scenario: A retired override clears at setup
+
+- **GIVEN** a config whose `harness.sandboxImage` names `ghcr.io/inflexa-ai/sandbox-python-r:latest`
+- **WHEN** `inflexa setup` runs
+- **THEN** the field leaves the config, one notice names the migration, and the transfers pull the default pair
+
+#### Scenario: A custom override stays
+
+- **GIVEN** a config whose `harness.sandboxImage` names an image outside the retired set
+- **WHEN** `inflexa setup` runs
+- **THEN** the field is unchanged
+
+#### Scenario: The removal hint removes nothing
+
+- **GIVEN** an engine that holds a retired variant image
+- **WHEN** `inflexa sandbox status` runs
+- **THEN** one line names the image, its size, and the remove command, and the engine is unchanged
+
 ### Requirement: A missing store is offered, never fatal
 
 A missing image and an incomplete store MUST surface an actionable offer
