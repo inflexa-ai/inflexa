@@ -123,16 +123,26 @@ jobs:
 
       # cli pins @inflexa-ai/harness to an exact version and installs it from
       # npm, so the binary bundles the published, attested harness artifact —
-      # not a local build. The pinned version is always already on npm here:
-      # the harness bump is promoted first (release-harness.yml), and a later,
-      # separate cli change consumes it. PR checks link the local harness, but
-      # the push checks that the gate above waits on keep this same npm pin —
-      # thus a main commit whose cli wants an unpublished harness fails that
-      # gate, and it never reaches this step.
+      # not a local build. Lint/Test link the working-copy harness in every
+      # run, so this install is the first place the npm pin is exercised: an
+      # unpublished pin fails right here under the frozen lockfile.
       - name: Install cli dependencies
         if: steps.gate.outputs.release == 'true'
         working-directory: cli
         run: bun install --frozen-lockfile
+
+      # The only checks that run against the npm pin. The Lint/Test runs the
+      # gate above waited on linked the working-copy harness, so they prove
+      # the source pair, not the published artifact the binary bundles. The
+      # typecheck catches API drift between cli and the pinned harness, and
+      # the test suite catches behavior drift — either one fails the release
+      # before any tag or binary exists.
+      - name: Check the cli against the npm harness
+        if: steps.gate.outputs.release == 'true'
+        working-directory: cli
+        run: |
+          bun run typecheck
+          bun test
 
       - name: Build release binaries
         if: steps.gate.outputs.release == 'true'

@@ -2,14 +2,17 @@
 
 ## Language
 
-Write all text in ASD-STE100 Simplified Technical English (STE), issue 9.
+Write the git text, the GitHub text, and each document in ASD-STE100
+Simplified Technical English (STE), issue 9.
 
 Use STE in:
 
-- each message to the user
 - each commit message
+- each pull request: the title, the body, a comment, and a review
+- each GitHub issue: the title, the body, and a comment
 - each document in this project
-- each comment and each docstring in the code
+
+STE does not apply to a chat reply, or to a comment in the code.
 
 STE controls prose only. It does not control code, an identifier, a command, a
 tool name, or text that you copy from a file. Keep the copied text as it is.
@@ -311,29 +314,23 @@ realizations of the seams. An embedder never controls what the harness does.
 Design a new capability in the harness first. Then connect it from the embedder.
 Do not design a capability as a feature of the embedder.
 
-### Red CI on a change to the two subsystems
+### The harness link in CI, and the npm pin at release
 
-The `cli` jobs of `lint.yml` and `test.yml` treat the harness in two ways:
+The `cli` jobs of `lint.yml` and `test.yml` link the working-copy harness and
+the working-copy prov-kernel in every run, the same as `bun run harness:local`
+and `bun run kernel:local`. Thus a combined change is green on a pull request
+and on main. `kernel:local` also points the tsprov install of the linked
+kernel at the copy of cli, because two tsprov copies break class identity.
 
-- On a pull request, the jobs link the working-copy harness, the same as `bun
-  run harness:local`. Thus a pull request that changes `cli` and `harness`
-  together is green.
-- On a push to main, the jobs install the pinned npm version of
-  `@inflexa-ai/harness` with a frozen lockfile. `release.yml` waits on these
-  checks. Thus the release gate runs against the exact version that the binary
-  bundles.
+Only `release.yml` uses the npm pins. It installs the pinned
+`@inflexa-ai/harness` and the locked `@inflexa-ai/prov-kernel` from npm with a
+frozen lockfile. Then it runs the cli typecheck and the cli tests against that
+install. If a pin is stale, or if a pin is not on npm, the release fails
+before the tag and the binaries.
 
-As a result, when a combined change merges, the push run on main has red `cli`
-checks. The red stays until the harness version publishes and the pin bump
-lands on main. This result is correct. Do not treat it as a defect.
-
-Obey these rules:
-
-- Do not report the red CI on main as a finding.
-- Do not read the workflow files to find the cause again.
-- Do not recommend a branch split or a merge sequence.
-- The developer of the pull request controls the harness release and the version
-  change. Refer to `cli/CLAUDE.md`, "Scope: implementation only".
+Thus a cli release comes after the harness publish and after the pin bump.
+The developer of the pull request controls the harness release and the
+version change. Refer to `cli/CLAUDE.md`, "Scope: implementation only".
 
 ## Agent-facing content
 
