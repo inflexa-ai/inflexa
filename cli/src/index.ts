@@ -63,9 +63,10 @@ for (const signal of ["SIGTERM", "SIGHUP"] as const) {
 getLogger("main").info({ argv: process.argv.slice(2) }, "cli start");
 
 // Started BEFORE the command and read AFTER it, so the read overlaps the work a person asked for instead
-// of delaying it. It resolves from a recorded answer on all but one run a day, and it never rejects — see
-// modules/update/latest.ts for every condition that makes it "nothing to report". The TUI is not covered
-// here: it exits through its own shutdown() and asks its own question (tui/app.launch.tsx).
+// of delaying it. It reads the network at each startup, and it never rejects — see modules/update/latest.ts
+// for every condition that makes it "nothing to report". The once-a-day limit sits on the printed line
+// (modules/update/notice.ts), not on this read. The TUI is not covered here: it exits through its own
+// shutdown() and asks its own question (tui/app.launch.tsx).
 const updateRead = pendingUpdate();
 
 try {

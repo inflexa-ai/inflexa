@@ -1,8 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-
 import { err, ok, Result, ResultAsync } from "neverthrow";
-import { z } from "zod";
 
 import pkg from "../../../package.json";
 import { env, updateNoticeSuppressed } from "../../lib/env.ts";
@@ -18,9 +14,6 @@ export const RELEASE_REPO = "inflexa-ai/inflexa";
  * page is a plain redirect that no rate limit covers.
  */
 export const RELEASES_LATEST_URL = `https://github.com/${RELEASE_REPO}/releases/latest`;
-
-/** How long a recorded read stays good. One day, the interval `gh` and `update-notifier` settled on. */
-const READ_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * How long the read may take before it is abandoned. It is short because a command the person actually
@@ -86,40 +79,6 @@ export async function fetchLatestVersion(fetchImpl: FetchLike = fetch): Promise<
     return ok(`${version.major}.${version.minor}.${version.patch}`);
 }
 
-/** The on-disk record of the last read. `version` is the newest release that read saw, not the running one. */
-const updateStateSchema = z.object({ checkedAt: z.number(), version: z.string() });
-
-type UpdateState = z.infer<typeof updateStateSchema>;
-
-/**
- * The recorded read, or `null`. Absence is the NORMAL condition — no run has read yet — so every fault
- * resolves to `null`: no file, bad bytes, a foreign schema. The cost of an unreadable record is one extra
- * network read, never a failure.
- */
-function readState(): UpdateState | null {
-    return Result.fromThrowable(
-        () => updateStateSchema.safeParse(JSON.parse(readFileSync(env.updateStatePath, "utf8"))),
-        () => undefined,
-    )().match(
-        (parsed) => (parsed.success ? parsed.data : null),
-        () => null,
-    );
-}
-
-/** Record `version` as what the read at `now` saw. A write fault is swallowed for the reason {@link readState} gives. */
-function writeState(version: string, now: number): void {
-    Result.fromThrowable(
-        () => {
-            mkdirSync(dirname(env.updateStatePath), { recursive: true });
-            writeFileSync(env.updateStatePath, JSON.stringify({ checkedAt: now, version } satisfies UpdateState, null, 4) + "\n");
-        },
-        () => undefined,
-    )().match(
-        () => undefined,
-        () => undefined,
-    );
-}
-
 /**
  * Whether this build may look for a newer release at all. Each condition names a build that CANNOT be
  * compared against the release page, or a run that must stay quiet:
@@ -138,9 +97,10 @@ export function updateReadAllowed(compiled: boolean, development: boolean, suppr
 /**
  * The newest released version when it is later than the running one, else `null`.
  *
- * At most one network read a day, and the recorded answer serves every run in between. This is the whole
- * reason the record exists: a person runs `inflexa` many times an hour, and a network read on each of
- * them would be both slow and rude to the host.
+ * The network read runs at each call, thus at each startup. As a result a release from the same day is
+ * visible at the next start. The once-a-day limit sits on the ASK, not on this read — `claimDailyAsk` in
+ * notice.ts keeps that record. The read overlaps the command that the person asked for (src/index.ts),
+ * and READ_TIMEOUT_MS caps what it can cost.
  *
  * Never gives an error. A caller uses this to decorate a run it does not own, so a failed read must read
  * as "nothing to say" — the `infra-state-resilience` spec states the same rule for the stack state.
@@ -148,29 +108,16 @@ export function updateReadAllowed(compiled: boolean, development: boolean, suppr
  * Separate from {@link pendingUpdate} only by the gate above it. A caller in the product always wants the
  * gate, so it always calls the other one.
  */
-export async function readNewerVersion(options: { readonly fetch?: FetchLike; readonly now?: number } = {}): Promise<string | null> {
-    const now = options.now ?? Date.now();
-    const recorded = readState();
-    if (recorded !== null && now - recorded.checkedAt < READ_INTERVAL_MS) {
-        return isNewerVersion(recorded.version, pkg.version) ? recorded.version : null;
-    }
-
-    const latest = await fetchLatestVersion(options.fetch ?? fetch);
+export async function readNewerVersion(fetchImpl: FetchLike = fetch): Promise<string | null> {
+    const latest = await fetchLatestVersion(fetchImpl);
     return latest.match(
-        (version) => {
-            // Recorded even when it equals the running version: the record's job is to hold the NEXT read
-            // for a day, and that job is the same whether or not this read found anything new.
-            writeState(version, now);
-            return isNewerVersion(version, pkg.version) ? version : null;
-        },
-        // A failed read writes nothing, so the next run reads again rather than waiting out the day on an
-        // answer that never arrived.
+        (version) => (isNewerVersion(version, pkg.version) ? version : null),
         () => null,
     );
 }
 
 /** The gated read: {@link readNewerVersion} unless {@link updateReadAllowed} says this build must stay quiet. */
-export async function pendingUpdate(options: { readonly fetch?: FetchLike; readonly now?: number } = {}): Promise<string | null> {
+export async function pendingUpdate(fetchImpl: FetchLike = fetch): Promise<string | null> {
     if (!updateReadAllowed(isCompiledBinary(), env.isDevelopment, updateNoticeSuppressed())) return null;
-    return readNewerVersion(options);
+    return readNewerVersion(fetchImpl);
 }

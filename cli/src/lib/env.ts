@@ -296,13 +296,13 @@ export const env = Object.freeze({
      */
     locksDir: join(dataDir(), "inflexa", "locks"),
     /**
-     * The record of the last release-version read: when it ran, and the newest version it saw. See
-     * src/modules/update/latest.ts, which reads it to hold the network read to once a day.
+     * The record of the last shown update ask: when it showed, and the release it named. See
+     * src/modules/update/notice.ts, which reads it to hold the ask to one time a day.
      *
      * Deliberately NOT channel-forked, unlike the stack paths above: a development build never reads for
      * a new release, so a production binary is the only writer this file can have and the two channels
-     * cannot collide here. Losing it costs one extra network read, so nothing downstream treats an
-     * unreadable file as an error.
+     * cannot collide here. Losing it costs one extra ask, so nothing downstream treats an unreadable
+     * file as an error.
      */
     updateStatePath: join(dataDir(), "inflexa", "update-state.json"),
     /**
@@ -534,7 +534,7 @@ export const envDoc: Readonly<
     updateStatePath: {
         kind: "path",
         label: "update state",
-        description: "when inflexa last read for a new release, and the newest version it saw",
+        description: "when inflexa last showed the update ask, and the release it named",
         baseVar: dataVar,
     },
     modelDir: { kind: "path", label: "models", description: "local embedding GGUF models, downloaded by `inflexa setup --embeddings`", baseVar: dataVar },

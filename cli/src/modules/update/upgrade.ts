@@ -10,9 +10,9 @@ import { fetchLatestVersion, isNewerVersion } from "./latest.ts";
 /**
  * `inflexa upgrade` — install the newest release, or name the command that does.
  *
- * The version read here is unconditional, and it deliberately ignores the once-a-day record that the
- * startup notice keeps (see latest.ts). A person who types this command is asking NOW, and an answer from
- * yesterday would be a wrong answer to that question.
+ * The version read here is unconditional, and its answer is not under the once-a-day ask record that the
+ * startup notice keeps (see notice.ts). A person who types this command is asking NOW, and the answer
+ * must show every time.
  */
 export async function upgrade(): Promise<void> {
     const channel = installChannel();

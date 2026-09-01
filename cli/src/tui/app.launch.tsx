@@ -23,7 +23,7 @@ import pkg from "../../package.json";
 import { applyErrorMessage, applyUpdate } from "../modules/update/apply.ts";
 import { installChannel } from "../modules/update/channel.ts";
 import { pendingUpdate } from "../modules/update/latest.ts";
-import { claimUpdateNotice, updateOffer } from "../modules/update/notice.ts";
+import { claimDailyAsk, claimUpdateNotice, updateOffer } from "../modules/update/notice.ts";
 
 // The TUI-entry layer: a thin render shim. All resolution/prompting/creation logic lives in
 // modules/analysis/launch.ts (headless, returns a ChatTarget); this file only makes the proxy
@@ -93,9 +93,9 @@ async function renderChat(target: ChatTarget): Promise<void> {
     void warmGrammars();
 
     // Offer the newest release, behind the same post-render fire-and-forget discipline as the two calls
-    // above. It reads from a recorded answer on all but one run a day, so it usually settles before the
-    // first frame; the dialog stack is module state, so a push that lands before the overlay mounts still
-    // renders once it does.
+    // above. The read goes to the network on each launch, with a short cap (modules/update/latest.ts);
+    // the dialog stack is module state, so a push that lands before the overlay mounts still renders
+    // once it does.
     void offerUpdate();
 
     // Boot the embedded harness runtime AFTER render() has the terminal (fire-and-forget, the same
@@ -119,6 +119,10 @@ async function renderChat(target: ChatTarget): Promise<void> {
 async function offerUpdate(): Promise<void> {
     const offer = updateOffer(await pendingUpdate(), installChannel());
     if (offer.kind === "none") return;
+    // One ask a day: the read above runs at each startup, and this claim is what keeps the dialog and
+    // the toast from opening on each launch. Claimed past the "none" gate, so only a shown message
+    // burns the day.
+    if (!claimDailyAsk(offer.version)) return;
     if (offer.kind === "tell") {
         notify({ kind: "info", text: `inflexa ${offer.version} is out. Update with: ${offer.instruction}` }, 8000, { queue: true });
         return;
