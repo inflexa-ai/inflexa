@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
@@ -8,79 +9,11 @@ import { createReadFileTool } from "./read-file.js";
 import { createWriteFileTool } from "./write-file.js";
 import { createWorkspaceMutator } from "./mutator.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
-import { stepWritePrefix, toSandboxPath } from "../../workspace/paths.js";
-import type { SandboxClient } from "../../sandbox/client.js";
-import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { stepWritePrefix } from "../../workspace/paths.js";
 
 const ANALYSIS = "analysis-001";
 const RUN = "run-abc";
 const STEP = "step-1";
-
-function makeSandboxRef(): SandboxRef {
-    return {
-        sandboxId: "sb-1",
-        host: "127.0.0.1",
-        port: 8765,
-        backend: "docker",
-        callbackSecret: "secret-abc",
-    };
-}
-
-interface FakeClient extends SandboxClient {
-    submits: SubmitExecBody[];
-    /** Files written by the fake when it sees a `write_file` Python command. */
-    filesWritten: { sandboxPath: string; content: Buffer }[];
-}
-
-/**
- * Fake `SandboxClient` for write_file tests: when the submit body is the
- * `write_file` Python command, write the decoded bytes to the *host* path
- * derived from the sandbox path so the read surface can see them.
- */
-function makeFakeClient(opts: { sessionsBasePath: string }): FakeClient {
-    const submits: SubmitExecBody[] = [];
-    const filesWritten: FakeClient["filesWritten"] = [];
-
-    return {
-        submits,
-        filesWritten,
-        async createSandbox() {
-            return makeSandboxRef();
-        },
-        async submitExec(_ref: SandboxRef, body: SubmitExecBody) {
-            submits.push(body);
-
-            const cmd = body.command;
-            if (cmd[0] === "python3" && cmd[1] === "-c" && cmd[2]?.includes("base64.b64decode")) {
-                const sandboxPath = cmd[3]!;
-                const contentBytes = Buffer.from(cmd[4]!, "base64");
-                const hostPath = join(opts.sessionsBasePath, sandboxPath.replace(/^\/+/, ""));
-                await mkdir(join(hostPath, ".."), { recursive: true });
-                await writeFile(hostPath, contentBytes);
-                filesWritten.push({ sandboxPath, content: contentBytes });
-            }
-        },
-        async awaitExec(_ref: SandboxRef, execId: string, _emit: ExecEmit, _deadlineMs: number): Promise<ExecResult> {
-            return {
-                execId,
-                exitCode: 0,
-                stdout: "",
-                stderr: "",
-                durationMs: 1,
-                timedOut: false,
-            };
-        },
-        async isAlive() {
-            return { alive: true, oomKilled: false };
-        },
-        async teardown() {},
-        async teardownById() {},
-        async listManagedSandboxes() {
-            return [];
-        },
-    };
-}
 
 describe("write_file tool", () => {
     let sessionsBasePath: string;
@@ -92,28 +25,20 @@ describe("write_file tool", () => {
         rmSync(sessionsBasePath, { recursive: true, force: true });
     });
 
-    function buildTool(opts: { nextFunctionId?: () => string } = {}) {
+    function workingDirOf() {
+        return stepWritePrefix({ workspaceRoot: join(sessionsBasePath, ANALYSIS), runId: RUN, stepId: STEP });
+    }
+
+    function buildTool() {
         const workspaceRoot = join(sessionsBasePath, ANALYSIS);
-        const client = makeFakeClient({ sessionsBasePath });
-        const workingDir = stepWritePrefix({
-            workspaceRoot,
-            runId: RUN,
-            stepId: STEP,
-        });
+        const workingDir = workingDirOf();
         const mutator = createWorkspaceMutator({
-            sandboxClient: client,
-            sandbox: makeSandboxRef(),
             workspaceRoot,
             analysisId: ANALYSIS,
-            stepId: STEP,
-            workflowId: "wf1",
             workingDir,
-            sandboxWorkingDir: toSandboxPath(workspaceRoot, ANALYSIS, workingDir),
-            nextFunctionId: opts.nextFunctionId ?? (() => "fn1"),
-            deadlineMs: () => 9_999_999,
         });
         const tool = createWriteFileTool({ mutator });
-        return { tool, client };
+        return { tool, workingDir };
     }
 
     it("writes a file inside the prefix and the read surface returns the same content at the same path", async () => {
@@ -132,51 +57,98 @@ describe("write_file tool", () => {
         }
     });
 
-    it("a relative path resolves INTO the working dir (step dir) and succeeds", async () => {
-        const { tool } = buildTool();
+    it("a relative path resolves INTO the working dir (step dir), creating the missing parent dirs inside the prefix", async () => {
+        const { tool, workingDir } = buildTool();
         const { ctx } = makeToolContext();
 
-        const out = (await tool.execute({ path: "output/x.csv", content: "id,value\n1,42\n" }, ctx))._unsafeUnwrap();
+        // Nothing under the step dir exists yet — the landing creates
+        // `output/deep` inside the prefix.
+        const out = (await tool.execute({ path: "output/deep/x.csv", content: "id,value\n1,42\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
         if (out.status === "ok") {
-            expect(out.path).toBe(`/${ANALYSIS}/runs/${RUN}/${STEP}/output/x.csv`);
+            expect(out.path).toBe(`/${ANALYSIS}/runs/${RUN}/${STEP}/output/deep/x.csv`);
         }
 
-        // The bytes land at the step's output dir, and the read surface (using the
-        // same working dir as base) reads them back at the same relative path.
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessionsBasePath, id) });
-        const onDisk = await readFile(resolvePath(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "output", "x.csv"), "utf8");
+        const onDisk = await readFile(join(workingDir, "output", "deep", "x.csv"), "utf8");
         expect(onDisk).toBe("id,value\n1,42\n");
-        void fs;
     });
 
-    it("rejects an absolute write under data/inputs as out_of_prefix and issues no submitExec", async () => {
-        const { tool, client } = buildTool();
+    it("rejects an absolute write under data/inputs as out_of_prefix and lands no file", async () => {
+        const { tool } = buildTool();
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ path: `/${ANALYSIS}/data/inputs/x.csv`, content: "evil" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("out_of_prefix");
-        expect(client.submits.length).toBe(0);
+        expect(existsSync(join(sessionsBasePath, ANALYSIS, "data", "inputs", "x.csv"))).toBe(false);
     });
 
-    it("rejects a `..` escape out of the analysis tree as out_of_scope and issues no submitExec", async () => {
+    it("rejects a `..` escape out of the analysis tree as out_of_scope and lands no file", async () => {
         // workingDir is the step dir (runs/run-abc/step-1); four `..` reach the
         // analysis root and a fifth escapes it.
-        const { tool, client } = buildTool();
+        const { tool } = buildTool();
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ path: "../../../../analysis-002/x.csv", content: "evil" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("out_of_scope");
-        expect(client.submits.length).toBe(0);
+        expect(existsSync(join(sessionsBasePath, "analysis-002"))).toBe(false);
+    });
+
+    it("rejects a write into another analysis's tree as out_of_scope", async () => {
+        const { tool } = buildTool();
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute({ path: "/analysis-002/runs/x.csv", content: "evil" }, ctx))._unsafeUnwrap();
+        expect(out.status).toBe("out_of_scope");
+        expect(existsSync(join(sessionsBasePath, "analysis-002"))).toBe(false);
     });
 
     it("rejects an absolute write to another run's tree as out_of_prefix", async () => {
-        const { tool, client } = buildTool();
+        const { tool } = buildTool();
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ path: `/${ANALYSIS}/runs/run-other/${STEP}/output/x.csv`, content: "evil" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("out_of_prefix");
-        expect(client.submits.length).toBe(0);
+        expect(existsSync(join(sessionsBasePath, ANALYSIS, "runs", "run-other"))).toBe(false);
     });
 
-    it("write/read agreement also holds for binary-ish content via UTF-8 buffer round-trip", async () => {
+    it("refuses a symlinked final component (symlink_denied) and keeps the target untouched", async () => {
+        const { tool, workingDir } = buildTool();
+        const { ctx } = makeToolContext();
+
+        const outside = join(sessionsBasePath, "outside-target.txt");
+        await writeFile(outside, "original");
+        await mkdir(join(workingDir, "output"), { recursive: true });
+        await symlink(outside, join(workingDir, "output", "link.txt"));
+
+        const out = (await tool.execute({ path: "output/link.txt", content: "evil" }, ctx))._unsafeUnwrap();
+        expect(out.status).toBe("symlink_denied");
+        expect(await readFile(outside, "utf8")).toBe("original");
+        // The symlink itself is untouched too — refused, not replaced.
+        expect((await lstat(join(workingDir, "output", "link.txt"))).isSymbolicLink()).toBe(true);
+    });
+
+    it("refuses a symlinked ancestor that escapes the prefix (out_of_prefix) and lands nothing outside", async () => {
+        const { tool, workingDir } = buildTool();
+        const { ctx } = makeToolContext();
+
+        const outsideDir = join(sessionsBasePath, "outside-dir");
+        await mkdir(outsideDir, { recursive: true });
+        await mkdir(workingDir, { recursive: true });
+        await symlink(outsideDir, join(workingDir, "output"));
+
+        const out = (await tool.execute({ path: "output/escape.txt", content: "evil" }, ctx))._unsafeUnwrap();
+        expect(out.status).toBe("out_of_prefix");
+        expect(existsSync(join(outsideDir, "escape.txt"))).toBe(false);
+    });
+
+    it("refuses a dangling-symlink ancestor as symlink_denied", async () => {
+        const { tool, workingDir } = buildTool();
+        const { ctx } = makeToolContext();
+
+        await mkdir(workingDir, { recursive: true });
+        await symlink(join(sessionsBasePath, "nowhere"), join(workingDir, "output"));
+
+        const out = (await tool.execute({ path: "output/x.txt", content: "evil" }, ctx))._unsafeUnwrap();
+        expect(out.status).toBe("symlink_denied");
+    });
+
+    it("write/read agreement also holds for multi-byte content via UTF-8 buffer round-trip", async () => {
         const { tool } = buildTool();
         const { ctx } = makeToolContext();
         const content = "α,β,γ\n1,2,3\n";
@@ -188,21 +160,34 @@ describe("write_file tool", () => {
         if (read.status === "ok") expect(read.content).toBe(content);
     });
 
-    it("emits a sandbox-event for intermediate progress (via runSandboxExec wiring)", async () => {
-        const { tool } = buildTool();
-        const { ctx, emitted } = makeToolContext();
-        await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/scripts/run.py`, content: "print('ok')" }, ctx);
-        // The fake's awaitExec emits no intermediate events, so emitted is empty —
-        // the wiring is tested under execute-command.test.ts.
-        expect(emitted.length).toBe(0);
-    });
+    it("the write runs inside a replay-cached step — a cached replay lands no second write", async () => {
+        const workspaceRoot = join(sessionsBasePath, ANALYSIS);
+        const workingDir = workingDirOf();
+        const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
 
-    it("write file content reaches the actual host path the read surface reads from", async () => {
-        const { tool } = buildTool();
-        const { ctx } = makeToolContext();
-        await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/r.csv`, content: "hi" }, ctx);
-        const hostPath = resolvePath(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "output", "r.csv");
-        const onDisk = await readFile(hostPath, "utf8");
-        expect(onDisk).toBe("hi");
+        // A caching RunStep: the first call runs the body, a later call with the
+        // same name returns the recorded value without re-running it.
+        const cache = new Map<string, unknown>();
+        let bodyRuns = 0;
+        const cachingStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+            if (cache.has(name)) return cache.get(name) as T;
+            bodyRuns++;
+            const value = await fn();
+            cache.set(name, value);
+            return value;
+        };
+
+        const first = await mutator.writeFile({ path: "output/replay.txt", content: "v1", toolName: "write_file", runStep: cachingStep });
+        expect(first.status).toBe("ok");
+        expect(bodyRuns).toBe(1);
+
+        // Overwrite the landed file out of band, then replay: the cached step
+        // returns ok without touching the disk again.
+        const hostPath = resolvePath(workingDir, "output", "replay.txt");
+        await writeFile(hostPath, "changed-on-disk");
+        const replayed = await mutator.writeFile({ path: "output/replay.txt", content: "v1", toolName: "write_file", runStep: cachingStep });
+        expect(replayed.status).toBe("ok");
+        expect(bodyRuns).toBe(1);
+        expect(await readFile(hostPath, "utf8")).toBe("changed-on-disk");
     });
 });

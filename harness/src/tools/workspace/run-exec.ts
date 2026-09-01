@@ -1,13 +1,13 @@
 /**
  * Internal helper used by dependency-bearing tools to drive one sandbox exec
  * through the `SandboxClient`. Centralises the submit/await pair, exec-id
- * derivation, and intermediate-event forwarding so all three tools share
- * one chokepoint. `write_file` / `edit_file` are layered on the workspace
- * mutator and environment introspection tools such as `list_available_refs`
- * use this same replay-safe submit/await path rather than a parallel protocol.
+ * derivation, and intermediate-event forwarding in one chokepoint.
+ * `execute_command` and environment introspection tools such as
+ * `list_available_refs` use this same replay-safe submit/await path rather
+ * than a parallel protocol.
  *
  * Not a registered tool — `defineTool` is called by the user-facing tools
- * (`execute-command.ts`, `write-file.ts`, `edit-file.ts`) which wrap this.
+ * (`execute-command.ts`) which wrap this.
  */
 
 import type { SandboxClient } from "../../sandbox/client.js";

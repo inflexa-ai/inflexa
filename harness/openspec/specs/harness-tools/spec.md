@@ -19,11 +19,13 @@ replay caching, idempotency, and `operation_outputs` recording for the ~35
 external bio/chem API tools and the workspace read tools at zero per-tool
 cost — on replay those rate-limited, keyed external calls return cached instead
 of re-firing. But that runs the body in DBOS *step* context, where `DBOS.recv`
-is illegal and throws. The sandbox mutate tools (`execute_command`,
-`write_file`, `edit_file`) submit a command and then `DBOS.recv` its result, so
-each declares `executionMode: "workflow"`: it runs through a workflow-backed
-execution path where its `recv` is legal, and the tool owns its own durability
-(the submit is an idempotent step, the recv is a body call). `inline` is
+is illegal and throws. `execute_command` submits a command and then receives
+its result with `DBOS.recv`, thus it declares `executionMode: "workflow"`: it
+runs through a workflow-backed execution path where its `recv` is legal, and
+the tool owns its own durability (the submit is an idempotent step, the recv
+is a body call). `write_file` and `edit_file` declare the same mode for a
+different reason: each mutates durable workspace state inside a workflow, with
+no `DBOS.recv`. `inline` is
 reserved for pure deterministic logic with no external side effects. The mode
 is the tool's declaration of intent, not loop policy; `ToolContext` carries a
 `runStep` seam so any tool can wrap its own durable work under the tool's step
@@ -109,14 +111,26 @@ other injected dependency.
 
 ### Requirement: Tools declare an execution mode
 
-Every tool SHALL declare or default to an execution mode: `step`, `workflow`, or `inline`. A `step` tool SHALL run through a deterministic durable step wrapper. A `workflow` tool SHALL run through a workflow-backed execution path when it requires body-only DBOS operations or multiple durable operations. An `inline` tool SHALL be reserved for pure deterministic logic with no external side effects.
+Every tool MUST declare or default to an execution mode: `step`, `workflow`,
+or `inline`. A `step` tool MUST run through a deterministic durable step
+wrapper. A `workflow` tool MUST run through a workflow-backed execution path.
+A tool declares the `workflow` mode when it uses a body-only DBOS operation or
+more than one durable operation. The mode also applies to a tool that mutates
+durable workspace state inside a workflow. An `inline` tool is reserved for
+pure deterministic logic with no external side effects.
+
+`execute_command` declares `executionMode: "workflow"` because it submits a
+command and then receives the result with `DBOS.recv`, which is illegal in
+step context. `write_file` and `edit_file` declare the same mode for a
+different reason: each mutates durable workspace state inside a workflow. The
+two file tools hold no `DBOS.recv`.
 
 #### Scenario: Default external tool is step-backed
 
 - **WHEN** an external lookup tool is constructed without a special mode
 - **THEN** it runs as a `step` tool through the deterministic durable wrapper
 
-#### Scenario: Sandbox mutate tool is workflow-backed
+#### Scenario: Mutate-surface tool is workflow-backed
 
 - **WHEN** `execute_command`, `write_file`, or `edit_file` is constructed
 - **THEN** it declares `executionMode: "workflow"`
@@ -124,7 +138,7 @@ Every tool SHALL declare or default to an execution mode: `step`, `workflow`, or
 #### Scenario: Inline mode is pure only
 
 - **WHEN** a tool declares `executionMode: "inline"`
-- **THEN** review and tests verify it has no external side effects and does not require DBOS durability
+- **THEN** review and tests make sure that it has no external side effects and no DBOS durability
 
 ### Requirement: AI SDK tool wrappers preserve the tool error contract
 

@@ -266,8 +266,10 @@ workspace tree of the analysis. The tree is rooted at the workspace root that th
 embedder resolves — refer to Storage Layout. Each sandbox container gets a **flat
 read-only mount** of the full analysis tree at `/{resourceId}`. It also gets a
 **nested read-write mount** at `/{resourceId}/runs/{runId}/{stepId}` for the
-artifacts of the step. The workspace tools enforce the write restriction with
-`allowedWritePrefix`.
+artifacts of the step. The mounts confine the scripts that `execute_command`
+runs. `write_file` and `edit_file` write host-side. The `resolveForWrite`
+prefix check and the symlink checks confine those writes to the same step
+directory.
 
 **Auth and attribution.** These are the seams of the harness. The concrete policy
 is an embedder concern.
@@ -319,8 +321,9 @@ is an embedder concern.
   in the harness.
 - **Workspace** (`workspace/`): the read surface (`read_file`, `grep`, semantic
   search) is sandbox-independent, and it is available to the conversation agent.
-  The mutate surface (`write_file`, `edit_file`, `execute_command`) is
-  sandbox-gated.
+  In the mutate surface (`write_file`, `edit_file`, `execute_command`), only
+  `execute_command` is sandbox-gated. The two file tools write with the host
+  filesystem after the `resolveForWrite` confinement.
 - **Composition root** (`runtime/assemble.ts`): `assembleCoreRuntime` is the
   host-neutral assembly point. It registers the durable workflows, and it builds
   the conversation agent over them. The local seam realizations that it can be

@@ -138,10 +138,12 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
     available to an agent with no sandbox. The conversation agent reads and
     searches the workspace and never holds a sandbox.
   - **Mutate surface** (`WorkspaceMutator`) — `write_file` and `edit_file`, plus
-    the raw `execute_command` chokepoint. It is **sandbox-gated**. `write_file`
-    and `edit_file` resolve the path, confine it to the writable working directory
-    of the agent, write through the sandbox, and record the provenance. All of
-    that is behind the one `WorkspaceMutator` seam, and no tool does it again.
+    the raw `execute_command` chokepoint. Only `execute_command` is
+    **sandbox-gated**. `write_file` and `edit_file` resolve the path, confine it
+    to the writable working directory of the agent, write with the host
+    filesystem, and record the provenance. The confinement is the
+    `resolveForWrite` prefix check plus the symlink checks. All of that is
+    behind the one `WorkspaceMutator` seam, and no tool does it again.
     `execute_command` defaults its `cwd` to the same working directory.
 - **Workspace working directory** — Each agent run has one writable **working
   directory** that the composition root supplies. A plannable step gets
@@ -672,8 +674,9 @@ Other facts:
   ID synchronously in array order. A `workflow` tool runs sequentially **after**,
   unwrapped in the workflow body, thus its internal `DBOS.recv` and `writeStream`
   (body-only) are legal. These are exactly `execute_command`, `write_file`, and
-  `edit_file`, which have their own durability: the submit is a step, and the recv
-  is a body call. They reserve multiple function IDs across awaits, thus
+  `edit_file`. `execute_command` has its own durability: the submit is a step,
+  and the recv is a body call. The two file tools hold no recv, but each mutates
+  durable workspace state inside the workflow body. They reserve multiple function IDs across awaits, thus
   concurrent ones would race the counter. An `inline` tool is pure deterministic
   logic and runs unwrapped. The results are assembled by the original index, thus
   the tool-result order holds. The loop emits (`iteration`, `tool-started`,

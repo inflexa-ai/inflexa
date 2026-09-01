@@ -5,8 +5,9 @@
  * `AgentDefinition` for one sandbox agent (see the harness-durable-runtime spec): SOUL kernel + the
  * agent's own prompt body + sandbox standards composed into a single
  * static `systemPrompt` string (no processors at request time, see the harness-providers spec),
- * the workspace mutate trio (`execute_command`, `write_file`, `edit_file`)
- * bound to the shared `SandboxClient` and the step's `allowedWritePrefix`,
+ * the workspace mutate trio — `execute_command` bound to the shared
+ * `SandboxClient`, and `write_file` / `edit_file` confined to the step's
+ * `allowedWritePrefix` through the host-side `WorkspaceMutator` —,
  * the workspace read tools (`read_file`, `grep`) over the shared
  * `WorkspaceFilesystem`, `inspect_data_profile` over the shared `Pool`, and the
  * bio/literature/context7/run-inspection tools its `meta.tools` allowlist names.
@@ -259,16 +260,9 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
         ? []
         : (() => {
               const mutator = createWorkspaceMutator({
-                  sandboxClient,
-                  sandbox: step.sandbox,
                   workspaceRoot: step.workspaceRoot,
                   analysisId: step.analysisId,
-                  stepId: step.stepId,
-                  workflowId: step.workflowId,
                   workingDir: hostWorkingDir,
-                  sandboxWorkingDir,
-                  nextFunctionId: step.nextFunctionId,
-                  deadlineMs: step.deadlineMs,
                   ...(lineageCollector ? { lineageCollector } : {}),
               });
               return [createWriteFileTool({ mutator }), createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir })];
