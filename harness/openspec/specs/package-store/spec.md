@@ -88,7 +88,11 @@ backend whose farm rides a volume the host cannot read MUST get the proof
 from the farm resolver. There the resolver MUST answer `unavailable` when
 the lock does not parse, and the backend mounts only a resolved farm. A K8s
 configuration CAN name the host mountpoint of the libs volume, and the
-backend then proves the lock itself, through the joined path.
+backend then proves the lock itself, through the joined path. The sandbox
+client factory MUST forward that root to the backend, because an embedder
+composes through the factory and never builds the backend config itself.
+Under a fixed farm source no resolver exists, thus the forwarded root
+carries the only gate that shape can have.
 
 #### Scenario: The gate reads the lock
 
