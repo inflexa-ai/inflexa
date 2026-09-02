@@ -96,35 +96,25 @@ RUN TOOLS=$(python3 /tmp/scripts/conda-tools.py 2>/dev/null || true) \
        micromamba clean --all --yes; \
     fi
 
-# The load check of the conda track. Each manifest tool that resolves on PATH
-# goes into the inventory fragment, and a missing tool drops with a log line.
-# The floor: zero resolved tools fail the build. PATH gains the conda bin.
-# Thus a tool that ships its own runtime finds it. The conda bin comes AFTER
-# the system dirs, thus `python3` stays the system one, which carries pyyaml.
+# The load check of the conda track (refer to conda-load-check.py). Each
+# manifest tool that resolves on PATH goes into the inventory fragment with
+# its version, and a missing tool drops with a log line. The floor: zero
+# resolved tools fail the build. PATH gains the conda bin. Thus a tool that
+# ships its own runtime finds it. The conda bin comes AFTER the system dirs,
+# thus `python3` stays the system one, which carries pyyaml.
 #
-# The probe reads the BINARY name that conda-binaries.py prints, not the raw
-# manifest entry. A probe of the raw entry drops a tool that works (refer to
-# the docstring of that script).
+# The probe reads the BINARY name, not the raw manifest entry. A probe of the
+# raw entry drops a tool that works. The version comes from micromamba over
+# the prefix, keyed on the package name.
 #
-# The check writes the fragment to /tmp, and the runtime stage copies it to
-# /opt/inflexa. That path sits outside the store mount. Thus the image
+# The check writes the JSON fragment to /tmp, and the runtime stage copies it
+# to /opt/inflexa. That path sits outside the store mount. Thus the image
 # advertises its own tools, and a mounted store never shadows the record.
 ENV PATH="${PATH}:/opt/conda/bin"
-RUN TOOLS=$(python3 /tmp/scripts/conda-binaries.py 2>/dev/null) \
-    && ok=""; failed=""; \
-    for tool in $TOOLS; do \
-      if command -v "$tool" >/dev/null 2>&1; then \
-        ver=$("$tool" --version 2>&1 | head -1 || true); \
-        echo "  OK: $tool ${ver}"; ok="$ok $tool"; \
-      else \
-        echo "DROP: $tool not found on PATH"; failed="$failed $tool"; \
-      fi; \
-    done; \
-    printf '## System tools (CLI)\n%s\n' "$(printf '%s\n' $ok | sort | paste -sd, - | sed 's/,/, /g')" \
-      > /tmp/conda.packages.txt; \
-    [ -n "$failed" ] && echo "NOTE: system tool(s) dropped:$failed"; \
-    if [ -z "$(printf '%s' $ok)" ]; then echo "ERROR: the conda track resolved ZERO tools (non-empty floor) — failing the build."; exit 1; fi; \
-    echo "Load check OK: system tools resolved"
+RUN python3 /tmp/scripts/conda-load-check.py \
+      --manifest /tmp/manifest.yaml \
+      --prefix /opt/conda \
+      --out /tmp/conda.packages.json
 
 # World-readable for the unprivileged sandbox user. The chmod MUST stay in
 # this builder stage. chmod is a write, thus it copies up each file that it
@@ -157,15 +147,15 @@ RUN mkdir -p /opt/node \
     && NODE_PKGS=$(python3 /tmp/scripts/node-packages.py 2>/dev/null || true) \
     && cd /opt/node && npm install $NODE_PKGS 2>&1 | tail -3
 
-# The load check of the node track (refer to node-load-check.js). The
-# fragment holds the set that loaded, and zero loaded packages fail the
-# build. /opt/node carries the direct dependencies of the manifest. Their
-# transitive dependencies live under node_modules, but the fragment does not
-# advertise them. The runtime stage copies the fragment to /opt/inflexa, the
-# same as the conda fragment.
+# The load check of the node track (refer to node-load-check.js). The JSON
+# fragment holds the set that loaded with the version of each package, and
+# zero loaded packages fail the build. /opt/node carries the direct
+# dependencies of the manifest. Their transitive dependencies live under
+# node_modules, but the fragment does not advertise them. The runtime stage
+# copies the fragment to /opt/inflexa, the same as the conda fragment.
 RUN NODE_PKGS=$(python3 /tmp/scripts/node-packages.py 2>/dev/null) \
     && cd /opt/node \
-    && FRAG="/tmp/node.packages.txt" NODE_PKGS="$NODE_PKGS" node /tmp/scripts/node-load-check.js
+    && FRAG="/tmp/node.packages.json" NODE_PKGS="$NODE_PKGS" node /tmp/scripts/node-load-check.js
 
 # World-readable — refer to the note above the matching chmod in conda-builder.
 RUN chmod -R a+rX /opt/node
@@ -426,23 +416,18 @@ ENV PATH="${PATH}:/opt/conda/bin:/mnt/libs/farm/python/bin"
 COPY --from=conda-builder /opt/conda /opt/conda
 COPY --from=node-builder /opt/node /opt/node
 
-# The image advertises its own two tracks through a baked inventory fragment.
-# Each builder derived its fragment from the set that its load check
-# resolved. Thus the record matches what the image installed, and it cannot
-# drift. The fragment lands at /opt/inflexa, outside the store mount, thus a
-# mounted store never shadows it. The harness tool list_available_packages
-# merges this fragment with the farm inventory. Thus an agent reads one
-# complete package list.
-COPY --from=conda-builder /tmp/conda.packages.txt /opt/inflexa/conda.packages.txt
-COPY --from=node-builder /tmp/node.packages.txt /opt/inflexa/node.packages.txt
+# The two builder fragments of the inventory record. Each builder derived its
+# fragment from the set that its load check resolved. Thus the record matches
+# what the image installed, and it cannot drift. The assembly below joins the
+# two, and it removes them.
+COPY --from=conda-builder /tmp/conda.packages.json /opt/inflexa/conda.packages.json
+COPY --from=node-builder /tmp/node.packages.json /opt/inflexa/node.packages.json
 # The load check of the package store rides the image that it proves. The
 # acquisition flight of the host runs it against an acquire report, with the
 # store mounted read-only and no network. The check must run in THIS image,
 # because the sandbox is what loads the packages later.
 COPY images/package-store/load-check.py /opt/inflexa/load-check.py
-RUN cat /opt/inflexa/conda.packages.txt /opt/inflexa/node.packages.txt \
-      > /opt/inflexa/image-packages.txt \
-    && chmod -R a+rX /opt/inflexa
+RUN chmod -R a+rX /opt/inflexa
 
 # No library-specific reference path is baked in. The reference store is
 # optional, and the catalog owns its layout, versioned per dataset. A path
@@ -489,6 +474,40 @@ COPY images/sandbox-base/inflexa-seed-caches.sh /usr/local/lib/inflexa-seed-cach
 COPY --from=provtrack-builder /provtrack.so /opt/provenance/provtrack.so
 COPY images/sandbox-base/provenance/sitecustomize.py /opt/provenance/sitecustomize.py
 COPY images/sandbox-base/provenance/Rprofile.site /opt/provenance/Rprofile.site
+
+# =============================================================================
+# The baked inventory record — the LAST write of this stage.
+#
+# The image describes itself in one JSON record at
+# /opt/inflexa/image-packages.json. The record joins the two builder
+# fragments with the identity of the image and the versions of the three
+# runtimes. That path sits outside the store mount, thus a mounted store
+# never shadows it. The harness tool list_available_packages merges the
+# record with the farm inventory, thus an agent reads one complete package
+# list. The catalog build copies the same file into the store root, and a
+# reader with no container engine gets the inventory from there.
+#
+# IMAGE_VERSION names the tag that the build publishes. The default `local`
+# states that a hand build carries no published version. Both build workflows
+# pass the version that they tag with.
+#
+# The version changes at each build. Thus the assembly comes last, and the
+# cache of the large copies above it holds. The runtime stage derives from
+# BASE_IMAGE and not from libs-toolchain, thus the assembly script arrives
+# through its own COPY.
+# =============================================================================
+
+ARG IMAGE_VERSION=local
+COPY images/sandbox-base/scripts/image-record.py /tmp/image-record.py
+RUN python3 /tmp/image-record.py \
+      --version "${IMAGE_VERSION}" \
+      --arch "${TARGETARCH}" \
+      --system-tools /opt/inflexa/conda.packages.json \
+      --node /opt/inflexa/node.packages.json \
+      --out /opt/inflexa/image-packages.json \
+    && chmod a+r /opt/inflexa/image-packages.json \
+    && rm -f /tmp/image-record.py \
+       /opt/inflexa/conda.packages.json /opt/inflexa/node.packages.json
 
 # The default is the unprivileged workload user. Callback mode and K8s run as
 # uid 1000 throughout. Docker poll mode overrides User to root at create
