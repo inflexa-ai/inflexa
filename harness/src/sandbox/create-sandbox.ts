@@ -30,6 +30,7 @@ import type { SandboxClient } from "./client.js";
 import { createDockerSandboxOps } from "./docker-client.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { sandboxWriteTail } from "./mount-plan.js";
+import { SandboxFailure, type SandboxError } from "./sandbox-error.js";
 import { submitExec, type SubmitExecDeps } from "./submit-exec.js";
 import { toPersistedRef, type CreateSandboxMeta, type FarmSource, type SandboxRef, type SandboxTransport, type ToolchainSource } from "./types.js";
 
@@ -93,6 +94,18 @@ export interface CreateSandboxClientConfig {
      * this field existed.
      */
     toolchainSource?: ToolchainSource;
+    /**
+     * The deployment cannot run an analysis without the package store. Under
+     * the fact, a farm that fails the `inflexa.lock` gate refuses the create
+     * with `farm_unusable`, and neither backend makes a machine. Absent keeps
+     * the degrade: the store mounts drop, a warning is logged, and the
+     * sandbox reports the store as unavailable. The field names the
+     * deployment fact rather than the remediation, so how the harness answers
+     * it can evolve without changing the embedder surface; a single-valued
+     * union (not a boolean) so future store classes extend it without a
+     * breaking change.
+     */
+    packageStore?: "required";
     /** Docker: host dir bind-mounted read-only at `/mnt/refs`. */
     refStorePath?: string;
     /** Docker: force the container platform (e.g. `linux/amd64`) so the sandbox matches the mounted lib store's arch. */
@@ -214,6 +227,39 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     const backend = config.backend ?? config.env.backend;
     const transport = config.transport ?? "poll";
 
+    // The declared fact needs a gate that can prove it. Each combination below
+    // leaves the backend with no gate at all, thus the fact could never be
+    // proved and every create would pass an unproved store. The refusal is at
+    // composition, where the embedder states the fact — the same rule as the
+    // tail-beside-readOnly throw in `mount-plan.ts` — because a contradiction
+    // found at the first sandbox costs a whole run. A K8s `per-analysis` farm
+    // source with no `libStorePvcRoot` is NOT a contradiction: there the
+    // resolver owes the proof, and its refusal already stops the create.
+    if (config.packageStore === "required") {
+        if (backend === "docker" && !config.libStorePath) {
+            throw new Error("createSandboxClient: packageStore is required but no libStorePath is configured — the docker lock gate has no store to prove");
+        }
+        if (backend === "k8s" && !config.libStorePvc) {
+            throw new Error("createSandboxClient: packageStore is required but no libStorePvc is configured — the k8s lock gate has no store to prove");
+        }
+        if (backend === "k8s" && config.farmSource.kind === "fixed" && !config.libStorePvcRoot) {
+            throw new Error(
+                "createSandboxClient: packageStore is required but a fixed farm source has no libStorePvcRoot — no resolver and no host-side gate can prove the store",
+            );
+        }
+    }
+
+    /**
+     * What the seam throws for a backend failure: the description of the
+     * variant as the message, and the variant itself on `cause`. The `mapErr`
+     * happens before the bridge because `toThrowable` passes an `Error`
+     * through untouched — thus `unwrapOrThrow` stays the single sanctioned
+     * Result→throw bridge, no second bridge is introduced, and the
+     * `must-use-result` lint patch keeps recognizing every site. The registry
+     * unwraps below stay on the plain bridge: they carry a `DbError`.
+     */
+    const failing = (e: SandboxError): SandboxFailure => new SandboxFailure(e);
+
     const registerSandbox = async (meta: CreateSandboxMeta, ref: SandboxRef) => {
         unwrapOrThrow(await setSandboxRef(config.pool, meta.runId, meta.stepId, toPersistedRef(ref), meta.execId ?? null));
     };
@@ -232,6 +278,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   libStorePvcRoot: config.libStorePvcRoot,
                   farmSource: config.farmSource,
                   toolchainSource: config.toolchainSource,
+                  packageStore: config.packageStore,
                   refStorePvc: config.refStorePvc,
                   nodeSelector: config.nodeSelector,
                   tolerations: config.tolerations,
@@ -247,6 +294,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   libStorePath: config.libStorePath,
                   farmSource: config.farmSource,
                   toolchainSource: config.toolchainSource,
+                  packageStore: config.packageStore,
                   refStorePath: config.refStorePath,
                   platform: config.platform,
                   engineSocketPath: config.engineSocketPath,
@@ -259,7 +307,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     // ref + step coordinates and the wrapper does the clear after the
     // backend-level removal.
     const teardown = async (ref: SandboxRef): Promise<void> => {
-        unwrapOrThrow(await ops.teardown(ref));
+        unwrapOrThrow((await ops.teardown(ref)).mapErr(failing));
         // Sandboxes are 1-per-step (see `sandbox-step.ts` body — each child
         // workflow calls `createSandbox` once then `teardown` once), so the
         // broad WHERE clause matches exactly one row. If that invariant ever
@@ -279,7 +327,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
 
     // One arbiter for both surfaces: the client's `isAlive` method and the
     // poll loop's escalation probe are the same backend inspect.
-    const isAlive = async (ref: SandboxRef) => unwrapOrThrow(await ops.isAlive(ref));
+    const isAlive = async (ref: SandboxRef) => unwrapOrThrow((await ops.isAlive(ref)).mapErr(failing));
 
     return {
         createSandbox: async (meta, identity) => {
@@ -301,7 +349,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             }
             // Clamp to cluster ceilings so the pod is always quota-admissible.
             const resources = clampResources(meta.resources, config.resourceLimits);
-            return unwrapOrThrow(await ops.createSandbox({ ...meta, resources }, identity));
+            return unwrapOrThrow((await ops.createSandbox({ ...meta, resources }, identity)).mapErr(failing));
         },
         submitExec: async (ref, body) =>
             submitExec(ref, body, {
@@ -319,10 +367,10 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                 config.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP,
             ),
         isAlive,
-        isAliveById: async (sandboxId) => unwrapOrThrow(await ops.isAliveById(sandboxId)),
+        isAliveById: async (sandboxId) => unwrapOrThrow((await ops.isAliveById(sandboxId)).mapErr(failing)),
         teardown,
-        teardownById: async (sandboxId) => unwrapOrThrow(await ops.teardownById(sandboxId)),
-        listManagedSandboxes: async () => unwrapOrThrow(await ops.listManagedSandboxes()),
+        teardownById: async (sandboxId) => unwrapOrThrow((await ops.teardownById(sandboxId)).mapErr(failing)),
+        listManagedSandboxes: async () => unwrapOrThrow((await ops.listManagedSandboxes()).mapErr(failing)),
     };
 }
 

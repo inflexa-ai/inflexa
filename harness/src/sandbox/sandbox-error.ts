@@ -38,8 +38,10 @@
  */
 
 import { ResultAsync, err, ok } from "neverthrow";
+import { ZodError } from "zod";
 
 import type { DomainError } from "../lib/result.js";
+import type { FarmLockError } from "./farm.js";
 
 /**
  * A sandbox backend failure. Absence / idempotent "already gone" is NOT
@@ -102,6 +104,23 @@ export type SandboxError =
           readonly analysisId: string;
           readonly reason: string;
           readonly cause?: unknown;
+      }
+    | {
+          /**
+           * The gate proved the `inflexa.lock` at the resolved farm and the
+           * farm is not usable. Raised only when the config declares
+           * `packageStore: "required"`; without the fact the same gate
+           * failure degrades to no store mount. The sibling
+           * `farm_unavailable` is the resolver refusing to name a farm at
+           * all — here a farm was named, and its lock does not hold up.
+           */
+          readonly type: "farm_unusable";
+          readonly op: string;
+          readonly analysisId: string;
+          readonly farmPath: string;
+          readonly lockPath: string;
+          readonly lockError: FarmLockError["type"];
+          readonly cause: unknown;
       };
 
 // SandboxError is a `DomainError` (string `type` + `cause`) — the compile-time
@@ -126,8 +145,56 @@ export function sandboxStatusOf(cause: unknown): number | undefined {
     return e.statusCode ?? e.response?.statusCode;
 }
 
-/** A one-line, user-facing description of a `SandboxError` for logs/error bodies. */
+/**
+ * The bound on the appended cause line — the same 200 characters the profile
+ * ledger keeps (`tasks/data-profile.ts`), because a description reaches that
+ * ledger and the run row. A stack trace and an engine response body must stay
+ * out of a row, so the line is cut and marked rather than carried whole.
+ */
+const CAUSE_LINE_MAX = 200;
+
+/**
+ * The one bounded line that names the reason of a cause, or `undefined` when
+ * the cause carries no reason to name.
+ *
+ * A `ZodError` is special-cased: its `message` is multi-line JSON whose first
+ * line is `[`, which names nothing. Thus a zod cause renders as its first
+ * issue — the path and the message — and the reader sees which field broke.
+ * Any other cause gives the first line of its message.
+ */
+function causeLine(cause: unknown): string | undefined {
+    let text: string;
+    if (cause instanceof ZodError) {
+        const issue = cause.issues[0];
+        if (!issue) return undefined;
+        const path = issue.path.join(".");
+        text = path.length > 0 ? `${path}: ${issue.message}` : issue.message;
+    } else if (cause instanceof Error) {
+        text = cause.message;
+    } else if (typeof cause === "string") {
+        text = cause;
+    } else {
+        return undefined;
+    }
+    const first = text.split("\n", 1)[0]!.trim();
+    if (first.length === 0) return undefined;
+    return first.length > CAUSE_LINE_MAX ? `${first.slice(0, CAUSE_LINE_MAX - 1)}…` : first;
+}
+
+/**
+ * A one-line, user-facing description of a `SandboxError` for logs/error
+ * bodies. The variant gives the head. Where the cause names a reason, that
+ * bounded line closes the description, thus the engine or the parser says why
+ * on the operator surfaces.
+ */
 export function describeSandboxError(e: SandboxError): string {
+    const line = causeLine(e.cause);
+    const head = describeVariant(e);
+    return line === undefined ? head : `${head} — ${line}`;
+}
+
+/** The head of a description: what failed, at which op, on which subject. */
+function describeVariant(e: SandboxError): string {
     switch (e.type) {
         case "container_create_failed":
             return `sandbox create failed (${e.op}${e.sandboxId ? `: ${e.sandboxId}` : ""})`;
@@ -143,6 +210,22 @@ export function describeSandboxError(e: SandboxError): string {
             return `sandbox liveness probe failed (${e.op}${e.sandboxId ? `: ${e.sandboxId}` : ""})`;
         case "farm_unavailable":
             return `farm unavailable (${e.op}: ${e.analysisId}) — ${e.reason}`;
+        case "farm_unusable":
+            return `farm unusable (${e.op}: ${e.analysisId}) — no usable inflexa.lock at ${e.lockPath} (${e.lockError})`;
+    }
+}
+
+/**
+ * The throw of the `SandboxClient` seam. The message is
+ * `describeSandboxError`, thus a surface that renders a message alone still
+ * names the fault and its reason. The variant rides two ways: on `cause`, so
+ * a cause-chain reader keeps working, and on `error`, so a consumer that
+ * matches the class reads the typed fields without a walk.
+ */
+export class SandboxFailure extends Error {
+    constructor(readonly error: SandboxError) {
+        super(describeSandboxError(error), { cause: error });
+        this.name = "SandboxFailure";
     }
 }
 

@@ -554,6 +554,54 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
         }
     });
 
+    test("a required package store refuses a farm with no lock, and no Job is made", async () => {
+        const root = mkdtempSync(join(tmpdir(), "k8s-libs-root-"));
+        try {
+            const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-x-abc" } }]);
+            const ops = createK8sSandboxOps({
+                image: "sandbox-base:latest",
+                cortexBaseUrl: "https://cortex.example.com:443",
+                namespace: "sandbox",
+                farmSource: FIXED_FARM,
+                sessionPvcRoot: SESSION_PVC_ROOT,
+                resolveWorkspaceRoot,
+                sessionPvc: "cortex-sessions",
+                libStorePvc: "cortex-libs",
+                libStorePvcRoot: root,
+                packageStore: "required",
+                batchApi: stub.batchApi,
+                coreApi: stub.coreApi,
+                registerSandbox: async () => {},
+            });
+
+            const result = await ops.createSandbox(
+                {
+                    runId: "run-1",
+                    stepId: "step-a",
+                    analysisId: "an-1",
+                    childWorkflowId: "run-1-0",
+                    resources: { cpu: 2, memoryGb: 4 },
+                },
+                mintSandboxIdentity("run-1"),
+            );
+
+            expect(result.isErr()).toBe(true);
+            if (result.isErr()) {
+                expect(result.error.type).toBe("farm_unusable");
+                if (result.error.type === "farm_unusable") {
+                    expect(result.error.analysisId).toBe("an-1");
+                    // The farm path stays PVC-relative; the lock path is the joined one.
+                    expect(result.error.farmPath).toBe("farms/catalog");
+                    expect(result.error.lockPath).toBe(join(root, "farms", "catalog", "inflexa.lock"));
+                    expect(result.error.lockError).toBe("lock_unreadable");
+                }
+            }
+            expect(stub.createdJobs).toHaveLength(0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     test("a parsable lock keeps the gate open, and the mounts land", async () => {
         const root = mkdtempSync(join(tmpdir(), "k8s-libs-root-"));
         try {

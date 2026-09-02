@@ -116,6 +116,17 @@ export interface DockerClientConfig {
     /** The declared toolchain owner. Absent means `"store"`, the legacy environment. */
     toolchainSource?: ToolchainSource;
     /**
+     * The deployment cannot run an analysis without the package store. Under
+     * the fact, a farm that fails the `inflexa.lock` gate refuses the create
+     * with `farm_unusable` and no container is made. Absent keeps the
+     * degrade: the store mounts drop, a warning is logged, and the container
+     * is still made. The field names the deployment fact rather than the
+     * remediation, so how the harness answers it can evolve without changing
+     * the embedder surface; a single-valued union (not a boolean) so future
+     * store classes extend it without a breaking change.
+     */
+    packageStore?: "required";
+    /**
      * Host ref store; bind-mounted read-only at `/mnt/refs`. Embedders pass the
      * configured store location unconditionally — existence is (re-)checked at each
      * sandbox creation, so a store installed mid-session is mounted into subsequent
@@ -352,15 +363,29 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     }
 
                     // The `inflexa.lock` gate runs at each create: the store may have
-                    // gone away, or the farm may be half-written. A gate failure
-                    // degrades — both store mounts drop, the container is still made,
-                    // and the sandbox reports the store as unavailable. The warning is
-                    // logged because an otherwise-silent mount drop is invisible to
-                    // operators.
+                    // gone away, or the farm may be half-written. The failure has two
+                    // outcomes. Under the declared fact the call refuses with
+                    // `farm_unusable` before any container work, and it logs nothing:
+                    // the returned value carries the reason, and the consumer logs the
+                    // throw, thus a warning here would record the one fault twice.
+                    // Without the fact it degrades — both store mounts drop, the
+                    // container is still made, and the sandbox reports the store as
+                    // unavailable. That drop is otherwise silent, thus it is warned.
                     let libsMounted = false;
                     if (config.libStorePath && farm) {
                         const lock = readFarmLock(farm.farmPath);
                         libsMounted = lock.isOk();
+                        if (lock.isErr() && config.packageStore === "required") {
+                            return err({
+                                type: "farm_unusable",
+                                op: "docker.createSandbox",
+                                analysisId: meta.analysisId,
+                                farmPath: farm.farmPath,
+                                lockPath: lock.error.lockPath,
+                                lockError: lock.error.type,
+                                cause: lock.error.cause,
+                            });
+                        }
                         if (lock.isErr()) {
                             logger.warn(
                                 "the farm of the analysis has no usable inflexa.lock at sandbox creation — mounting no package store (sandbox degrades to available:false)",

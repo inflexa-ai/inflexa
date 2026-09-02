@@ -726,6 +726,68 @@ describe("docker createSandbox — mounts and platform", () => {
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
 
+    test("a required package store refuses an unparseable lock, and no container is made", async () => {
+        const { docker, created } = stubDocker();
+        await writeFile(join(farmDir, "inflexa.lock"), "not json");
+        const logger = createCapturingLogger();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            packageStore: "required",
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("farm_unusable");
+            if (result.error.type === "farm_unusable") {
+                expect(result.error.analysisId).toBe("an-1");
+                expect(result.error.farmPath).toBe(farmDir);
+                expect(result.error.lockPath).toBe(join(farmDir, "inflexa.lock"));
+                expect(result.error.lockError).toBe("lock_invalid");
+            }
+        }
+        expect(created).toHaveLength(0);
+        // The refused value carries the reason and the consumer logs the throw,
+        // thus a warning here would record the one fault twice.
+        expect(logger.records.filter((r) => r.level === "warn")).toHaveLength(0);
+    });
+
+    test("a required package store refuses an absent lock with lock_unreadable", async () => {
+        const { docker, created } = stubDocker();
+        await rm(join(farmDir, "inflexa.lock"), { force: true });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            packageStore: "required",
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr() && result.error.type === "farm_unusable") {
+            expect(result.error.lockError).toBe("lock_unreadable");
+            expect(result.error.lockPath).toBe(join(farmDir, "inflexa.lock"));
+        }
+        expect(created).toHaveLength(0);
+    });
+
     test("skips the /mnt/libs mounts when the inflexa.lock schema version is unknown", async () => {
         const { docker, created } = stubDocker();
         await writeFile(join(farmDir, "inflexa.lock"), JSON.stringify({ schema: 99, arch: "arm64", packages: [], languages: {} }));
