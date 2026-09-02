@@ -105,7 +105,7 @@ export type RunEngineComposition = {
      * Host path of the open analysis's farm `inflexa.lock`, or null when the boot
      * carried no analysis. The tool re-reads the file per call, thus a farm that a
      * link extended mid-session answers the next call. Null makes the farm tracks
-     * read as unknown, and the image fragment still merges.
+     * read as unknown, and the image record still merges.
      */
     readonly farmLockFile: string | null;
     /**
