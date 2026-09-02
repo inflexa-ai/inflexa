@@ -138,6 +138,17 @@ export interface K8sClientConfig {
     farmSource: FarmSource;
     /** The declared toolchain owner. Absent means `"store"`, the legacy environment. */
     toolchainSource?: ToolchainSource;
+    /**
+     * The deployment cannot run an analysis without the package store. Under
+     * the fact, a farm that fails the `inflexa.lock` gate refuses the create
+     * with `farm_unusable` and no Job is made. Absent keeps the degrade: the
+     * store mounts drop, a warning is logged, and the Job is still made. The
+     * field names the deployment fact rather than the remediation, so how the
+     * harness answers it can evolve without changing the embedder surface; a
+     * single-valued union (not a boolean) so future store classes extend it
+     * without a breaking change.
+     */
+    packageStore?: "required";
     /** PVC claim mounted read-only at `/mnt/refs` when set. */
     refStorePvc?: string;
     /** Node selector pinning sandbox pods to the dedicated agent pool. Omit for default scheduling. */
@@ -616,14 +627,30 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                     // The `inflexa.lock` gate, for a host that mounts the libs
                     // volume itself. The resolver owes the proof either way,
                     // but a farm half-written between the resolution and this
-                    // create still mounts without a second look. A gate failure
-                    // degrades exactly as the Docker backend does: no store
-                    // mount, the Job is still made, and the sandbox reports the
-                    // store as unavailable.
+                    // create still mounts without a second look. The failure
+                    // has the two outcomes of the Docker backend. Under the
+                    // declared fact the call refuses with `farm_unusable`
+                    // before any cluster work, and it logs nothing: the
+                    // returned value carries the reason, and the consumer logs
+                    // the throw, thus a warning here would record the one fault
+                    // twice. Without the fact it degrades — no store mount, the
+                    // Job is still made, and the sandbox reports the store as
+                    // unavailable.
                     let libsMounted = !!config.libStorePvc;
                     if (config.libStorePvc && config.libStorePvcRoot && farm) {
                         const lock = readFarmLock(join(config.libStorePvcRoot, farm.farmPath));
                         libsMounted = lock.isOk();
+                        if (lock.isErr() && config.packageStore === "required") {
+                            return err({
+                                type: "farm_unusable",
+                                op: "k8s.createSandbox",
+                                analysisId: meta.analysisId,
+                                farmPath: farm.farmPath,
+                                lockPath: lock.error.lockPath,
+                                lockError: lock.error.type,
+                                cause: lock.error.cause,
+                            });
+                        }
                         if (lock.isErr()) {
                             (config.logger ?? createNoopLogger())
                                 .named("k8s-client")

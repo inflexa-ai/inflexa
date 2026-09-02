@@ -11,12 +11,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pool } from "pg";
 
+import { errAsync } from "neverthrow";
+
 import type { AwaitExecOptions } from "./await-exec.js";
 import { composeAwaitOptions, createSandboxClient, precreateStepTree } from "./create-sandbox.js";
+import * as dockerClient from "./docker-client.js";
+import { mintSandboxIdentity } from "./identity.js";
 import * as k8sClient from "./k8s-client.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { STEP_SUBDIRS } from "./mount-plan.js";
-import type { CreateSandboxMeta, SandboxLiveness } from "./types.js";
+import { describeSandboxError, SandboxFailure, type SandboxError } from "./sandbox-error.js";
+import type { CreateSandboxMeta, FarmSource, SandboxLiveness } from "./types.js";
 
 const opsProbe = async (): Promise<SandboxLiveness> => ({ alive: false, oomKilled: false });
 const injectedProbe = async (): Promise<SandboxLiveness> => ({ alive: true, oomKilled: false });
@@ -184,6 +189,169 @@ describe("createSandboxClient — the k8s libs root threading", () => {
             expect(captured!.logger).toBe(logger);
         } finally {
             spy.mockRestore();
+        }
+    });
+});
+
+describe("createSandboxClient — the required-store fact", () => {
+    const FIXED: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
+    const base = {
+        pool: {} as unknown as Pool,
+        cortexBaseUrl: "https://x",
+        image: "sandbox-base:latest",
+        resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
+        resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+    };
+
+    test("the fact reaches both backend ops, so each gate can refuse instead of degrade", () => {
+        // One optional field on each backend config: tsc cannot catch its
+        // absence, and without the forward the gate silently keeps degrading.
+        let k8sConfig: k8sClient.K8sClientConfig | null = null;
+        let dockerConfig: dockerClient.DockerClientConfig | null = null;
+        const k8sSpy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation((cfg) => {
+            k8sConfig = cfg;
+            return {} as unknown as ReturnType<typeof k8sClient.createK8sSandboxOps>;
+        });
+        const dockerSpy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation((cfg) => {
+            dockerConfig = cfg;
+            return {} as unknown as ReturnType<typeof dockerClient.createDockerSandboxOps>;
+        });
+        try {
+            createSandboxClient({
+                ...base,
+                env: { backend: "k8s", namespace: "sandbox" },
+                sessionPvc: "cortex-sessions",
+                sessionPvcRoot: "/sessions",
+                libStorePvc: "cortex-libs",
+                libStorePvcRoot: "/mnt/libs",
+                farmSource: FIXED,
+                packageStore: "required",
+            });
+            createSandboxClient({
+                ...base,
+                env: { backend: "docker", namespace: "default" },
+                libStorePath: "/mnt/libs",
+                farmSource: FIXED,
+                packageStore: "required",
+            });
+
+            expect(k8sConfig).not.toBeNull();
+            expect(k8sConfig!.packageStore).toBe("required");
+            expect(dockerConfig).not.toBeNull();
+            expect(dockerConfig!.packageStore).toBe("required");
+        } finally {
+            k8sSpy.mockRestore();
+            dockerSpy.mockRestore();
+        }
+    });
+
+    test("a docker client with no lib store cannot prove the fact, and composition refuses", () => {
+        expect(() =>
+            createSandboxClient({
+                ...base,
+                env: { backend: "docker", namespace: "default" },
+                farmSource: FIXED,
+                packageStore: "required",
+            }),
+        ).toThrow(/libStorePath/);
+    });
+
+    test("a k8s client with no libs PVC cannot prove the fact, and composition refuses", () => {
+        expect(() =>
+            createSandboxClient({
+                ...base,
+                env: { backend: "k8s", namespace: "sandbox" },
+                sessionPvc: "cortex-sessions",
+                sessionPvcRoot: "/sessions",
+                farmSource: FIXED,
+                packageStore: "required",
+            }),
+        ).toThrow(/libStorePvc/);
+    });
+
+    test("a k8s fixed farm source with no libs mountpoint has no gate at all, and composition refuses", () => {
+        expect(() =>
+            createSandboxClient({
+                ...base,
+                env: { backend: "k8s", namespace: "sandbox" },
+                sessionPvc: "cortex-sessions",
+                sessionPvcRoot: "/sessions",
+                libStorePvc: "cortex-libs",
+                farmSource: FIXED,
+                packageStore: "required",
+            }),
+        ).toThrow(/libStorePvcRoot/);
+    });
+
+    test("a k8s per-analysis source with no libs mountpoint composes, because the resolver owes the proof", () => {
+        const spy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation(() => ({}) as unknown as ReturnType<typeof k8sClient.createK8sSandboxOps>);
+        try {
+            expect(() =>
+                createSandboxClient({
+                    ...base,
+                    env: { backend: "k8s", namespace: "sandbox" },
+                    sessionPvc: "cortex-sessions",
+                    sessionPvcRoot: "/sessions",
+                    libStorePvc: "cortex-libs",
+                    farmSource: { kind: "per-analysis", resolve: async () => ({ kind: "available", location: { farmPath: "farms/an-1" } }) },
+                    packageStore: "required",
+                }),
+            ).not.toThrow();
+        } finally {
+            spy.mockRestore();
+        }
+    });
+});
+
+describe("createSandboxClient — the seam throw", () => {
+    test("a backend refusal reaches the caller as a SandboxFailure carrying the description and the variant", async () => {
+        const root = await mkdtemp(join(tmpdir(), "harness-seam-"));
+        const variant: SandboxError = {
+            type: "farm_unusable",
+            op: "docker.createSandbox",
+            analysisId: "an-1",
+            farmPath: "/mnt/libs/farms/catalog",
+            lockPath: "/mnt/libs/farms/catalog/inflexa.lock",
+            lockError: "lock_invalid",
+            cause: new Error("Unexpected token o in JSON at position 1"),
+        };
+        const spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(
+            () => ({ createSandbox: () => errAsync(variant) }) as unknown as ReturnType<typeof dockerClient.createDockerSandboxOps>,
+        );
+        try {
+            const client = createSandboxClient({
+                pool: {} as unknown as Pool,
+                env: { backend: "docker", namespace: "default" },
+                cortexBaseUrl: "https://x",
+                image: "sandbox-base:latest",
+                resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
+                resolveWorkspaceRoot: () => root,
+                libStorePath: "/mnt/libs",
+                farmSource: { kind: "fixed", location: { farmPath: "/mnt/libs/farms/catalog" } },
+                packageStore: "required",
+            });
+
+            const thrown = await client
+                .createSandbox(
+                    { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } },
+                    mintSandboxIdentity("run-1"),
+                )
+                .then(
+                    () => null,
+                    (e: unknown) => e,
+                );
+
+            expect(thrown).toBeInstanceOf(SandboxFailure);
+            const failure = thrown as SandboxFailure;
+            // The message is the whole description — the head and the reason of
+            // the cause — not the bare `type` a `ResultError` would render.
+            expect(failure.message).toBe(describeSandboxError(variant));
+            expect(failure.message).toContain("Unexpected token o in JSON");
+            expect(failure.cause).toBe(variant);
+            expect(failure.error).toBe(variant);
+        } finally {
+            spy.mockRestore();
+            await rm(root, { recursive: true, force: true });
         }
     });
 });
