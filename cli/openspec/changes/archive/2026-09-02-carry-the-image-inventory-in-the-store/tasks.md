@@ -4,7 +4,7 @@
 
 - [x] 1.1 Put `image-packages.json` on the update rule in `mergeStagedRoot`
   (`src/modules/libs/store_download.ts`): absent moves in, present stays
-  on a plain download, and present is replaced whole under `replaceGraph`.
+  on a plain download, and present is replaced whole under `replacePublisherRecords`.
   Generalize `mergeStoreGraph` into one replaceable-record helper that the
   graph and the record both call, with an error message that names the
   entry.

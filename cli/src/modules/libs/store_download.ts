@@ -928,7 +928,7 @@ async function mergeStagedRoot(
     stageRoot: string,
     storeRoot: string,
     metadataName: string,
-    replaceGraph: boolean,
+    replacePublisherRecords: boolean,
 ): Promise<Result<StoreMergeReport, StoreDownloadError>> {
     let entries: readonly string[];
     try {
@@ -949,14 +949,14 @@ async function mergeStagedRoot(
                 continue;
             }
             if (name === "farms") {
-                const merged = await mergeFarms(join(stageRoot, name), to, replaceGraph);
+                const merged = await mergeFarms(join(stageRoot, name), to, replacePublisherRecords);
                 farmsAdded.push(...merged.added);
                 farmsKept.push(...merged.kept);
                 farmsReplaced.push(...merged.replaced);
                 continue;
             }
             if (name === STORE_GRAPH || name === STORE_IMAGE_RECORD) {
-                const merged = await mergeReplaceableRecord(name, join(stageRoot, name), to, replaceGraph);
+                const merged = await mergeReplaceableRecord(name, join(stageRoot, name), to, replacePublisherRecords);
                 if (merged.isErr()) return err(merged.error);
                 continue;
             }
@@ -981,7 +981,7 @@ async function stageAndMerge(
     paths: StoreDownloadPaths,
     layers: readonly StoreLayer[],
     attemptId: string,
-    replaceGraph: boolean,
+    replacePublisherRecords: boolean,
     bounds: { readonly windowMs: number; readonly tarBoundMs?: number },
     onProgress: ((event: StoreDownloadProgress) => void) | undefined,
 ): Promise<Result<StoreMergeReport, StoreDownloadError>> {
@@ -994,7 +994,7 @@ async function stageAndMerge(
             const extracted = await extractLayer(join(paths.blobs, blobFileName(layer.digest)), attemptRoot, unpack, onProgress);
             if (extracted.isErr()) return err(extracted.error);
         }
-        return await mergeStagedRoot(attemptRoot, storeRoot, paths.metadataName, replaceGraph);
+        return await mergeStagedRoot(attemptRoot, storeRoot, paths.metadataName, replacePublisherRecords);
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not stage the package store under ${storeRoot}.`, cause });
     } finally {
