@@ -197,6 +197,32 @@ describe("sandbox-error", () => {
             expect(description.endsWith(` — schema: ${issue.message}`)).toBe(true);
             expect(description).not.toContain("[");
         });
+
+        it("a zod issue with no path renders its message alone", () => {
+            const parsed = z.number().safeParse("not a number");
+            if (parsed.success) throw new Error("the fixture must fail to parse");
+            const issue = parsed.error.issues[0]!;
+
+            expect(describeSandboxError(farmUnusable({ cause: parsed.error })).endsWith(` — ${issue.message}`)).toBe(true);
+        });
+
+        it("a string cause renders as its first line", () => {
+            expect(describeSandboxError({ type: "liveness_failed", op: "docker.isAlive", cause: "engine socket closed\nsecond line" })).toBe(
+                "sandbox liveness probe failed (docker.isAlive) — engine socket closed",
+            );
+        });
+
+        it("an unavailable farm keeps the resolver reason as its one dash, with no cause line after it", () => {
+            expect(
+                describeSandboxError({
+                    type: "farm_unavailable",
+                    op: "docker.createSandbox",
+                    analysisId: "an-1",
+                    reason: "the farm resolver threw",
+                    cause: new Error("boom"),
+                }),
+            ).toBe("farm unavailable (docker.createSandbox: an-1) — the farm resolver threw");
+        });
     });
 
     describe("SandboxFailure", () => {

@@ -96,7 +96,9 @@ a variant carries a `cause`, `describeSandboxError` appends the first line
 of the cause message, bounded to 200 characters, the same bound as the
 profile ledger. The engine or the API then names its reason on the run
 row and on the ledger. The bound keeps a stack or a response body out of
-the row. A cause without a message adds nothing.
+the row. A cause without a message adds nothing. `farm_unavailable` takes no
+cause line, because its head already carries the reason of the resolver,
+and a second dash on one row would repeat it.
 
 A `ZodError` is the cause of `lock_invalid`, and its message is multi-line
 JSON whose first line is `[`. Thus a zod cause renders as its first issue,

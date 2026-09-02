@@ -10,7 +10,9 @@
  * - A resolver refusal (`unavailable`, or a throw) is a `farm_unavailable`
  *   `SandboxError` — the call refuses and no container is made.
  * - A lock-gate failure degrades — the backend drops both store mounts,
- *   logs a warning, and still makes the container.
+ *   logs a warning, and still makes the container. Under a config that
+ *   declares `packageStore: "required"`, the same failure refuses with
+ *   `farm_unusable`, and no container is made.
  */
 
 import { readFileSync } from "node:fs";
