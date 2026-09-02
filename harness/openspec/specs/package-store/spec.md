@@ -201,9 +201,17 @@ The harness MUST expose a `list_available_packages` tool, built with
 binds. A sandbox agent reads the `inflexa.lock` of the mounted farm,
 because a step imports only what the farm links. A conversation or
 planning surface reads a pool-scope source, because the ask flow marks the
-packages that the POOL does not hold. When the baked image fragment at
-`/opt/inflexa/image-packages.txt` exists, the tool merges it into the
-report.
+packages that the POOL does not hold.
+
+The tool MUST merge the image record into either report. The record is
+`image-packages.json` at the store root. The default path MUST be the
+container mountpoint, `/mnt/libs/image-packages.json`, and
+`imagePackagesFile` names another location. The zod schema of the harness
+MUST validate the record at each read, and that schema is the one
+definition of the shape. An absent or invalid record MUST merge nothing,
+and the report MUST stay whole. A `system_tools` entry MUST render under
+the title `System tools (CLI)`, by its `executable` name, and a `node`
+entry under the title `Node (npm)`.
 
 Each answer MUST render the version beside the name, as `name==version`.
 The targeted `names` path MUST also carry the store directory and the full
@@ -218,7 +226,7 @@ fault reads as a transient one, and the agent retries without end.
 #### Scenario: Packages available
 
 - **WHEN** `list_available_packages` is called and the `inflexa.lock` of the mounted farm is readable
-- **THEN** it returns `{ available: true, ... }` with the farm inventory as `name==version` rows, merged with the image fragment
+- **THEN** it returns `{ available: true, ... }` with the farm inventory as `name==version` rows, merged with the image record
 
 #### Scenario: Store not mounted
 
@@ -234,6 +242,30 @@ fault reads as a transient one, and the agent retries without end.
 
 - **WHEN** the pool-scope source answers unavailable with a reason
 - **THEN** the tool returns `available: false`, and the content carries that reason beside the UNKNOWN note
+
+#### Scenario: The image record renders versions
+
+- **GIVEN** a readable `image-packages.json` with `samtools` at `1.22.1` and `echarts` at `6.0.0`
+- **WHEN** the tool lists with `language: "cli"`
+- **THEN** the report holds `samtools==1.22.1` under `System tools (CLI)`, and no Node row
+
+#### Scenario: A tool renders by its executable name
+
+- **GIVEN** a `system_tools` entry with `name` `eagle2` and `executable` `eagle`
+- **WHEN** the tool checks `names: ["eagle"]`
+- **THEN** the answer marks it present under `System tools (CLI)`
+
+#### Scenario: An absent image record merges nothing
+
+- **GIVEN** a readable farm lock and no `image-packages.json` at the store root
+- **WHEN** the tool lists
+- **THEN** it returns `{ available: true, ... }` with the farm tracks alone, without a throw
+
+#### Scenario: An invalid image record merges nothing
+
+- **GIVEN** an `image-packages.json` that does not parse at schema 1
+- **WHEN** the tool lists
+- **THEN** it returns the farm tracks alone, without a throw
 
 ### Requirement: The lib-store resolver env is injected only when the store is mounted
 

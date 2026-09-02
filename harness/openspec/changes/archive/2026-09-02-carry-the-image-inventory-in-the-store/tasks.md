@@ -23,7 +23,8 @@
 - [x] 1.7 Make the acceptance validator
   `scripts/package-store-validate/validate.py` read the image record in
   place of the text fragment: a conda entry contributes its executable
-  name, a node entry its name, and an unknown schema fails loud.
+  name, a node entry its name, and an absent record or an unknown schema
+  fails loud.
 
 ## 2. The workflows
 

@@ -3,8 +3,7 @@
 
 The probe decides presence: a manifest tool whose binary resolves on PATH
 goes into the fragment, and a tool that does not resolve drops with a log
-line. The floor is the same as before, thus zero recorded tools fail the
-build.
+line. Zero recorded tools fail the build.
 
 The probe reads the BINARY name, not the raw manifest entry. An entry can
 carry a conda pin (`samtools=1.22.1`), and a package can install its
@@ -59,8 +58,8 @@ def prefix_versions(micromamba, prefix):
             f"{result.returncode}: {result.stderr.strip()}"
         )
     payload = json.loads(result.stdout)
-    # micromamba 2.x prints a bare list. An object form keeps the list under
-    # `packages` or `result`, thus both shapes read here.
+    # micromamba 2.x prints an object, with the list under `packages`. An
+    # older release prints the bare list, thus both shapes read here.
     if isinstance(payload, dict):
         payload = payload.get("packages") or payload.get("result") or []
     versions = {}

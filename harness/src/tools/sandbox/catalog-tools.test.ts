@@ -188,6 +188,21 @@ describe("list_available_packages — reading the inventory", () => {
         expect(result.content).not.toContain("Node (npm)");
     });
 
+    it("answers the node language filter with the image packages alone", async () => {
+        const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
+
+        const result = (await createListAvailablePackagesTool(deps).execute({ language: "node" }, makeToolContext().ctx))._unsafeUnwrap() as {
+            available: true;
+            total: number;
+            content: string;
+        };
+
+        expect(result.total).toBe(1);
+        expect(result.content).toContain("Node (npm)");
+        expect(result.content).toContain("echarts==6.0.0");
+        expect(result.content).not.toContain("System tools (CLI)");
+    });
+
     // An agent invokes the binary, not the conda package that carries it.
     it("finds a tool by its executable name when the package name differs", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
@@ -225,6 +240,34 @@ describe("list_available_packages — reading the inventory", () => {
         )._unsafeUnwrap() as { available: true; checked: { version?: string; storeDir?: string }[] };
 
         expect(result.checked[0]).toMatchObject({ present: true, name: "echarts", version: "5.4.0", storeDir: "echarts-5.4.0-abcd1234abcd1234" });
+    });
+
+    // A track that two sources carry renders as one heading, under the same first-writer rule as the check.
+    it("folds a track that the farm and the record both carry into one heading", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "packages-"));
+        const farmLockFile = join(dir, "inflexa.lock");
+        const imagePackagesFile = join(dir, "image-packages.json");
+        await writeFile(
+            farmLockFile,
+            JSON.stringify({
+                ...LOCK,
+                packages: [
+                    { name: "echarts", version: "5.4.0", track: "node", store_dir: "echarts-5.4.0-abcd1234abcd1234", hash: "c".repeat(64), requested: true },
+                    { name: "d3", version: "7.9.0", track: "node", store_dir: "d3-7.9.0-abcd1234abcd1234", hash: "d".repeat(64), requested: true },
+                ],
+            }),
+        );
+        await writeFile(imagePackagesFile, JSON.stringify(IMAGE_RECORD));
+
+        const result = (
+            await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({ language: "node" }, makeToolContext().ctx)
+        )._unsafeUnwrap() as { available: true; total: number; content: string };
+
+        expect(result.total).toBe(2);
+        expect(result.content.match(/## Node \(npm\)/g)).toHaveLength(1);
+        expect(result.content).toContain("echarts==5.4.0");
+        expect(result.content).toContain("d3==7.9.0");
+        expect(result.content).not.toContain("echarts==6.0.0");
     });
 
     it("a bound pool reader wins over the farm lock, and the listing renders name==version", async () => {

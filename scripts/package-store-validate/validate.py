@@ -105,7 +105,7 @@ def parse_inventory() -> dict[str, list[str]]:
     The farm advertises its store tracks through `inflexa.lock`, and the image
     advertises its two owned tracks (conda + node) through the baked record.
     An unknown lock track raises, for the same fail-loud reason a drifted
-    section header does."""
+    record schema does."""
     out: dict[str, list[str]] = {"r": [], "python": [], "node": [], "conda": []}
     try:
         lock = json.loads(FARM_LOCK.read_text(encoding="utf-8"))
@@ -121,10 +121,14 @@ def parse_inventory() -> dict[str, list[str]]:
                 f"update the mapping or fix the producer.")
         if pkg.get("name"):
             out[eco].append(str(pkg["name"]))
-    if IMAGE_RECORD.is_file():
-        record = parse_image_record(IMAGE_RECORD)
-        out["conda"] += record["conda"]
-        out["node"] += record["node"]
+    if not IMAGE_RECORD.is_file():
+        # Every build bakes the record, thus an absent one is an image fault. A
+        # silent skip would drop both image tracks from `advertised` and turn the
+        # advertised ⊆ loadable gate into a no-op for them.
+        raise ValueError(f"{IMAGE_RECORD} is absent: the image under test bakes no inventory record")
+    record = parse_image_record(IMAGE_RECORD)
+    out["conda"] += record["conda"]
+    out["node"] += record["node"]
     return out
 
 

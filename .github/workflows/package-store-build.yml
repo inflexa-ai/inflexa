@@ -505,7 +505,10 @@ jobs:
         # below takes each root entry into the base layer, thus the pack needs
         # no change. The run reads the sandbox image, because that image holds
         # the record. `--user 0:0` overrides the `sandbox` user of the image,
-        # because the volume is root-owned.
+        # because the volume is root-owned. A `version_suffix` re-dispatch
+        # mints a version that no published sandbox-base tag carries. The
+        # record then names the image of this run, and a later comparison
+        # against the configured image reads that difference.
         run: |
           docker run --rm \
             --user 0:0 \

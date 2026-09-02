@@ -49,13 +49,22 @@ const DEFAULT_FARM_LOCK_FILES = [`${LIBS_CONTAINER_PATH}/farm/inflexa.lock`, `${
  */
 const DEFAULT_IMAGE_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/image-packages.json`;
 
+/**
+ * The two headings that a lock track and the image record can both carry.
+ * Declared once, because {@link LANGUAGE_MATCHERS} keys the `language` filter
+ * on the heading text, and {@link foldSections} merges two sources by it: a
+ * second spelling of either would split one track into two headings.
+ */
+const CLI_TITLE = "System tools (CLI)";
+const NODE_TITLE = "Node (npm)";
+
 /** The section title of each known lock track. An unknown track titles itself. */
 const TRACK_TITLES: Record<string, string> = {
     python: "Python (pip)",
     cran: "R (CRAN)",
     bioconductor: "R (Bioconductor)",
     github: "R (GitHub)",
-    node: "Node (npm)",
+    node: NODE_TITLE,
 };
 
 /**
@@ -83,22 +92,48 @@ export function lockSections(lock: FarmLock): Section[] {
  *
  * A `system_tools` row renders its `executable` name where the record gives
  * one, because an agent invokes the binary rather than the conda package
- * (the manifest `binaries:` map holds the pairs that differ). The two titles
- * are the same strings the lock tracks use, because {@link LANGUAGE_MATCHERS}
- * keys the `language` filter on the heading text.
+ * (the manifest `binaries:` map holds the pairs that differ).
  */
 export function imageSections(record: ImagePackages): Section[] {
     const sections: Section[] = [];
     if (record.system_tools.length > 0) {
         sections.push({
-            title: "System tools (CLI)",
+            title: CLI_TITLE,
             packages: record.system_tools.map((tool) => ({ name: tool.executable ?? tool.name, version: tool.version })),
         });
     }
     if (record.node.length > 0) {
-        sections.push({ title: TRACK_TITLES["node"]!, packages: record.node.map((pkg) => ({ name: pkg.name, version: pkg.version })) });
+        sections.push({ title: NODE_TITLE, packages: record.node.map((pkg) => ({ name: pkg.name, version: pkg.version })) });
     }
     return sections;
+}
+
+/**
+ * Merge the sections that share a title, in first-occurrence order, and keep
+ * the first entry of each name inside a merged section.
+ *
+ * Two sources can carry one track: the `node` track of a farm lock and the
+ * `node` track of the image record. Rendered as they arrive, a listing would
+ * print one heading twice and read as two tracks. The fold keeps the first
+ * writer, which is the same rule the `names` index applies, thus the listing
+ * and the presence check agree on which entry a colliding name resolves to.
+ */
+function foldSections(sections: readonly Section[]): Section[] {
+    const byTitle = new Map<string, { title: string; packages: SectionPackage[]; seen: Set<string> }>();
+    for (const section of sections) {
+        let open = byTitle.get(section.title);
+        if (!open) {
+            open = { title: section.title, packages: [], seen: new Set() };
+            byTitle.set(section.title, open);
+        }
+        for (const pkg of section.packages) {
+            const key = pkg.name.toLowerCase();
+            if (open.seen.has(key)) continue;
+            open.seen.add(key);
+            open.packages.push(pkg);
+        }
+    }
+    return [...byTitle.values()].map(({ title, packages }) => ({ title, packages }));
 }
 
 /**
@@ -167,7 +202,7 @@ const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
     // The R triple: `R (CRAN)`, `R (Bioconductor)`, `R (GitHub)`.
     r: (t) => /^r\b/i.test(t),
     python: (t) => /^python\b/i.test(t),
-    // `System tools (CLI)` — the conda-installed bioinformatics executables.
+    // `CLI_TITLE` — the conda-installed bioinformatics executables.
     cli: (t) => /system tools|\bcli\b/i.test(t),
     node: (t) => /^node\b/i.test(t),
 };
@@ -209,7 +244,8 @@ export interface PackagesQuery {
  * Answer a packages query against a parsed catalog. Pure — the tool's `execute`
  * is only the file read plus this call.
  */
-export function queryPackages(sections: readonly Section[], { names, query, language, limit }: PackagesQuery): PackagesResult {
+export function queryPackages(rawSections: readonly Section[], { names, query, language, limit }: PackagesQuery): PackagesResult {
+    const sections = foldSections(rawSections);
     // Presence check — the cheap, targeted path. Answers "is X available, and in
     // which track" without returning the catalog.
     if (names && names.length > 0) {
