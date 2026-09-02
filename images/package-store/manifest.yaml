@@ -675,7 +675,8 @@ system_tools:
     # two differ. Everything else is probed under its own name. This exists because
     # the install step needs the PACKAGE name while the load check and the coverage
     # report need the BINARY name: eagle2 installs `bin/eagle`, so probing it as
-    # `eagle2` would drop a tool that is present and working out of packages.txt,
-    # and packages.txt is the only thing that tells an agent the tool exists.
+    # `eagle2` would drop a tool that is present and working out of the image
+    # record, and /opt/inflexa/image-packages.json is the only thing that tells
+    # an agent the tool exists.
     binaries:
         eagle2: eagle

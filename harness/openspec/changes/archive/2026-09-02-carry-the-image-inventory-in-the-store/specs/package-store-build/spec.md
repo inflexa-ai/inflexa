@@ -43,9 +43,10 @@ and the per-library smoke-test suite. The advertised inventory MUST be the
 `inflexa.lock` of the mounted farm plus the record
 `/opt/inflexa/image-packages.json` of the image under test, thus the image
 tracks stay inside the invariant. A conda entry of the record contributes
-its executable name, because the check probes the binary. A record at an
-unknown schema MUST fail the run loud, because a dropped record would turn
-the invariant into a no-op for the image tracks. It MUST confirm that each
+its executable name, because the check probes the binary. An absent record
+or a record at an unknown schema MUST fail the run loud, because a dropped
+record would turn the invariant into a no-op for the image tracks. It MUST
+confirm that each
 advertised Python module resolves from the content store. Acceptance MUST
 NOT move `latest-<arch>` and MUST NOT mutate any published artifact. It
 MUST surface a per-arch results table with the green or red status.
@@ -72,3 +73,9 @@ MUST surface a per-arch results table with the green or red status.
 - **GIVEN** an image record at a schema other than 1
 - **WHEN** the inventory is read
 - **THEN** the run exits with the store-error code, and the message names the schema
+
+#### Scenario: An absent record fails loud
+
+- **GIVEN** an image under test with no `/opt/inflexa/image-packages.json`
+- **WHEN** the inventory is read
+- **THEN** the run exits with the store-error code, and the message names the absent record
