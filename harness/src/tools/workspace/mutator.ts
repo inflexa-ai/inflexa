@@ -107,8 +107,10 @@ type LandingStatus = "ok" | "out_of_prefix" | "symlink_denied";
  *      lands outside the realpath'd prefix — a symlinked ancestor inside the
  *      prefix cannot point the write elsewhere. A dangling-symlink ancestor
  *      has no landing at all and is refused too.
- *   3. Create the missing parents under that canonical ancestor only — a
- *      component that does not exist cannot be a symlink.
+ *   3. Create the missing parents under that canonical ancestor, then realpath
+ *      the created directory and refuse when it lands outside the prefix — a
+ *      symlink raced into a missing segment between the ancestor check and the
+ *      recursive mkdir would re-aim the tail of the path.
  *   4. Refuse a symlinked final component (lstat), then open with
  *      `O_NOFOLLOW` so a symlink raced in after the check still cannot be
  *      followed.
@@ -134,11 +136,24 @@ async function landBytes(prefix: string, absolute: string, bytes: Buffer): Promi
     if (realDeepest !== realPrefix && !realDeepest.startsWith(realPrefix + sep)) return "out_of_prefix";
 
     const targetDir = joinPath(realDeepest, relativePath(deepest, dirname(absolute)));
+    let landingDir = realDeepest;
     if (targetDir !== realDeepest) {
         unwrapOrThrow(await tryFsWrite("mutator.mkdirParents", () => mkdir(targetDir, { recursive: true }), { path: targetDir }));
+        // Recursive mkdir follows a symlink that already occupies a segment, so
+        // a symlink raced into a missing segment after the ancestor check would
+        // re-aim the tail. The canonical path of the created directory exposes
+        // it; a directory that vanished before the check is hostile too. The
+        // open below uses the canonical path, so the write never traverses the
+        // raced segment again.
+        const realTarget = unwrapOrThrow(
+            await tryFs<string | null>("mutator.realpathTarget", () => realpath(targetDir), { path: targetDir, onAbsent: () => null }),
+        );
+        if (realTarget === null) return "symlink_denied";
+        if (realTarget !== realPrefix && !realTarget.startsWith(realPrefix + sep)) return "out_of_prefix";
+        landingDir = realTarget;
     }
 
-    const finalPath = joinPath(targetDir, basename(absolute));
+    const finalPath = joinPath(landingDir, basename(absolute));
     const finalStat = unwrapOrThrow(await tryFs<Stats | null>("mutator.lstatFinal", () => lstat(finalPath), { path: finalPath, onAbsent: () => null }));
     if (finalStat !== null && finalStat.isSymbolicLink()) return "symlink_denied";
 
