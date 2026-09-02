@@ -4,7 +4,7 @@
  * transport is client-owned. Pure composition — no DBOS, no backend.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,6 +13,7 @@ import type { Pool } from "pg";
 
 import type { AwaitExecOptions } from "./await-exec.js";
 import { composeAwaitOptions, createSandboxClient, precreateStepTree } from "./create-sandbox.js";
+import * as k8sClient from "./k8s-client.js";
 import { STEP_SUBDIRS } from "./mount-plan.js";
 import type { CreateSandboxMeta, SandboxLiveness } from "./types.js";
 
@@ -142,6 +143,42 @@ describe("precreateStepTree — step-tree access mode", () => {
         await expect(precreateStepTree(deps(undefined), { ...meta, writableTail: "../escape" })).rejects.toThrow(/Invalid writableTail/);
         await expect(precreateStepTree(deps(undefined), { ...meta, writableTail: TAIL, readOnly: true })).rejects.toThrow(/read-only sandbox cannot/);
         await expect(stat(join(root, "..", "escape"))).rejects.toThrow();
+    });
+});
+
+describe("createSandboxClient — the k8s libs root threading", () => {
+    test("libStorePvcRoot reaches the k8s ops, so the host-side lock gate can run", () => {
+        // The forward is one optional field: tsc cannot catch its absence, and
+        // under a `fixed` farm source it carries the ONLY lock gate. The spy
+        // asserts the composed backend config instead of faking a cluster,
+        // because the factory forwards no test API seams.
+        let captured: k8sClient.K8sClientConfig | null = null;
+        const spy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation((cfg) => {
+            captured = cfg;
+            // The client is never used — the test ends at the composed config.
+            return {} as unknown as ReturnType<typeof k8sClient.createK8sSandboxOps>;
+        });
+        try {
+            createSandboxClient({
+                pool: {} as unknown as Pool,
+                env: { backend: "k8s", namespace: "sandbox" },
+                cortexBaseUrl: "https://x",
+                image: "sandbox-base:latest",
+                resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
+                resolveWorkspaceRoot: (id) => join("/sessions", id),
+                sessionPvc: "cortex-sessions",
+                sessionPvcRoot: "/sessions",
+                libStorePvc: "cortex-libs",
+                libStorePvcRoot: "/mnt/libs",
+                farmSource: { kind: "fixed", location: { farmPath: "farms/catalog" } },
+            });
+
+            expect(captured).not.toBeNull();
+            expect(captured!.libStorePvcRoot).toBe("/mnt/libs");
+            expect(captured!.libStorePvc).toBe("cortex-libs");
+        } finally {
+            spy.mockRestore();
+        }
     });
 });
 

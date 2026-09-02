@@ -126,6 +126,15 @@ export interface CreateSandboxClientConfig {
     sessionPvcRoot?: string;
     /** K8s: PVC claim mounted read-only at `/mnt/libs`. */
     libStorePvc?: string;
+    /**
+     * K8s: absolute mountpoint of `libStorePvc` on this process's filesystem,
+     * for a host that mounts the same volume. With it set, the backend proves
+     * the `inflexa.lock` of the resolved farm before the mount. Under a
+     * `fixed` farm source no resolver exists, thus this root carries the only
+     * lock gate that shape can have. Without it, the proof duty stays whole
+     * on the farm resolver.
+     */
+    libStorePvcRoot?: string;
     /** K8s: PVC claim mounted read-only at `/mnt/refs`. */
     refStorePvc?: string;
     /** K8s: node selector pinning sandbox pods to the dedicated agent pool. */
@@ -220,6 +229,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   sessionPvcRoot: config.sessionPvcRoot,
                   resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                   libStorePvc: config.libStorePvc,
+                  libStorePvcRoot: config.libStorePvcRoot,
                   farmSource: config.farmSource,
                   toolchainSource: config.toolchainSource,
                   refStorePvc: config.refStorePvc,
