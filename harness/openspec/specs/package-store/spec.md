@@ -94,6 +94,15 @@ composes through the factory and never builds the backend config itself.
 Under a fixed farm source no resolver exists, thus the forwarded root
 carries the only gate that shape can have.
 
+An embedder CAN declare the fact `packageStore: "required"` on the sandbox
+client config. Under the fact, a gate failure MUST refuse the create with
+the `farm_unusable` error, which carries the farm path, the lock path, the
+lock error type, and the cause, and no container and no Job is made.
+Without the fact, a gate failure degrades. The sandbox client factory MUST
+refuse at composition when the fact is set and no gate can run: no store
+configured, or a K8s `fixed` farm source without the host mountpoint of the
+libs volume.
+
 #### Scenario: The gate reads the lock
 
 - **GIVEN** a farm directory with a valid `inflexa.lock`
@@ -117,6 +126,24 @@ carries the only gate that shape can have.
 - **GIVEN** a K8s backend whose config names the host mountpoint of the libs volume
 - **WHEN** the `inflexa.lock` of the resolved farm does not parse
 - **THEN** the sandbox degrades to `available: false` with a logged warning, and no store mount is made
+
+#### Scenario: A required store refuses an unusable farm on Docker
+
+- **GIVEN** a Docker backend with `packageStore: "required"` and a resolved farm whose `inflexa.lock` does not parse
+- **WHEN** `createSandbox` runs
+- **THEN** the call refuses with `farm_unusable`, the error names the lock path and the lock error type, and no container is made
+
+#### Scenario: A required store refuses an unusable farm on K8s
+
+- **GIVEN** a K8s backend with `packageStore: "required"`, the host mountpoint of the libs volume, and a resolved farm whose `inflexa.lock` is absent
+- **WHEN** `createSandbox` runs
+- **THEN** the call refuses with `farm_unusable`, the lock path is the joined path under the mountpoint, and no Job is made
+
+#### Scenario: A required store without a gate refuses at composition
+
+- **GIVEN** a config with `packageStore: "required"` and no `libStorePath` on Docker, or a `fixed` farm source and no `libStorePvcRoot` on K8s
+- **WHEN** `createSandboxClient` runs
+- **THEN** it throws, and the message names the missing field
 
 ### Requirement: The per-analysis cache mounts read-write
 

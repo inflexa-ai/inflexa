@@ -43,9 +43,10 @@ the description of the variant, and the variant MUST ride as the cause.
 The description of a variant that carries a cause MUST end with the first
 line of the cause message, bounded to 200 characters. A zod cause MUST
 render as its first issue, the path and the message, because its message
-is multi-line JSON. A cause without a message adds nothing. The registry
-writes of the seam keep the plain bridge, because they carry a database
-error.
+is multi-line JSON. A cause without a message adds nothing. The
+`farm_unavailable` variant takes no cause line, because its head already
+carries the reason of the resolver. The registry writes of the seam keep
+the plain bridge, because they carry a database error.
 
 #### Scenario: A create refusal reaches the caller with its description
 

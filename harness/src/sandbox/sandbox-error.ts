@@ -26,10 +26,12 @@
  *    ever wraps the single SDK/HTTP call handed to it.
  *
  * The public `SandboxClient` interface keeps `Promise<T>` method signatures.
- * `create-sandbox.ts` is the composition seam: it builds the backend ops, then
- * `unwrapOrThrow`s each op's `ResultAsync` so the seam re-throws a genuine
- * `SandboxError`. (`submitExec` is the exception — it is already its own DBOS
- * step and throws directly, so the seam forwards its `Promise<void>` as-is.)
+ * `create-sandbox.ts` is the composition seam: it builds the backend ops, maps
+ * each `err` of an op to a `SandboxFailure`, and `unwrapOrThrow`s it, so the
+ * seam throws the described failure with the variant on `.cause` and on
+ * `.error`. A `catch` never sees the raw variant. (`submitExec` is the
+ * exception — it is already its own DBOS step and throws directly, so the seam
+ * forwards its `Promise<void>` as-is.)
  * Workflow consumers (`sandbox-step.ts`) already wrap each seam call in
  * `DBOS.runStep`, so the re-thrown error records the step as failed;
  * non-workflow consumers (`reaper`, `watchdog`,
@@ -188,7 +190,11 @@ function causeLine(cause: unknown): string | undefined {
  * on the operator surfaces.
  */
 export function describeSandboxError(e: SandboxError): string {
-    const line = causeLine(e.cause);
+    // `farm_unavailable` is the one variant whose head already carries its
+    // reason, the text of the resolver. A cause line after it would put two
+    // dashes on one row, and the throw of a resolver is in the log with its
+    // stack. Every other variant names its reason only through the cause.
+    const line = e.type === "farm_unavailable" ? undefined : causeLine(e.cause);
     const head = describeVariant(e);
     return line === undefined ? head : `${head} — ${line}`;
 }
