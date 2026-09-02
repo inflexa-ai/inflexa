@@ -68,7 +68,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         skillsDir: "/tmp/skills",
         refStorePath: "/tmp/refs",
         farmLockFile: null,
-        imagePackagesFile: null,
+        imagePackagesFile: "/tmp/store/image-packages.json",
         extendAnalysisFarm: async () => [],
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };

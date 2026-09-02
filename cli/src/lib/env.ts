@@ -273,22 +273,11 @@ export const env = Object.freeze({
      */
     refsDir: join(dataDir(), "inflexa", "refs"),
     /**
-     * Cached sandbox-image package inventories, one directory per image ID. NOT a library
-     * store: the packages themselves are baked into the image and never staged here — this
-     * holds only the `packages.txt` extracted from the image's inventory label, so the
-     * harness can read on the host what otherwise exists only inside the container.
-     */
-    libsDir: join(dataDir(), "inflexa", "libs"),
-    /**
      * Host package-store root: `<dataDir>/inflexa/package-store`. The ONE location, a CLI-owned path,
      * the peer of `refsDir`, with no config key and no user override. The store commands make the store
      * here and the catalog download installs it here, so the writers and the reader cannot disagree.
      * The harness bind-mounts this root read-only at the sandbox's `/mnt/libs` for every sandbox,
      * because the runtime image bakes no R library and no Python library.
-     *
-     * Deliberately DISTINCT from `libsDir`. `libsDir` caches the image inventory fragment for each
-     * image and is pruned by image identity. Thus a real store placed inside it would be deleted as
-     * stale cache. Keeping the two apart keeps the content out of a cache.
      */
     packageStoreDir: join(dataDir(), "inflexa", "package-store"),
     /**
@@ -528,12 +517,6 @@ export const envDoc: Readonly<
         kind: "path",
         label: "references",
         description: "reference data mounted read-only in sandboxes at /mnt/refs",
-        baseVar: dataVar,
-    },
-    libsDir: {
-        kind: "path",
-        label: "package inventories",
-        description: "per-image package lists extracted from the sandbox image's inventory label",
         baseVar: dataVar,
     },
     packageStoreDir: {

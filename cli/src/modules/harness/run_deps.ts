@@ -109,11 +109,13 @@ export type RunEngineComposition = {
      */
     readonly farmLockFile: string | null;
     /**
-     * Host path of the cached image inventory fragment, or null when none could be
-     * extracted. Null is a normal state (no image pulled yet), and the inventory
-     * then carries the farm tracks alone.
+     * Host path of the image inventory record at the store root, which the catalog build packs
+     * beside the graph. Passed unconditionally, exactly as {@link RunEngineComposition.refStorePath}
+     * is: the tool re-reads the file per call, so a catalog download that lands mid-session reaches
+     * the next call. A store that carries no record merges nothing, and the inventory then reports
+     * the farm tracks alone.
      */
-    readonly imagePackagesFile: string | null;
+    readonly imagePackagesFile: string;
     /**
      * The farm-extension seam realization. Bound here so the sandbox agents, the
      * conversation agent, and the pre-launch link pass of `execute_analysis` all
@@ -151,7 +153,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         skillsDir: comp.skillsDir,
         refStorePath: comp.refStorePath,
         ...(comp.farmLockFile ? { farmLockFile: comp.farmLockFile } : {}),
-        ...(comp.imagePackagesFile ? { imagePackagesFile: comp.imagePackagesFile } : {}),
+        imagePackagesFile: comp.imagePackagesFile,
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
         blockerHolder: ctx.blockerHolder,

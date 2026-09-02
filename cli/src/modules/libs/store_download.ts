@@ -86,6 +86,14 @@ const METADATA_DIR = ".inflexa-download";
  */
 const STORE_GRAPH = "deps.json";
 
+/**
+ * The image inventory record of the catalog, at the store root. The catalog build writes it beside the
+ * graph, and the harness inventory tool reads it from the mounted store root. It rides the update rule
+ * of the graph, because it names the image that the resolved set was proven inside: the graph, the
+ * catalog farm, and this record describe ONE build, thus they move together.
+ */
+const STORE_IMAGE_RECORD = "image-packages.json";
+
 /** How long the merge waits for the store-level metadata mutex before it reports a conflict. */
 const METADATA_MUTEX_WAIT_MS = 30_000;
 
@@ -873,24 +881,28 @@ function metadataMutexTimeout(holderPid: number): StoreDownloadError {
 }
 
 /**
- * Merge the dependency graph of the catalog into the store root, under the metadata mutex.
+ * Merge one replaceable record of the catalog into the store root, under the metadata mutex.
  *
- * On a plain download the graph moves in only when the root carries none, exactly as any other
- * top-level record does. On `--update` the graph of the NEW catalog replaces the graph of the old
- * one: the two describe different resolved sets, and a merge of the two would name edges that no
- * single catalog ever resolved.
+ * {@link STORE_GRAPH} and {@link STORE_IMAGE_RECORD} both ride this rule. On a plain download the
+ * record moves in only when the root carries none, exactly as any other top-level entry does. On
+ * `--update` the record of the NEW catalog replaces the record of the old one: the two describe
+ * different builds, and a kept record would state what the new catalog never resolved.
+ *
+ * The mutex is here for the graph, whose second writer is the flight commit. The image record has one
+ * writer only, and it takes the same lock anyway: an uncontended acquire costs nothing, and one rule
+ * in one place is worth more than a second, narrower path.
  */
-async function mergeStoreGraph(stagedGraph: string, target: string, replace: boolean): Promise<Result<void, StoreDownloadError>> {
+async function mergeReplaceableRecord(name: string, staged: string, target: string, replace: boolean): Promise<Result<void, StoreDownloadError>> {
     return withStoreMetadataMutex(metadataMutexTimeout, async () => {
         try {
             if (await entryExists(target)) {
                 if (!replace) return ok(undefined);
                 await rm(target, { force: true });
             }
-            await rename(stagedGraph, target);
+            await rename(staged, target);
             return ok(undefined);
         } catch (cause) {
-            return err({ type: "io_failed", message: `Could not merge ${STORE_GRAPH} into ${target}.`, cause });
+            return err({ type: "io_failed", message: `Could not merge ${name} into ${target}.`, cause });
         }
     });
 }
@@ -902,9 +914,10 @@ async function mergeStoreGraph(stagedGraph: string, target: string, replace: boo
  * store add` acquires into the same `store/` pool, and the composition writes an analysis farm
  * beside the published one. A replacement would destroy that work, so the download moves in only
  * what the root does not have. `store/` and `farms/` merge one level deeper, because both owners
- * write into them. Two records ride the update rule instead: `deps.json` ({@link mergeStoreGraph}),
- * and the catalog farm ({@link mergeFarms}), because the template and the graph describe one
- * resolved set and must move together. Any other top-level entry moves in only when it is absent.
+ * write into them. Three records ride the update rule instead: `deps.json` and `image-packages.json`
+ * ({@link mergeReplaceableRecord}), and the catalog farm ({@link mergeFarms}), because the graph, the
+ * template, and the image record describe one build and must move together. Any other top-level entry
+ * moves in only when it is absent.
  *
  * The merge keeps the crash safety of the receipt pattern. Each move is a `rename` inside one
  * filesystem, thus a child is complete or absent and never half-written. A crash part-way leaves the
@@ -942,9 +955,9 @@ async function mergeStagedRoot(
                 farmsReplaced.push(...merged.replaced);
                 continue;
             }
-            if (name === STORE_GRAPH) {
-                const graph = await mergeStoreGraph(join(stageRoot, name), to, replaceGraph);
-                if (graph.isErr()) return err(graph.error);
+            if (name === STORE_GRAPH || name === STORE_IMAGE_RECORD) {
+                const merged = await mergeReplaceableRecord(name, join(stageRoot, name), to, replaceGraph);
+                if (merged.isErr()) return err(merged.error);
                 continue;
             }
             if (await entryExists(to)) continue;

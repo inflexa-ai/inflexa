@@ -65,7 +65,8 @@ async function makeLayerBlob(mediaType: string, build: (root: string) => void): 
 
 /**
  * The two layers of one published catalog version. Version 2 differs in every
- * record an update moves: the pool gains a directory, and the graph changes.
+ * record an update moves: the pool gains a directory, and the graph and the
+ * image record change.
  */
 async function catalogLayers(version: 1 | 2): Promise<readonly FakeLayer[]> {
     const track = await makeLayerBlob(TRACK_MEDIA_TYPE, (root) => {
@@ -80,6 +81,7 @@ async function catalogLayers(version: 1 | 2): Promise<readonly FakeLayer[]> {
         mkdirSync(join(root, "farms", "catalog"), { recursive: true });
         writeFileSync(join(root, "farms", "catalog", "inflexa.lock"), `catalog-v${version}\n`);
         writeFileSync(join(root, "deps.json"), JSON.stringify({ catalog: version }));
+        writeFileSync(join(root, "image-packages.json"), JSON.stringify({ image: version }));
     });
     return [track, base];
 }
@@ -219,6 +221,9 @@ describe("downloadPackageStore", () => {
         expect(outcome.merge.farmsAdded).toEqual(["catalog"]);
         expect(readFileSync(join(storeRoot, "store", ALPHA, "content.txt"), "utf8")).toBe("alpha\n");
         expect(readFileSync(join(storeRoot, "deps.json"), "utf8")).toBe(JSON.stringify({ catalog: 1 }));
+        // The image record rides in with the graph, thus the inventory tool reads the image the
+        // catalog was proven beside from the store root.
+        expect(readFileSync(join(storeRoot, "image-packages.json"), "utf8")).toBe(JSON.stringify({ image: 1 }));
         const paths = storeDownloadPaths(storeRoot);
         const receipt = JSON.parse(readFileSync(paths.receipt, "utf8")) as { manifestDigest: string };
         expect(receipt.manifestDigest).toBe(registry.manifestDigest);
@@ -252,7 +257,7 @@ describe("downloadPackageStore", () => {
         expect(existsSync(join(storeRoot, "store", BETA))).toBe(false);
     });
 
-    test("the update replaces the graph and the catalog farm, and keeps each farm of the user", async () => {
+    test("the update replaces the graph, the image record, and the catalog farm, and keeps each farm of the user", async () => {
         const storeRoot = tempDir("inflexa-store-dl-");
         expectDownloaded((await download(storeRoot, makeRegistry(await catalogLayers(1))))._unsafeUnwrap());
         // State a user builds between the two versions: a farm, a local acquisition,
@@ -267,6 +272,9 @@ describe("downloadPackageStore", () => {
 
         // The graph replaces whole: no node-level merge of two resolved sets.
         expect(readFileSync(join(storeRoot, "deps.json"), "utf8")).toBe(JSON.stringify({ catalog: 2 }));
+        // The image record travels WITH the graph: it names the image the new resolved set was
+        // proven inside, and a kept record would describe an older image beside a newer catalog.
+        expect(readFileSync(join(storeRoot, "image-packages.json"), "utf8")).toBe(JSON.stringify({ image: 2 }));
         // The pool merge is add-only: version 1 and the local acquisition stay, version 2 joins.
         expect(existsSync(join(storeRoot, "store", ALPHA))).toBe(true);
         expect(existsSync(join(storeRoot, "store", LOCAL))).toBe(true);
@@ -301,6 +309,19 @@ describe("downloadPackageStore", () => {
         expect(existsSync(join(storeRoot, "farms", "catalog", "inflexa.lock"))).toBe(false);
         expect(readFileSync(join(storeRoot, "farms", "catalog", "user-note.txt"), "utf8")).toBe("note\n");
         expect(existsSync(join(storeRoot, "store", LOCAL))).toBe(true);
+    });
+
+    test("a plain download keeps the image record that is present", async () => {
+        const storeRoot = tempDir("inflexa-store-dl-");
+        // A record of an older catalog, with no receipt beside it. The merge runs, and without the
+        // consent of `--update` each record that the root already holds stays as it is.
+        writeFileSync(join(storeRoot, "image-packages.json"), JSON.stringify({ image: 0 }));
+
+        expectDownloaded((await download(storeRoot, makeRegistry(await catalogLayers(1))))._unsafeUnwrap());
+
+        expect(readFileSync(join(storeRoot, "image-packages.json"), "utf8")).toBe(JSON.stringify({ image: 0 }));
+        // The rest of the catalog still merged around it.
+        expect(readFileSync(join(storeRoot, "deps.json"), "utf8")).toBe(JSON.stringify({ catalog: 1 }));
     });
 
     test("a failed transfer keeps the verified blobs, and the next run fetches only the missing layer", async () => {
