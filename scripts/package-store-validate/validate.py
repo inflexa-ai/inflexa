@@ -5,7 +5,8 @@ there because the published store artifact is mounted read-only at /mnt/libs. No
 runtime image bakes a package set after the retirement of the variants, thus the
 mounted store is the one source of a library.
 
-It derives its work from packages.txt, not a hardcoded list, and runs two phases:
+It derives its work from the farm lock and the image record, not a hardcoded
+list, and runs two phases:
 
   1. import-all   import()/library()/require()/--version EVERY advertised package.
                   The advertised == loadable invariant (advertised ⊆ loadable):
@@ -40,19 +41,12 @@ from pathlib import Path
 STORE = Path(os.environ.get("INFLEXA_FARM_ROOT", "/mnt/libs/farm"))
 # The one metadata file of a farm — the advertised inventory of the store tracks.
 FARM_LOCK = STORE / "inflexa.lock"
-# The baked inventory fragment of the image-owned tracks (conda + node).
-IMAGE_PACKAGES_TXT = Path("/opt/inflexa/image-packages.txt")
+# The baked inventory record of the image-owned tracks (conda + node). The
+# validator reads the copy of the image under test, not the copy of the store,
+# because the invariant is about what THIS image advertises.
+IMAGE_RECORD = Path("/opt/inflexa/image-packages.json")
 # Where run.sh mounts scripts/lib-validator inside the container.
 LIB_VALIDATOR_DIR = Path(os.environ.get("LIB_VALIDATOR_DIR", "/opt/lib-validator"))
-
-SECTION_ECOSYSTEM = {
-    "R (CRAN)": "r",
-    "R (Bioconductor)": "r",
-    "R (GitHub)": "r",
-    "Python (pip)": "python",
-    "Node (npm)": "node",
-    "System tools (CLI)": "conda",
-}
 
 # Display order for the per-track tables/summary.
 TRACK_ORDER = ["python", "r", "conda", "node"]
@@ -67,43 +61,33 @@ def arch() -> str:
     return m
 
 
-def parse_packages_txt(path: Path) -> dict[str, list[str]]:
-    """Return {ecosystem: [names]} parsed from the mounted packages.txt.
+def parse_image_record(path: Path) -> dict[str, list[str]]:
+    """Return {ecosystem: [names]} from the baked image record.
 
-    Raises ValueError on a ``## <title>`` header mapping to no known ecosystem: silently
-    dropping the section would remove its packages from ``advertised``, turning the
-    advertised ⊆ loadable gate into a no-op for that track. Fail loud on header drift."""
-    out: dict[str, list[str]] = {"r": [], "python": [], "node": [], "conda": []}
-    eco: str | None = None
+    A conda entry contributes its ``executable`` where the record gives one, because
+    the check probes the binary on PATH and not the conda package. Raises ValueError on
+    an unreadable record or a schema the validator does not know: silently dropping the
+    record would remove the image tracks from ``advertised``, turning the advertised
+    ⊆ loadable gate into a no-op for them. Fail loud on shape drift."""
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as e:
-        # A read that fails after .exists() (permission/IO) is a store problem, not
-        # a package failure — raise so main() signals the store-error exit code.
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        # A read that fails after .is_file() (permission/IO/JSON) is an image problem,
+        # not a package failure — raise so main() signals the store-error exit code.
         raise ValueError(f"cannot read {path}: {e}") from e
-    for raw in text.splitlines():
-        line = raw.strip()
-        if line.startswith("## "):
-            title = line[3:].strip()
-            eco = SECTION_ECOSYSTEM.get(title)
-            if eco is None:
-                raise ValueError(
-                    f"unrecognized section header '## {title}' in packages.txt "
-                    f"(known: {sorted(SECTION_ECOSYSTEM)}). A producer header drifted "
-                    f"from SECTION_ECOSYSTEM — update the mapping or fix the header."
-                )
-            continue
-        if not line or line.startswith("#"):
-            continue
-        if eco is None:
-            continue
-        for tok in line.split(","):
-            name = tok.strip()
-            # Defensive: drop any trailing "(repo)" annotation.
-            if " (" in name:
-                name = name.split(" (", 1)[0].strip()
-            if name:
-                out[eco].append(name)
+    if record.get("schema") != 1:
+        raise ValueError(
+            f"{path} is at schema {record.get('schema')!r}, and this validator reads "
+            f"schema 1. A producer shape drifted — update the reader or fix the producer."
+        )
+    out: dict[str, list[str]] = {"conda": [], "node": []}
+    for tool in record.get("system_tools") or []:
+        name = tool.get("executable") or tool.get("name")
+        if name:
+            out["conda"].append(str(name))
+    for pkg in record.get("node") or []:
+        if pkg.get("name"):
+            out["node"].append(str(pkg["name"]))
     return out
 
 
@@ -116,10 +100,10 @@ LOCK_TRACK_ECOSYSTEM = {
 
 
 def parse_inventory() -> dict[str, list[str]]:
-    """Return {ecosystem: [names]} from the farm lock plus the image fragment.
+    """Return {ecosystem: [names]} from the farm lock plus the image record.
 
     The farm advertises its store tracks through `inflexa.lock`, and the image
-    advertises its two owned tracks (conda + node) through the baked fragment.
+    advertises its two owned tracks (conda + node) through the baked record.
     An unknown lock track raises, for the same fail-loud reason a drifted
     section header does."""
     out: dict[str, list[str]] = {"r": [], "python": [], "node": [], "conda": []}
@@ -137,10 +121,10 @@ def parse_inventory() -> dict[str, list[str]]:
                 f"update the mapping or fix the producer.")
         if pkg.get("name"):
             out[eco].append(str(pkg["name"]))
-    if IMAGE_PACKAGES_TXT.is_file():
-        fragment = parse_packages_txt(IMAGE_PACKAGES_TXT)
-        out["conda"] += fragment.get("conda", [])
-        out["node"] += fragment.get("node", [])
+    if IMAGE_RECORD.is_file():
+        record = parse_image_record(IMAGE_RECORD)
+        out["conda"] += record["conda"]
+        out["node"] += record["node"]
     return out
 
 

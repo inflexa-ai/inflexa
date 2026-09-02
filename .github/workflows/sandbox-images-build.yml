@@ -131,7 +131,8 @@ jobs:
       # in the local docker daemon, and `docker push` then publishes it to GHCR.
       # There is no inventory label: the mounted farm carries its own inventory
       # (inflexa.lock), and the image advertises its two owned tracks through the
-      # baked fragment at /opt/inflexa.
+      # baked record at /opt/inflexa/image-packages.json. IMAGE_VERSION gives that
+      # record the tag of this build, thus the record names its own image.
 
       - name: "Build + push: sandbox-base"
         # TARGETARCH is passed explicitly, although buildx predefines it. The
@@ -144,6 +145,7 @@ jobs:
             --platform "$PLATFORM" \
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
             --build-arg "TARGETARCH=${ARCH}" \
+            --build-arg "IMAGE_VERSION=${VERSION}" \
             -t "${IMAGE_BASE}:${VERSION}-${ARCH}" \
             .
           # GHCR sometimes refuses a fresh layer with "unknown blob" when the two

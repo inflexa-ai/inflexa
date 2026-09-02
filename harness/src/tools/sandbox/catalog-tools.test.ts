@@ -5,43 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
-import { createListAvailablePackagesTool, parsePackagesFile, queryPackages } from "./list-available-packages.js";
+import { createListAvailablePackagesTool, queryPackages, type Section } from "./list-available-packages.js";
 
-// A faithful slice of `/mnt/libs/current/packages.txt`: the two `#` advisory
-// lines the producers emit, then `## <Section>` headings each followed by one
-// comma-separated line of names. The real file carries NO version strings.
-const PACKAGES_TXT = `# Available packages in the sandbox environment.
-# Do NOT attempt to install packages — there is no network access and no build toolchain.
-
-## R (CRAN)
-Seurat, dplyr, ggplot2
-
-## R (Bioconductor)
-DESeq2, edgeR, limma
-
-## Python (pip)
-anndata, scanpy, pydeseq2
-
-## System tools (CLI)
-bcftools, samtools
-
-## Node (npm)
-typescript
-`;
-
-const SECTIONS = parsePackagesFile(PACKAGES_TXT);
-
-describe("parsePackagesFile", () => {
-    it("splits the real packages.txt shape into per-track sections of names", () => {
-        expect(SECTIONS.map((s) => s.title)).toEqual(["R (CRAN)", "R (Bioconductor)", "Python (pip)", "System tools (CLI)", "Node (npm)"]);
-        expect(SECTIONS[0]!.packages.map((p) => p.name)).toEqual(["Seurat", "dplyr", "ggplot2"]);
-        expect(SECTIONS[3]!.packages.map((p) => p.name)).toEqual(["bcftools", "samtools"]);
-    });
-
-    it("ignores the `#` advisory header lines", () => {
-        expect(SECTIONS.flatMap((s) => s.packages).some((p) => p.name.startsWith("#"))).toBe(false);
-    });
-});
+// The shape every source is normalized into before `queryPackages` sees it:
+// one section per language track, each holding the canonical package names.
+const SECTIONS: Section[] = [
+    { title: "R (CRAN)", packages: [{ name: "Seurat" }, { name: "dplyr" }, { name: "ggplot2" }] },
+    { title: "R (Bioconductor)", packages: [{ name: "DESeq2" }, { name: "edgeR" }, { name: "limma" }] },
+    { title: "Python (pip)", packages: [{ name: "anndata" }, { name: "scanpy" }, { name: "pydeseq2" }] },
+    { title: "System tools (CLI)", packages: [{ name: "bcftools" }, { name: "samtools" }] },
+    { title: "Node (npm)", packages: [{ name: "typescript" }] },
+];
 
 describe("queryPackages — names (presence check)", () => {
     it("reports present/absent plus the language track, without returning the catalog", () => {
@@ -136,10 +110,29 @@ describe("list_available_packages — reading the inventory", () => {
         languages: {},
     };
 
-    it("reads the inflexa.lock at the injected host path rather than assuming the container's", async () => {
+    const IMAGE_RECORD = {
+        schema: 1,
+        image: { repository: "ghcr.io/inflexa-ai/sandbox-base", version: "20260901-3031713", arch: "amd64" },
+        runtimes: { python: "3.12.3", r: "4.6.0", node: "24.8.0" },
+        system_tools: [
+            { name: "samtools", version: "1.22.1" },
+            { name: "eagle2", version: "2.4.1", executable: "eagle" },
+        ],
+        node: [{ name: "echarts", version: "6.0.0" }],
+    };
+
+    /** A temp store root holding the farm lock, and the record bytes when the case wants one. */
+    async function makeStore(recordBytes?: string): Promise<{ farmLockFile: string; imagePackagesFile: string }> {
         const dir = await mkdtemp(join(tmpdir(), "packages-"));
         const farmLockFile = join(dir, "inflexa.lock");
+        const imagePackagesFile = join(dir, "image-packages.json");
         await writeFile(farmLockFile, JSON.stringify(LOCK));
+        if (recordBytes !== undefined) await writeFile(imagePackagesFile, recordBytes);
+        return { farmLockFile, imagePackagesFile };
+    }
+
+    it("reads the inflexa.lock at the injected host path rather than assuming the container's", async () => {
+        const { farmLockFile } = await makeStore();
 
         const result = (
             await createListAvailablePackagesTool({ farmLockFile }).execute({ names: ["Seurat", "nonesuch"] }, makeToolContext().ctx)
@@ -161,24 +154,77 @@ describe("list_available_packages — reading the inventory", () => {
         ]);
     });
 
-    it("merges the baked image fragment into the report when the host can read one", async () => {
-        const dir = await mkdtemp(join(tmpdir(), "packages-"));
-        const farmLockFile = join(dir, "inflexa.lock");
-        const imagePackagesFile = join(dir, "image-packages.txt");
-        await writeFile(farmLockFile, JSON.stringify(LOCK));
-        await writeFile(imagePackagesFile, "## System tools (CLI)\nsamtools, bcftools\n");
+    it("merges the image record into the report, with a version on each row", async () => {
+        const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        const result = (await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
+        const result = (await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
             available: true;
             total: number;
             content: string;
         };
 
         expect(result.available).toBe(true);
-        expect(result.total).toBe(4);
+        // 2 farm packages + 2 image tools + 1 image node package.
+        expect(result.total).toBe(5);
         expect(result.content).toContain("Python (pip)");
         expect(result.content).toContain("System tools (CLI)");
-        expect(result.content).toContain("samtools");
+        expect(result.content).toContain("samtools==1.22.1");
+        expect(result.content).toContain("Node (npm)");
+        expect(result.content).toContain("echarts==6.0.0");
+    });
+
+    it("answers the cli language filter with the image tools alone", async () => {
+        const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
+
+        const result = (await createListAvailablePackagesTool(deps).execute({ language: "cli" }, makeToolContext().ctx))._unsafeUnwrap() as {
+            available: true;
+            total: number;
+            content: string;
+        };
+
+        expect(result.total).toBe(2);
+        expect(result.content).toContain("samtools==1.22.1");
+        expect(result.content).not.toContain("echarts");
+        expect(result.content).not.toContain("Node (npm)");
+    });
+
+    // An agent invokes the binary, not the conda package that carries it.
+    it("finds a tool by its executable name when the package name differs", async () => {
+        const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
+
+        const result = (await createListAvailablePackagesTool(deps).execute({ names: ["eagle", "eagle2"] }, makeToolContext().ctx))._unsafeUnwrap() as {
+            available: true;
+            checked: { requested: string; present: boolean }[];
+        };
+
+        expect(result.checked).toEqual([
+            { requested: "eagle", present: true, name: "eagle", section: "System tools (CLI)", version: "2.4.1" },
+            // The conda package name is not what the report carries.
+            { requested: "eagle2", present: false },
+        ]);
+    });
+
+    // The farm is the authority on what a step imports; the record is an enrichment.
+    it("keeps the farm entry when a record entry collides on a name", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "packages-"));
+        const farmLockFile = join(dir, "inflexa.lock");
+        const imagePackagesFile = join(dir, "image-packages.json");
+        await writeFile(
+            farmLockFile,
+            JSON.stringify({
+                ...LOCK,
+                packages: [
+                    { name: "echarts", version: "5.4.0", track: "node", store_dir: "echarts-5.4.0-abcd1234abcd1234", hash: "c".repeat(64), requested: true },
+                ],
+            }),
+        );
+        await writeFile(imagePackagesFile, JSON.stringify(IMAGE_RECORD));
+
+        const result = (
+            await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({ names: ["echarts"] }, makeToolContext().ctx)
+        )._unsafeUnwrap() as { available: true; checked: { version?: string; storeDir?: string }[] };
+
+        expect(result.checked[0]).toMatchObject({ present: true, name: "echarts", version: "5.4.0", storeDir: "echarts-5.4.0-abcd1234abcd1234" });
     });
 
     it("a bound pool reader wins over the farm lock, and the listing renders name==version", async () => {
@@ -219,17 +265,36 @@ describe("list_available_packages — reading the inventory", () => {
         expect(result.content).toContain("the dependency graph names 1 edge(s)");
     });
 
-    it("still reports the farm inventory when no image fragment is readable", async () => {
-        const dir = await mkdtemp(join(tmpdir(), "packages-"));
-        const farmLockFile = join(dir, "inflexa.lock");
-        await writeFile(farmLockFile, JSON.stringify(LOCK));
+    // A store packed before the record existed carries none. That is the state
+    // of every host today, and it must degrade to the farm tracks alone.
+    it("still reports the farm inventory when no image record is readable", async () => {
+        const { farmLockFile, imagePackagesFile } = await makeStore();
 
-        const result = (
-            await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile: join(dir, "absent.txt") }).execute({}, makeToolContext().ctx)
-        )._unsafeUnwrap() as { available: true; total: number };
+        const result = (await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
+            available: true;
+            total: number;
+            content: string;
+        };
 
         expect(result.available).toBe(true);
         expect(result.total).toBe(2);
+        expect(result.content).not.toContain("System tools (CLI)");
+    });
+
+    it("still reports the farm inventory when the image record is invalid", async () => {
+        for (const bytes of ["## System tools (CLI)\nsamtools, bcftools\n", JSON.stringify({ ...IMAGE_RECORD, schema: 2 })]) {
+            const deps = await makeStore(bytes);
+
+            const result = (await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
+                available: true;
+                total: number;
+                content: string;
+            };
+
+            expect(result.available).toBe(true);
+            expect(result.total).toBe(2);
+            expect(result.content).not.toContain("samtools");
+        }
     });
 
     // Naming packages in this state is worse than silence: the agent cannot verify any
@@ -253,14 +318,10 @@ describe("list_available_packages — reading the inventory", () => {
 // when it was only unrendered. The default must return a real-sized store whole.
 describe("queryPackages — a real-sized store is not truncated by default", () => {
     it("returns every package with hasMore=false at a catalog-scale size", () => {
-        const sections = parsePackagesFile(
-            [
-                "## Python (pip)",
-                Array.from({ length: 180 }, (_, i) => `pkg-python-${i}`).join(", "),
-                "## R (CRAN)",
-                Array.from({ length: 120 }, (_, i) => `pkg-r-${i}`).join(", "),
-            ].join("\n"),
-        );
+        const sections: Section[] = [
+            { title: "Python (pip)", packages: Array.from({ length: 180 }, (_, i) => ({ name: `pkg-python-${i}` })) },
+            { title: "R (CRAN)", packages: Array.from({ length: 120 }, (_, i) => ({ name: `pkg-r-${i}` })) },
+        ];
 
         const result = queryPackages(sections, {}) as { available: true; total: number; returned: number; hasMore: boolean; content: string };
 

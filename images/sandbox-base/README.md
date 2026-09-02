@@ -17,9 +17,12 @@ specs for the protocol.
 **package store**, mounted read-only at `/mnt/libs`. The farm of the
 analysis mounts at `/mnt/libs/farm`, and its optional read-write cache at
 `/mnt/libs/cache`. The image advertises its two owned tracks (the conda
-tools and the Node packages) through the baked fragment at
-`/opt/inflexa/image-packages.txt`, which `list_available_packages` merges
-with the `inflexa.lock` of the mounted farm.
+tools and the Node packages) through the baked record at
+`/opt/inflexa/image-packages.json`. The record carries the identity of the
+image, the runtime versions, and the version of each tool and each package.
+The catalog build copies the same file into the store root. Thus
+`list_available_packages` reads it at `/mnt/libs/image-packages.json`, and it
+merges the record with the `inflexa.lock` of the mounted farm.
 
 The sibling image, [`../sandbox-provisioner`](../sandbox-provisioner), is
 the network-enabled builder that writes the store. The two images build from

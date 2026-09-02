@@ -58,9 +58,11 @@ docker run --rm ghcr.io/inflexa-ai/sandbox-base:latest \
 ```
 
 A bare `docker run` with no store mounted resolves the image-owned tools
-only. The analysis packages arrive with the store mounts, and
-`list_available_packages` reads the `inflexa.lock` of the mounted farm merged
-with the baked fragment at `/opt/inflexa/image-packages.txt`.
+only. The analysis packages arrive with the store mounts. The image bakes its
+own inventory as the record at `/opt/inflexa/image-packages.json`, and the
+catalog build copies that record into the store root. Thus
+`list_available_packages` reads the record at `/mnt/libs/image-packages.json`,
+and it merges the record with the `inflexa.lock` of the mounted farm.
 
 ## Adding a package
 

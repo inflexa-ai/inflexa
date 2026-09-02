@@ -207,13 +207,16 @@ jobs:
         # The provisioner installs pak, yaml, and jsonlite into its own R
         # library, thus a load check there resolves names that no farm carries.
         # The image comes from the working tree, so the store of this run and
-        # this image come from one commit.
+        # this image come from one commit. IMAGE_VERSION gives the baked record
+        # the version of this run, thus the record that the store carries names
+        # the image that the run proved it beside.
         run: |
           docker buildx build --load \
             -f images/sandbox-base/Dockerfile \
             --platform "$PLATFORM" \
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
             --build-arg "TARGETARCH=${ARCH}" \
+            --build-arg "IMAGE_VERSION=${VERSION}" \
             -t "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" \
             .
 
@@ -493,6 +496,24 @@ jobs:
             --entrypoint sh \
             "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
             -c 'rmdir /mnt/libs/farm 2>/dev/null || true; test ! -e /mnt/libs/farm'
+
+      - name: Copy the image record into the store root
+        # The store then carries the inventory of the image that this run
+        # proved it beside, and a reader with no container engine gets that
+        # inventory from the store alone. The image assembles the record, and
+        # this step copies it VERBATIM: one writer owns the shape. The pack
+        # below takes each root entry into the base layer, thus the pack needs
+        # no change. The run reads the sandbox image, because that image holds
+        # the record. `--user 0:0` overrides the `sandbox` user of the image,
+        # because the volume is root-owned.
+        run: |
+          docker run --rm \
+            --user 0:0 \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            --entrypoint sh \
+            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" \
+            -c 'cp /opt/inflexa/image-packages.json /mnt/libs/image-packages.json &&
+                chmod a+r /mnt/libs/image-packages.json'
 
       - name: Pack the store into per-track OCI layers
         # One layer per track plus one base layer. A track layer holds only the

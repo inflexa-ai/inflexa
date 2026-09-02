@@ -9,20 +9,16 @@
  * planning surface reads the pool-scope inventory (`readPoolInventory`) —
  * everything the store holds, whether or not a farm links it yet — because
  * the ask flow marks the packages the POOL does not hold, and the farm of a
- * new analysis is empty. The baked image inventory fragment
- * (`image-packages.txt`, at `/opt/inflexa` in the image) merges into either
- * report when the host can read one. The fragment keeps the section format:
- *
- *     ## System tools (CLI)
- *     samtools, bcftools, ...
+ * new analysis is empty. The image inventory record (`image-packages.json`,
+ * at the root of the package store) merges into either report when the host
+ * can read one: it carries the conda tools and the Node packages the image
+ * owns, which the content-addressed store cannot hold.
  *
  * Each entry renders as `name==version` where the source pins a version, and
  * a targeted `names` lookup also carries the store directory and the full
  * content hash where the source records them. A full listing carries no
  * hashes — a thousand rows of sha256 would bury the signal.
  */
-
-import { readFile } from "node:fs/promises";
 
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -32,6 +28,7 @@ import type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, Po
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
+import { readImagePackagesFile, type ImagePackages } from "../../sandbox/image-packages.js";
 
 /**
  * Where the lock lives when the host mounts the farm at the same path the
@@ -42,8 +39,15 @@ import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
  */
 const DEFAULT_FARM_LOCK_FILES = [`${LIBS_CONTAINER_PATH}/farm/inflexa.lock`, `${LIBS_CONTAINER_PATH}/current/inflexa.lock`] as const;
 
-/** Where the baked image inventory fragment lives inside the image. */
-const DEFAULT_IMAGE_PACKAGES_FILE = "/opt/inflexa/image-packages.txt";
+/**
+ * Where the image inventory record lives: at the root of the package store,
+ * which the catalog build copied it into. The default names the container
+ * mountpoint of that store, the same rule as {@link DEFAULT_FARM_LOCK_FILES}
+ * — a host whose own process sees the store the way a sandbox does needs no
+ * configuration. A host that reads the store somewhere else injects
+ * `imagePackagesFile`.
+ */
+const DEFAULT_IMAGE_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/image-packages.json`;
 
 /** The section title of each known lock track. An unknown track titles itself. */
 const TRACK_TITLES: Record<string, string> = {
@@ -70,6 +74,31 @@ export function lockSections(lock: FarmLock): Section[] {
         else byTrack.set(pkg.track, [entry]);
     }
     return [...byTrack.entries()].filter(([, packages]) => packages.length > 0).map(([track, packages]) => ({ title: TRACK_TITLES[track] ?? track, packages }));
+}
+
+/**
+ * Group the image record into its two sections, in the order of the record.
+ * An empty track yields no section, so the report never carries a heading
+ * with nothing under it.
+ *
+ * A `system_tools` row renders its `executable` name where the record gives
+ * one, because an agent invokes the binary rather than the conda package
+ * (the manifest `binaries:` map holds the pairs that differ). The two titles
+ * are the same strings the lock tracks use, because {@link LANGUAGE_MATCHERS}
+ * keys the `language` filter on the heading text.
+ */
+export function imageSections(record: ImagePackages): Section[] {
+    const sections: Section[] = [];
+    if (record.system_tools.length > 0) {
+        sections.push({
+            title: "System tools (CLI)",
+            packages: record.system_tools.map((tool) => ({ name: tool.executable ?? tool.name, version: tool.version })),
+        });
+    }
+    if (record.node.length > 0) {
+        sections.push({ title: TRACK_TITLES["node"]!, packages: record.node.map((pkg) => ({ name: pkg.name, version: pkg.version })) });
+    }
+    return sections;
 }
 
 /**
@@ -107,7 +136,7 @@ const POOL_UNAVAILABLE_NOTE =
 /** One package entry of a section, with the store identity where the source records it. */
 export type SectionPackage = PoolInventoryPackage;
 
-/** One language track of the store, in `packages.txt` section order. The seam shape and the render shape are one. */
+/** One language track of the store, in the section order of its source. The seam shape and the render shape are one. */
 export type Section = PoolInventorySection;
 
 /** One `names` lookup: present + canonical spelling + track + store identity, or absent. */
@@ -142,32 +171,6 @@ const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
     cli: (t) => /system tools|\bcli\b/i.test(t),
     node: (t) => /^node\b/i.test(t),
 };
-
-/**
- * Parse `packages.txt` into its sections. `#` lines are the advisory header,
- * `## X` opens a section, and every other non-empty line contributes
- * comma-separated package names to the open section. Unknown section headings
- * are preserved as-is — a downstream image may add its own track.
- */
-export function parsePackagesFile(content: string): Section[] {
-    const sections: { title: string; packages: SectionPackage[] }[] = [];
-    for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (trimmed.startsWith("##")) {
-            sections.push({ title: trimmed.slice(2).trim(), packages: [] });
-            continue;
-        }
-        if (trimmed.startsWith("#")) continue;
-        const open = sections.at(-1);
-        if (!open) continue;
-        for (const name of trimmed.split(",")) {
-            const pkg = name.trim();
-            if (pkg) open.packages.push({ name: pkg });
-        }
-    }
-    return sections;
-}
 
 /** One entry as the listing renders it: `name==version` where the source pins a version, the bare name otherwise. */
 function renderPackage(entry: SectionPackage): string {
@@ -213,8 +216,8 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
         const index = new Map<string, { entry: SectionPackage; section: string }>();
         for (const section of sections) {
             for (const pkg of section.packages) {
-                // First writer wins: `packages.txt` sections are ordered, so a name
-                // colliding across tracks resolves to the earliest one.
+                // First writer wins: the sections arrive in a fixed order, so a
+                // name colliding across tracks resolves to the earliest one.
                 if (!index.has(pkg.name.toLowerCase())) index.set(pkg.name.toLowerCase(), { entry: pkg, section: section.title });
             }
         }
@@ -276,7 +279,7 @@ export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "farmLockFil
  * Create the package inventory over the bound source: the pool-scope reader
  * when the embedder binds one (a conversation or planning surface), the
  * host-readable farm `inflexa.lock` otherwise (a sandbox agent). The image
- * fragment merges into either report.
+ * record merges into either report.
  */
 export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps = {}) {
     const lockCandidates = deps.farmLockFile ? [deps.farmLockFile] : DEFAULT_FARM_LOCK_FILES;
@@ -344,12 +347,15 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
             return "full package list";
         },
         execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
-            // The baked image fragment merges in when the host can read one; a
-            // missing fragment merges nothing, and that is the normal state for
-            // a host that runs outside the image.
-            const fragmentSections: Section[] = await readFile(imagePackagesFile, "utf-8")
-                .then(parsePackagesFile)
-                .catch((): Section[] => []);
+            // The image record merges in when the host can read a valid one.
+            // An absent record and an invalid record both merge nothing, and
+            // neither is an error: the record is an enrichment, and the farm
+            // or pool inventory stays whole without it. A store packed before
+            // the record existed carries none. The tool holds no logger, thus
+            // an invalid record cannot be reported here — the schema of the
+            // harness refuses it, and the report degrades to the tracks it
+            // could read.
+            const recordSections: Section[] = readImagePackagesFile(imagePackagesFile).map(imageSections).unwrapOr([]);
             // An unreadable inventory is an expected environment state — model it as an
             // `available: false` data variant telling the caller the set is UNKNOWN,
             // WITH the reason: without it, a structural fault (a damaged dependency
@@ -360,7 +366,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
                     reason: cause instanceof Error ? cause.message : String(cause),
                 }));
                 if (pool.kind === "unavailable") return ok({ available: false, content: `${POOL_UNAVAILABLE_NOTE} The reason: ${pool.reason}.` });
-                return ok(queryPackages([...pool.sections, ...fragmentSections], input));
+                return ok(queryPackages([...pool.sections, ...recordSections], input));
             }
             let lock: FarmLock | null = null;
             for (const candidate of lockCandidates) {
@@ -370,7 +376,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
             if (lock === null) {
                 return ok({ available: false, content: UNAVAILABLE_NOTE });
             }
-            return ok(queryPackages([...lockSections(lock), ...fragmentSections], input));
+            return ok(queryPackages([...lockSections(lock), ...recordSections], input));
         },
     });
 }

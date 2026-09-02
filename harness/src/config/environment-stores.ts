@@ -46,11 +46,14 @@ export interface EnvironmentStorePaths {
      */
     readonly farmLockFile?: string;
     /**
-     * Host path of the baked image inventory fragment
-     * (`image-packages.txt`) — the image-owned tools that
-     * `list_available_packages` merges into its report. Omit when the host
-     * cannot read one; a missing fragment merges nothing, and that is a
-     * normal state.
+     * Host path of the image inventory record, `image-packages.json` at the
+     * root of the package store — the image-owned tools and Node packages
+     * that `list_available_packages` merges into its report. Omit when the
+     * host's own process sees the store at the container mountpoint, which
+     * makes `/mnt/libs/image-packages.json` correct as-is; set it when the
+     * host reads the store somewhere else. An absent or invalid record
+     * merges nothing, and that is a normal state: a store packed before the
+     * record existed carries none, and the rest of the report stays whole.
      */
     readonly imagePackagesFile?: string;
     /**
@@ -79,7 +82,7 @@ export type PoolInventoryRead =
 /** One package entry of an inventory section, with the store identity where the source records it. */
 export interface PoolInventoryPackage {
     readonly name: string;
-    /** The pinned version, rendered as `name==version`. Absent for an image-fragment tool. */
+    /** The pinned version, rendered as `name==version`. Absent where the source pins none. */
     readonly version?: string;
     /** The content-addressed store directory of the package. */
     readonly storeDir?: string;
