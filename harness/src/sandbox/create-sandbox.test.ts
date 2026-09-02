@@ -14,6 +14,7 @@ import type { Pool } from "pg";
 import type { AwaitExecOptions } from "./await-exec.js";
 import { composeAwaitOptions, createSandboxClient, precreateStepTree } from "./create-sandbox.js";
 import * as k8sClient from "./k8s-client.js";
+import { createNoopLogger } from "../lib/console-logger.js";
 import { STEP_SUBDIRS } from "./mount-plan.js";
 import type { CreateSandboxMeta, SandboxLiveness } from "./types.js";
 
@@ -152,6 +153,7 @@ describe("createSandboxClient — the k8s libs root threading", () => {
         // under a `fixed` farm source it carries the ONLY lock gate. The spy
         // asserts the composed backend config instead of faking a cluster,
         // because the factory forwards no test API seams.
+        const logger = createNoopLogger();
         let captured: k8sClient.K8sClientConfig | null = null;
         const spy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation((cfg) => {
             captured = cfg;
@@ -171,11 +173,15 @@ describe("createSandboxClient — the k8s libs root threading", () => {
                 libStorePvc: "cortex-libs",
                 libStorePvcRoot: "/mnt/libs",
                 farmSource: { kind: "fixed", location: { farmPath: "farms/catalog" } },
+                logger,
             });
 
             expect(captured).not.toBeNull();
             expect(captured!.libStorePvcRoot).toBe("/mnt/libs");
             expect(captured!.libStorePvc).toBe("cortex-libs");
+            // The same reference, not a copy: the lock-gate warning must reach
+            // the embedder's sink, never the no-op fallback.
+            expect(captured!.logger).toBe(logger);
         } finally {
             spy.mockRestore();
         }

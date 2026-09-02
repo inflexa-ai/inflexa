@@ -236,6 +236,10 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   nodeSelector: config.nodeSelector,
                   tolerations: config.tolerations,
                   runtimeClassName: config.runtimeClassName,
+                  // Without the forward, every k8s-client diagnostic — the lock-gate
+                  // warning included — lands in the no-op fallback, and a degraded
+                  // sandbox mounts silently.
+                  logger: config.logger,
                   registerSandbox,
               })
             : createDockerSandboxOps({
