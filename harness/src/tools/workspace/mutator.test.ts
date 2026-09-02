@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -279,6 +279,50 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         expect(result.status).toBe("out_of_prefix");
         expect(existsSync(join(outside, "x.csv"))).toBe(false);
         expect(events).toHaveLength(0);
+    });
+
+    // The TOCTOU window: a symlink planted at a missing intermediate segment
+    // after the ancestor walk cleared it, but before the recursive mkdir runs.
+    // The planter jitters across event-loop turns so that, over the attempts,
+    // the plant lands before the walk, inside the window, and after the mkdir.
+    // The invariant under every interleaving: no byte ever lands outside the
+    // analysis root.
+    test("a symlink raced into a missing intermediate segment cannot re-aim the write", async () => {
+        const { mutator } = buildSessionMutator();
+        const outside = join(basePath, "outside-tree");
+        await mkdir(outside, { recursive: true });
+        await mkdir(join(basePath, ANALYSIS), { recursive: true });
+
+        for (let attempt = 0; attempt < 200; attempt++) {
+            const segment = `nested-${attempt}`;
+            const planted = join(basePath, ANALYSIS, segment);
+            const write = mutator.writeFile({
+                path: `${segment}/x.csv`,
+                content: "x",
+                toolName: "write_file",
+                invocationId: `inv-${attempt}`,
+                runStep: passthrough,
+                session: chatSession,
+            });
+            const plant = (async () => {
+                for (let turn = 0; turn < attempt % 7; turn++) {
+                    await new Promise((resolve) => setImmediate(resolve));
+                }
+                try {
+                    symlinkSync(outside, planted);
+                } catch {
+                    // The write created the real directory first; the plant lost.
+                }
+            })();
+            const [result] = await Promise.all([write, plant]);
+
+            expect(existsSync(join(outside, "x.csv"))).toBe(false);
+            if (result.status === "ok") {
+                expect(lstatSync(planted).isSymbolicLink()).toBe(false);
+                expect(existsSync(join(planted, "x.csv"))).toBe(true);
+            }
+            rmSync(planted, { recursive: true, force: true });
+        }
     });
 
     test("a non-analysis scope is out_of_scope before any I/O", async () => {
