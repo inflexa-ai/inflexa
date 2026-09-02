@@ -11,11 +11,16 @@ import { z } from "zod";
 
 // ── Producer ────────────────────────────────────────────────────────
 
-/** File tool write (write_file, edit_file). */
+/**
+ * File tool write (write_file, edit_file). Carries the loop's tool-call
+ * `invocationId` — replay-stable, and the identity the bridge mixes into the
+ * deterministic call-activity QName — instead of a wall-clock timestamp,
+ * which would be re-minted on every durable replay.
+ */
 export const FileToolProducerSchema = z.object({
     type: z.literal("file_tool"),
     tool: z.string(),
-    timestamp: z.string(),
+    invocationId: z.string(),
 });
 
 /** Sandbox command execution (execute_command). */

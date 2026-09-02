@@ -152,6 +152,8 @@ export type SessionProvenanceEvent =
           size: number;
           /** The agent-visible file tool that authored the content (`write_file` / `edit_file`). */
           tool: string;
+          /** The loop's tool-call id of the write — the replay-stable identity of the invocation. */
+          invocationId: string;
       };
 
 /**

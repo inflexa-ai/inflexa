@@ -14,7 +14,8 @@ import type { ProvActor, ProvModelId } from "./types.js";
  *
  * Deliberate coverage: the lifecycle builders and the generic lifecycle action, a user agent
  * (opaque id plus email), a resolved and an unresolved `scriptPath`, an empty `args` vector (no
- * `inflexa:args` attribute), the `file_tool` generation path, a plain-boolean `inflexa:isDir`, a
+ * `inflexa:args` attribute), all three `file_written` generation arms (`command`, `step`, and
+ * `call` — the call once step-scoped and once thread-scoped), a plain-boolean `inflexa:isDir`, a
  * typed-int `inflexa:size`, and a non-zero-millisecond formal time. The session and report family
  * adds both session kinds (the conversation arm mints no entity), a parent thread, the four block
  * acts, a repeated `inflexa:source` attribute, and the version entity with its specialization.
@@ -75,17 +76,32 @@ export function buildGoldenDocument(m: ProvDocumentModelInternal): ProvDocument 
         },
         model,
     );
-    m.appendCommandExecuted(
+    m.appendFileWritten(doc, "a-golden", system, { path: "runs/r1/s1/output/result.csv", hash: "sha256:bbb", size: 10, producer: "command" }, "command", model);
+    m.appendFileWritten(
         doc,
         "a-golden",
         system,
-        step,
-        { kind: "file_tool", tool: "write_file", outputs: [{ path: "runs/r1/s1/output/notes.md", hash: "sha256:fff" }] },
+        { path: "runs/r1/s1/logs/run.log", hash: "sha256:ddd", size: 3, producer: "command" },
+        "step",
         model,
+        undefined,
+        step,
     );
-    m.appendFileWritten(doc, "a-golden", system, { path: "runs/r1/s1/output/result.csv", hash: "sha256:bbb", size: 10, producer: "command" }, step, "command");
-    m.appendFileWritten(doc, "a-golden", system, { path: "runs/r1/s1/logs/run.log", hash: "sha256:ddd", size: 3, producer: "command" }, step, "step");
-    m.appendFileWritten(doc, "a-golden", system, { path: "runs/r1/s1/output/notes.md", hash: "sha256:fff", size: 7, producer: "file_tool" }, step, "command");
+    m.appendFileWritten(
+        doc,
+        "a-golden",
+        system,
+        { path: "runs/r1/s1/output/notes.md", hash: "sha256:fff", size: 7, producer: "file_tool" },
+        "call",
+        model,
+        { invocationId: "call-77", tool: "write_file" },
+        step,
+    );
+    m.appendFileWritten(doc, "a-golden", system, { path: "notes/summary.md", hash: "sha256:ggg", size: 9, producer: "file_tool" }, "call", model, {
+        invocationId: "call-42",
+        tool: "edit_file",
+        threadId: "t-chat",
+    });
     m.appendInputUsed(doc, "a-golden", system, step, { path: "data/inputs/counts.csv", hash: "sha256:aaa", source: "data", fileId: "file-1" });
     m.appendStepCompleted(
         doc,

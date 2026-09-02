@@ -304,7 +304,7 @@ export class ProvenanceCollector {
             producer: {
                 type: "file_tool",
                 tool: artifact.toolName ?? "unknown",
-                timestamp: artifact.timestamp,
+                invocationId: artifact.invocationId,
             },
             inputs: [],
 

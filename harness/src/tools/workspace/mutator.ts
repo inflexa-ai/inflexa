@@ -75,16 +75,19 @@ export interface WorkspaceMutator {
      * (absolute `/{analysisId}/...`), confine the result to the working
      * directory, and land `content` on the host filesystem. `toolName` names
      * the invoking tool so a successful write is attributed to it in
-     * provenance. `runStep` wraps the disk mutation in a replay-cached step —
-     * pass the tool context's `runStep`. `session` is the calling agent's
-     * session — pass the tool context's `session`: the step-scoped realization
-     * ignores it, the session-scoped one resolves its coordinates and its
-     * provenance attribution from it.
+     * provenance. `invocationId` is the tool call's loop id — pass the tool
+     * context's `invocationId`: it rides the provenance record so the write's
+     * call activity gets a deterministic identity. `runStep` wraps the disk
+     * mutation in a replay-cached step — pass the tool context's `runStep`.
+     * `session` is the calling agent's session — pass the tool context's
+     * `session`: the step-scoped realization ignores it, the session-scoped
+     * one resolves its coordinates and its provenance attribution from it.
      */
     writeFile(args: {
         readonly path: string;
         readonly content: string;
         readonly toolName: MutateToolName;
+        readonly invocationId: string;
         readonly runStep: RunStep;
         readonly session: AgentSession;
     }): Promise<WriteFileResult>;
@@ -208,7 +211,7 @@ async function confinedWrite(args: {
 
 export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMutator {
     return {
-        async writeFile({ path, content, toolName, runStep }) {
+        async writeFile({ path, content, toolName, invocationId, runStep }) {
             const landed = await confinedWrite({
                 workspaceRoot: deps.workspaceRoot,
                 analysisId: deps.analysisId,
@@ -225,20 +228,18 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
             // process-local state, so a recovered replay must re-record into the
             // fresh collector even while the cached step skips the disk write.
             //
-            // `timestamp` is a write-time wall clock — normally a replay hazard in
-            // provenance, but safe here because the record contributes only producer
-            // IDENTITY downstream: the bridge drops it (the cli's file-tool ref has no
-            // timestamp field) and the signed `inflexa:FileToolWrite` activity carries
-            // just the tool name, so a re-execution's fresh stamp changes nothing in
-            // the attested graph. Do NOT start forwarding it into an identifier or a
-            // formal PROV position without making it replay-stable first.
+            // `invocationId` is replay-stable: the model turn that minted the tool
+            // call is a durably cached step, so a re-execution replays the same id.
+            // That is what lets the bridge key a DETERMINISTIC call-activity
+            // identifier on it — a wall-clock stamp here would be re-minted per
+            // replay and must never reach an identifier or a formal PROV position.
             if (deps.lineageCollector) {
                 deps.lineageCollector.recordFileToolWrite({
                     path: landed.relative,
                     hash: computeSha256(landed.bytes),
                     size: landed.bytes.length,
                     toolName,
-                    timestamp: new Date().toISOString(),
+                    invocationId,
                 });
             }
 
@@ -279,7 +280,7 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
     const logger = (deps.logger ?? createNoopLogger()).named("workspace-mutator");
     const observe = bindSessionEmit(deps.provenance, logger);
     return {
-        async writeFile({ path, content, toolName, runStep, session }) {
+        async writeFile({ path, content, toolName, invocationId, runStep, session }) {
             // Only an analysis scope has a workspace tree; under any other
             // scope there is nothing in scope to write.
             const scope = session.scope;
@@ -306,6 +307,7 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
                 hash: computeSha256(landed.bytes),
                 size: landed.bytes.length,
                 tool: toolName,
+                invocationId,
             });
 
             return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length };

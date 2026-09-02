@@ -20,7 +20,7 @@ const STEP_PREFIX = `runs/${RUN}/${STEP}/`;
 const HASH = `sha256:${"a".repeat(64)}`;
 
 function fileToolWrite(path: string, tool: ArtifactRecord["toolName"]): ArtifactRecord {
-    return { path, hash: HASH, size: 42, toolName: tool, timestamp: "2026-07-13T00:00:00.000Z" };
+    return { path, hash: HASH, size: 42, toolName: tool, invocationId: "inv-1" };
 }
 
 describe("ProvenanceCollector.recordFileToolWrite", () => {
@@ -33,7 +33,7 @@ describe("ProvenanceCollector.recordFileToolWrite", () => {
         expect(records).toHaveLength(1);
         const rec = records[0]!;
         expect(rec.outputPath).toBe("output/x.csv");
-        expect(rec.producer).toEqual({ type: "file_tool", tool: "write_file", timestamp: "2026-07-13T00:00:00.000Z" });
+        expect(rec.producer).toEqual({ type: "file_tool", tool: "write_file", invocationId: "inv-1" });
         expect(rec.inputs).toEqual([]);
         expect(rec.outputHash).toBe(HASH);
     });
@@ -62,7 +62,7 @@ describe("ProvenanceCollector.recordFileToolWrite", () => {
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
         const rec = records[0]!;
-        expect(rec.producer).toEqual({ type: "file_tool", tool: "edit_file", timestamp: "2026-07-13T00:00:00.000Z" });
+        expect(rec.producer).toEqual({ type: "file_tool", tool: "edit_file", invocationId: "inv-1" });
         expect(rec.inputs).toEqual([]);
         expect(rec.outputPath).toBe("output/x.csv");
     });

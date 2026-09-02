@@ -19,7 +19,7 @@ import type {
     ProvReportPreviewRef,
     ProvReportTitleRef,
     ProvReportVersionRef,
-    ProvSessionFileWriteRef,
+    ProvCallRef,
     ProvSessionRef,
 } from "./types.js";
 
@@ -477,13 +477,12 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
 
     /**
      * Append a command execution's records — the finer-grained lineage the step level cannot
-     * express: a command (or file-tool) activity, `wasInformedBy` its step, `wasAssociatedWith` the
-     * actor's agent AND the model agent, a `used` edge per command-scoped input (including the
-     * script when it resolves), and — the load-bearing move — `wasGeneratedBy(output, command)` per
-     * output. The command is the GENERATION AUTHORITY for its outputs: it writes each
-     * `gen-{fileDigest}` edge under the SAME id `appendFileWritten` would have used for the
-     * step-level edge, so a produced file ends up with exactly ONE generation record — this
-     * activity's.
+     * express: a command activity, `wasInformedBy` its step, `wasAssociatedWith` the actor's agent
+     * AND the model agent, a `used` edge per command-scoped input (including the script when it
+     * resolves), and — the load-bearing move — `wasGeneratedBy(output, command)` per output. The
+     * command is the GENERATION AUTHORITY for its outputs: it writes each `gen-{fileDigest}` edge
+     * under the SAME id `appendFileWritten` would have used for the step-level edge, so a produced
+     * file ends up with exactly ONE generation record — this activity's.
      */
     function appendCommandExecuted(
         doc: ProvDocument,
@@ -506,25 +505,21 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         // path rides the activity as `inflexa:unresolvedScript`: deterministic from the payload,
         // metadata about the activity, not a node.
         const scriptKey =
-            command.kind === "command" && command.scriptPath !== undefined
+            command.scriptPath !== undefined
                 ? (command.outputs.find((o) => o.path === command.scriptPath) ?? command.inputs.find((i) => i.path === command.scriptPath))
                 : undefined;
-        const unresolvedScript = command.kind === "command" && command.scriptPath !== undefined && scriptKey === undefined ? command.scriptPath : undefined;
+        const unresolvedScript = command.scriptPath !== undefined && scriptKey === undefined ? command.scriptPath : undefined;
 
-        // Per-kind attributes; args are joined into one string. No formal start/end time — the only
-        // timestamp at this seam is replay-unstable.
-        const attributes =
-            command.kind === "command"
-                ? {
-                      "prov:type": "inflexa:Command",
-                      "inflexa:command": command.command,
-                      ...(command.args !== undefined && command.args.length > 0 ? { "inflexa:args": command.args.join(" ") } : {}),
-                      "inflexa:exitCode": command.exitCode,
-                      ...(command.durationMs !== undefined ? { "inflexa:durationMs": command.durationMs } : {}),
-                      ...(unresolvedScript !== undefined ? { "inflexa:unresolvedScript": unresolvedScript } : {}),
-                  }
-                : { "prov:type": "inflexa:FileToolWrite", "inflexa:tool": command.tool };
-        doc.activity(cmdQn, undefined, undefined, attributes);
+        // Args are joined into one string. No formal start/end time — the only timestamp at this
+        // seam is replay-unstable.
+        doc.activity(cmdQn, undefined, undefined, {
+            "prov:type": "inflexa:Command",
+            "inflexa:command": command.command,
+            ...(command.args !== undefined && command.args.length > 0 ? { "inflexa:args": command.args.join(" ") } : {}),
+            "inflexa:exitCode": command.exitCode,
+            ...(command.durationMs !== undefined ? { "inflexa:durationMs": command.durationMs } : {}),
+            ...(unresolvedScript !== undefined ? { "inflexa:unresolvedScript": unresolvedScript } : {}),
+        });
         doc.wasInformedBy(cmdQn, sQn, `${NS_PREFIX}:informed-cmd-${step.runId}-${step.stepId}-${groupDigest}`);
         const assocIdBase = `${NS_PREFIX}:assoc-cmd-${step.runId}-${step.stepId}-${groupDigest}`;
         doc.wasAssociatedWith(cmdQn, agentQn, undefined, `${assocIdBase}-${agentDigest(agentQn)}`);
@@ -537,40 +532,81 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
             doc.wasGeneratedBy(fileQName(output), cmdQn, undefined, `${NS_PREFIX}:gen-${fileDigest(output)}`);
         }
 
-        // Only a `command` kind reads inputs; a `file_tool` write is agent-authored content with none.
-        if (command.kind === "command") {
-            // Every command-scoped `used` id is keyed on (command group + the read entity's
-            // `(path,hash)` digest) — when the script resolves to an entity already among these
-            // inputs, its `used` edge gets the SAME id and merges: the command reads one entity once.
-            const usedId = (key: ProvFileKey): string => `${NS_PREFIX}:used-cmd-${step.runId}-${step.stepId}-${groupDigest}-${fileDigest(key)}`;
-            for (const input of command.inputs) {
-                doc.used(cmdQn, fileQName(input), undefined, usedId(input));
-            }
-            if (scriptKey) doc.used(cmdQn, fileQName(scriptKey), undefined, usedId(scriptKey));
+        // Every command-scoped `used` id is keyed on (command group + the read entity's
+        // `(path,hash)` digest) — when the script resolves to an entity already among these
+        // inputs, its `used` edge gets the SAME id and merges: the command reads one entity once.
+        const usedId = (key: ProvFileKey): string => `${NS_PREFIX}:used-cmd-${step.runId}-${step.stepId}-${groupDigest}-${fileDigest(key)}`;
+        for (const input of command.inputs) {
+            doc.used(cmdQn, fileQName(input), undefined, usedId(input));
         }
+        if (scriptKey) doc.used(cmdQn, fileQName(scriptKey), undefined, usedId(scriptKey));
+    }
+
+    /**
+     * The digest that keys a call activity and every call-relation id — the QName is
+     * `inflexa:call-{callDigest}`. An invocation id is replay-stable but unique per agent loop
+     * only, so the digest mixes in a scope disambiguator: the `(runId, stepId)` key when the write
+     * is step-scoped, else the thread (empty when the host scoped none).
+     */
+    function callDigest(call: ProvCallRef, step: ProvStepRef | undefined): string {
+        return digest(step !== undefined ? `${step.runId}|${step.stepId}|${call.invocationId}` : `${call.threadId ?? ""}|${call.invocationId}`);
     }
 
     /**
      * Append the file-write records: a file entity, attributed to the actor's agent, and
-     * `wasDerivedFrom` the analysis entity — the coarse lineage edge. The step-level
-     * `wasGeneratedBy(file, step)` is written ONLY when `generation === "step"`: a LEAF file (no
-     * producing command activity) whose best available attestation is "the step produced it
-     * somehow". A PRODUCED file (`generation === "command"`) receives its generation edge
-     * exclusively from {@link appendCommandExecuted}, under the same `gen-{fileDigest}` id — so
-     * exactly ONE generation edge exists per file entity regardless of which authority wrote it.
+     * `wasDerivedFrom` the analysis entity — the coarse lineage edge. The generation edge depends
+     * on the arm, always under the shared `gen-{fileDigest}` id, so exactly ONE generation edge
+     * exists per file entity regardless of which authority wrote it:
+     *
+     * - `"command"`: NO edge here — a produced file's generation comes exclusively from
+     *   {@link appendCommandExecuted}, under the same id.
+     * - `"step"`: `wasGeneratedBy(file, step)` — a LEAF file (no producing command activity) whose
+     *   best available attestation is "the step produced it somehow".
+     * - `"call"`: a deterministic `inflexa:FileToolWrite` call activity ({@link callQName}) that
+     *   generates the file — declared before the entity (declaration-before-reference, like
+     *   {@link appendCommandExecuted}), `wasInformedBy` its step when one scopes the write,
+     *   associated with the actor's agent AND the model agent (this is the only arm that reads
+     *   `model`), and carrying no formal time: the only timestamp at this seam is replay-unstable.
+     *   The relation ids key on the call digest, so a durable re-emission dedupes.
      */
     function appendFileWritten(
         doc: ProvDocument,
         analysisId: string,
         actor: ProvActor,
         file: ProvFileRef,
-        step: ProvStepRef,
-        generation: "command" | "step",
+        generation: "command" | "step" | "call",
+        model: ProvModelId,
+        call?: ProvCallRef,
+        step?: ProvStepRef,
     ): void {
         const { analysisQn, agentQn } = recordPreamble(doc, analysisId, actor);
-        const sQn = stepQName(step);
         const suffix = fileDigest(file);
         const fQn = fileQName(file);
+
+        // The generating activity this event draws the `gen-{fileDigest}` edge to, or undefined
+        // for the "command" arm (the command activity owns that edge). `applyProvEvent` rejects a
+        // "step"/"call" event missing its ref; the throws here keep the builder total on its own.
+        let generatorQn: string | undefined;
+        if (generation === "call") {
+            if (call === undefined) throw new Error('file_written with generation "call" requires a call ref');
+            const cDigest = callDigest(call, step);
+            const cQn = `${NS_PREFIX}:call-${cDigest}`;
+            doc.activity(cQn, undefined, undefined, {
+                "prov:type": "inflexa:FileToolWrite",
+                "inflexa:tool": call.tool,
+                "inflexa:invocationId": call.invocationId,
+                ...(call.threadId !== undefined ? { "inflexa:threadId": call.threadId } : {}),
+            });
+            if (step !== undefined) doc.wasInformedBy(cQn, stepQName(step), `${NS_PREFIX}:informed-call-${cDigest}`);
+            const assocIdBase = `${NS_PREFIX}:assoc-call-${cDigest}`;
+            doc.wasAssociatedWith(cQn, agentQn, undefined, `${assocIdBase}-${agentDigest(agentQn)}`);
+            appendModelAgent(doc, model, agentQn, cQn, assocIdBase);
+            generatorQn = cQn;
+        } else if (generation === "step") {
+            if (step === undefined) throw new Error('file_written with generation "step" requires a step ref');
+            generatorQn = stepQName(step);
+        }
+
         doc.entity(fQn, {
             "prov:type": "inflexa:File",
             "inflexa:path": file.path,
@@ -578,7 +614,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
             "inflexa:size": file.size,
             "inflexa:producer": file.producer,
         });
-        if (generation === "step") doc.wasGeneratedBy(fQn, sQn, undefined, `${NS_PREFIX}:gen-${suffix}`);
+        if (generatorQn !== undefined) doc.wasGeneratedBy(fQn, generatorQn, undefined, `${NS_PREFIX}:gen-${suffix}`);
         doc.wasAttributedTo(fQn, agentQn, `${NS_PREFIX}:attr-${suffix}-${agentDigest(agentQn)}`);
         doc.wasDerivedFrom(fQn, analysisQn, undefined, undefined, undefined, `${NS_PREFIX}:deriv-${suffix}`);
     }
@@ -715,42 +751,6 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         doc.wasAttributedTo(reportQn, action.agentQn);
     }
 
-    /**
-     * Append the records of a file a session wrote with a file tool — the chat-route counterpart of
-     * {@link appendCommandExecuted}'s `file_tool` arm plus {@link appendFileWritten}, with no run or
-     * step to anchor to. The act keeps the lifecycle shape (a fresh action activity per write — a
-     * host emits it from a live bus, one time, never from a durable replay), typed
-     * `inflexa:FileToolWrite` so a lineage reader classifies it with the step-scoped file-tool
-     * activities. The file entity lives in the shared `(path, hash)` QName space, and its
-     * generation edge carries the SAME `gen-{fileDigest}` id every other generation authority
-     * uses — so one file entity keeps exactly one generation record even when a later step
-     * rewrites the identical bytes.
-     */
-    function appendSessionFileWritten(doc: ProvDocument, analysisId: string, actor: ProvActor, write: ProvSessionFileWriteRef, model: ProvModelId): void {
-        const { analysisQn, actionQn, agentQn } = appendLifecycleAction(doc, analysisId, actor, "inflexa:FileToolWrite");
-        // A second declaration of the freshly minted activity, because `appendLifecycleAction` owns
-        // the first one. No formal time — both slots are stamped already (see `appendReportAction`).
-        doc.activity(actionQn, undefined, undefined, {
-            "inflexa:tool": write.tool,
-            ...(write.threadId !== undefined ? { "inflexa:threadId": write.threadId } : {}),
-        });
-        appendActionModelAgent(doc, model, agentQn, actionQn);
-
-        const file = write.file;
-        const suffix = fileDigest(file);
-        const fQn = fileQName(file);
-        doc.entity(fQn, {
-            "prov:type": "inflexa:File",
-            "inflexa:path": file.path,
-            "inflexa:hash": file.hash,
-            "inflexa:size": file.size,
-            "inflexa:producer": file.producer,
-        });
-        doc.wasGeneratedBy(fQn, actionQn, undefined, `${NS_PREFIX}:gen-${suffix}`);
-        doc.wasAttributedTo(fQn, agentQn, `${NS_PREFIX}:attr-${suffix}-${agentDigest(agentQn)}`);
-        doc.wasDerivedFrom(fQn, analysisQn, undefined, undefined, undefined, `${NS_PREFIX}:deriv-${suffix}`);
-    }
-
     /** Append the records of one block act. The four acts share one payload, thus they differ only in the activity type they name. */
     function appendReportBlockAct(
         doc: ProvDocument,
@@ -859,7 +859,6 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
         appendFileWritten,
         appendInputUsed,
         appendSessionCreated,
-        appendSessionFileWritten,
         appendReportBlockAdded,
         appendReportBlockChanged,
         appendReportBlockRemoved,

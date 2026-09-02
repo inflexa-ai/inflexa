@@ -194,57 +194,50 @@ export type ProvCommandInputRef = {
 };
 
 /**
- * One execution inside a step that produced files — a discriminated union over the collector's two
- * producer kinds. The `command` variant records as a PROV **activity** typed `inflexa:Command`,
- * the `file_tool` variant as `inflexa:FileToolWrite`. One ref per surviving producer group: the
- * collector is last-write-wins per output path, so after collapse a group is uniquely keyed by its
- * OUTPUT SET (never the producer's object identity, which is meaningless across a durable workflow
- * re-execution).
+ * One command execution inside a step that produced files. Records as a PROV **activity** typed
+ * `inflexa:Command`. One ref per surviving producer group: the collector is last-write-wins per
+ * output path, so after collapse a group is uniquely keyed by its OUTPUT SET (never the producer's
+ * object identity, which is meaningless across a durable workflow re-execution). The `kind`
+ * discriminator literal stays on the single remaining variant for wire stability.
  *
  * NO timestamp field by design: the producer's observation timestamp is re-minted on every durable
  * replay (replay-unstable), so it must never cross into an identifier or a formal PROV position.
  * The command activity therefore carries no formal start/end time at all — its ordering lives on
  * the `wasInformedBy` edge to its step, and the step carries replay-stable settlement times.
  */
-export type ProvCommandRef =
-    | {
-          kind: "command";
-          /** The command line the sandbox executed. */
-          command: string;
-          /** The command's argument vector, when the collector captured one. */
-          args?: string[];
-          /** The process exit code. */
-          exitCode: number;
-          /** Execution duration in ms, when captured — a relative span (replay-stable), NOT an observation timestamp. */
-          durationMs?: number;
-          /** The script the command ran, when it read one; resolved against the group's own outputs/inputs by the builder. */
-          scriptPath?: string;
-          /** The files this command wrote — its generation authority; each keys a file entity. */
-          outputs: ProvFileKey[];
-          /** The command's command-scoped reads: data/upstream/prior reads plus resolved intra-step self-reads. */
-          inputs: ProvCommandInputRef[];
-      }
-    | {
-          kind: "file_tool";
-          /** The agent file-tool that authored the content (e.g. `write_file`). */
-          tool: string;
-          /** The files the tool wrote; a file-tool write carries no inputs by construction. */
-          outputs: ProvFileKey[];
-      };
+export type ProvCommandRef = {
+    kind: "command";
+    /** The command line the sandbox executed. */
+    command: string;
+    /** The command's argument vector, when the collector captured one. */
+    args?: string[];
+    /** The process exit code. */
+    exitCode: number;
+    /** Execution duration in ms, when captured — a relative span (replay-stable), NOT an observation timestamp. */
+    durationMs?: number;
+    /** The script the command ran, when it read one; resolved against the group's own outputs/inputs by the builder. */
+    scriptPath?: string;
+    /** The files this command wrote — its generation authority; each keys a file entity. */
+    outputs: ProvFileKey[];
+    /** The command's command-scoped reads: data/upstream/prior reads plus resolved intra-step self-reads. */
+    inputs: ProvCommandInputRef[];
+};
 
 /**
- * A file an agent session wrote with a file tool, outside any run or step — the chat-route
- * counterpart of a step's file-tool write. Recorded as a fresh `inflexa:FileToolWrite` action
- * activity that generates the file entity, in the SAME `(path, hash)` QName space as
- * {@link ProvFileRef} step outputs — so a later read of the file resolves to this very entity.
+ * One file-tool invocation (`write_file` / `edit_file`) that wrote a file — the generation
+ * authority a `file_written` event with `generation: "call"` anchors to. Records as a
+ * DETERMINISTIC PROV **activity** typed `inflexa:FileToolWrite`, keyed by the invocation id plus a
+ * scope disambiguator: `invocationId` is replay-stable (the durably cached model turn minted it)
+ * but unique per agent loop only, so the QName mixes in the step key when the write is
+ * step-scoped, else the thread.
  */
-export type ProvSessionFileWriteRef = {
-    /** The thread of the session that wrote the file. Absent when the host scoped no thread. */
-    threadId?: string;
+export type ProvCallRef = {
+    /** The loop's tool-call id — replay-stable, unique within one agent loop only. */
+    invocationId: string;
     /** The agent file-tool that authored the content (e.g. `write_file`), an OPEN vocabulary. */
     tool: string;
-    /** The file that landed — the shared file-entity identity plus its attributes. */
-    file: ProvFileRef;
+    /** The thread of the session that wrote the file. Absent when the host scoped no thread. */
+    threadId?: string;
 };
 
 /**

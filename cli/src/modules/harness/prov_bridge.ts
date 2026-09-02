@@ -44,11 +44,13 @@ import { buildAttestation } from "../prov/verify.ts";
 // `producer` OBJECT reference (mirroring the reference implementation's per-execution grouping) into
 // command/file-tool groups, with entries that have no record forming the LEAF bucket. The partition is
 // exclusive by construction — a single record lookup decides each entry's bucket — which keeps a file
-// from ever accruing two generation authorities (a command activity AND its step). Each group emits one
-// `prov.command_executed` followed by its `prov.file_written` events with `generation: "command"`; leaf
-// files emit `generation: "step"`, so the produced-vs-leaf decision rides the file event and the
-// recorder never infers it across events. Files, command-scoped inputs, and command activities all
-// originate here; step lifecycle stays at the scheduler.
+// from ever accruing two generation authorities. Each COMMAND group emits one `prov.command_executed`
+// followed by its `prov.file_written` events with `generation: "command"`; a FILE-TOOL group emits
+// `prov.file_written` with `generation: "call"` and the call ref (invocation id + tool) — the kernel
+// mints the deterministic call activity from it, so no pseudo-command event exists; leaf files emit
+// `generation: "step"`. The bucket decision rides the file event and the recorder never infers it
+// across events. Files, command-scoped inputs, and command activities all originate here; step
+// lifecycle stays at the scheduler.
 
 // A collector record (`getRecords()` element), its `producer` object (the grouping key), and its
 // per-command `inputs` — derived off the already-imported `ArtifactRegistrationInput` because the
@@ -127,14 +129,15 @@ function toCommandInputs(reads: readonly CollectorInputRef[], resourceId: string
 }
 
 /**
- * Build the {@link ProvCommandRef} for one producer group. A `command` producer carries the full
- * execution facts (`command`/`args`/`exitCode`/`durationMs`), the scoped `scriptPath`, the group's
- * analysis-scoped `(path, hash)` outputs, and its command-scoped inputs; a `file_tool` producer carries
- * only the tool name and outputs (agent-authored content has no reads, by construction). The producer's
- * observation `timestamp` is NEVER forwarded — it is re-minted on every DBOS replay and would poison the
- * document's replay-idempotency if it leaked into an identifier or formal position.
+ * Build the {@link ProvCommandRef} for one COMMAND producer group: the full execution facts
+ * (`command`/`args`/`exitCode`/`durationMs`), the scoped `scriptPath`, the group's analysis-scoped
+ * `(path, hash)` outputs, and its command-scoped inputs. A file-tool producer group never reaches
+ * this — it emits `prov.file_written` with `generation: "call"` instead of a command event. The
+ * producer's observation `timestamp` is NEVER forwarded — it is re-minted on every DBOS replay and
+ * would poison the document's replay-idempotency if it leaked into an identifier or formal position.
  */
 function toCommandRef(
+    producer: Extract<CollectorProducer, { type: "command" }>,
     record: CollectorRecord,
     outputs: ProvFileKey[],
     resourceId: string,
@@ -142,8 +145,6 @@ function toCommandRef(
     stepId: string,
     producedHashByPath: ReadonlyMap<string, string>,
 ): ProvCommandRef {
-    const producer = record.producer;
-    if (producer.type === "file_tool") return { kind: "file_tool", tool: producer.tool, outputs };
     const scriptPath = record.scriptPath !== null ? scopeScriptPath(record.scriptPath, resourceId, runId, stepId) : undefined;
     return {
         kind: "command",
@@ -158,18 +159,20 @@ function toCommandRef(
 }
 
 /**
- * The bus-adapter {@link ArtifactRegistry} — translates one step's registration into, per producer group,
- * one `prov.command_executed` followed by that group's `prov.file_written` events (`generation:
- * "command"`), then the leaf bucket's `prov.file_written` events (`generation: "step"`), then one
- * `prov.input_used` per tracked non-`"artifacts"` read. It returns the deterministic file QNames so the
- * harness can cross-reference its local ledger into the signed document, and does NOT emit
+ * The bus-adapter {@link ArtifactRegistry} — translates one step's registration into, per COMMAND
+ * producer group, one `prov.command_executed` followed by that group's `prov.file_written` events
+ * (`generation: "command"`); per FILE-TOOL producer group, `prov.file_written` events with
+ * `generation: "call"` carrying `{ invocationId, tool }`; then the leaf bucket's
+ * `prov.file_written` events (`generation: "step"`), then one `prov.input_used` per tracked
+ * non-`"artifacts"` read. It returns the deterministic file QNames so the harness can
+ * cross-reference its local ledger into the signed document, and does NOT emit
  * `prov.step_completed` (see the module note on the split and the producer grouping).
  *
  * `model` is the id of the model driving the step agent — resolved ONCE at boot (composition), so
- * stamping the construction-time id on every `prov.command_executed` is exactly "the model this
- * run's steps ran on". It rides the event so the recorder never infers it across events; when the
- * agents split (chat/decision/synthesis), this constructor takes the step agent's own id with no
- * event-shape change.
+ * stamping the construction-time id on every `prov.command_executed` and `prov.file_written` is
+ * exactly "the model this run's steps ran on". It rides the event so the recorder never infers it
+ * across events; when the agents split (chat/decision/synthesis), this constructor takes the step
+ * agent's own id with no event-shape change.
  *
  * Three seam-contract facts shape the behavior:
  *
@@ -251,34 +254,46 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
                 return { path, hash: entry.hash, size: entry.size, producer: recordByPath.get(entry.path)?.producer.type ?? "command" };
             };
 
-            // Per producer group, in declaration-before-reference order: one `prov.command_executed`, then
-            // that group's `prov.file_written` events flagged `generation: "command"` — their generation
-            // edge is the command activity's, not the step's.
+            // Per producer group, in declaration-before-reference order. A COMMAND group emits one
+            // `prov.command_executed`, then its `prov.file_written` events flagged `generation:
+            // "command"` — their generation edge is the command activity's. A FILE-TOOL group emits
+            // only `prov.file_written` with `generation: "call"`: the kernel mints the deterministic
+            // call activity from `(step, invocationId)`, so no command event exists for it.
             for (const { record, entries } of groups.values()) {
                 const files: ProvFileRef[] = [];
                 for (const entry of entries) {
                     const file = attest(entry);
                     if (file !== null) files.push(file);
                 }
-                // A group whose every output failed attestation has no entity to anchor a command
-                // activity's generation edges — skip it rather than mint a zero-output command.
+                // A group whose every output failed attestation has no entity to anchor a generation
+                // edge — skip it rather than mint a zero-output activity.
                 if (files.length === 0) continue;
 
+                const producer = record.producer;
+                if (producer.type === "file_tool") {
+                    const call = { invocationId: producer.invocationId, tool: producer.tool };
+                    for (const file of files) {
+                        Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, model, file, generation: "call", call, step });
+                        registered.push({ path: file.path, externalId: provModel.fileQName(file) });
+                    }
+                    continue;
+                }
+
                 const outputs: ProvFileKey[] = files.map((f) => ({ path: f.path, hash: f.hash }));
-                const command = toCommandRef(record, outputs, input.resourceId, input.runId, input.stepId, producedHashByPath);
+                const command = toCommandRef(producer, record, outputs, input.resourceId, input.runId, input.stepId, producedHashByPath);
                 Bus.emit("inflexa", { type: "prov.command_executed", analysisId: input.resourceId, actor, step, command, model });
                 for (const file of files) {
-                    Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step, generation: "command" });
+                    Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, model, file, generation: "command", step });
                     registered.push({ path: file.path, externalId: provModel.fileQName(file) });
                 }
             }
 
-            // Leaf bucket: an observed write with no in-process producer record — no command activity, so
-            // its generation edge falls to the step activity (`generation: "step"`, today's fallback path).
+            // Leaf bucket: an observed write with no in-process producer record — no producing activity,
+            // so its generation edge falls to the step activity (`generation: "step"`, the fallback path).
             for (const entry of leaves) {
                 const file = attest(entry);
                 if (file === null) continue;
-                Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step, generation: "step" });
+                Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, model, file, generation: "step", step });
                 registered.push({ path: file.path, externalId: provModel.fileQName(file) });
             }
 
@@ -534,17 +549,21 @@ export function createSessionEmit(sessionModel: ReportSessionModel): (event: Ses
                 });
                 return;
             case "write-file":
+                // The flattened form of a session write: `generation: "call"` with no step ref, so
+                // the kernel scopes the call QName by the thread instead of a step key.
                 Bus.emit("inflexa", {
-                    type: "prov.session_file_written",
+                    type: "prov.file_written",
                     analysisId,
                     actor,
                     model,
-                    write: {
+                    file: { path: event.path, hash: event.hash, size: event.size, producer: "file_tool" },
+                    generation: "call",
+                    call: {
+                        invocationId: event.invocationId,
+                        tool: event.tool,
                         // A chat scope can carry no thread; the key then stays absent rather than
                         // carrying `undefined` into the record.
                         ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
-                        tool: event.tool,
-                        file: { path: event.path, hash: event.hash, size: event.size, producer: "file_tool" },
                     },
                 });
                 return;

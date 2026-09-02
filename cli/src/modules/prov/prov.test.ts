@@ -19,6 +19,7 @@ import type {
     ProvUsedInputRef,
     ProvFileRef,
     ProvFileKey,
+    ProvCallRef,
     ProvCommandRef,
 } from "../../types/prov.ts";
 import { applyProvEvent, computeChainHash, computePayloadDigest, verifyHexDigest, verifyProvenance, verifyPayload } from "@inflexa-ai/prov-kernel";
@@ -68,10 +69,20 @@ function appendFileWritten(
     analysisId: string,
     actor: ProvActor,
     file: ProvFileRef,
-    step: ProvStepRef,
-    generation: "command" | "step",
+    generation: "command" | "step" | "call",
+    call?: ProvCallRef,
+    step?: ProvStepRef,
 ): void {
-    applyProvEvent(provModel, doc, { type: "file_written", analysisId, actor, file, step, generation });
+    applyProvEvent(provModel, doc, {
+        type: "file_written",
+        analysisId,
+        actor,
+        model,
+        file,
+        generation,
+        ...(call !== undefined ? { call } : {}),
+        ...(step !== undefined ? { step } : {}),
+    });
 }
 function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
     applyProvEvent(provModel, doc, { type: "input_used", analysisId, actor, step, input });
@@ -136,15 +147,13 @@ const cmdPlotHeatmap: ProvCommandRef = {
     outputs: [heatmapKey],
     inputs: [{ path: deResultsKey.path, hash: deResultsKey.hash, source: "step" }],
 };
-const fileToolWriteScript: ProvCommandRef = {
-    kind: "file_tool",
-    tool: "write_file",
-    outputs: [{ path: "runs/run-001/step-de/scripts/de.R", hash: "hashScr001" }],
-};
+const scriptKey: ProvFileKey = { path: "runs/run-001/step-de/scripts/de.R", hash: "hashScr001" };
+// The file-tool call that wrote the script — the kernel mints the deterministic call activity from it.
+const scriptWriteCall: ProvCallRef = { invocationId: "call-script", tool: "write_file" };
 // The ProvFileRef forms the produced-file `prov.file_written` events carry (generation "command").
 const deResultsFileRef: ProvFileRef = { ...deResultsKey, size: 2048, producer: "command" };
 const heatmapFileRef: ProvFileRef = { ...heatmapKey, size: 4096, producer: "command" };
-const scriptFileRef: ProvFileRef = { ...fileToolWriteScript.outputs[0]!, size: 512, producer: "file_tool" };
+const scriptFileRef: ProvFileRef = { ...scriptKey, size: 512, producer: "file_tool" };
 // A leaf file: no producer record upstream, so its `prov.file_written` carries generation "step".
 const leafFileRef: ProvFileRef = { path: "runs/run-001/step-de/output/leaf.txt", hash: "hashLeaf01", size: 24, producer: "command" };
 
@@ -235,7 +244,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         const doc = freshDocument(analysis);
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
+        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
         const provn = doc.unified().serialize("provn");
 
         expect(provn).toContain("inflexa:File");
@@ -309,7 +318,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         // Run 1 produces the file.
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
+        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
         // A later run's step reads it back with source "prior" — same (path, hash) as fileRef.
         const readerStep: ProvStepRef = { runId: "run-002", stepId: "step-model" };
         appendStepCompleted(doc, "a1", system, { runId: "run-002", stepId: "step-model", status: "completed", completedAtMs: 1_700_000_050_000 }, model);
@@ -335,7 +344,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         appendRunStarted(doc, "a1", system, runRef);
         appendRunCompleted(doc, "a1", system, runOutcome);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
+        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
         appendInputUsed(doc, "a1", system, stepRef, priorInput);
         const unified = doc.unified();
         const parsed = ProvDocument.deserialize(unified.serialize("json"), "json");
@@ -350,11 +359,11 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         const doc = freshDocument(analysis);
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
+        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
         // Re-apply the same events, as body re-execution on recovery would.
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
+        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
 
         const unified = doc.unified();
         const ids = unified.getRecords().map((r) => r.identifier?.toString() ?? "");
@@ -416,18 +425,21 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         expect(provn).toMatch(/used\(inflexa:used-cmd-run-001-step-de-[\w-]+; inflexa:cmd-run-001-step-de-\w+, inflexa:file-/);
     });
 
-    test("the file_tool variant records an inflexa:FileToolWrite activity with the tool and no inputs", () => {
+    test("a call-generation write records an inflexa:FileToolWrite call activity with the tool and no inputs", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendCommandExecuted(doc, "a1", system, stepRef, fileToolWriteScript, model);
+        appendFileWritten(doc, "a1", system, scriptFileRef, "call", scriptWriteCall, stepRef);
         const provn = doc.unified().serialize("provn");
 
         expect(provn).toContain("inflexa:FileToolWrite");
         expect(provn).toContain("write_file"); // inflexa:tool
-        expect(provn).not.toContain("inflexa:Command"); // not the command kind
+        expect(provn).toContain("call-script"); // inflexa:invocationId
+        expect(provn).not.toContain("inflexa:Command"); // no pseudo-command exists for a file-tool write
         // It generates its output but reads nothing — a file-tool write is agent-authored content.
-        expect(provn).toMatch(/wasGeneratedBy\(inflexa:gen-\w+; inflexa:file-\w+, inflexa:cmd-run-001-step-de-/);
+        expect(provn).toMatch(/wasGeneratedBy\(inflexa:gen-\w+; inflexa:file-\w+, inflexa:call-/);
         expect(provn).not.toContain("used(");
+        // A step-scoped call is informed by its step.
+        expect(provn).toMatch(/wasInformedBy\(inflexa:informed-call-\w+; inflexa:call-\w+, inflexa:step-run-001-step-de/);
     });
 
     // The intra-step chain scenario: A writes de_results, B reads it (source "step") and writes
@@ -438,8 +450,8 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model);
         appendCommandExecuted(doc, "a1", system, stepRef, cmdPlotHeatmap, model);
         // The produced-file entities are declared by their file_written events (generation "command").
-        appendFileWritten(doc, "a1", system, deResultsFileRef, stepRef, "command");
-        appendFileWritten(doc, "a1", system, heatmapFileRef, stepRef, "command");
+        appendFileWritten(doc, "a1", system, deResultsFileRef, "command");
+        appendFileWritten(doc, "a1", system, heatmapFileRef, "command");
 
         const unified = doc.unified();
         const deQn = fileQName(deResultsKey);
@@ -465,9 +477,9 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
         // Produced file: its command owns the generation; the file event (generation "command") skips its edge.
         appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model);
-        appendFileWritten(doc, "a1", system, deResultsFileRef, stepRef, "command");
+        appendFileWritten(doc, "a1", system, deResultsFileRef, "command");
         // Leaf file: no command; the step-level generation is the fallback.
-        appendFileWritten(doc, "a1", system, leafFileRef, stepRef, "step");
+        appendFileWritten(doc, "a1", system, leafFileRef, "step", undefined, stepRef);
 
         const provn = doc.unified().serialize("provn");
         // Two generation edges total, one per file — no file accrued a second.
@@ -589,11 +601,11 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         expect(occurrences("used(")).toBe(1); // one input (unresolvable script skipped)
     });
 
-    test("command records round-trip losslessly through PROV-JSON", () => {
+    test("command and call records round-trip losslessly through PROV-JSON", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
         appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model);
-        appendCommandExecuted(doc, "a1", system, stepRef, fileToolWriteScript, model);
+        appendFileWritten(doc, "a1", system, scriptFileRef, "call", scriptWriteCall, stepRef);
         const unified = doc.unified();
         const parsed = ProvDocument.deserialize(unified.serialize("json"), "json");
         expect(unified.equals(parsed)).toBe(true);
@@ -986,7 +998,7 @@ describe("provenance recorder handles execution events (bus → flush → signed
         Bus.emit("inflexa", { type: "prov.analysis_created", analysisId: "a1", actor: system });
         Bus.emit("inflexa", { type: "prov.run_started", analysisId: "a1", actor: system, run: runRef });
         Bus.emit("inflexa", { type: "prov.step_completed", analysisId: "a1", actor: system, outcome: stepOutcome, model });
-        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: fileRef, step: stepRef, generation: "step" });
+        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, model, file: fileRef, generation: "step", step: stepRef });
         Bus.emit("inflexa", {
             type: "prov.input_used",
             analysisId: "a1",
@@ -1048,15 +1060,31 @@ describe("provenance recorder handles execution events (bus → flush → signed
         Bus.emit("inflexa", { type: "prov.step_completed", analysisId: "a1", actor: system, outcome: stepOutcome, model });
         // Command group A + its produced file (the chain's head).
         Bus.emit("inflexa", { type: "prov.command_executed", analysisId: "a1", actor: system, step: stepRef, command: cmdRunDe, model });
-        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: deResultsFileRef, step: stepRef, generation: "command" });
+        Bus.emit("inflexa", {
+            type: "prov.file_written",
+            analysisId: "a1",
+            actor: system,
+            model,
+            file: deResultsFileRef,
+            generation: "command",
+            step: stepRef,
+        });
         // Command group B reads A's output (source "step") and produces the heatmap (the chain's tail).
         Bus.emit("inflexa", { type: "prov.command_executed", analysisId: "a1", actor: system, step: stepRef, command: cmdPlotHeatmap, model });
-        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: heatmapFileRef, step: stepRef, generation: "command" });
-        // File-tool group + its produced file.
-        Bus.emit("inflexa", { type: "prov.command_executed", analysisId: "a1", actor: system, step: stepRef, command: fileToolWriteScript, model });
-        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: scriptFileRef, step: stepRef, generation: "command" });
+        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, model, file: heatmapFileRef, generation: "command", step: stepRef });
+        // The file-tool write rides ONE flattened call-generation file event — no pseudo-command.
+        Bus.emit("inflexa", {
+            type: "prov.file_written",
+            analysisId: "a1",
+            actor: system,
+            model,
+            file: scriptFileRef,
+            generation: "call",
+            call: scriptWriteCall,
+            step: stepRef,
+        });
         // A leaf file (no producer record) keeps the step-level generation.
-        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: leafFileRef, step: stepRef, generation: "step" });
+        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, model, file: leafFileRef, generation: "step", step: stepRef });
         // Step-level input_used registry is untouched by the command edges (deliberate redundancy).
         Bus.emit("inflexa", {
             type: "prov.input_used",
@@ -1087,6 +1115,7 @@ describe("provenance recorder handles execution events (bus → flush → signed
         expect(provn).toContain(`${bQn}, ${deQn}`); // used(B, de_results) — the intra-step chain
         expect(provn).toContain(`${fileQName(heatmapKey)}, ${bQn}`); // wasGeneratedBy(heatmap, B)
         expect(provn).toContain(`${fileQName(leafFileRef)}, inflexa:step-run-001-step-de`); // leaf → step
+        expect(provn).toMatch(/wasGeneratedBy\(inflexa:gen-\w+; inflexa:file-\w+, inflexa:call-/); // script → its call
         // The produced files never take a step-level generation.
         expect(provn).not.toContain(`${deQn}, inflexa:step-run-001-step-de`);
 

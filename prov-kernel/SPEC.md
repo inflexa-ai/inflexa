@@ -100,14 +100,14 @@ A written file carries `prov:type` `inflexa:File`, `inflexa:path`,
 | run | `inflexa:run-{runId}` | start from `startedAtMs`, end from `completedAtMs` |
 | step | `inflexa:step-{runId}-{stepId}` | end from `completedAtMs` |
 | command | `inflexa:cmd-{runId}-{stepId}-{groupDigest}` | none |
+| call | `inflexa:call-{callDigest}` | none |
 
 `mintActionId` mints one fresh id per genuine user action. The default minter
 is a random UUID. The model clock (`now`) defaults to the wall clock. Both are
 injectable, and a lifecycle action (`inflexa:CreateAnalysis`,
 `inflexa:AddInput`, `inflexa:RemoveInput`, one of the nine session and report
-types below, `inflexa:FileToolWrite` for a session file write, or a
-host-defined type through the generic lifecycle-action builder) is
-deliberately not deterministic by default.
+types below, or a host-defined type through the generic lifecycle-action
+builder) is deliberately not deterministic by default.
 
 The command group digest is:
 
@@ -121,11 +121,25 @@ Sort the per-output `fileDigest` strings lexicographically, join them with
 `inflexa:exitCode`, optional `inflexa:durationMs`, and optional
 `inflexa:unresolvedScript`. `inflexa:args` is the argument vector joined with
 one space, and it is present **only when the vector has at least one
-element** — an empty vector emits no attribute. A file-tool write carries
-`prov:type` `inflexa:FileToolWrite` and `inflexa:tool`. A command activity
+element** — an empty vector emits no attribute. A command activity
 carries **no formal time**: its observation timestamp is replay-unstable, and
 a replay-unstable value must not enter an identifier or a formal PROV
 position.
+
+A call activity records one file-tool invocation (for example `write_file`).
+The call digest is:
+
+```
+callDigest = digest( "{runId}|{stepId}|{invocationId}" )   with a step ref
+callDigest = digest( "{threadId}|{invocationId}" )         without a step ref
+```
+
+Without a step ref, an absent thread id contributes the empty string. An
+invocation id is replay-stable, but it is unique per agent loop only. Thus
+the digest mixes in a scope disambiguator. The call activity carries
+`prov:type` `inflexa:FileToolWrite`, `inflexa:tool`, `inflexa:invocationId`,
+and the optional `inflexa:threadId`. A call activity carries **no formal
+time**, for the same reason as a command activity.
 
 Run and step activities carry terminal attributes on completion:
 `inflexa:status` and optional `inflexa:durationMs`. A run also carries
@@ -170,7 +184,7 @@ PROV-JSON attribute values encode per JSON type of the supplied value:
 
 | Value type | Encoding | Dialect attributes |
 |-|-|-|
-| string | plain JSON string | `inflexa:path`, `inflexa:hash`, `inflexa:name`, `inflexa:slug`, `inflexa:command`, `inflexa:args`, `inflexa:tool`, `inflexa:source`, `inflexa:fileId`, `inflexa:status`, `inflexa:runId`, `inflexa:stepId`, `inflexa:planSummary`, `inflexa:unresolvedScript`, `inflexa:email`, `inflexa:version`, `inflexa:commit`, `inflexa:model`, `inflexa:threadId`, `inflexa:parentThreadId`, `inflexa:sessionKind`, `inflexa:blockId`, `inflexa:blockKind`, `inflexa:title`, `inflexa:outputPath`, `inflexa:outputHash`, `inflexa:scriptHash`, `inflexa:pagePath`, `inflexa:documentHash`, `inflexa:versionId`, `prov:label`, `prov:type` (the type name is a plain string) |
+| string | plain JSON string | `inflexa:path`, `inflexa:hash`, `inflexa:name`, `inflexa:slug`, `inflexa:command`, `inflexa:args`, `inflexa:tool`, `inflexa:source`, `inflexa:fileId`, `inflexa:status`, `inflexa:runId`, `inflexa:stepId`, `inflexa:planSummary`, `inflexa:unresolvedScript`, `inflexa:invocationId`, `inflexa:email`, `inflexa:version`, `inflexa:commit`, `inflexa:model`, `inflexa:threadId`, `inflexa:parentThreadId`, `inflexa:sessionKind`, `inflexa:blockId`, `inflexa:blockKind`, `inflexa:title`, `inflexa:outputPath`, `inflexa:outputHash`, `inflexa:scriptHash`, `inflexa:pagePath`, `inflexa:documentHash`, `inflexa:versionId`, `prov:label`, `prov:type` (the type name is a plain string) |
 | boolean | plain JSON boolean | `inflexa:isDir`, `inflexa:replaced` |
 | integral number | `{"$": n, "type": "xsd:int"}` | `inflexa:size`, `inflexa:exitCode`, `inflexa:durationMs` |
 | non-integral number | `{"$": n, "type": "xsd:double"}` | none in the dialect |
@@ -194,6 +208,8 @@ the formal time argument. `aDigest = digest(agentQName)`.
 | step associated with agent | `inflexa:assoc-step-{runId}-{stepId}-{aDigest}` |
 | command informed by step | `inflexa:informed-cmd-{runId}-{stepId}-{groupDigest}` |
 | command associated with agent | `inflexa:assoc-cmd-{runId}-{stepId}-{groupDigest}-{aDigest}` |
+| call informed by step | `inflexa:informed-call-{callDigest}` |
+| call associated with agent | `inflexa:assoc-call-{callDigest}-{aDigest}` |
 | model delegation | `inflexa:delegation-{digest(modelQn)}-{digest(responsibleQn)}` |
 | model association | `{assocIdBase}-{digest(modelQn)}` |
 | file generation | `inflexa:gen-{fileDigest}` |
@@ -208,8 +224,9 @@ one activity share one base and differ in the agent digest.
 
 Exactly **one generation edge exists per file entity**. A file that a command
 produced gets its `inflexa:gen-{fileDigest}` edge from the command activity. A
-leaf file with no producing command gets the same id from its step activity.
-The two authorities write the same identifier, thus re-emission merges.
+file that a file-tool call wrote gets the same id from its call activity. A
+leaf file with no producing activity gets the same id from its step activity.
+The three authorities write the same identifier, thus re-emission merges.
 
 A lifecycle relation (creation, input add, input remove) carries no explicit
 identifier, and neither does a relation of the session and report family. Only
@@ -242,8 +259,9 @@ event except `run_completed` first declares (re-declares) the actor agent per
 the agent table, before its own statements. Re-declaration is harmless:
 `unified()` collapses same-QName records.
 
-A model-driven event (`step_completed`, `command_executed`) also appends the
-model-agent statements, after the actor association of its activity:
+A model-driven event (`step_completed`, `command_executed`, and a
+`file_written` with the `call` authority) also appends the model-agent
+statements, after the actor association of its activity:
 
 1. the agent `inflexa:agent-model-{digest(model)}`
 2. `actedOnBehalfOf(model, actor)`, id
@@ -328,11 +346,10 @@ and the model id.
 
 ### command_executed
 
-Payload: the step ref, the command ref (a `command` or a `file_tool` group),
-and the model id.
+Payload: the step ref, the command ref, and the model id.
 
 1. the command activity `inflexa:cmd-{runId}-{stepId}-{groupDigest}` with the
-   per-kind attributes and no formal time
+   command attributes and no formal time
 2. `wasInformedBy(command, step)`, id
    `inflexa:informed-cmd-{runId}-{stepId}-{groupDigest}`
 3. `wasAssociatedWith(command, actor)`, id
@@ -341,7 +358,7 @@ and the model id.
    `assocIdBase = inflexa:assoc-cmd-{runId}-{stepId}-{groupDigest}`
 5. per output: `wasGeneratedBy(file, command)`, id
    `inflexa:gen-{fileDigest}`
-6. for the `command` kind only, per input: `used(command, file)`, id
+6. per input: `used(command, file)`, id
    `inflexa:used-cmd-{runId}-{stepId}-{groupDigest}-{fileDigest}`, then the
    resolved script edge per the script-resolution rules
 
@@ -351,19 +368,39 @@ comes from the `file_written` or `input_used` event for the same
 
 ### file_written
 
-Payload: the file ref, the step ref, and the generation authority (`command`
-or `step`).
+Payload: the file ref, the model id, and the generation authority (`command`,
+`step`, or `call`). A `step` authority requires the step ref. A `call`
+authority requires the call ref, and the step ref is optional. A producer
+must reject a `step` event with no step ref, and a `call` event with no call
+ref.
 
-1. the file entity `inflexa:file-{fileDigest}`, `prov:type` `inflexa:File`,
+Only when the authority is `call`, the producer first appends the call
+activity, before the file entity:
+
+1. the call activity `inflexa:call-{callDigest}` with the call attributes and
+   no formal time
+2. only when the payload holds a step ref: `wasInformedBy(call, step)`, id
+   `inflexa:informed-call-{callDigest}`
+3. `wasAssociatedWith(call, actor)`, id
+   `inflexa:assoc-call-{callDigest}-{aDigest}`
+4. the model-agent statements, with
+   `assocIdBase = inflexa:assoc-call-{callDigest}`
+
+Every authority then appends:
+
+5. the file entity `inflexa:file-{fileDigest}`, `prov:type` `inflexa:File`,
    `inflexa:path`, `inflexa:hash`, `inflexa:size`, `inflexa:producer`
-2. only when the authority is `step`: `wasGeneratedBy(file, step)`, id
+6. only when the authority is `step`: `wasGeneratedBy(file, step)`, id
    `inflexa:gen-{fileDigest}`
-3. `wasAttributedTo(file, actor)`, id `inflexa:attr-{fileDigest}-{aDigest}`
-4. `wasDerivedFrom(file, analysis)`, id `inflexa:deriv-{fileDigest}`
+7. only when the authority is `call`: `wasGeneratedBy(file, call)`, the same
+   id `inflexa:gen-{fileDigest}`
+8. `wasAttributedTo(file, actor)`, id `inflexa:attr-{fileDigest}-{aDigest}`
+9. `wasDerivedFrom(file, analysis)`, id `inflexa:deriv-{fileDigest}`
 
 When the authority is `command`, the generation edge comes from the
 `command_executed` event under the same id. Thus exactly one generation edge
-exists per file entity.
+exists per file entity. The model id enters the document only through the
+`call` authority. The other two authorities carry it and do not use it.
 
 ### input_used
 
@@ -447,33 +484,6 @@ entity. It appends the generation edge, the attribution, and the specialization
 only when the count is zero. Each of the three relations is anonymous, and the
 generation edge lands on a fresh action id. `unified()` merges by identifier
 alone, thus it cannot collapse a second copy, and the guard is the only dedupe.
-
-### session_file_written
-
-Payload: the write ref and the model id. The write ref carries the tool name,
-the file ref, and an optional thread id.
-
-The event records a file that an agent session wrote with a file tool,
-outside a run and outside a step. The producer appends these statements, in
-this order:
-
-1. the action activity `inflexa:action-{mintActionId()}`, `prov:type`
-   `inflexa:FileToolWrite`, start = end = the model clock
-2. `wasAssociatedWith(action, actor)` — anonymous
-3. the same action activity again, with `inflexa:tool` and with the optional
-   `inflexa:threadId`, and with no formal time
-4. the model agent and its delegation, per the model-agent statements above
-5. `wasAssociatedWith(action, model)` — anonymous
-6. the file entity `inflexa:file-{fileDigest}`, with the same attributes as
-   the `file_written` entity
-7. `wasGeneratedBy(file, action)`, id `inflexa:gen-{fileDigest}`
-8. `wasAttributedTo(file, actor)`, id `inflexa:attr-{fileDigest}-{aDigest}`
-9. `wasDerivedFrom(file, analysis)`, id `inflexa:deriv-{fileDigest}`
-
-The file entity is in the same `(path, hash)` QName space as a step output.
-The generation edge carries the shared `inflexa:gen-{fileDigest}` id. Thus
-one file entity keeps exactly one generation record, also when a later step
-writes the identical bytes to the same path.
 
 ## The chain rule
 

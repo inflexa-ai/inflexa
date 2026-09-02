@@ -9,8 +9,8 @@ import type {
     ProvStepOutcome,
     ProvUsedInputRef,
     ProvFileRef,
+    ProvCallRef,
     ProvCommandRef,
-    ProvSessionFileWriteRef,
     ProvSessionRef,
     ProvReportBlockRef,
     ProvReportTitleRef,
@@ -112,16 +112,22 @@ export type BusEvent =
           type: "prov.file_written";
           analysisId: AnalysisId;
           actor: ProvActor;
+          /** The model that drove the writing agent — used by the kernel only in the `call` arm. */
+          model: ProvModelId;
           file: ProvFileRef;
-          step: ProvStepRef;
           /**
            * Which activity owns this file's generation edge: `"command"` when a producer group's
            * `prov.command_executed` writes it (the bridge bucketed the file as produced), `"step"` for
            * a leaf file (no producer record — e.g. an inotify-only observation) that keeps the
-           * step-level generation fallback. The bridge's produced-vs-leaf decision rides the event so
-           * the recorder never has to infer it across events.
+           * step-level generation fallback, `"call"` for a file-tool write (a step-scoped file-tool
+           * producer group, or a conversation-turn write with no run and no step). The bridge's
+           * bucket decision rides the event so the recorder never has to infer it across events.
            */
-          generation: "command" | "step";
+          generation: "command" | "step" | "call";
+          /** The generating file-tool call — present exactly when `generation` is `"call"`. */
+          call?: ProvCallRef;
+          /** The producing step — required for `"step"`; scopes a step-side call; absent on a session write. */
+          step?: ProvStepRef;
       }
     | { type: "prov.input_used"; analysisId: AnalysisId; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef }
     /**
@@ -136,8 +142,6 @@ export type BusEvent =
      * reaches this contract only through the pin, never silently.
      */
     | { type: "prov.session_created"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; session: ProvSessionRef }
-    /** A file a conversation turn wrote with a file tool — a session-scoped write with no run or step to anchor to. */
-    | { type: "prov.session_file_written"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; write: ProvSessionFileWriteRef }
     | { type: "prov.report_block_added"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
     | { type: "prov.report_block_changed"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
     | { type: "prov.report_block_removed"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }

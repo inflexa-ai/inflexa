@@ -27,7 +27,7 @@ function appendRun(model: ProvDocumentModelInternal, doc: ProvDocument, analysis
         },
         "anthropic/test-model",
     );
-    model.appendFileWritten(doc, analysisId, actor, { ...outputKey, size: 10, producer: "command" }, step, "command");
+    model.appendFileWritten(doc, analysisId, actor, { ...outputKey, size: 10, producer: "command" }, "command", "anthropic/test-model");
     model.appendInputUsed(doc, analysisId, actor, step, { ...inputKey, source: "data" });
     model.appendStepCompleted(
         doc,
