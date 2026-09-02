@@ -32,7 +32,6 @@ import { getTransfer, listTransfers } from "../../db/primary_query.ts";
 import { recordTransferProgress, recordTransferResolve, settleTransfer, startTransferRun } from "../../db/primary_mutation.ts";
 import { TRANSFER_KINDS, type TransferKind, type TransferRow, type TransferStatus } from "../../types/store.ts";
 import { provisionerImageFor } from "./images.ts";
-import { imagePackagesFile } from "./packages.ts";
 import { configuredSandboxImage } from "./pull.ts";
 
 /** The instance-lock key of one transfer kind. The child holds it for its whole life. */
@@ -448,11 +447,6 @@ export async function runImageTransfer(kind: "runtime_image" | "provisioner_imag
             const removed = await capture(rt, ["rmi", previous]).catch(() => ({ code: 1, stdout: "", stderr: "" }));
             if (removed.code === 0) notice = `The superseded image ${previous.slice(0, 19)} was removed.`;
         }
-
-        // The runtime image carries the baked inventory fragment. Cache it while
-        // the image is definitely present; a failure degrades to a fragment-less
-        // package list and never fails the transfer.
-        if (kind === "runtime_image") await imagePackagesFile(rt, image, env.libsDir);
 
         settleTransfer(kind, { state: "installed", message: notice }).unwrapOr(undefined);
     } finally {

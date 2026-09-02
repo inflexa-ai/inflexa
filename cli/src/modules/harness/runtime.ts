@@ -49,7 +49,7 @@ import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { analysisFarmPath, linkPackagesIntoFarm, resolveAnalysisFarm } from "../libs/composition.ts";
-import { imagePackagesFile, readPoolInventorySections } from "../libs/packages.ts";
+import { readPoolInventorySections } from "../libs/packages.ts";
 import { classifyPoolMiss } from "../libs/store_flight.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
@@ -380,14 +380,6 @@ export type BootSeams = {
      * offline (no runtime binaries spawned).
      */
     readonly resolveSandboxEngine: () => Promise<Result<ResolvedSandboxEngine, ContainerRuntimeError>>;
-    /**
-     * Extract the sandbox image's package inventory onto the host, returning its cached
-     * path or null when none can be read. Effectful (it shells out to the container
-     * runtime), so it is a seam: the sequencing test must stay offline, and a host with
-     * no runtime binary on PATH must boot regardless — the inventory is an enrichment,
-     * never a prerequisite.
-     */
-    readonly resolveImagePackages: (rt: ContainerRuntime, image: string) => Promise<string | null>;
     readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
     /** Construct the sandbox client — a seam so boot tests can inspect the engine config it is wired with. */
     readonly createSandbox: typeof createSandboxClient;
@@ -436,7 +428,6 @@ export type BootSeams = {
 
 const realSeams: BootSeams = {
     resolveSandboxEngine: resolveSandboxEngineOnce,
-    resolveImagePackages: (rt, image) => imagePackagesFile(rt, image, env.libsDir),
     ensurePostgres: ensurePostgresReady,
     createSandbox: createSandboxClient,
     startIngress: () => startExecIngress(),
@@ -751,24 +742,18 @@ async function bootHarnessRuntimeOnce(
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
     const conn = pgResult.value;
 
-    // Extract the baked image inventory fragment onto the host. The fragment lists the
-    // two image-owned tracks — the bioconda command-line tools and the Node packages —
-    // and `list_available_packages` merges it with the farm lock of the analysis.
-    //
-    // Deliberately AFTER the prereq gates: it spawns a container-runtime probe, and a boot
-    // that is about to fail on Postgres must not pay for it. A null result is non-fatal —
-    // the fragment is an enrichment, never a prerequisite.
-    const imagePackages = await seams.resolveImagePackages(pinnedRuntime, cfg.sandboxImage);
-    if (imagePackages === null) {
-        logger.warn("no image inventory fragment — the package list carries the farm tracks alone", { image: cfg.sandboxImage });
-    }
-
     // The `inflexa.lock` of the open analysis's farm — the inventory of what a sandbox
     // of THIS process can import. One analysis opens per process (the instance lock
     // holds that), thus one static path serves the whole boot. The tool re-reads the
     // file per call, so a farm that grows mid-session reaches the next call unchanged.
     // A boot with no analysis (a probe) carries none, and the inventory reads unknown.
     const farmLockFile = analysisId === undefined ? null : join(analysisFarmPath(env.packageStoreDir, analysisId), "inflexa.lock");
+
+    // The image inventory record the catalog build packs at the store root, beside the graph.
+    // The path is static, thus the boot stats nothing: the tool re-reads the file per call, so a
+    // catalog download that lands mid-session reaches the next call, and a store from before the
+    // record merges nothing and leaves the report on the farm tracks alone.
+    const imagePackagesFile = join(env.packageStoreDir, "image-packages.json");
 
     // The local CLI is a POLL-mode embedder: the host polls the sandbox for
     // results, the sandbox initiates nothing, and there is no callback listener to
@@ -1058,7 +1043,7 @@ async function bootHarnessRuntimeOnce(
             skillsDir: cfg.skillsDir,
             refStorePath: env.refsDir,
             farmLockFile,
-            imagePackagesFile: imagePackages,
+            imagePackagesFile,
             // The farm-extension seam, which gives each sandbox agent the `link_packages`
             // tool. It links from the pool of the same store root that `farmSource`
             // reads, thus a step reaches a package that the plan did not name. It
@@ -1100,7 +1085,7 @@ async function bootHarnessRuntimeOnce(
                 skillsDir: cfg.skillsDir,
                 refStorePath: env.refsDir,
                 ...(farmLockFile ? { farmLockFile } : {}),
-                ...(imagePackages ? { imagePackagesFile: imagePackages } : {}),
+                imagePackagesFile,
                 // The same farm-extension realization as the step agents (the
                 // composition bundle above): the profiler meets the farm at its
                 // emptiest, and `link_packages` is how it reads an input whose
@@ -1142,7 +1127,7 @@ async function bootHarnessRuntimeOnce(
             // the farm of a new analysis is empty — a farm view here would read
             // every pool package as absent, and the agent would ask for held ones.
             ...(farmLockFile ? { farmLockFile } : {}),
-            ...(imagePackages ? { imagePackagesFile: imagePackages } : {}),
+            imagePackagesFile,
             readPoolInventory: () => readPoolInventorySections(env.packageStoreDir),
             // The link seam of the conversation side: the pre-launch pass of
             // `execute_analysis` links the packages of the plan through it, and the
