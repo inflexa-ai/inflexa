@@ -58,14 +58,23 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 actorKind: event.actor.kind,
                 runId: event.step.runId,
                 stepId: event.step.stepId,
-                // The command line for a command execution, the tool name for a file-tool write — the
-                // one identifying string per producer kind, without carrying args into telemetry.
-                command: event.command.kind === "command" ? event.command.command : event.command.tool,
+                // The command line identifies the execution, without carrying args into telemetry.
+                command: event.command.command,
                 outputCount: event.command.outputs.length,
                 model: event.model,
             };
         case "prov.file_written":
-            return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.file.path, producer: event.file.producer };
+            // The generation arm and, for a call, the writing tool identify the write; the hash and
+            // the size stay out of telemetry.
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                filePath: event.file.path,
+                producer: event.file.producer,
+                generation: event.generation,
+                ...(event.call !== undefined ? { tool: event.call.tool } : {}),
+                model: event.model,
+            };
         case "prov.input_used":
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.input.path, source: event.input.source };
         // The report family projects its identifying fields only: the thread, plus the block and its
@@ -77,16 +86,6 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 actorKind: event.actor.kind,
                 threadId: event.session.threadId,
                 sessionKind: event.session.kind,
-                model: event.model,
-            };
-        case "prov.session_file_written":
-            // The hash and the size stay out — the path and the tool identify the write for telemetry.
-            return {
-                analysisId: event.analysisId,
-                actorKind: event.actor.kind,
-                threadId: event.write.threadId,
-                filePath: event.write.file.path,
-                tool: event.write.tool,
                 model: event.model,
             };
         case "prov.report_block_added":

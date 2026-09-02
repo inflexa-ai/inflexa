@@ -17,13 +17,18 @@ settlement:
   grouping — one group per command/file-tool execution surviving last-write-wins);
   entries with NO record form the LEAF bucket. The partition is exclusive: a file is
   in exactly one group or the leaf bucket, never both.
-- Per group, emit ONE `prov.command_executed` (the `command` variant with command /
-  args / exitCode / durationMs / scriptPath and the group's outputs as analysis-scoped
-  `(path, hash)` keys; the `file_tool` variant with the tool name and outputs),
-  stamped with the construction-time model id,
-  followed by that group's `prov.file_written` events carrying `generation:
-  "command"`; leaf-bucket entries emit `prov.file_written` with `generation:
-  "step"`. The producer's observation timestamp SHALL NOT be forwarded.
+- Per COMMAND group, emit ONE `prov.command_executed` (the `command` variant with
+  command / args / exitCode / durationMs / scriptPath and the group's outputs as
+  analysis-scoped `(path, hash)` keys),
+  stamped with the construction-time model id. Then emit
+  that group's `prov.file_written` events, with `generation:
+  "command"`, the model id, and the step ref. Per FILE-TOOL group, emit
+  `prov.file_written` with `generation: "call"`,
+  `call: { invocationId, tool }` from the collector record's producer, the model
+  id, and the step ref — and NO command event: the recorder mints the
+  deterministic call activity from the event. Leaf-bucket entries emit
+  `prov.file_written` with `generation: "step"`, the model id, and the step ref.
+  The producer's observation timestamp SHALL NOT be forwarded.
 - **Command-scoped inputs**: the group's `inputs` are its record's per-command reads
   with `source ∈ "data" | "upstream" | "prior"` passed through (container paths
   stripped to analysis-relative), and `source: "artifacts"` reads — the step's own
@@ -46,7 +51,13 @@ settlement:
 #### Scenario: Registration emits command groups before their files
 
 - **WHEN** `register` is called with three manifest entries where two share one command's producer record and one was written by a file tool
-- **THEN** the bus receives two `prov.command_executed` events (one `command` variant with two outputs, one `file_tool` variant with one output), each carrying the construction-time model id and followed by its `prov.file_written` events, and the result reports three `registered` entries
+- **THEN** the bus receives one `prov.command_executed` (with two outputs), then its two `prov.file_written` events, then one call-generation `prov.file_written` for the file-tool write
+- **AND** the result reports three `registered` entries
+
+#### Scenario: A file-tool write carries its call ref and no command event
+
+- **WHEN** a manifest entry's collector record holds a `file_tool` producer with an invocation id
+- **THEN** its `prov.file_written` carries `generation: "call"`, `call: { invocationId, tool }`, the step ref, and the model id, and no `prov.command_executed` references it
 
 #### Scenario: A leaf entry emits no command event
 
@@ -134,7 +145,7 @@ re-reading any clock.
 
 ### Requirement: The cli realizes the provenance seam as one bridge
 
-The cli MUST realize the whole `ProvenanceSeam` in `src/modules/harness/prov_bridge.ts`. The seam constructor MUST take the live model source, thus a seam with no model is unrepresentable. The boot MUST build one seam and install it. The core bag, the run-engine deps, and the chat turn read that one installed object. The session emit maps each seam event onto its report bus member. It stamps the system actor, and it carries the model that the source names at emit time. The run emit keeps its construction-time model stamp, refreshed through the swap of the agent switch. The conversation creation emits inside the turn, through the same installed object.
+The cli MUST realize the whole `ProvenanceSeam` in `src/modules/harness/prov_bridge.ts`. The seam constructor MUST take the live model source, thus a seam with no model is unrepresentable. The boot MUST build one seam and install it. The core bag, the run-engine deps, and the chat turn read that one installed object. The session emit maps each seam event onto its bus member. It stamps the system actor, and it carries the model that the source names at emit time. The `write-file` seam event maps onto the flattened `prov.file_written`: `generation: "call"`, the call ref with the invocation id, the tool, and the optional thread id, and NO step ref. The run emit keeps its construction-time model stamp, refreshed through the swap of the agent switch. The conversation creation emits inside the turn, through the same installed object.
 
 #### Scenario: A created report session reaches the bus
 
@@ -145,6 +156,11 @@ The cli MUST realize the whole `ProvenanceSeam` in `src/modules/harness/prov_bri
 
 - **WHEN** the harness emits `add-block` with the kind `figure`
 - **THEN** the bridge publishes `prov.report_block_added` whose block carries the kind `figure`
+
+#### Scenario: A conversation write maps onto the flattened file event
+
+- **WHEN** the harness emits `write-file` with a thread id and an invocation id
+- **THEN** the bridge publishes `prov.file_written` with `generation: "call"`, the call ref, the file identity with `producer: "file_tool"`, the model of the source, and no step ref
 
 #### Scenario: A bridge defect never fails the tool
 

@@ -59,7 +59,7 @@ describe("WorkspaceMutator provenance recording", () => {
 
         const content = "id,value\n1,42\n";
         const contentBytes = Buffer.from(content, "utf8");
-        const result = await mutator.writeFile({ path: "output/x.csv", content, toolName: "write_file", runStep: passthrough, session });
+        const result = await mutator.writeFile({ path: "output/x.csv", content, toolName: "write_file", invocationId: "inv-1", runStep: passthrough, session });
         expect(result.status).toBe("ok");
 
         const records = collector.getRecords();
@@ -68,7 +68,7 @@ describe("WorkspaceMutator provenance recording", () => {
         expect(rec.producer.type).toBe("file_tool");
         if (rec.producer.type === "file_tool") {
             expect(rec.producer.tool).toBe("write_file");
-            expect(typeof rec.producer.timestamp).toBe("string");
+            expect(rec.producer.invocationId).toBe("inv-1");
         }
         expect(rec.outputHash).toMatch(/^sha256:[0-9a-f]{64}$/);
         expect(rec.outputHash).toBe(computeSha256(contentBytes));
@@ -84,6 +84,7 @@ describe("WorkspaceMutator provenance recording", () => {
             path: "../../../../other/x.csv",
             content: "x",
             toolName: "write_file",
+            invocationId: "inv-1",
             runStep: passthrough,
             session,
         });
@@ -96,6 +97,7 @@ describe("WorkspaceMutator provenance recording", () => {
             path: `/${ANALYSIS}/data/inputs/x.csv`,
             content: "x",
             toolName: "write_file",
+            invocationId: "inv-1",
             runStep: passthrough,
             session,
         });
@@ -106,7 +108,7 @@ describe("WorkspaceMutator provenance recording", () => {
     test("a collector-less mutator writes successfully and records nothing (result unchanged)", async () => {
         const mutator = buildMutator();
         const content = "id,value\n1,42\n";
-        const result = await mutator.writeFile({ path: "output/x.csv", content, toolName: "write_file", runStep: passthrough, session });
+        const result = await mutator.writeFile({ path: "output/x.csv", content, toolName: "write_file", invocationId: "inv-1", runStep: passthrough, session });
         expect(result.status).toBe("ok");
         if (result.status === "ok") {
             expect(result.bytesWritten).toBe(Buffer.byteLength(content, "utf8"));
@@ -129,14 +131,25 @@ describe("WorkspaceMutator provenance recording", () => {
         const rec = records[0]!;
         expect(rec.outputPath).toBe("output/notes.md");
         expect(rec.producer.type).toBe("file_tool");
-        if (rec.producer.type === "file_tool") expect(rec.producer.tool).toBe("write_file");
+        if (rec.producer.type === "file_tool") {
+            expect(rec.producer.tool).toBe("write_file");
+            // The tool forwards its context's invocationId into the record.
+            expect(rec.producer.invocationId).toBe("test-tool-call");
+        }
     });
 
     test("a confined write mints no command record — the file-tool record is the sole attestation", async () => {
         const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
         const mutator = buildMutator({ collector });
 
-        await mutator.writeFile({ path: "output/notes.md", content: "# notes\n", toolName: "write_file", runStep: passthrough, session });
+        await mutator.writeFile({
+            path: "output/notes.md",
+            content: "# notes\n",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            runStep: passthrough,
+            session,
+        });
 
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
@@ -174,7 +187,14 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         const content = "# notes\n";
         const contentBytes = Buffer.from(content, "utf8");
 
-        const result = await mutator.writeFile({ path: "notes/summary.md", content, toolName: "write_file", runStep: passthrough, session: chatSession });
+        const result = await mutator.writeFile({
+            path: "notes/summary.md",
+            content,
+            toolName: "write_file",
+            invocationId: "inv-1",
+            runStep: passthrough,
+            session: chatSession,
+        });
         expect(result.status).toBe("ok");
         if (result.status === "ok") {
             expect(result.path).toBe(`/${ANALYSIS}/notes/summary.md`);
@@ -191,6 +211,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
             hash: computeSha256(contentBytes),
             size: contentBytes.length,
             tool: "write_file",
+            invocationId: "inv-1",
         });
     });
 
@@ -198,7 +219,14 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         const { mutator, events } = buildSessionMutator();
         const bare = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS } });
 
-        const result = await mutator.writeFile({ path: "notes/a.md", content: "a", toolName: "edit_file", runStep: passthrough, session: bare });
+        const result = await mutator.writeFile({
+            path: "notes/a.md",
+            content: "a",
+            toolName: "edit_file",
+            invocationId: "inv-1",
+            runStep: passthrough,
+            session: bare,
+        });
         expect(result.status).toBe("ok");
         expect(events).toHaveLength(1);
         expect(events[0]).not.toHaveProperty("threadId");
@@ -208,13 +236,21 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
     test("a traversal escape and a foreign analysis are out_of_scope, land nothing, and emit nothing", async () => {
         const { mutator, events } = buildSessionMutator();
 
-        const escaped = await mutator.writeFile({ path: "../outside/x.csv", content: "x", toolName: "write_file", runStep: passthrough, session: chatSession });
+        const escaped = await mutator.writeFile({
+            path: "../outside/x.csv",
+            content: "x",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            runStep: passthrough,
+            session: chatSession,
+        });
         expect(escaped.status).toBe("out_of_scope");
 
         const foreign = await mutator.writeFile({
             path: "/other-analysis/x.csv",
             content: "x",
             toolName: "write_file",
+            invocationId: "inv-1",
             runStep: passthrough,
             session: chatSession,
         });
@@ -232,7 +268,14 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         await mkdir(join(basePath, ANALYSIS), { recursive: true });
         await symlink(outside, join(basePath, ANALYSIS, "leak"));
 
-        const result = await mutator.writeFile({ path: "leak/x.csv", content: "x", toolName: "write_file", runStep: passthrough, session: chatSession });
+        const result = await mutator.writeFile({
+            path: "leak/x.csv",
+            content: "x",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            runStep: passthrough,
+            session: chatSession,
+        });
         expect(result.status).toBe("out_of_prefix");
         expect(existsSync(join(outside, "x.csv"))).toBe(false);
         expect(events).toHaveLength(0);
@@ -242,14 +285,28 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         const { mutator, events } = buildSessionMutator();
         const assessment = makeSession({ scope: { kind: "target-assessment", targetAssessmentId: "ta-1", billingContextId: "bc-1" } });
 
-        const result = await mutator.writeFile({ path: "x.csv", content: "x", toolName: "write_file", runStep: passthrough, session: assessment });
+        const result = await mutator.writeFile({
+            path: "x.csv",
+            content: "x",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            runStep: passthrough,
+            session: assessment,
+        });
         expect(result.status).toBe("out_of_scope");
         expect(events).toHaveLength(0);
     });
 
     test("an unbound provenance seam records nothing and the write proceeds unchanged", async () => {
         const mutator = createSessionWorkspaceMutator({ resolveWorkspaceRoot: (id) => join(basePath, id) });
-        const result = await mutator.writeFile({ path: "notes/b.md", content: "b", toolName: "write_file", runStep: passthrough, session: chatSession });
+        const result = await mutator.writeFile({
+            path: "notes/b.md",
+            content: "b",
+            toolName: "write_file",
+            invocationId: "inv-1",
+            runStep: passthrough,
+            session: chatSession,
+        });
         expect(result.status).toBe("ok");
         expect(readFileSync(join(basePath, ANALYSIS, "notes", "b.md"), "utf8")).toBe("b");
     });
@@ -277,6 +334,8 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         if (editEvent.type === "write-file") {
             expect(editEvent.hash).toBe(computeSha256(Buffer.from("alpha gamma\n", "utf8")));
             expect(editEvent.size).toBe(Buffer.byteLength("alpha gamma\n", "utf8"));
+            // The tools forward their context's invocationId into the session event.
+            expect(editEvent.invocationId).toBe("test-tool-call");
         }
     });
 });

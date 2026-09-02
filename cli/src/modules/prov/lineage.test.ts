@@ -6,6 +6,7 @@ import { asStr256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type {
     ProvActor,
+    ProvCallRef,
     ProvCommandRef,
     ProvFileRef,
     ProvInputRef,
@@ -15,7 +16,7 @@ import type {
     ProvStepRef,
     ProvUsedInputRef,
 } from "../../types/prov.ts";
-import { provModel, provSubject } from "./document.ts";
+import { cliProvDigest, provModel, provSubject } from "./document.ts";
 import {
     computeLineage,
     formatDot,
@@ -64,9 +65,10 @@ function appendFileWritten(
     actor: ProvActor,
     file: ProvFileRef,
     step: ProvStepRef,
-    generation: "command" | "step",
+    generation: "command" | "step" | "call",
+    call?: ProvCallRef,
 ): void {
-    applyProvEvent(provModel, doc, { type: "file_written", analysisId, actor, file, step, generation });
+    applyProvEvent(provModel, doc, { type: "file_written", analysisId, actor, model, file, generation, ...(call !== undefined ? { call } : {}), step });
 }
 function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
     applyProvEvent(provModel, doc, { type: "input_used", analysisId, actor, step, input });
@@ -86,8 +88,8 @@ const model: ProvModelId = "anthropic/claude-sonnet-4-5";
 const stepRef: ProvStepRef = { runId: "run-001", stepId: "step-de" };
 
 // The canonical chain: counts.csv (staged data) → command A (Rscript) → de_results.csv → command B
-// (python) → heatmap.png, plus a file-tool-written script read by A and a leaf file with only the
-// step-level generation.
+// (python) → heatmap.png, plus a script written by a file-tool call and read by A, and a leaf file
+// with only the step-level generation.
 const countsKey = { path: "data/inputs/counts.csv", hash: "hashCount1" };
 const deResultsKey = { path: "runs/run-001/step-de/output/de_results.csv", hash: "hashDe0001" };
 const heatmapKey = { path: "runs/run-001/step-de/figures/heatmap.png", hash: "hashHeat01" };
@@ -112,7 +114,9 @@ const cmdB: ProvCommandRef = {
     outputs: [heatmapKey],
     inputs: [{ ...deResultsKey, source: "step" }],
 };
-const writeScript: ProvCommandRef = { kind: "file_tool", tool: "write_file", outputs: [scriptKey] };
+const writeScriptCall: ProvCallRef = { invocationId: "call-script", tool: "write_file" };
+/** The deterministic call-activity QName the kernel mints for the step-scoped script write. */
+const writeCallQn = `inflexa:call-${cliProvDigest(`${stepRef.runId}|${stepRef.stepId}|${writeScriptCall.invocationId}`)}`;
 const leafFileRef: ProvFileRef = { path: "runs/run-001/step-de/output/leaf.txt", hash: "hashLeaf01", size: 24, producer: "command" };
 
 function fileRefOf(key: { path: string; hash: string }, producer: "command" | "file_tool" = "command"): ProvFileRef {
@@ -124,8 +128,7 @@ function canonicalDoc(): ProvDocument {
     const doc = freshDocument(analysis);
     appendRunStarted(doc, "a1", system, { runId: "run-001", planSummary: "DE analysis", startedAtMs: 1_700_000_000_000 });
     appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1_700_000_001_500 }, model);
-    appendCommandExecuted(doc, "a1", system, stepRef, writeScript, model);
-    appendFileWritten(doc, "a1", system, fileRefOf(scriptKey, "file_tool"), stepRef, "command");
+    appendFileWritten(doc, "a1", system, fileRefOf(scriptKey, "file_tool"), stepRef, "call", writeScriptCall);
     appendCommandExecuted(doc, "a1", system, stepRef, cmdA, model);
     appendFileWritten(doc, "a1", system, fileRefOf(deResultsKey), stepRef, "command");
     appendCommandExecuted(doc, "a1", system, stepRef, cmdB, model);
@@ -366,7 +369,7 @@ describe("backward lineage", () => {
         const { json } = lineageOf(graph, heatmapKey.path, { forward: false });
         const bQn = commandQName(stepRef, cmdB.outputs);
         const aQn = commandQName(stepRef, cmdA.outputs);
-        const writeQn = commandQName(stepRef, writeScript.outputs);
+        const writeQn = writeCallQn;
 
         const b = json.nodes[bQn]!;
         expect(b.kind).toBe("command");
@@ -911,5 +914,52 @@ describe("attribution gaps and per-kind absence wording", () => {
         ].join("\n");
         expect(tree).toBe(expected);
         expect(tree).not.toContain("no recorded inputs");
+    });
+});
+
+// A stored document can hold BOTH file-tool shapes at once: the retired pseudo-command activity
+// (`inflexa:cmd-…` typed `inflexa:FileToolWrite`, written by an older cli) and the current
+// deterministic call action. The read side must render both identically — the legacy branch is the
+// `prov:type` match, which is shape-independent.
+describe("legacy and current file-tool shapes in one document", () => {
+    const legacyKey = { path: "runs/run-000/step-old/output/old-notes.md", hash: "hashOld001" };
+    const legacyCmdQn = "inflexa:cmd-run-000-step-old-legacy1";
+
+    /** The canonical doc's bytes with an old-shape file-tool pseudo-command spliced in. */
+    function mixedModel(): LineageModel {
+        const parsed = JSON.parse(canonicalDoc().serialize("json")) as Record<string, Record<string, unknown>>;
+        parsed.activity = {
+            ...parsed.activity,
+            [legacyCmdQn]: { "prov:type": "inflexa:FileToolWrite", "inflexa:tool": "write_file" },
+        };
+        parsed.entity = {
+            ...parsed.entity,
+            [fileQName(legacyKey)]: {
+                "prov:type": "inflexa:File",
+                "inflexa:path": legacyKey.path,
+                "inflexa:hash": legacyKey.hash,
+                "inflexa:producer": "file_tool",
+            },
+        };
+        parsed.wasGeneratedBy = {
+            ...parsed.wasGeneratedBy,
+            "inflexa:gen-legacy1": { "prov:entity": fileQName(legacyKey), "prov:activity": legacyCmdQn },
+        };
+        return deriveLineageModel(JSON.stringify(parsed))._unsafeUnwrap();
+    }
+
+    test("both writers classify as file_tool and render as file-tool activities", () => {
+        const g = mixedModel();
+
+        // The legacy pseudo-command still walks and renders exactly as before.
+        const legacy = lineageOf(g, legacyKey.path, { forward: false });
+        expect(legacy.json.nodes[legacyCmdQn]).toMatchObject({ kind: "file_tool", tool: "write_file" });
+        expect(legacy.tree).toContain("write_file (file tool)");
+        expect(legacy.tree).toContain("agent-authored — no file inputs by design");
+
+        // The current call action classifies and renders the same way.
+        const current = lineageOf(g, scriptKey.path, { forward: false });
+        expect(current.json.nodes[writeCallQn]).toMatchObject({ kind: "file_tool", tool: "write_file" });
+        expect(current.tree).toContain("write_file (file tool)");
     });
 });

@@ -70,6 +70,8 @@ export type LineageActivityNode = {
     args?: string;
     exitCode?: number;
     tool?: string;
+    /** The tool-call id of a file-tool call action — present on a `file_tool` activity written as a call. */
+    invocationId?: string;
     unresolvedScript?: string;
     planSummary?: string;
 };
@@ -223,6 +225,7 @@ function activityKindOf(types: string[], qn: string): { activity: LineageActivit
     if (local.startsWith("run-")) return { activity: "run" };
     if (local.startsWith("step-")) return { activity: "step" };
     if (local.startsWith("cmd-")) return { activity: "command" };
+    if (local.startsWith("call-")) return { activity: "file_tool" };
     // A lifecycle action is the only remaining dialect activity kind.
     return { activity: "action", ...(types[0] !== undefined ? { actionType: types[0] } : {}) };
 }
@@ -256,6 +259,7 @@ function toActivityNode(record: ProvActivity): LineageActivityNode {
     const durationMs = attrNumber(record, "durationMs");
     const args = attrString(record, "args");
     const exitCode = attrNumber(record, "exitCode");
+    const invocationId = attrString(record, "invocationId");
     const unresolvedScript = attrString(record, "unresolvedScript");
     const planSummary = attrString(record, "planSummary");
     return {
@@ -274,6 +278,7 @@ function toActivityNode(record: ProvActivity): LineageActivityNode {
         ...(args !== undefined ? { args } : {}),
         ...(exitCode !== undefined ? { exitCode } : {}),
         ...(tool !== undefined ? { tool } : {}),
+        ...(invocationId !== undefined ? { invocationId } : {}),
         ...(unresolvedScript !== undefined ? { unresolvedScript } : {}),
         ...(planSummary !== undefined ? { planSummary } : {}),
     };

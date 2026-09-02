@@ -181,6 +181,7 @@ describe("write_file tool", () => {
             path: "output/replay.txt",
             content: "v1",
             toolName: "write_file",
+            invocationId: "inv-1",
             runStep: cachingStep,
             session: makeToolContext().ctx.session,
         });
@@ -195,6 +196,7 @@ describe("write_file tool", () => {
             path: "output/replay.txt",
             content: "v1",
             toolName: "write_file",
+            invocationId: "inv-1",
             runStep: cachingStep,
             session: makeToolContext().ctx.session,
         });

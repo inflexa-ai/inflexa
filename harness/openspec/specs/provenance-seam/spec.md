@@ -70,8 +70,10 @@ read of the seam. A root session has no parent, thus the event carries none.
 
 The `write-file` event MUST come from the mutate seam of the conversation
 agent, after the bytes land. It carries the analysis-root-relative path, the
-SHA-256 hash of the exact bytes, the size in bytes, and the tool name. A
-refused write and a failed write emit nothing.
+SHA-256 hash of the exact bytes, the size in bytes, and the tool name. It
+also carries the `invocationId` of the tool call. The invocation id is the
+replay-stable identity of the write, and the consumer keys the deterministic
+call activity on it. A refused write and a failed write emit nothing.
 
 #### Scenario: The creation of a conversation emits
 
@@ -109,6 +111,7 @@ refused write and a failed write emit nothing.
   the member is bound
 - **THEN** the member receives one `write-file` event with the analysis id,
   the thread id, the path, the hash, the size, and the tool `write_file`
+- **AND** the event carries the invocation id of the call
 
 ### Requirement: The emits are fire-and-forget
 

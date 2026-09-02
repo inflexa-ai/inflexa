@@ -45,6 +45,15 @@ export function createWriteFileTool(deps: WriteFileDeps) {
         // channel, which the emit-site length cap enforces regardless.
         describeCall: ({ path }) => path,
         execute: async ({ path, content }, ctx) =>
-            ok(await deps.mutator.writeFile({ path, content, toolName: "write_file", runStep: ctx.runStep, session: ctx.session })),
+            ok(
+                await deps.mutator.writeFile({
+                    path,
+                    content,
+                    toolName: "write_file",
+                    invocationId: ctx.invocationId,
+                    runStep: ctx.runStep,
+                    session: ctx.session,
+                }),
+            ),
     });
 }

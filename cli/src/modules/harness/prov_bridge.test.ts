@@ -50,7 +50,7 @@ afterEach(() => {
 type FakeInputRef = { path: string; hash: string; source: "data" | "upstream" | "prior" | "artifacts"; fileId?: string };
 type FakeProducer =
     | { type: "command"; command: string; args?: string[]; exitCode: number; durationMs: number; timestamp: string }
-    | { type: "file_tool"; tool: string; timestamp: string };
+    | { type: "file_tool"; tool: string; invocationId: string };
 type FakeRecord = { outputPath: string; producer: FakeProducer; inputs?: FakeInputRef[]; scriptPath?: string | null };
 
 // The adapter reads `getRecords()` (→ full `{outputPath, producer, inputs, scriptPath}`) and
@@ -135,15 +135,21 @@ describe("createBusArtifactRegistry — register", () => {
         const files = fileEvents();
         expect(files.map((f) => f.generation)).toEqual(["command", "command"]);
         expect(files.map((f) => f.file.producer)).toEqual(["command", "command"]);
+        // The construction-time model id and the step ref ride every file event.
+        expect(files.map((f) => f.model)).toEqual([modelId, modelId]);
+        expect(files.map((f) => f.step)).toEqual([
+            { runId: "run-001", stepId: "de-analysis" },
+            { runId: "run-001", stepId: "de-analysis" },
+        ]);
         // Both files register with their QN externalIds and nothing failed — a clean, fully-attested result.
         expect(result.failedCount).toBe(0);
         expect(result.failed).toEqual([]);
         expect(result.registered).toEqual(files.map((f) => ({ path: f.file.path, externalId: fileQName(f.file) })));
     });
 
-    test("a file-tool write groups into a file_tool command event with no inputs", async () => {
+    test("a file-tool write emits a call-generation file event and no command event", async () => {
         const registry = createBusArtifactRegistry(modelId);
-        const tool: FakeProducer = { type: "file_tool", tool: "write_file", timestamp: "2026-07-06T00:00:00Z" };
+        const tool: FakeProducer = { type: "file_tool", tool: "write_file", invocationId: "call-9" };
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
             runId: "run-001",
@@ -152,19 +158,20 @@ describe("createBusArtifactRegistry — register", () => {
             collector: fakeCollector([{ outputPath: "output/summary.md", producer: tool }]),
         };
 
-        await registry.register(input, noSession);
+        const result = await registry.register(input, noSession);
 
-        expect(captured.map((e) => e.type)).toEqual(["prov.command_executed", "prov.file_written"]);
-        const ref = commandEvents()[0]!.command;
-        if (ref.kind !== "file_tool") throw new Error("expected a file_tool-kind ref");
-        expect(ref.tool).toBe("write_file");
-        expect(ref.outputs).toEqual([{ path: "runs/run-001/de-analysis/output/summary.md", hash: "sha256:sss" }]);
-        // The file_tool variant carries no `inputs` field by construction (agent-authored content).
-        expect("inputs" in ref).toBe(false);
-        // The file event's producer joins from the record; its generation is the command's, not the step's.
+        // No pseudo-command exists for a file-tool write — the call ref rides the file event and the
+        // kernel mints the deterministic call activity from it.
+        expect(captured.map((e) => e.type)).toEqual(["prov.file_written"]);
         const file = fileEvents()[0]!;
+        expect(file.generation).toBe("call");
+        expect(file.call).toEqual({ invocationId: "call-9", tool: "write_file" });
+        expect(file.step).toEqual({ runId: "run-001", stepId: "de-analysis" });
+        expect(file.model).toBe(modelId);
         expect(file.file.producer).toBe("file_tool");
-        expect(file.generation).toBe("command");
+        expect(file.file.path).toBe("runs/run-001/de-analysis/output/summary.md");
+        // The write still registers with its deterministic file QName.
+        expect(result.registered).toEqual([{ path: file.file.path, externalId: fileQName(file.file) }]);
     });
 
     test("a leaf entry (no collector record) emits no command event and keeps step generation", async () => {
@@ -185,6 +192,8 @@ describe("createBusArtifactRegistry — register", () => {
         // Its generation falls to the step activity; the inotify-only fallback producer is "command".
         expect(file.generation).toBe("step");
         expect(file.file.producer).toBe("command");
+        expect(file.step).toEqual({ runId: "run-001", stepId: "de-analysis" });
+        expect(file.model).toBe(modelId);
     });
 
     test("an intra-step artifacts read resolves to a command-scoped 'step' input, while a phantom self-read is dropped", async () => {
@@ -626,7 +635,7 @@ describe("createSessionEmit", () => {
         expect(version.version).toEqual({ threadId: reportThreadId, versionId: "v1", replaced: true });
     });
 
-    test("a conversation file write maps onto prov.session_file_written with the file identity", () => {
+    test("a conversation file write maps onto a call-generation prov.file_written with no step", () => {
         emitSession({
             type: "write-file",
             analysisId: sessionAnalysisId,
@@ -635,26 +644,37 @@ describe("createSessionEmit", () => {
             hash: "sha256:abc",
             size: 42,
             tool: "write_file",
+            invocationId: "call-1",
         });
 
         const event = onlyEvent();
-        if (event.type !== "prov.session_file_written") throw new Error(`expected prov.session_file_written, got ${event.type}`);
+        if (event.type !== "prov.file_written") throw new Error(`expected prov.file_written, got ${event.type}`);
         expect(event.analysisId).toBe(sessionAnalysisId);
         expect(event.model).toBe(sessionModelId);
-        expect(event.write).toEqual({
-            threadId: "thread-conv-1",
-            tool: "write_file",
-            file: { path: "notes/summary.md", hash: "sha256:abc", size: 42, producer: "file_tool" },
-        });
+        expect(event.generation).toBe("call");
+        expect(event.call).toEqual({ invocationId: "call-1", tool: "write_file", threadId: "thread-conv-1" });
+        expect(event.file).toEqual({ path: "notes/summary.md", hash: "sha256:abc", size: 42, producer: "file_tool" });
+        // A session write has no run and no step to anchor to.
+        expect("step" in event).toBe(false);
     });
 
-    test("a file write with no thread carries no threadId key", () => {
-        emitSession({ type: "write-file", analysisId: sessionAnalysisId, path: "notes/a.md", hash: "sha256:aaa", size: 1, tool: "edit_file" });
+    test("a file write with no thread carries no threadId key on the call ref", () => {
+        emitSession({
+            type: "write-file",
+            analysisId: sessionAnalysisId,
+            path: "notes/a.md",
+            hash: "sha256:aaa",
+            size: 1,
+            tool: "edit_file",
+            invocationId: "call-2",
+        });
 
         const event = onlyEvent();
-        if (event.type !== "prov.session_file_written") throw new Error("expected prov.session_file_written");
-        expect("threadId" in event.write).toBe(false);
-        expect(event.write.tool).toBe("edit_file");
+        if (event.type !== "prov.file_written") throw new Error("expected prov.file_written");
+        expect(event.call).toBeDefined();
+        expect("threadId" in event.call!).toBe(false);
+        expect(event.call!.tool).toBe("edit_file");
+        expect(event.call!.invocationId).toBe("call-2");
     });
 
     test("a derivation carries its chain, restated pair by pair", () => {

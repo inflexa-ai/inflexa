@@ -238,6 +238,7 @@ export function createEditFileTool(deps: EditFileDeps) {
                 path,
                 content: replaced.content,
                 toolName: "edit_file",
+                invocationId: ctx.invocationId,
                 runStep: ctx.runStep,
                 session: ctx.session,
             });

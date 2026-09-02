@@ -50,7 +50,7 @@ function runEvents(analysisId: string): ProvEvent[] {
             type: "file_written",
             analysisId,
             actor,
-            step,
+            model: "anthropic/test-model",
             generation: "command",
             file: { path: "runs/r1/s1/output/result.csv", hash: "sha256:bbb", size: 10, producer: "command" },
         },
@@ -201,6 +201,35 @@ describe("applyProvEvent", () => {
         const rogue = { type: "not_an_event", analysisId: "a1", actor } as unknown as ProvEvent;
         expect(() => applyProvEvent(model, doc, rogue)).toThrow("unhandled prov event type");
     });
+
+    test("a step-generation file write without a step ref is rejected", () => {
+        const model = makeModel();
+        const doc = model.freshDocument({ analysisId: "a1" });
+        const event: ProvEvent = {
+            type: "file_written",
+            analysisId: "a1",
+            actor,
+            model: "anthropic/test-model",
+            generation: "step",
+            file: { path: "runs/r1/s1/logs/run.log", hash: "sha256:ddd", size: 3, producer: "command" },
+        };
+        expect(() => applyProvEvent(model, doc, event)).toThrow('generation "step" requires a step ref');
+    });
+
+    test("a call-generation file write without a call ref is rejected", () => {
+        const model = makeModel();
+        const doc = model.freshDocument({ analysisId: "a1" });
+        const event: ProvEvent = {
+            type: "file_written",
+            analysisId: "a1",
+            actor,
+            model: "anthropic/test-model",
+            generation: "call",
+            step: { runId: "r1", stepId: "s1" },
+            file: { path: "runs/r1/s1/output/notes.md", hash: "sha256:fff", size: 7, producer: "file_tool" },
+        };
+        expect(() => applyProvEvent(model, doc, event)).toThrow('generation "call" requires a call ref');
+    });
 });
 
 const reportThread = "t-report";
@@ -295,29 +324,37 @@ describe("applyProvEvent — the session and report family", () => {
             "inflexa:blockKind": "chart",
         });
     });
+});
 
-    test("a session file write mints a FileToolWrite action that generates the shared file entity", () => {
+describe("applyProvEvent — the call generation arm", () => {
+    const chatFileDigest = defaultProvDigest("notes/summary.md|sha256:ccc");
+    const stepFileDigest = defaultProvDigest("runs/r1/s1/output/notes.md|sha256:fff");
+
+    test("a thread-scoped call mints a deterministic FileToolWrite activity that generates the shared file entity", () => {
         const model = makeModel();
-        const chatFileDigest = defaultProvDigest("notes/summary.md|sha256:ccc");
+        const callDigest = defaultProvDigest("t-chat|inv-1");
+        const callQn = `inflexa:call-${callDigest}`;
         const doc = serialize(model, [
             {
-                type: "session_file_written",
+                type: "file_written",
                 analysisId: "a1",
                 actor,
                 model: "anthropic/test-model",
-                write: {
-                    threadId: "t-chat",
-                    tool: "write_file",
-                    file: { path: "notes/summary.md", hash: "sha256:ccc", size: 20, producer: "file_tool" },
-                },
+                generation: "call",
+                call: { invocationId: "inv-1", tool: "write_file", threadId: "t-chat" },
+                file: { path: "notes/summary.md", hash: "sha256:ccc", size: 20, producer: "file_tool" },
             },
         ]);
 
-        expect(doc.activity?.["inflexa:action-evt-1"]).toMatchObject({
+        expect(doc.activity?.[callQn]).toMatchObject({
             "prov:type": "inflexa:FileToolWrite",
             "inflexa:tool": "write_file",
+            "inflexa:invocationId": "inv-1",
             "inflexa:threadId": "t-chat",
         });
+        // No formal time anywhere: the only timestamp at this seam is replay-unstable.
+        expect(doc.activity?.[callQn]).not.toHaveProperty("prov:startTime");
+        expect(doc.activity?.[callQn]).not.toHaveProperty("prov:endTime");
         expect(doc.entity?.[`inflexa:file-${chatFileDigest}`]).toMatchObject({
             "prov:type": "inflexa:File",
             "inflexa:path": "notes/summary.md",
@@ -329,27 +366,61 @@ describe("applyProvEvent — the session and report family", () => {
         // entity keeps exactly one generation record across every authority.
         expect(doc.wasGeneratedBy?.[`inflexa:gen-${chatFileDigest}`]).toMatchObject({
             "prov:entity": `inflexa:file-${chatFileDigest}`,
-            "prov:activity": "inflexa:action-evt-1",
+            "prov:activity": callQn,
         });
+        expect(doc.wasAssociatedWith?.[`inflexa:assoc-call-${callDigest}-${systemAgentDigest}`]).toMatchObject({ "prov:agent": "inflexa:agent-system" });
         expect(doc.wasAttributedTo?.[`inflexa:attr-${chatFileDigest}-${systemAgentDigest}`]).toMatchObject({ "prov:agent": "inflexa:agent-system" });
         expect(doc.wasDerivedFrom?.[`inflexa:deriv-${chatFileDigest}`]).toMatchObject({ "prov:usedEntity": "inflexa:analysis-a1" });
-        // The model agent is associated with the write action, so the record names
-        // the intelligence that authored the content.
-        expect(Object.keys(doc.agent ?? {})).toContain(model.modelAgentQName("anthropic/test-model"));
+        // The model agent is associated with the call, so the record names the
+        // intelligence that authored the content.
+        const modelQn = model.modelAgentQName("anthropic/test-model");
+        expect(Object.keys(doc.agent ?? {})).toContain(modelQn);
+        expect(doc.wasAssociatedWith?.[`inflexa:assoc-call-${callDigest}-${defaultProvDigest(modelQn)}`]).toMatchObject({ "prov:agent": modelQn });
+        // A thread-scoped call anchors to no step.
+        expect(Object.keys(doc.wasInformedBy ?? {})).toHaveLength(0);
     });
 
-    test("a session file write with no thread stamps no threadId attribute", () => {
+    test("a step-scoped call keys its QName on (runId, stepId, invocationId) and informs the step", () => {
+        const callDigest = defaultProvDigest("r1|s1|inv-1");
+        const callQn = `inflexa:call-${callDigest}`;
         const doc = serialize(makeModel(), [
             {
-                type: "session_file_written",
+                type: "file_written",
                 analysisId: "a1",
                 actor,
                 model: "anthropic/test-model",
-                write: { tool: "edit_file", file: { path: "notes/summary.md", hash: "sha256:ccc", size: 20, producer: "file_tool" } },
+                generation: "call",
+                call: { invocationId: "inv-1", tool: "edit_file" },
+                step: { runId: "r1", stepId: "s1" },
+                file: { path: "runs/r1/s1/output/notes.md", hash: "sha256:fff", size: 7, producer: "file_tool" },
             },
         ]);
 
-        expect(doc.activity?.["inflexa:action-evt-1"]).toMatchObject({ "prov:type": "inflexa:FileToolWrite", "inflexa:tool": "edit_file" });
-        expect(doc.activity?.["inflexa:action-evt-1"]).not.toHaveProperty("inflexa:threadId");
+        expect(doc.activity?.[callQn]).toMatchObject({ "prov:type": "inflexa:FileToolWrite", "inflexa:tool": "edit_file", "inflexa:invocationId": "inv-1" });
+        expect(doc.activity?.[callQn]).not.toHaveProperty("inflexa:threadId");
+        expect(doc.wasInformedBy?.[`inflexa:informed-call-${callDigest}`]).toMatchObject({ "prov:informed": callQn, "prov:informant": "inflexa:step-r1-s1" });
+        expect(doc.wasGeneratedBy?.[`inflexa:gen-${stepFileDigest}`]).toMatchObject({ "prov:activity": callQn });
+    });
+
+    test("a re-emitted call dedupes to one activity and one record set", () => {
+        const event: ProvEvent = {
+            type: "file_written",
+            analysisId: "a1",
+            actor,
+            model: "anthropic/test-model",
+            generation: "call",
+            call: { invocationId: "inv-1", tool: "write_file" },
+            step: { runId: "r1", stepId: "s1" },
+            file: { path: "runs/r1/s1/output/notes.md", hash: "sha256:fff", size: 7, producer: "file_tool" },
+        };
+        const doc = serialize(makeModel(), [event, event]);
+
+        const callQn = `inflexa:call-${defaultProvDigest("r1|s1|inv-1")}`;
+        expect(Object.keys(doc.activity ?? {}).filter((k) => k === callQn)).toHaveLength(1);
+        expect(Object.keys(doc.wasGeneratedBy ?? {}).filter((k) => k.includes(stepFileDigest))).toHaveLength(1);
+        // Every call relation carries a deterministic id — nothing anonymous to duplicate.
+        for (const relKind of ["used", "wasGeneratedBy", "wasAssociatedWith", "wasInformedBy", "wasAttributedTo", "wasDerivedFrom"]) {
+            for (const id of Object.keys(doc[relKind] ?? {})) expect(id.startsWith("_:")).toBe(false);
+        }
     });
 });

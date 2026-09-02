@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
-import { createProvDocumentModel, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "./document.js";
+import { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "./document.js";
 import { applyProvEvent } from "./events.js";
 import { computeLineage, computeReachable, deriveLineageModel, findFileEntity, type LineageModel } from "./lineage.js";
-import type { ProvActor, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef } from "./types.js";
+import type { ProvActor, ProvCallRef, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef } from "./types.js";
 
 // The read model is tested against two sources: the committed golden fixture (the exact stored
 // bytes every consumer reads) and documents built with the real event switch — the record shapes
@@ -33,12 +33,13 @@ describe("deriveLineageModel — golden fixture", () => {
     const model = deriveLineageModel(goldenJson)._unsafeUnwrap();
 
     test("derives every PROV element into a node, plus the undeclared endpoints", () => {
-        // 6 declared entities + 2 synthesized from relation endpoints the document references but
+        // 7 declared entities + 2 synthesized from relation endpoints the document references but
         // never declares (the resolved script and the failed command's output).
         const entities = model.nodes.filter((n) => n.kind === "analysis" || n.kind === "input" || n.kind === "file");
         expect(entities.map((n) => n.qn).sort()).toEqual([
             "inflexa:analysis-a-golden",
             "inflexa:file-18bvqsvo19q9p",
+            "inflexa:file-1cwlnqmo0fdyw",
             "inflexa:file-2cl35k0tb4udj",
             "inflexa:file-2oo1fa1324nay",
             "inflexa:file-8cpsktnfc9if",
@@ -47,8 +48,8 @@ describe("deriveLineageModel — golden fixture", () => {
             "inflexa:input-39n74a7sqlbvc",
         ]);
         expect(model.nodes.filter((n) => n.kind === "report" || n.kind === "report_version").map((n) => n.qn)).toEqual([reportQn, reportVersionQn]);
-        // 8 execution and lifecycle activities, plus the 10 action activities of the report family.
-        expect(model.nodes.filter((n) => n.kind === "activity")).toHaveLength(18);
+        // 9 execution and lifecycle activities, plus the 10 action activities of the report family.
+        expect(model.nodes.filter((n) => n.kind === "activity")).toHaveLength(19);
         expect(model.nodes.filter((n) => n.kind === "agent")).toHaveLength(3);
     });
 
@@ -141,7 +142,22 @@ describe("deriveLineageModel — golden fixture", () => {
             exitCode: 1,
             unresolvedScript: "runs/r1/s1/scripts/analyze.R",
         });
-        expect(nodeOf(model, "inflexa:cmd-r1-s1-1gmep6ya47zjz")).toMatchObject({ kind: "activity", activity: "file_tool", tool: "write_file" });
+        // A step-scoped call carries no runId/stepId attribute — both inherit from the informing step.
+        expect(nodeOf(model, "inflexa:call-35vou98b3seid")).toMatchObject({
+            kind: "activity",
+            activity: "file_tool",
+            tool: "write_file",
+            invocationId: "call-77",
+            runId: "r1",
+            stepId: "s1",
+        });
+        // A thread-scoped call informs no step, thus it inherits nothing.
+        const threadCall = nodeOf(model, "inflexa:call-1jhn1c2qpy187");
+        expect(threadCall).toMatchObject({ kind: "activity", activity: "file_tool", tool: "edit_file", invocationId: "call-42" });
+        if (threadCall?.kind === "activity") {
+            expect(threadCall.runId).toBeUndefined();
+            expect(threadCall.stepId).toBeUndefined();
+        }
         expect(nodeOf(model, "inflexa:action-golden-1")).toMatchObject({ kind: "activity", activity: "action", actionType: "CreateAnalysis" });
     });
 
@@ -207,9 +223,9 @@ describe("deriveLineageModel — golden fixture", () => {
     });
 
     test("derives exactly the seven edge kinds with no dangling endpoint; delegation is not an edge", () => {
-        // 32 associations + 13 usages + 8 generations + 7 attributions + 4 derivations +
+        // 34 associations + 13 usages + 9 generations + 8 attributions + 5 derivations +
         // 4 communications; the model delegation is skipped.
-        expect(model.edges).toHaveLength(68);
+        expect(model.edges).toHaveLength(73);
         expect(model.edges.some((e) => e.id.startsWith("inflexa:delegation-"))).toBe(false);
         const nodeQns = new Set(qns(model));
         for (const edge of model.edges) {
@@ -228,8 +244,8 @@ describe("deriveLineageModel — golden fixture", () => {
 });
 
 // The traversal fixtures: the canonical chain counts.csv → command A (Rscript) → de_results.csv →
-// command B (python) → heatmap.png, plus a file-tool-written script read by A, a leaf file with
-// only the step-level generation, and a step-level read of counts.csv.
+// command B (python) → heatmap.png, plus a script written by a file-tool call and read by A, a
+// leaf file with only the step-level generation, and a step-level read of counts.csv.
 const system: ProvActor = { kind: "system", label: "kernel-test", version: "0.0.1" };
 const model: ProvModelId = "anthropic/test-model";
 const stepRef: ProvStepRef = { runId: "run-001", stepId: "step-de" };
@@ -252,7 +268,7 @@ const cmdA: ProvCommandRef = {
     ],
 };
 const cmdB: ProvCommandRef = { kind: "command", command: "python plot.py", exitCode: 0, outputs: [heatmapKey], inputs: [{ ...deResultsKey, source: "step" }] };
-const writeScript: ProvCommandRef = { kind: "file_tool", tool: "write_file", outputs: [scriptKey] };
+const writeScriptCall: ProvCallRef = { invocationId: "inv-script", tool: "write_file" };
 
 function fileRefOf(key: { path: string; hash: string }, producer: "command" | "file_tool" = "command"): ProvFileRef {
     return { ...key, size: 100, producer };
@@ -268,20 +284,21 @@ function chainDoc(m: ProvDocumentModel): ProvDocument {
         outcome: { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1_700_000_001_500 },
         model,
     });
-    applyProvEvent(m, doc, { type: "command_executed", analysisId: "a1", actor: system, step: stepRef, command: writeScript, model });
     applyProvEvent(m, doc, {
         type: "file_written",
         analysisId: "a1",
         actor: system,
+        model,
         file: fileRefOf(scriptKey, "file_tool"),
+        generation: "call",
+        call: writeScriptCall,
         step: stepRef,
-        generation: "command",
     });
     applyProvEvent(m, doc, { type: "command_executed", analysisId: "a1", actor: system, step: stepRef, command: cmdA, model });
-    applyProvEvent(m, doc, { type: "file_written", analysisId: "a1", actor: system, file: fileRefOf(deResultsKey), step: stepRef, generation: "command" });
+    applyProvEvent(m, doc, { type: "file_written", analysisId: "a1", actor: system, model, file: fileRefOf(deResultsKey), generation: "command" });
     applyProvEvent(m, doc, { type: "command_executed", analysisId: "a1", actor: system, step: stepRef, command: cmdB, model });
-    applyProvEvent(m, doc, { type: "file_written", analysisId: "a1", actor: system, file: fileRefOf(heatmapKey), step: stepRef, generation: "command" });
-    applyProvEvent(m, doc, { type: "file_written", analysisId: "a1", actor: system, file: fileRefOf(leafKey), step: stepRef, generation: "step" });
+    applyProvEvent(m, doc, { type: "file_written", analysisId: "a1", actor: system, model, file: fileRefOf(heatmapKey), generation: "command" });
+    applyProvEvent(m, doc, { type: "file_written", analysisId: "a1", actor: system, model, file: fileRefOf(leafKey), generation: "step", step: stepRef });
     applyProvEvent(m, doc, { type: "input_used", analysisId: "a1", actor: system, step: stepRef, input: { ...countsKey, source: "data", fileId: "file-1" } });
     return doc;
 }
@@ -295,7 +312,7 @@ const chainModel = modelFrom(chainDoc(provModel));
 const fileQn = (key: { path: string; hash: string }): string => provModel.fileQName(key);
 const aQn = provModel.commandQName(stepRef, cmdA.outputs);
 const bQn = provModel.commandQName(stepRef, cmdB.outputs);
-const writeQn = provModel.commandQName(stepRef, writeScript.outputs);
+const writeQn = `inflexa:call-${defaultProvDigest(`${stepRef.runId}|${stepRef.stepId}|${writeScriptCall.invocationId}`)}`;
 const stepQn = provModel.stepQName(stepRef);
 
 describe("computeLineage — backward", () => {
@@ -346,8 +363,8 @@ describe("computeLineage — backward", () => {
             type: "file_written",
             analysisId: "a1",
             actor: system,
+            model,
             file: fileRefOf(modelKey),
-            step: readerStep,
             generation: "command",
         });
 
@@ -368,8 +385,8 @@ describe("computeLineage — backward", () => {
             type: "file_written",
             analysisId: "a1",
             actor: system,
+            model,
             file: fileRefOf(selfKey),
-            step: stepRef,
             generation: "command",
         });
 
@@ -480,8 +497,8 @@ describe("computeLineage — truncated is equivalent to the depth+1 diff derivat
             type: "file_written",
             analysisId: "a1",
             actor: system,
+            model,
             file: fileRefOf(selfKey),
-            step: stepRef,
             generation: "command",
         });
         return modelFrom(doc);
@@ -510,8 +527,8 @@ describe("computeLineage — truncated is equivalent to the depth+1 diff derivat
             type: "file_written",
             analysisId: "a1",
             actor: system,
+            model,
             file: fileRefOf(modelKey),
-            step: readerStep,
             generation: "command",
         });
         return modelFrom(doc);
@@ -549,7 +566,7 @@ describe("computeReachable — golden document", () => {
     test("both directions from a consumed input reaches the full dataflow cone and nothing else", () => {
         const sub = computeReachable(golden, ["inflexa:file-2cl35k0tb4udj"], { direction: "both" });
         expect(qns(sub).sort()).toEqual([
-            "inflexa:cmd-r1-s1-1gmep6ya47zjz",
+            "inflexa:call-35vou98b3seid",
             "inflexa:cmd-r1-s1-302d2bs8ad5ko",
             "inflexa:cmd-r1-s1-3on7qauhakeey",
             "inflexa:file-18bvqsvo19q9p",
@@ -718,28 +735,44 @@ describe("findFileEntity", () => {
     });
 });
 
-describe("deriveLineageModel — a session file write", () => {
+describe("deriveLineageModel — a thread-scoped file-tool call", () => {
     const noteKey = { path: "notes/summary.md", hash: "sha256:note1" };
+    const callQn = `inflexa:call-${defaultProvDigest("t-chat|inv-note")}`;
 
-    function sessionWriteDoc(m: ProvDocumentModel): ProvDocument {
+    function callWriteDoc(m: ProvDocumentModel): ProvDocument {
         const doc = m.freshDocument({ analysisId: "a1" });
         applyProvEvent(m, doc, {
-            type: "session_file_written",
+            type: "file_written",
             analysisId: "a1",
             actor: system,
             model,
-            write: { threadId: "t-chat", tool: "write_file", file: { ...noteKey, size: 20, producer: "file_tool" } },
+            file: { ...noteKey, size: 20, producer: "file_tool" },
+            generation: "call",
+            call: { invocationId: "inv-note", tool: "write_file", threadId: "t-chat" },
         });
         return doc;
     }
 
-    const derived = modelFrom(sessionWriteDoc(createProvDocumentModel({ mintActionId: () => "chat-1", now: () => new Date(1_700_000_002_000) })));
+    const derived = modelFrom(callWriteDoc(createProvDocumentModel()));
 
-    test("the write derives a file node generated by a file_tool activity", () => {
+    test("the write derives a file node generated by a file_tool call activity", () => {
         expect(nodeOf(derived, fileQn(noteKey))).toMatchObject({ kind: "file", path: noteKey.path, hash: noteKey.hash, producer: "file_tool" });
-        expect(nodeOf(derived, "inflexa:action-chat-1")).toMatchObject({ kind: "activity", activity: "file_tool" });
+        expect(nodeOf(derived, callQn)).toMatchObject({ kind: "activity", activity: "file_tool", tool: "write_file", invocationId: "inv-note" });
         const gen = derived.edges.find((e) => e.kind === "generated" && e.from === fileQn(noteKey));
-        expect(gen?.to).toBe("inflexa:action-chat-1");
+        expect(gen?.to).toBe(callQn);
+    });
+
+    test("a legacy session-write action still classifies as a file_tool activity", () => {
+        // The retired `session_file_written` arm minted `inflexa:action-…` activities typed
+        // `inflexa:FileToolWrite` — stored documents keep them, and the type match still wins.
+        const legacyJson = JSON.stringify({
+            prefix: { inflexa: "https://inflexa.ai/prov#" },
+            activity: { "inflexa:action-chat-1": { "prov:type": "inflexa:FileToolWrite", "inflexa:tool": "write_file" } },
+            entity: { "inflexa:file-legacy": { "prov:type": "inflexa:File", "inflexa:path": "notes/old.md", "inflexa:hash": "sha256:old" } },
+            wasGeneratedBy: { "inflexa:gen-legacy": { "prov:entity": "inflexa:file-legacy", "prov:activity": "inflexa:action-chat-1" } },
+        });
+        const legacy = deriveLineageModel(legacyJson)._unsafeUnwrap();
+        expect(nodeOf(legacy, "inflexa:action-chat-1")).toMatchObject({ kind: "activity", activity: "file_tool", tool: "write_file" });
     });
 
     test("findFileEntity resolves the written file by path + hash", () => {

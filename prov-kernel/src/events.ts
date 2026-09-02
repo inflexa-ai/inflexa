@@ -2,6 +2,7 @@ import type { ProvDocument } from "@inflexa-ai/tsprov";
 import type { ProvDocumentModel, ProvDocumentModelInternal } from "./document.js";
 import type {
     ProvActor,
+    ProvCallRef,
     ProvCommandRef,
     ProvFileRef,
     ProvInputRef,
@@ -13,7 +14,6 @@ import type {
     ProvReportVersionRef,
     ProvRunOutcome,
     ProvRunRef,
-    ProvSessionFileWriteRef,
     ProvSessionRef,
     ProvStepOutcome,
     ProvStepRef,
@@ -58,13 +58,17 @@ export type ProvEvent =
           type: "file_written";
           analysisId: string;
           actor: ProvActor;
+          model: ProvModelId;
           file: ProvFileRef;
-          step: ProvStepRef;
-          generation: "command" | "step";
+          /** Which activity owns the file's generation edge: a producing command, the bare step, or a file-tool call. */
+          generation: "command" | "step" | "call";
+          /** The generating file-tool call — required when `generation` is `"call"`. */
+          call?: ProvCallRef;
+          /** The owning step — required when `generation` is `"step"`; scopes a step-side call QName when present. */
+          step?: ProvStepRef;
       }
     | { type: "input_used"; analysisId: string; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef }
     | { type: "session_created"; analysisId: string; actor: ProvActor; model: ProvModelId; session: ProvSessionRef }
-    | { type: "session_file_written"; analysisId: string; actor: ProvActor; model: ProvModelId; write: ProvSessionFileWriteRef }
     | { type: "report_block_added"; analysisId: string; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
     | { type: "report_block_changed"; analysisId: string; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
     | { type: "report_block_removed"; analysisId: string; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
@@ -108,16 +112,22 @@ export function applyProvEvent(model: ProvDocumentModel, doc: ProvDocument, even
             m.appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command, event.model);
             return;
         case "file_written":
-            m.appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step, event.generation);
+            // The optionality of `call` and `step` is per-generation, not global: a step-anchored
+            // generation without its step (or a call without its call ref) has no activity to draw
+            // the edge to, and silently skipping the edge would drop the file's sole generation.
+            if (event.generation === "step" && event.step === undefined) {
+                throw new Error('file_written with generation "step" requires a step ref');
+            }
+            if (event.generation === "call" && event.call === undefined) {
+                throw new Error('file_written with generation "call" requires a call ref');
+            }
+            m.appendFileWritten(doc, event.analysisId, event.actor, event.file, event.generation, event.model, event.call, event.step);
             return;
         case "input_used":
             m.appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
             return;
         case "session_created":
             m.appendSessionCreated(doc, event.analysisId, event.actor, event.session, event.model);
-            return;
-        case "session_file_written":
-            m.appendSessionFileWritten(doc, event.analysisId, event.actor, event.write, event.model);
             return;
         case "report_block_added":
             m.appendReportBlockAdded(doc, event.analysisId, event.actor, event.block, event.model);

@@ -25,8 +25,23 @@ const fixture = JSON.parse(readFileSync(join(import.meta.dir, "__fixtures__", "k
 
 const subject = { analysisId: "compat-a1", name: "Compat Analysis", slug: "compat-analysis" };
 
-/** The replay-stable subset: what a durable recovery re-emits. Lifecycle events are excluded — each genuine user action mints a fresh action activity by design. */
-const executionEvents = fixture.events.filter((e) => e.type !== "analysis_created" && e.type !== "input_added" && e.type !== "input_removed");
+/**
+ * The replay-stable subset: what a durable recovery re-emits. Lifecycle events are excluded — each
+ * genuine user action mints a fresh action activity by design. The fixture's file-tool group is
+ * excluded too: it rides the retired `command_executed` `file_tool` shape, which the kernel no
+ * longer accepts — the current writer re-emits such a write as a call-generation `file_written`
+ * under a NEW identifier. The stored document keeps its pseudo-command records untouched (nothing
+ * re-emits them, and unify never drops a record), which the equality assertion below proves.
+ */
+const executionEvents = fixture.events.filter(
+    (e) =>
+        e.type !== "analysis_created" &&
+        e.type !== "input_added" &&
+        e.type !== "input_removed" &&
+        // `as string`: the current ProvCommandRef types `kind` as the literal "command", but the
+        // frozen pre-kernel fixture holds the retired "file_tool" value behind the cast above.
+        !(e.type === "command_executed" && (e.command.kind as string) !== "command"),
+);
 
 /**
  * Re-key the serializer-assigned blank-node ids (`_:idN`) by their record content so two documents
