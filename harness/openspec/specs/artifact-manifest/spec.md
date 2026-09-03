@@ -117,7 +117,7 @@ before any artifact is registered or synced. For each manifest entry it SHALL
 stat the file at `{workspaceRoot}/runs/{runId}/{stepId}/{entry.path}`, bounded
 to the step root, and:
 
-- If the file does not exist (`ENOENT`) → drop the entry from the returned manifest, call `collector.removeRecord(path)`, increment the `cortex.artifact.reconcile.dropped` counter (tagged `agent_id`, `step_id`), and emit a debug log line.
+- If the file does not exist (`ENOENT`) → drop the entry from the returned manifest, call `collector.removeRecord(path)`, increment the `cortex.artifact.reconcile.dropped` counter (tagged `agent_id`), and emit a debug log line.
 - If the path is not a regular file (a directory) → drop it the same way.
 - Otherwise → recompute SHA-256 from disk via `computeSha256File` and replace the entry's `hash` and `size` with the on-disk values.
 
@@ -136,7 +136,7 @@ dropped via `collector.dropInput` and SHALL NOT fail the step:
 - An input naming a path that is **not present** at reconcile (`ENOENT`) → dropped, logged at **warn** with the ref, its resolved host path, and `dropSite: "input-enoent"`.
 
 Every input drop SHALL increment the `cortex.artifact.reconcile.input_dropped`
-counter, tagged `agent_id`, `step_id`, and `reason` (`directory`,
+counter, tagged `agent_id` and `reason` (`directory`,
 `container-prefix`, `workspace-root`, or `missing`).
 
 An out-of-tree read is out of scope rather than drift: the analysis tree mounts
