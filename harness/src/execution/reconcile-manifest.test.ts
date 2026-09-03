@@ -10,8 +10,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { metrics } from "@opentelemetry/api";
+import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import { __resetReconcileMetricsForTest } from "../lib/metrics.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { feedExecFrame } from "../provenance/exec-frame.js";
 import { reconcileManifestWithDisk } from "./reconcile-manifest.js";
@@ -605,6 +608,51 @@ describe("reconcileManifestWithDisk — undeclared sibling reads", () => {
             expect(warns[0]!.fields).toMatchObject({ path: `/${RID}/${scratchRel}`, dropSite: "input-enoent" });
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("reconcileManifestWithDisk — metric labels", () => {
+    test("the two reconcile counters carry agent_id (and reason), never step_id", async () => {
+        // A per-step label multiplies the series count without bound; the
+        // counters stay at one series per agent (per reason).
+        const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+        const provider = new MeterProvider({
+            readers: [new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 })],
+        });
+        metrics.setGlobalMeterProvider(provider);
+        __resetReconcileMetricsForTest();
+
+        // A phantom manifest entry (never written) drops one manifest entry, and
+        // the absent upstream input drops one lineage input with reason `missing`.
+        const { sessionPath, root, collector, manifest } = await setup({ writeUpstream: false });
+        try {
+            manifest.push({ stepId: "de", runId: "run-001", path: "output/phantom.csv", size: 0, type: "output", hash: "" });
+            await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+            });
+
+            await provider.forceFlush();
+            const exported = exporter
+                .getMetrics()
+                .flatMap((rm) => rm.scopeMetrics)
+                .flatMap((sm) => sm.metrics);
+            const dropped = exported.find((m) => m.descriptor.name === "cortex.artifact.reconcile.dropped");
+            const inputDropped = exported.find((m) => m.descriptor.name === "cortex.artifact.reconcile.input_dropped");
+
+            expect(dropped?.dataPoints.map((p) => p.attributes)).toEqual([{ agent_id: "agent-x" }]);
+            expect(inputDropped?.dataPoints.map((p) => p.attributes)).toEqual([{ agent_id: "agent-x", reason: "missing" }]);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+            await provider.shutdown();
+            metrics.disable();
+            __resetReconcileMetricsForTest();
         }
     });
 });

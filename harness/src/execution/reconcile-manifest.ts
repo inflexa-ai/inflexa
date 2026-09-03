@@ -27,7 +27,7 @@ import type { ProvenanceCollector } from "../provenance/collector.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { classifyWithinRoot, computeSha256File, hasValidContentHash } from "../lib/fs-helpers.js";
-import { artifactReconcileDropped, lineageInputDropped } from "../lib/metrics.js";
+import { recordArtifactReconcileDropped, recordLineageInputDropped } from "../lib/metrics.js";
 
 export interface ReconcileManifestInput {
     /** Absolute host root of the analysis's workspace tree. */
@@ -98,7 +98,7 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
                 logger.debug("dropping phantom entry", { path: entry.path });
                 collector.removeRecord(entry.path);
                 droppedCount++;
-                artifactReconcileDropped.add(1, { agent_id: agentId, step_id: stepId });
+                recordArtifactReconcileDropped({ agentId });
                 continue;
             }
             throw err;
@@ -112,7 +112,7 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
             logger.debug("dropping non-file entry", { path: entry.path });
             collector.removeRecord(entry.path);
             droppedCount++;
-            artifactReconcileDropped.add(1, { agent_id: agentId, step_id: stepId });
+            recordArtifactReconcileDropped({ agentId });
             continue;
         }
 
@@ -190,14 +190,14 @@ async function fillInputHashesFromDisk(
         const containerPrefix = `/${resourceId}`;
         if (ref.path !== containerPrefix && !ref.path.startsWith(containerPrefix + "/")) {
             logger.warn("dropping out-of-tree input from lineage", { ...attestation, boundSite: "container-prefix" });
-            lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "container-prefix" });
+            recordLineageInputDropped({ agentId, reason: "container-prefix" });
             collector.dropInput(ref);
             continue;
         }
         const hostPath = path.join(resourceRoot, ref.path.slice(containerPrefix.length + 1));
         if (hostPath !== resourceRoot && !hostPath.startsWith(resourceRoot + path.sep)) {
             logger.warn("dropping out-of-tree input from lineage", { ...attestation, hostPath, boundSite: "workspace-root" });
-            lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "workspace-root" });
+            recordLineageInputDropped({ agentId, reason: "workspace-root" });
             collector.dropInput(ref);
             continue;
         }
@@ -209,7 +209,7 @@ async function fillInputHashesFromDisk(
         // verdict (a dangling link) falls through to the ENOENT drop below.
         if ((await classifyWithinRoot(resourceRoot, hostPath)) === "escaped") {
             logger.warn("dropping out-of-tree input from lineage", { ...attestation, hostPath, boundSite: "realpath" });
-            lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "symlink-escape" });
+            recordLineageInputDropped({ agentId, reason: "symlink-escape" });
             collector.dropInput(ref);
             continue;
         }
@@ -223,7 +223,7 @@ async function fillInputHashesFromDisk(
                 // consumed, and the count of those is how a reader tells a noisy
                 // hook from an artifact that genuinely vanished under the step.
                 logger.warn("dropping input not present at reconcile from lineage", { ...attestation, hostPath, dropSite: "input-enoent" });
-                lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "missing" });
+                recordLineageInputDropped({ agentId, reason: "missing" });
                 collector.dropInput(ref);
                 continue;
             }
@@ -237,7 +237,7 @@ async function fillInputHashesFromDisk(
             // non-file drop above. A genuinely missing FILE (ENOENT) still fails fast
             // as drift; a directory is not drift.
             logger.debug("dropping non-file input from lineage", attestation);
-            lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "directory" });
+            recordLineageInputDropped({ agentId, reason: "directory" });
             collector.dropInput(ref);
             continue;
         }
