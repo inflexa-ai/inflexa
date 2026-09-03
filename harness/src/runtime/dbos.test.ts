@@ -10,10 +10,22 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Pool } from "pg";
 
-import { silentLogger } from "../__tests__/setup/logger.js";
-import { __resetDbosStateForTest, __setDbosStateForTest, dbosState, sweepEphemeralWorkflows, type DbosConfig } from "./dbos.js";
+import { createCapturingLogger, silentLogger } from "../__tests__/setup/logger.js";
+import { __resetDbosStateForTest, __setDbosStateForTest, dbosSdkConfig, dbosSdkLogger, dbosState, sweepEphemeralWorkflows, type DbosConfig } from "./dbos.js";
 
 const stubConfig = {} as DbosConfig;
+
+const fullConfig: DbosConfig = {
+    dbHost: "db.internal",
+    dbPort: "5432",
+    dbName: "cortex",
+    dbUser: "cortex",
+    dbPassword: "secret",
+    dbSslMode: "disable",
+    appName: "cortex",
+    adminPort: "3001",
+    executorId: "pod-1",
+};
 
 /**
  * `DBOS.shutdown` is stubbed by DIRECT property assignment, which
@@ -89,6 +101,61 @@ describe("launchDbos / shutdownDbos", () => {
         await shutdownDbos({ logger: silentLogger });
         expect(dbosState().launched).toBe(false);
         expect(stub).toHaveBeenCalled();
+    });
+});
+
+describe("dbosSdkConfig", () => {
+    it("leaves SDK tracing off unless the host turns it on", () => {
+        const sdk = dbosSdkConfig(fullConfig, silentLogger);
+        expect(sdk.tracingEnabled).toBe(false);
+        expect(sdk.otelAttributeFormat).toBe("semconv");
+        expect(sdk.enableOTLP).toBeUndefined();
+        expect(sdk.otlpTracesEndpoints).toBeUndefined();
+    });
+
+    it("passes tracingEnabled through", () => {
+        expect(dbosSdkConfig({ ...fullConfig, tracingEnabled: true }, silentLogger).tracingEnabled).toBe(true);
+    });
+
+    it("routes the SDK's own logging through the harness Logger seam", () => {
+        const logger = createCapturingLogger();
+        const sdk = dbosSdkConfig(fullConfig, logger);
+        sdk.logger!.info("Recovering 2 workflows");
+        expect(logger.records).toEqual([{ level: "info", msg: "[sdk] Recovering 2 workflows", fields: {} }]);
+    });
+});
+
+describe("dbosSdkLogger", () => {
+    it("applies the configured threshold, since the SDK does not filter a custom logger", () => {
+        const logger = createCapturingLogger();
+        const sdk = dbosSdkLogger(logger, "warn");
+        sdk.debug("d");
+        sdk.info("i");
+        sdk.warn("w");
+        sdk.error("e");
+        expect(logger.records.map((r) => r.level)).toEqual(["warn", "error"]);
+    });
+
+    it("defaults the threshold to info", () => {
+        const logger = createCapturingLogger();
+        const sdk = dbosSdkLogger(logger, undefined);
+        sdk.debug("d");
+        sdk.info("i");
+        expect(logger.records.map((r) => r.level)).toEqual(["info"]);
+    });
+
+    it("carries the stack and the operation context as fields, not in the message", () => {
+        const logger = createCapturingLogger();
+        const sdk = dbosSdkLogger(logger, "info");
+        const span = { attributes: { "dbos.operation.workflow_id": "wf-1", "dbos.operation.name": "executeAnalysis" } };
+        sdk.error("step failed", { stack: "Error: step failed\n    at x", span: span as never });
+        expect(logger.records).toHaveLength(1);
+        expect(logger.records[0]!.msg).toBe("[sdk] step failed");
+        expect(logger.records[0]!.fields).toEqual({
+            "dbos.operation.workflow_id": "wf-1",
+            "dbos.operation.name": "executeAnalysis",
+            stack: "Error: step failed\n    at x",
+        });
     });
 });
 
