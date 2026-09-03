@@ -13,10 +13,10 @@
  * See `openspec/changes/harness-dbos-runtime`.
  */
 
-import { DBOS } from "@dbos-inc/dbos-sdk";
+import { DBOS, type DBOSConfig, type DLogger } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 
-import type { Logger } from "../lib/logger.js";
+import type { LogFields, Logger } from "../lib/logger.js";
 import { DBOS_SYSTEM_POOL_SIZE } from "./pools.js";
 
 /**
@@ -36,12 +36,38 @@ export interface DbosConfig {
     /** Stable per-pod executor id (e.g. `process.env.HOSTNAME ?? "local-dev"`). */
     readonly executorId: string;
     /**
-     * SDK log verbosity (winston levels; the SDK's own default is `info`).
-     * Interactive embedders pass `warn` so the launch banner and migration
-     * chatter don't interleave with their own command output; the server root
-     * omits it and keeps the informative default.
+     * Least severe SDK record forwarded to the host's `Logger` (winston level
+     * names; the SDK's own default is `info`). The SDK's lines ride the
+     * harness `Logger` seam under `[dbos.sdk]`, so this threshold is applied by
+     * the bridge, not by the SDK. Interactive embedders pass `warn` so the
+     * launch banner and migration chatter stay out of their logs; the server
+     * root omits it and keeps the informative default.
      */
     readonly logLevel?: string;
+    /**
+     * Emit DBOS workflow and step spans on the globally registered
+     * TracerProvider, and run every workflow and step body under an active
+     * OTel context. Default `false`.
+     *
+     * DBOS installs nothing of its own here: with no OTLP endpoint of its own it
+     * probes the global provider and, when one is registered, emits under the
+     * instrumentation scope `dbos-tracer` through that provider's processors.
+     * A host that registers no provider (the CLI passes a no-op
+     * `initTelemetry`) must leave this off, otherwise the SDK installs its own
+     * `BasicTracerProvider` and every span is created and never exported.
+     *
+     * Attribute names follow the `dbos.*` semantic-convention layout
+     * (`otelAttributeFormat: "semconv"`).
+     *
+     * Known SDK behavior a host must plan for:
+     * - a recovered workflow starts a new root trace, with no link to the trace
+     *   of the original execution
+     * - every already-completed step re-emits a `cached=true` span on replay,
+     *   so a restart with many in-flight steps bursts spans; size
+     *   `OTEL_BSP_MAX_QUEUE_SIZE` for it
+     * - step span names embed the step, tool-use, or exec id
+     */
+    readonly tracingEnabled?: boolean;
 }
 
 /** DBOS lifecycle facts a host's readiness probe reports on. */
@@ -82,6 +108,75 @@ function systemDatabaseUrl(config: DbosConfig): string {
     return `postgresql://${user}:${password}@${host}:${port}/${database}?sslmode=${dbosSslMode(config.dbSslMode)}`;
 }
 
+/** Winston severity ranks, ascending verbosity — the scale `DbosConfig.logLevel` names. */
+const SDK_LOG_LEVEL_RANK: Readonly<Record<string, number>> = {
+    error: 0,
+    warn: 1,
+    info: 2,
+    http: 3,
+    verbose: 4,
+    debug: 5,
+    silly: 6,
+};
+
+const SDK_DEFAULT_LOG_LEVEL = "info";
+
+/**
+ * Bridge the SDK's internal logger onto the harness `Logger` seam, so the
+ * SDK's own lines (`Recovering N workflows…`, migration chatter) land in the
+ * host's sink instead of on the process console. The SDK does not filter by
+ * `logLevel` before it delegates to a custom logger, so the threshold is
+ * applied here. Records arrive as strings; an `Error` arrives as its message
+ * with the stack (and cause chain) in `metadata.stack`; inside a workflow or
+ * step body `metadata.span.attributes` carries the operation context, which
+ * rides as fields.
+ */
+export function dbosSdkLogger(logger: Logger, logLevel: string | undefined): DLogger {
+    const sink = logger.named("sdk");
+    const threshold = SDK_LOG_LEVEL_RANK[logLevel ?? SDK_DEFAULT_LOG_LEVEL] ?? SDK_LOG_LEVEL_RANK[SDK_DEFAULT_LOG_LEVEL]!;
+    const passes = (level: keyof typeof SDK_LOG_LEVEL_RANK): boolean => SDK_LOG_LEVEL_RANK[level]! <= threshold;
+    const fields = (metadata: Parameters<DLogger["error"]>[1]): LogFields | undefined => {
+        const attributes = metadata?.span?.attributes;
+        const stack = metadata?.stack;
+        if (attributes === undefined && stack === undefined) return undefined;
+        return { ...attributes, ...(stack !== undefined ? { stack } : {}) };
+    };
+    const message = (entry: unknown): string => (typeof entry === "string" ? entry : String(entry));
+    return {
+        debug: (entry, metadata) => {
+            if (passes("debug")) sink.debug(message(entry), fields(metadata));
+        },
+        info: (entry, metadata) => {
+            if (passes("info")) sink.info(message(entry), fields(metadata));
+        },
+        warn: (entry, metadata) => {
+            if (passes("warn")) sink.warn(message(entry), fields(metadata));
+        },
+        error: (entry, metadata) => {
+            if (passes("error")) sink.error(message(entry), fields(metadata));
+        },
+    };
+}
+
+/**
+ * The SDK config `launchDbos` sets. Pure over `DbosConfig`, so a test can
+ * assert on the mapping without a launch.
+ */
+export function dbosSdkConfig(config: DbosConfig, logger: Logger): DBOSConfig {
+    return {
+        name: config.appName,
+        systemDatabaseUrl: systemDatabaseUrl(config),
+        systemDatabasePoolSize: DBOS_SYSTEM_POOL_SIZE,
+        executorID: config.executorId,
+        applicationVersion: config.applicationVersion,
+        adminPort: parseInt(config.adminPort, 10),
+        logLevel: config.logLevel,
+        logger: dbosSdkLogger(logger, config.logLevel),
+        tracingEnabled: config.tracingEnabled ?? false,
+        otelAttributeFormat: "semconv",
+    };
+}
+
 /**
  * Launch DBOS. Idempotent — a second call is a no-op so tests that drive
  * the harness twice (or accidentally double-import) don't re-launch.
@@ -94,27 +189,19 @@ export async function launchDbos({ config, logger: injected }: { config: DbosCon
     if (state.launched) return;
 
     const logger = injected.named("dbos");
-    const executorID = config.executorId;
-    const adminPort = parseInt(config.adminPort, 10);
+    const sdkConfig = dbosSdkConfig(config, logger);
 
-    DBOS.setConfig({
-        name: config.appName,
-        systemDatabaseUrl: systemDatabaseUrl(config),
-        systemDatabasePoolSize: DBOS_SYSTEM_POOL_SIZE,
-        executorID,
-        applicationVersion: config.applicationVersion,
-        adminPort,
-        logLevel: config.logLevel,
-    });
+    DBOS.setConfig(sdkConfig);
 
     const start = performance.now();
     await DBOS.launch();
     state.launched = true;
     state.recoveryStarted = true;
     logger.info("launched", {
-        executorID,
+        executorID: sdkConfig.executorID,
         applicationVersion: config.applicationVersion,
-        adminPort,
+        adminPort: sdkConfig.adminPort,
+        tracingEnabled: sdkConfig.tracingEnabled,
         durationMs: Math.round(performance.now() - start),
     });
 }
