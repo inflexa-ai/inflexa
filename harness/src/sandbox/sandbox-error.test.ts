@@ -12,7 +12,10 @@ function farmUnusable(over: Partial<Extract<SandboxError, { type: "farm_unusable
         farmPath: "/mnt/libs/farms/catalog",
         lockPath: "/mnt/libs/farms/catalog/inflexa.lock",
         lockError: "lock_invalid",
-        cause: undefined,
+        // A real gate always sets a cause (`readFarmLockFile` never returns one
+        // without), thus the fixture carries one and each render below sees the
+        // shape an operator sees.
+        cause: new Error("Unexpected token o in JSON at position 1"),
         ...over,
     };
 }
@@ -155,10 +158,13 @@ describe("sandbox-error", () => {
             }
         });
 
-        it("an unusable farm names the lock path and the lock error", () => {
-            expect(describeSandboxError(farmUnusable({ lockError: "lock_unreadable" }))).toBe(
-                "farm unusable (docker.createSandbox: an-1) — no usable inflexa.lock at /mnt/libs/farms/catalog/inflexa.lock (lock_unreadable)",
+        it("an unusable farm names the lock error and the lock path in its head, and its cause after the one dash", () => {
+            const description = describeSandboxError(farmUnusable({ lockError: "lock_unreadable" }));
+
+            expect(description).toBe(
+                "farm unusable (docker.createSandbox: an-1, lock_unreadable at /mnt/libs/farms/catalog/inflexa.lock) — Unexpected token o in JSON at position 1",
             );
+            expect(description.split(" — ")).toHaveLength(2);
         });
 
         it("ends with the first line of an Error cause, so the engine names its reason", () => {

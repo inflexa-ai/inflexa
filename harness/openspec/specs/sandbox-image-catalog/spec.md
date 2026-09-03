@@ -168,7 +168,9 @@ The image MUST bake its inventory as one JSON record at
 
 The keys `system_tools` and `node` MUST equal the manifest keys. Additive
 fields pass through, and a breaking change MUST move the schema number.
-The store mount point MUST stay empty in the image.
+A conda tool whose binary is on PATH, but whose package has no version in
+the prefix, MUST fail the build, because a silent drop narrows the record
+with no signal. The store mount point MUST stay empty in the image.
 
 #### Scenario: The conda tools live in the image
 
@@ -192,6 +194,12 @@ The store mount point MUST stay empty in the image.
 - **GIVEN** a manifest `binaries:` entry `eagle2: eagle`
 - **WHEN** the record is read on an arch that holds `eagle2`
 - **THEN** the `system_tools` entry has `name` `eagle2` and `executable` `eagle`
+
+#### Scenario: A tool with no package version fails the build
+
+- **GIVEN** a manifest tool whose binary is on PATH, and whose package the prefix does not list
+- **WHEN** the conda load check runs
+- **THEN** the build fails, and the check names the package
 
 ### Requirement: The entrypoint seeds the caches
 

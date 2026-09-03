@@ -194,7 +194,10 @@ render as its first issue, the path and the message, because its message
 is multi-line JSON. A cause without a message adds nothing. The
 `farm_unavailable` variant takes no cause line, because its head already
 carries the reason of the resolver. The registry writes of the seam keep
-the plain bridge, because they carry a database error.
+the plain bridge, because they carry a database error. The public barrel
+MUST export `SandboxFailure`, `SandboxError`, and `describeSandboxError`,
+thus an embedder matches the class and reads the typed variant with no deep
+import.
 
 #### Scenario: A create refusal reaches the caller with its description
 
@@ -219,6 +222,12 @@ the plain bridge, because they carry a database error.
 - **GIVEN** a `farm_unusable` error whose cause is a `ZodError` with its first issue at the path `schema`
 - **WHEN** the description is built
 - **THEN** it ends with `schema: ` and the message of that issue, and no `[` appears
+
+#### Scenario: An embedder matches the failure from the barrel
+
+- **GIVEN** an embedder that imports `SandboxFailure` from `@inflexa-ai/harness`
+- **WHEN** a client op throws
+- **THEN** `instanceof SandboxFailure` holds, and `error.type` names the variant
 
 ### Requirement: Bind mounts replace PVCs
 

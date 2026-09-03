@@ -98,10 +98,12 @@ RUN TOOLS=$(python3 /tmp/scripts/conda-tools.py 2>/dev/null || true) \
 
 # The load check of the conda track (refer to conda-load-check.py). Each
 # manifest tool that resolves on PATH goes into the inventory fragment with
-# its version, and a missing tool drops with a log line. The floor: zero
-# resolved tools fail the build. PATH gains the conda bin. Thus a tool that
-# ships its own runtime finds it. The conda bin comes AFTER the system dirs,
-# thus `python3` stays the system one, which carries pyyaml.
+# its version, and a missing tool drops with a log line. A tool on PATH whose
+# package has no version in the prefix fails the build, because a silent
+# drop narrows the advertised set. The floor: zero resolved tools fail the
+# build. PATH gains the conda bin. Thus a tool that ships its own runtime
+# finds it. The conda bin comes AFTER the system dirs, thus `python3` stays
+# the system one, which carries pyyaml.
 #
 # The probe reads the BINARY name, not the raw manifest entry. A probe of the
 # raw entry drops a tool that works. The version comes from micromamba over

@@ -217,7 +217,7 @@ function describeVariant(e: SandboxError): string {
         case "farm_unavailable":
             return `farm unavailable (${e.op}: ${e.analysisId}) — ${e.reason}`;
         case "farm_unusable":
-            return `farm unusable (${e.op}: ${e.analysisId}) — no usable inflexa.lock at ${e.lockPath} (${e.lockError})`;
+            return `farm unusable (${e.op}: ${e.analysisId}, ${e.lockError} at ${e.lockPath})`;
     }
 }
 

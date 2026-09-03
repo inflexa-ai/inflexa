@@ -18,6 +18,7 @@ import { composeAwaitOptions, createSandboxClient, precreateStepTree } from "./c
 import * as dockerClient from "./docker-client.js";
 import { mintSandboxIdentity } from "./identity.js";
 import * as k8sClient from "./k8s-client.js";
+import { SandboxFailure as BarrelSandboxFailure } from "@inflexa-ai/harness";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { STEP_SUBDIRS } from "./mount-plan.js";
 import { describeSandboxError, SandboxFailure, type SandboxError } from "./sandbox-error.js";
@@ -342,6 +343,9 @@ describe("createSandboxClient — the seam throw", () => {
                 );
 
             expect(thrown).toBeInstanceOf(SandboxFailure);
+            // The barrel hands an embedder the same class, thus its `instanceof`
+            // holds without a deep import.
+            expect(thrown).toBeInstanceOf(BarrelSandboxFailure);
             const failure = thrown as SandboxFailure;
             // The message is the whole description — the head and the reason of
             // the cause — not the bare `type` a `ResultError` would render.

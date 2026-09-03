@@ -1457,7 +1457,7 @@ export function ensureStoreMountpoints(storeRoot: string): void {
         try {
             mkdirSync(join(storeRoot, entry), { recursive: true });
         } catch (cause) {
-            getLogger("farm").warn({ err: cause, storeRoot, entry }, "could not make the mountpoint entry; a runc engine can refuse the sandbox mounts");
+            getLogger("store").warn({ err: cause, storeRoot, entry }, "could not make the mountpoint entry; a runc engine can refuse the sandbox mounts");
         }
     }
 }
