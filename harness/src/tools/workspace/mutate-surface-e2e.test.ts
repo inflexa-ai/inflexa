@@ -45,6 +45,7 @@ function makeFakeClient(opts: { lsResult?: { stdout: string; stderr: string } } 
     const submits: SubmitExecBody[] = [];
     return {
         submits,
+        toolchainSource: "store",
         async createSandbox() {
             return makeSandboxRef();
         },

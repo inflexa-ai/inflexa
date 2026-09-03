@@ -23,6 +23,7 @@ export function makeFakeSandboxClient(): SandboxClient {
         callbackSecret: "secret",
     };
     return {
+        toolchainSource: "store",
         async createSandbox(_meta: CreateSandboxMeta) {
             return ref;
         },

@@ -22,11 +22,11 @@
  * `prompts/briefing.ts`), which is composed per dispatch and where per-step
  * content belongs.
  *
- * The orient-core text keys on the declared `toolchainSource`
- * (`sandboxOrientCorePromptFor`). The absent field gives the legacy constant
- * untouched, thus an old embedder keeps its cached prefix byte-identical.
- * Both variants are composition-time constants, thus each composition stays
- * byte-stable across its own steps.
+ * The orient-core text keys on the `toolchainSource` of the sandbox client
+ * (`sandboxOrientCorePromptFor`). `"store"` gives the legacy constant
+ * untouched, thus an embedder that declares no toolchain keeps its cached
+ * prefix byte-identical. Both variants are composition-time constants, thus
+ * each composition stays byte-stable across its own steps.
  */
 
 import type { ToolchainSource } from "../sandbox/types.js";
@@ -305,9 +305,9 @@ sandbox.`,
 /**
  * The orient-core layer for one declared toolchain. `"image"` states that an
  * acquisition is a host action and directs the agent to report a missing
- * package. The absent field gives the legacy constant untouched.
+ * package. `"store"` gives the legacy constant untouched.
  */
-export function sandboxOrientCorePromptFor(toolchainSource: ToolchainSource | undefined): string {
+export function sandboxOrientCorePromptFor(toolchainSource: ToolchainSource): string {
     return toolchainSource === "image" ? imageToolchainOrientCorePrompt : sandboxOrientCorePrompt;
 }
 

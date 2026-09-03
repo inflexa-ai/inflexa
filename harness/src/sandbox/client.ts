@@ -26,9 +26,29 @@
  * rule yet, thus a new caller must read this paragraph.
  */
 
-import type { CreateSandboxMeta, ExecEmit, ExecResult, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SubmitExecBody } from "./types.js";
+import type {
+    CreateSandboxMeta,
+    ExecEmit,
+    ExecResult,
+    ManagedSandbox,
+    SandboxIdentity,
+    SandboxLiveness,
+    SandboxRef,
+    SubmitExecBody,
+    ToolchainSource,
+} from "./types.js";
 
 export interface SandboxClient {
+    /**
+     * The declared owner of the sandbox toolchain, as the client was composed
+     * with it: `"image"` when the config declared it, `"store"` when the config
+     * declared nothing. The mount plan and the orient-core prompt both key on
+     * this one value, thus the environment a sandbox gets and the text that
+     * describes it cannot disagree. Required rather than optional, because an
+     * optional field would carry two meanings, undeclared and unknown.
+     */
+    readonly toolchainSource: ToolchainSource;
+
     /**
      * DBOS step (`sandbox.create`) — the spawn half of the two-step create
      * (see the harness-sandbox-exec spec). Launches the sandbox-base container/Job under the

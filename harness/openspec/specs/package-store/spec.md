@@ -172,9 +172,26 @@ cache is per analysis, because a loaded numba entry executes machine code.
 
 The backend config MUST carry a `toolchainSource` field with the values
 `"image"` and `"store"`, and the absent field MUST mean `"store"`. The
-harness MUST key the resolver environment and the agent-facing environment
-text on this declared value only. The harness MUST NOT infer its host or its
-image generation.
+sandbox client MUST carry the value it was composed with as
+`toolchainSource`, normalized to `"store"` when the config has none, thus the
+one declaration reaches each consumer. The harness MUST key the resolver
+environment and the agent-facing environment text on this declared value
+only. The agent composition MUST read the value from the sandbox client, and
+the agent deps MUST NOT carry a second declaration, because a bag that
+disagrees with the client describes an environment the sandbox does not
+have. The harness MUST NOT infer its host or its image generation.
+
+#### Scenario: The client normalizes the absent field
+
+- **GIVEN** a config with no `toolchainSource`
+- **WHEN** the sandbox client is composed
+- **THEN** `client.toolchainSource` is `"store"`
+
+#### Scenario: The agent composition reads the toolchain from the client
+
+- **GIVEN** a sandbox client composed with `toolchainSource: "image"` and an agent deps bag with no toolchain field
+- **WHEN** a sandbox agent is composed
+- **THEN** its orient core states that an acquisition is a host action
 
 #### Scenario: The absent field keeps the legacy environment
 

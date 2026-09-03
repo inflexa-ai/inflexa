@@ -173,6 +173,7 @@ function makeSandbox(args: {
     const teardowns: string[] = [];
     const ref: SandboxRef = { sandboxId: "sbx-derive-1", host: "127.0.0.1", port: 8765, backend: "docker", callbackSecret: "base64:secret" };
     const client = {
+        toolchainSource: "store" as const,
         createSandbox(meta: CreateSandboxMeta): Promise<SandboxRef> {
             creates.push(meta);
             return Promise.resolve(ref);

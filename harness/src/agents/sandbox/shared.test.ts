@@ -343,10 +343,11 @@ describe("createSandboxAgent — the farm-extension seam", () => {
 });
 
 describe("createSandboxAgent — the toolchain keying of the orient core", () => {
-    it("the absent field keeps the legacy orient core byte-identical", () => {
-        expect(sandboxOrientCorePromptFor(undefined)).toBe(sandboxOrientCorePrompt);
+    it("the store toolchain keeps the legacy orient core byte-identical", () => {
         expect(sandboxOrientCorePromptFor("store")).toBe(sandboxOrientCorePrompt);
 
+        // The fixture client declares "store", the value the factory gives an
+        // embedder that declares nothing.
         const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
         expect(def.systemPrompt).toContain(sandboxOrientCorePrompt.trim());
     });
@@ -357,7 +358,11 @@ describe("createSandboxAgent — the toolchain keying of the orient core", () =>
         expect(image).toContain("An acquisition of a new package is a host action");
         expect(image).toContain("report it as missing");
 
-        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), toolchainSource: "image" }, meta, body);
+        // The bag carries no toolchain field: the composition reads the value
+        // of the client, thus the text and the environment cannot disagree.
+        const deps = makeFakeSandboxAgentDeps();
+        const def = createSandboxAgent({ ...deps, sandboxClient: { ...deps.sandboxClient, toolchainSource: "image" } }, meta, body);
         expect(def.systemPrompt).toContain("An acquisition of a new package is a host action");
+        expect(def.systemPrompt).not.toContain(sandboxOrientCorePrompt.trim());
     });
 });

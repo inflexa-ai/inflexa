@@ -47,6 +47,7 @@ function makeFakeClient(opts: FakeOpts = {}): FakeSandboxClient {
     return {
         submits,
         awaits,
+        toolchainSource: "store",
         async createSandbox(_meta: CreateSandboxMeta) {
             return makeSandboxRef();
         },

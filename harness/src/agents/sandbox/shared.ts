@@ -22,7 +22,7 @@ import type { Pool } from "pg";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { ExtendAnalysisFarm, SandboxRef, ToolchainSource } from "../../sandbox/types.js";
+import type { ExtendAnalysisFarm, SandboxRef } from "../../sandbox/types.js";
 import type { Tool } from "../../tools/define-tool.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { ProvenanceCollector as LineageCollector } from "../../provenance/collector.js";
@@ -144,12 +144,6 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
      * and the package-link prompt layer appends. Without it, neither exists.
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
-    /**
-     * The declared toolchain owner. Keys the orient-core environment text.
-     * Absent keeps the legacy text, thus an old embedder keeps its cached
-     * prompt prefix.
-     */
-    readonly toolchainSource?: ToolchainSource;
 }
 
 /** Per-agent override for the prompt composition and tool surface. */
@@ -310,10 +304,13 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
 export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body: string, opts: SandboxAgentPromptOptions = {}): AgentDefinition {
     const appendStandards = opts.appendAnalysisStepStandards ?? true;
     // The layer order is fixed by the harness-sandbox-agents spec: the agent
-    // body, the orient core keyed on the declared toolchain, the package-link
-    // layer only when the seam is bound, then the step standards.
+    // body, the orient core keyed on the toolchain of the sandbox client, the
+    // package-link layer only when the seam is bound, then the step standards.
+    // The client is the one declaration: the environment it provisions and the
+    // text that describes it come from the same value, thus a bag cannot
+    // describe a toolchain the sandbox does not have.
     const sandboxLayer = [
-        sandboxOrientCorePromptFor(deps.toolchainSource),
+        sandboxOrientCorePromptFor(deps.sandboxClient.toolchainSource),
         ...(deps.extendAnalysisFarm ? [sandboxPackageLinkPrompt] : []),
         ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : []),
     ];

@@ -228,10 +228,11 @@ analysis root, the dataset, and each dependency's output. The prompt MUST be
 a frozen string by the time `runAgent` sees it — there is no request-time
 processor pipeline.
 
-The orient-core environment section MUST key its text on the declared
-`toolchainSource`. With `"image"` it states that an acquisition is a host
-action and directs the agent to report a missing package. Absent, it keeps
-the legacy text, thus an old embedder keeps its cached prefix.
+The orient-core environment section MUST key its text on the
+`toolchainSource` of the sandbox client, and on no field of the agent deps.
+With `"image"` it states that an acquisition is a host action and directs
+the agent to report a missing package. With `"store"` it keeps the legacy
+text, thus an embedder that declares no toolchain keeps its cached prefix.
 
 #### Scenario: System prompt is a single composed string
 
@@ -248,8 +249,8 @@ the legacy text, thus an old embedder keeps its cached prefix.
 
 #### Scenario: The legacy embedder keeps its prefix
 
-- **GIVEN** a composition with no `toolchainSource` and no bound seam
-- **WHEN** the system prompt is compared with the prompt before this change
+- **GIVEN** a sandbox client composed with no `toolchainSource` and no bound seam
+- **WHEN** the system prompt is compared with the prompt of the legacy embedder
 - **THEN** the orient-core section is unchanged
 
 ### Requirement: Planner catalog derives from the sandbox-agent meta
