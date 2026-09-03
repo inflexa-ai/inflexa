@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import {
+    closeSync,
+    constants,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    openSync,
+    readFileSync,
+    readdirSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+    writeSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
@@ -229,17 +242,24 @@ describe("downloadPackageStore", () => {
         expect(receipt.manifestDigest).toBe(registry.manifestDigest);
         // The receipt is durable, thus the second copy of the store in the blob cache is dropped.
         expect(existsSync(paths.blobs)).toBe(false);
+        // The artifact packs no mountpoint entry, and runc refuses a nested bind without one, thus
+        // the download makes the three entries at the root it landed.
+        for (const entry of ["farm", "current", "cache"]) expect(statSync(join(storeRoot, entry)).isDirectory()).toBe(true);
     });
 
     test("a second download over a valid receipt resolves the manifest and transfers nothing", async () => {
         const storeRoot = tempDir("inflexa-store-dl-");
         const registry = makeRegistry(await catalogLayers(1));
         expectDownloaded((await download(storeRoot, registry))._unsafeUnwrap());
+        // A root that a download landed before the entries existed looks like this one.
+        rmSync(join(storeRoot, "farm"), { recursive: true });
 
         const again = (await download(storeRoot, registry))._unsafeUnwrap();
 
         expect(again).toEqual({ type: "up_to_date", manifestDigest: registry.manifestDigest });
         for (const count of registry.blobGets.values()) expect(count).toBe(1);
+        // The no-op run still owns the root, thus it restores the entry it found missing.
+        for (const entry of ["farm", "current", "cache"]) expect(statSync(join(storeRoot, entry)).isDirectory()).toBe(true);
     });
 
     test("a moved tag reports the update, and it downloads nothing without the consent", async () => {

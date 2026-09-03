@@ -49,6 +49,32 @@ none. Old versions stay until `store reclaim` frees the unreferenced ones.
 - **WHEN** a catalog download merges
 - **THEN** the staged `image-packages.json` moves into the store root
 
+### Requirement: The download makes the mountpoint entries
+
+After a download, the store root MUST hold the empty entries `farm`,
+`current`, and `cache`. The sandbox nests the farm bind and the cache bind
+inside the read-only store bind, and runc refuses to make a mountpoint
+inside a read-only mount, thus a root without the entries refuses every
+sandbox on that engine. The download MUST make the entries after the merge
+and before the receipt. It MUST also make them on a run that finds the
+receipt current, because a root that a download filled before the entries
+existed gets them on its next run. A failure to make an entry MUST warn and
+MUST NOT fail the download, because a crun engine runs without the entries.
+The farm resolver keeps its own call, as the heal for an entry that a user
+removed by hand.
+
+#### Scenario: The first download makes the entries
+
+- **GIVEN** an empty store root
+- **WHEN** a catalog download completes
+- **THEN** the root holds the empty directories `farm`, `current`, and `cache` beside the receipt
+
+#### Scenario: A current store gets the entries on a no-op run
+
+- **GIVEN** a store whose receipt pins the manifest the registry serves, and whose root lacks `farm`
+- **WHEN** `store download` runs
+- **THEN** nothing transfers, and the root holds `farm`, `current`, and `cache`
+
 ### Requirement: A moved tag updates only with consent
 
 A download over a valid receipt MUST resolve the manifest and transfer
