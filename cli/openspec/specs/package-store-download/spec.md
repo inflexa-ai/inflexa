@@ -56,9 +56,9 @@ After a download, the store root MUST hold the empty entries `farm`,
 inside the read-only store bind, and runc refuses to make a mountpoint
 inside a read-only mount, thus a root without the entries refuses every
 sandbox on that engine. The download MUST make the entries after the merge
-and before the receipt. It MUST also make them on a run that finds the
-receipt current, because a root that a download filled before the entries
-existed gets them on its next run. A failure to make an entry MUST warn and
+and before the receipt. It MUST also make them on a run that keeps an
+installed root, current or behind the registry, because a root that a
+download filled before the entries existed gets them on its next run. A failure to make an entry MUST warn and
 MUST NOT fail the download, because a crun engine runs without the entries.
 The farm resolver keeps its own call, as the heal for an entry that a user
 removed by hand.
@@ -74,6 +74,12 @@ removed by hand.
 - **GIVEN** a store whose receipt pins the manifest the registry serves, and whose root lacks `farm`
 - **WHEN** `store download` runs
 - **THEN** nothing transfers, and the root holds `farm`, `current`, and `cache`
+
+#### Scenario: A store behind the registry gets the entries with the report
+
+- **GIVEN** a store whose receipt pins an older manifest than the registry serves, and whose root lacks `farm`
+- **WHEN** `store download` runs without the update consent
+- **THEN** it reports the update, nothing transfers, and the root holds `farm`, `current`, and `cache`
 
 ### Requirement: A moved tag updates only with consent
 

@@ -267,6 +267,9 @@ describe("downloadPackageStore", () => {
         const registryV1 = makeRegistry(await catalogLayers(1));
         expectDownloaded((await download(storeRoot, registryV1))._unsafeUnwrap());
 
+        // A root that a download landed before the entries existed looks like this one.
+        rmSync(join(storeRoot, "farm"), { recursive: true });
+
         const registryV2 = makeRegistry(await catalogLayers(2));
         const outcome = (await download(storeRoot, registryV2))._unsafeUnwrap();
 
@@ -275,6 +278,8 @@ describe("downloadPackageStore", () => {
         // The report applies nothing: the graph and the pool stay at version 1.
         expect(readFileSync(join(storeRoot, "deps.json"), "utf8")).toBe(JSON.stringify({ catalog: 1 }));
         expect(existsSync(join(storeRoot, "store", BETA))).toBe(false);
+        // The run keeps the installed root, thus it restores the entry it found missing.
+        for (const entry of ["farm", "current", "cache"]) expect(statSync(join(storeRoot, entry)).isDirectory()).toBe(true);
     });
 
     test("the update replaces the graph, the image record, and the catalog farm, and keeps each farm of the user", async () => {

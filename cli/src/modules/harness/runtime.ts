@@ -18,6 +18,7 @@ import {
     registerSandboxReaper,
     registerWatchdog,
     sweepEphemeralWorkflows,
+    IMAGE_PACKAGES_FILE,
     type AgentSession,
     type AiSdkProviderConfig,
     type AskGateway,
@@ -753,7 +754,7 @@ async function bootHarnessRuntimeOnce(
     // The path is static, thus the boot stats nothing: the tool re-reads the file per call, so a
     // catalog download that lands mid-session reaches the next call, and a store from before the
     // record merges nothing and leaves the report on the farm tracks alone.
-    const imagePackagesFile = join(env.packageStoreDir, "image-packages.json");
+    const imagePackagesFile = join(env.packageStoreDir, IMAGE_PACKAGES_FILE);
 
     // The local CLI is a POLL-mode embedder: the host polls the sandbox for
     // results, the sandbox initiates nothing, and there is no callback listener to

@@ -28,7 +28,7 @@ import type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, Po
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
-import { readImagePackagesFile, type ImagePackages } from "../../sandbox/image-packages.js";
+import { IMAGE_PACKAGES_FILE, readImagePackagesFile, type ImagePackages } from "../../sandbox/image-packages.js";
 
 /**
  * Where the lock lives when the host mounts the farm at the same path the
@@ -47,7 +47,7 @@ const DEFAULT_FARM_LOCK_FILES = [`${LIBS_CONTAINER_PATH}/farm/inflexa.lock`, `${
  * configuration. A host that reads the store somewhere else injects
  * `imagePackagesFile`.
  */
-const DEFAULT_IMAGE_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/image-packages.json`;
+const DEFAULT_IMAGE_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/${IMAGE_PACKAGES_FILE}`;
 
 /**
  * The two headings that a lock track and the image record can both carry.
