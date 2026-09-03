@@ -588,6 +588,9 @@ export type {
 // farms writes this shape, and the mount gate reads it — one schema, no copy.
 export { FARM_LOCK_FILE, FarmLockSchema, readFarmLock, readFarmLockFile } from "./sandbox/farm.js";
 export type { FarmLock, FarmLockError } from "./sandbox/farm.js";
+// The image record: one file name at the root of the store. An embedder joins
+// it onto its own store root for `imagePackagesFile`.
+export { IMAGE_PACKAGES_FILE } from "./sandbox/image-packages.js";
 // The pool-scope inventory seam: an embedder that binds `readPoolInventory`
 // builds these sections, and `list_available_packages` renders them.
 export type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "./config/environment-stores.js";

@@ -52,6 +52,14 @@ import {
 import { sha256File } from "../../lib/hash.ts";
 import { acquireInstanceLock, releaseInstanceLock, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../lib/lock.ts";
 import type { TransferPhase } from "../../types/store.ts";
+/**
+ * The image inventory record of the catalog, at the store root. The catalog build writes it beside the
+ * graph, and the harness inventory tool reads it from the mounted store root. It rides the update rule
+ * of the graph, because it names the image that the resolved set was proven inside: the graph, the
+ * catalog farm, and this record describe ONE build, thus they move together.
+ */
+import { IMAGE_PACKAGES_FILE } from "@inflexa-ai/harness";
+
 import { CATALOG_FARM, ensureStoreMountpoints } from "./composition.ts";
 import { readTransferReport, spawnDetachedSelf, stopTransferChild, transferLockKey, type TransferReport } from "./transfers.ts";
 
@@ -85,14 +93,6 @@ const METADATA_DIR = ".inflexa-download";
  * because the composition reads the closure of a farm from it (`images/sandbox-provisioner/emit_deps.py`).
  */
 const STORE_GRAPH = "deps.json";
-
-/**
- * The image inventory record of the catalog, at the store root. The catalog build writes it beside the
- * graph, and the harness inventory tool reads it from the mounted store root. It rides the update rule
- * of the graph, because it names the image that the resolved set was proven inside: the graph, the
- * catalog farm, and this record describe ONE build, thus they move together.
- */
-const STORE_IMAGE_RECORD = "image-packages.json";
 
 /** How long the merge waits for the store-level metadata mutex before it reports a conflict. */
 const METADATA_MUTEX_WAIT_MS = 30_000;
@@ -883,7 +883,7 @@ function metadataMutexTimeout(holderPid: number): StoreDownloadError {
 /**
  * Merge one replaceable record of the catalog into the store root, under the metadata mutex.
  *
- * {@link STORE_GRAPH} and {@link STORE_IMAGE_RECORD} both ride this rule. On a plain download the
+ * {@link STORE_GRAPH} and {@link IMAGE_PACKAGES_FILE} both ride this rule. On a plain download the
  * record moves in only when the root carries none, exactly as any other top-level entry does. On
  * `--update` the record of the NEW catalog replaces the record of the old one: the two describe
  * different builds, and a kept record would state what the new catalog never resolved.
@@ -955,7 +955,7 @@ async function mergeStagedRoot(
                 farmsReplaced.push(...merged.replaced);
                 continue;
             }
-            if (name === STORE_GRAPH || name === STORE_IMAGE_RECORD) {
+            if (name === STORE_GRAPH || name === IMAGE_PACKAGES_FILE) {
                 const merged = await mergeReplaceableRecord(name, join(stageRoot, name), to, replacePublisherRecords);
                 if (merged.isErr()) return err(merged.error);
                 continue;
@@ -1138,10 +1138,11 @@ export async function downloadPackageStore(deps: StoreDownloadDeps): Promise<Res
     const receiptRead = await readStoreReceipt(paths.receipt);
     const installed = receiptRead.receipt;
     if (installed !== undefined && deps.force !== true) {
+        // An installed root gets its mountpoint entries on each run that keeps it, current or behind:
+        // a root that a download landed before the entries existed has no other writer, and the
+        // mkdir is idempotent.
+        ensureStoreMountpoints(deps.storeRoot);
         if (installed.manifestDigest === manifest.value.manifestDigest) {
-            // A current root still gets its mountpoint entries: a root that a download landed before
-            // the entries existed has no other writer, and the mkdir is idempotent.
-            ensureStoreMountpoints(deps.storeRoot);
             return ok({ type: "up_to_date", manifestDigest: installed.manifestDigest });
         }
         // A moved `latest` is never applied silently: report it, and the caller asks before it downloads.

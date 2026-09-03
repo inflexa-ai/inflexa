@@ -25,6 +25,13 @@ import { readFileSync } from "node:fs";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+/**
+ * The file name of the record, at the root of the package store. Exported,
+ * as `FARM_LOCK_FILE` is, thus an embedder that joins the path onto its own
+ * store root never spells the name by hand.
+ */
+export const IMAGE_PACKAGES_FILE = "image-packages.json";
+
 /** The image the record describes. The pair of tags shares one version string. */
 export const ImageIdentitySchema = z
     .object({

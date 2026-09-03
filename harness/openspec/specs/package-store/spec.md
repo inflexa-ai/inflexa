@@ -250,7 +250,9 @@ packages that the POOL does not hold.
 The tool MUST merge the image record into either report. The record is
 `image-packages.json` at the store root. The default path MUST be the
 container mountpoint, `/mnt/libs/image-packages.json`, and
-`imagePackagesFile` names another location. The zod schema of the harness
+`imagePackagesFile` names another location. The harness MUST export the
+file name as `IMAGE_PACKAGES_FILE`, thus an embedder joins it onto its own
+store root and never spells the name. The zod schema of the harness
 MUST validate the record at each read, and that schema is the one
 definition of the shape. An absent or invalid record MUST merge nothing,
 and the report MUST stay whole. A `system_tools` entry MUST render under
