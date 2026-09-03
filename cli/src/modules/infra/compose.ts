@@ -30,7 +30,7 @@ import { formatInfraStateError, writeProxyConfig, type InfraStateError } from ".
 // Exported because the one-shot OAuth-login container (setup.ts) must run the SAME pinned build: the
 // login writes the credential file the serving proxy loads, so a version skew between the two could
 // mint a shape the pinned server does not expect.
-export const PROXY_IMAGE = "eceasy/cli-proxy-api:v7.2.90@sha256:6aa1ffb6616bff0b35d76cff89761ee7d54704d33d0c0c4f5ce7f3bffa9d73d2";
+export const PROXY_IMAGE = "eceasy/cli-proxy-api:v7.2.148@sha256:150195d92f3a26459f61e06f36f4f6f6312f267d5a43e4df5629d67369bc672d";
 const PROXY_CONFIG_PATH = "/CLIProxyAPI/config.yaml";
 const PROXY_AUTH_DIR = "/root/.cli-proxy-api";
 

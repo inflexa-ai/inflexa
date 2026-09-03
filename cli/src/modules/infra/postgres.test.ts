@@ -186,7 +186,7 @@ describe("compose file generation", () => {
         const conn = resolvePostgresConfig();
         const cliproxy = generateComposeFile(conn, "cliproxy");
         // The proxy image is pinned by tag+digest and present only in cliproxy mode.
-        expect(cliproxy).toContain("image: eceasy/cli-proxy-api:v7.2.90@sha256:");
+        expect(cliproxy).toContain("image: eceasy/cli-proxy-api:v7.2.148@sha256:");
         expect(cliproxy).toContain("image: pgvector/pgvector:0.8.5-pg18@sha256:");
         // No floating tag in either mode.
         expect(cliproxy).not.toContain(":latest");
