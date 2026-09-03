@@ -207,8 +207,10 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   the embedder. The harness never invents a farm location.
 - **Toolchain source (`toolchainSource`)** — The declared owner of the
   sandbox toolchain: `"image"` (conda at `/opt/conda`, Node at `/opt/node`)
-  or `"store"`, with absent as `"store"`. It keys the resolver env and the
-  orient-core prompt text. The harness never infers its host.
+  or `"store"`, with absent as `"store"`. The sandbox client carries the
+  normalized value, and it keys the resolver env and the orient-core prompt
+  text, which the agent composition reads from the client. The harness never
+  infers its host.
 - **Catalog** — The published default package set that the store download
   delivers, as the farm `farms/catalog` with its prepared caches.
 - **Unpacking** — The phase of the catalog download after the last byte:

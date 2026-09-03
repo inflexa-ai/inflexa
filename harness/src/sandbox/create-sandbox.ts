@@ -226,6 +226,10 @@ export async function precreateStepTree(
 export function createSandboxClient(config: CreateSandboxClientConfig): SandboxClient {
     const backend = config.backend ?? config.env.backend;
     const transport = config.transport ?? "poll";
+    // Normalized once, here, and handed to the backends and to the client
+    // alike: the mount plan and the orient-core prompt then key on one value,
+    // and an absent declaration means "store" on both sides.
+    const toolchainSource: ToolchainSource = config.toolchainSource ?? "store";
 
     // The declared fact needs a gate that can prove it. Each combination below
     // leaves the backend with no gate at all, thus the fact could never be
@@ -277,7 +281,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   libStorePvc: config.libStorePvc,
                   libStorePvcRoot: config.libStorePvcRoot,
                   farmSource: config.farmSource,
-                  toolchainSource: config.toolchainSource,
+                  toolchainSource,
                   packageStore: config.packageStore,
                   refStorePvc: config.refStorePvc,
                   nodeSelector: config.nodeSelector,
@@ -293,7 +297,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                   libStorePath: config.libStorePath,
                   farmSource: config.farmSource,
-                  toolchainSource: config.toolchainSource,
+                  toolchainSource,
                   packageStore: config.packageStore,
                   refStorePath: config.refStorePath,
                   platform: config.platform,
@@ -330,6 +334,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     const isAlive = async (ref: SandboxRef) => unwrapOrThrow((await ops.isAlive(ref)).mapErr(failing));
 
     return {
+        toolchainSource,
         createSandbox: async (meta, identity) => {
             // The config states an engine fact (binds preserve host ownership);
             // which remediation that fact demands — today, a world-writable step

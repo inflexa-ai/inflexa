@@ -389,3 +389,23 @@ describe("createSandboxClient — engine connection threading", () => {
         }
     });
 });
+
+describe("createSandboxClient — the toolchain on the client", () => {
+    const base = {
+        pool: {} as unknown as Pool,
+        env: { backend: "docker" as const, namespace: "" },
+        cortexBaseUrl: "http://127.0.0.1:0",
+        image: "sandbox-base:latest",
+        resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
+        resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+        farmSource: { kind: "fixed", location: { farmPath: "/store/farms/catalog" } } as const,
+    };
+
+    test("an absent declaration reads as store on the client", () => {
+        expect(createSandboxClient(base).toolchainSource).toBe("store");
+    });
+
+    test("the declared image toolchain reaches the client", () => {
+        expect(createSandboxClient({ ...base, toolchainSource: "image" }).toolchainSource).toBe("image");
+    });
+});
