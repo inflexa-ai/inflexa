@@ -1445,8 +1445,14 @@ export function catalogFarmPath(storeRoot: string): string {
  * `farm` serves the image toolchain, and `current` serves the old images
  * (see farmContainerPath in the harness mount plan). A failure only warns,
  * because a crun engine runs without the entries.
+ *
+ * The writer of a store root owns its mountpoints: the catalog download makes
+ * the entries when it lands a root, because the published artifact carries
+ * none and a consumer that only downloads has no other writer. The farm
+ * resolver makes them again at sandbox create, as the heal for an entry that
+ * a user removed by hand.
  */
-function ensureStoreMountpoints(storeRoot: string): void {
+export function ensureStoreMountpoints(storeRoot: string): void {
     for (const entry of ["farm", "current", "cache"] as const) {
         try {
             mkdirSync(join(storeRoot, entry), { recursive: true });

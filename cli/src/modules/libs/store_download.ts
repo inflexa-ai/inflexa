@@ -52,7 +52,7 @@ import {
 import { sha256File } from "../../lib/hash.ts";
 import { acquireInstanceLock, releaseInstanceLock, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../lib/lock.ts";
 import type { TransferPhase } from "../../types/store.ts";
-import { CATALOG_FARM } from "./composition.ts";
+import { CATALOG_FARM, ensureStoreMountpoints } from "./composition.ts";
 import { readTransferReport, spawnDetachedSelf, stopTransferChild, transferLockKey, type TransferReport } from "./transfers.ts";
 
 /** The registry host the store publishes to. */
@@ -1138,7 +1138,12 @@ export async function downloadPackageStore(deps: StoreDownloadDeps): Promise<Res
     const receiptRead = await readStoreReceipt(paths.receipt);
     const installed = receiptRead.receipt;
     if (installed !== undefined && deps.force !== true) {
-        if (installed.manifestDigest === manifest.value.manifestDigest) return ok({ type: "up_to_date", manifestDigest: installed.manifestDigest });
+        if (installed.manifestDigest === manifest.value.manifestDigest) {
+            // A current root still gets its mountpoint entries: a root that a download landed before
+            // the entries existed has no other writer, and the mkdir is idempotent.
+            ensureStoreMountpoints(deps.storeRoot);
+            return ok({ type: "up_to_date", manifestDigest: installed.manifestDigest });
+        }
         // A moved `latest` is never applied silently: report it, and the caller asks before it downloads.
         return ok({ type: "update_available", installedDigest: installed.manifestDigest, latestDigest: manifest.value.manifestDigest });
     }
@@ -1165,6 +1170,10 @@ export async function downloadPackageStore(deps: StoreDownloadDeps): Promise<Res
     // graph: the new catalog resolved a different set, and the two graphs must not merge.
     const staged = await stageAndMerge(deps.storeRoot, paths, manifest.value.layers, attemptId, deps.force === true, bounds, deps.onProgress);
     if (staged.isErr()) return err(staged.error);
+
+    // Before the receipt, thus a root that reads back as installed holds the entries that a runc
+    // engine needs for the nested farm and cache binds. The artifact packs none of them.
+    ensureStoreMountpoints(deps.storeRoot);
 
     const receipt: StoreReceipt = {
         version: RECEIPT_VERSION,
