@@ -567,6 +567,10 @@ export type { ResolveWorkspaceRoot } from "./workspace/paths.js";
 export { createSandboxClient } from "./sandbox/create-sandbox.js";
 export type { CreateSandboxClientConfig, SandboxBackendConfig } from "./sandbox/create-sandbox.js";
 export type { SandboxClient } from "./sandbox/client.js";
+// The throw of the client seam. An embedder matches the class and reads the
+// typed variant on `error`, instead of a string match on the message.
+export { describeSandboxError, SandboxFailure } from "./sandbox/sandbox-error.js";
+export type { SandboxError } from "./sandbox/sandbox-error.js";
 // Package-store seams. `FarmSource` is a required backend config field: the
 // embedder names where the farm of an analysis comes from. `ExtendAnalysisFarm`
 // is the optional link seam behind the `link_packages` tool.

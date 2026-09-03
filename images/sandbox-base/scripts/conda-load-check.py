@@ -3,7 +3,10 @@
 
 The probe decides presence: a manifest tool whose binary resolves on PATH
 goes into the fragment, and a tool that does not resolve drops with a log
-line. Zero recorded tools fail the build.
+line. Zero recorded tools fail the build. A tool on PATH whose package has
+no version in the prefix fails the build too. The manifest then names a
+package that the prefix does not hold, and a silent drop would narrow the
+advertised set with no signal.
 
 The probe reads the BINARY name, not the raw manifest entry. An entry can
 carry a conda pin (`samtools=1.22.1`), and a package can install its
@@ -87,6 +90,7 @@ def main():
 
     tools = []
     dropped = []
+    unversioned = []
     for name in sorted(set(names)):
         binary = binaries.get(name, name)
         if shutil.which(binary) is None:
@@ -95,14 +99,26 @@ def main():
             continue
         version = versions.get(name)
         if version is None:
-            print(f"DROP: {binary} has no version in the prefix {args.prefix}")
-            dropped.append(binary)
+            print(
+                f"ERROR: {binary} is on PATH, but the package {name} has no "
+                f"version in the prefix {args.prefix}",
+                file=sys.stderr,
+            )
+            unversioned.append(name)
             continue
         entry = {"name": name, "version": version}
         if binary != name:
             entry["executable"] = binary
         print(f"  OK: {binary} {version}")
         tools.append(entry)
+
+    if unversioned:
+        print(
+            "ERROR: the manifest names package(s) that the prefix does not "
+            "hold: " + " ".join(unversioned) + " — failing the build.",
+            file=sys.stderr,
+        )
+        return 1
 
     with open(args.out, "w") as f:
         json.dump(tools, f, indent=2)
