@@ -43,6 +43,54 @@ describe("queryPackages — names (presence check)", () => {
     });
 });
 
+describe("queryPackages — the two tracks of one name", () => {
+    // One spelling in both tracks: a plan entry of `igraph` cannot say which
+    // package it means, thus the census must answer both and mark the rows.
+    const BOTH_TRACKS: Section[] = [
+        {
+            title: "Python (pip)",
+            packages: [
+                { name: "igraph", version: "1.0.0" },
+                { name: "decoupler", version: "2.2.0" },
+            ],
+        },
+        { title: "R (CRAN)", packages: [{ name: "igraph", version: "2.1.4" }] },
+        { title: "R (Bioconductor)", packages: [{ name: "decoupleR", version: "2.17.0" }] },
+    ];
+
+    it("a both-track name answers once for each track", () => {
+        const result = queryPackages(BOTH_TRACKS, { names: ["igraph"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([
+            { requested: "igraph", present: true, name: "igraph", section: "Python (pip)", version: "1.0.0" },
+            { requested: "igraph", present: true, name: "igraph", section: "R (CRAN)", version: "2.1.4" },
+        ]);
+    });
+
+    it("a two-spelling pair answers with both spellings", () => {
+        const result = queryPackages(BOTH_TRACKS, { names: ["decoupler"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([
+            { requested: "decoupler", present: true, name: "decoupler", section: "Python (pip)", version: "2.2.0" },
+            { requested: "decoupler", present: true, name: "decoupleR", section: "R (Bioconductor)", version: "2.17.0" },
+        ]);
+    });
+
+    it("the listing marks a both-track name, and no other row", () => {
+        const result = queryPackages(BOTH_TRACKS, {});
+        if (!result.available || !("total" in result)) throw new Error("expected a listing result");
+
+        expect(result.content).toContain("igraph==1.0.0 [both tracks — write python:igraph or r:igraph]");
+        expect(result.content).toContain("igraph==2.1.4 [both tracks — write python:igraph or r:igraph]");
+        // A two-spelling pair settles itself, thus neither row carries a mark.
+        expect(result.content).toContain("decoupler==2.2.0");
+        expect(result.content).toContain("decoupleR==2.17.0");
+        expect(result.content.match(/both tracks/g)).toHaveLength(2);
+    });
+});
+
 describe("queryPackages — listing", () => {
     it("bounds a no-arg call and reports truthful total/hasMore", () => {
         const result = queryPackages(SECTIONS, { limit: 4 });

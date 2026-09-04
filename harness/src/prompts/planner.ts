@@ -170,6 +170,12 @@ Every step carries a \`packages\` array — the packages its scripts import.
   one exact version (\`"numpy==1.26.4"\`). Never a path, a URL, or a store
   directory — a location is an installer detail, and validation refuses it.
 - An empty array is valid: the step needs nothing beyond the baked toolchain.
+- When the package census shows one name under a Python section AND under an R
+  section, write the prefixed form the census shows: \`"python:igraph"\` or
+  \`"r:igraph"\`. A bare name that both tracks hold refuses the launch, because
+  the pool cannot tell which package you mean.
+- Write a bare name for every other package. The prefix is for a both-track
+  name only.
 - The set is not a promise of completeness. The execution agent can still link a
   missing package mid-step. Name what you know the step imports; do not pad the
   list defensively.

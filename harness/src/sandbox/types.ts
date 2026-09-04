@@ -86,6 +86,28 @@ export interface PackageRequest {
 }
 
 /**
+ * The `by_name` key of one package name, on the shelf of its track.
+ *
+ * Each ecosystem owns its identity rule, and the key obeys the rule of the
+ * track that holds it. PEP 503 defines the equivalence of a Python
+ * distribution name, thus the Python key folds each run of `-`, `_`, and `.`
+ * into one `-` and lowers the case. An R name is case-sensitive at
+ * `library()`, thus the R key is the DESCRIPTION spelling, verbatim.
+ *
+ * One rule for both tracks made `decoupleR` and `decoupler` into one key, and
+ * a lookup of either name then found the key in both tracks. This function is
+ * the one TypeScript home of the rule: `emit_deps.py` holds the matching
+ * Python copy, because the emitter runs inside the provisioner image.
+ *
+ * @param track The ecosystem that holds the name.
+ * @param name The package name, as the caller spells it.
+ * @returns The key that `by_name` of that track carries.
+ */
+export function shelfKey(track: "python" | "r", name: string): string {
+    return track === "python" ? name.replace(/[-_.]+/g, "-").toLowerCase() : name;
+}
+
+/**
  * One outcome per request, index-aligned with the request array.
  *
  * `name` echoes the REQUESTED spelling verbatim, never a normalized form. A

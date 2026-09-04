@@ -36,8 +36,10 @@ export function createLinkPackagesTool(deps: LinkPackagesDeps) {
             "One outcome comes back per request: `linked` (the pool held it, and it is importable now), " +
             "`present` (the farm held it already), " +
             "`absent` (the pool does not hold it — a real answer, and `acquisitionPossible` states whether the host can acquire that ecosystem; report the package as missing, do not retry), " +
-            "`collision` (the request resolves to two store directories — terminal for that package; the `detail` names the two pins and the packages that need each; report it and continue without it), " +
-            "or `unavailable` (the link pass itself could not answer — the `reason` says why; it says nothing about the package's presence, so report the reason and do not re-request packages).",
+            "`collision` (the request resolves to two store directories; the `detail` names the two pins and the packages that need each), " +
+            "or `unavailable` (the link pass itself could not answer — the `reason` says why; it says nothing about the package's presence, so report the reason and do not re-request packages). " +
+            "After a `collision` of one name that BOTH tracks hold, call this tool again for that package with `ecosystem` set to `python` or `r`: the `ecosystem` field exists for this call. " +
+            "A collision is terminal only after that second call also refuses, or when it names two versions of one distribution — then report it and continue without the package.",
         inputSchema: z.object({
             packages: z
                 .array(

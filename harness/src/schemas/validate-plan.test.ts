@@ -162,4 +162,15 @@ describe("validatePlan package entries", () => {
             expect(result.errors.some((e) => e.includes("T1S1") && e.includes(entry) && e.includes("name==version"))).toBe(true);
         }
     });
+
+    it("passes the prefixed form of each ecosystem", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["python:igraph", "r:decoupleR==2.17.0"] })]));
+        expect(result.valid).toBe(true);
+    });
+
+    it("refuses a prefix that is neither python: nor r:, naming the two permitted prefixes", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["bioc:fgsea"] })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("T1S1") && e.includes("bioc:fgsea") && e.includes('"python:"') && e.includes('"r:"'))).toBe(true);
+    });
 });

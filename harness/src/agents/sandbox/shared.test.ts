@@ -268,6 +268,28 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         expect(def.systemPrompt).toContain("Report a package as missing only after");
     });
 
+    it("the layer teaches the ecosystem retry after a two-track collision", () => {
+        // The spec scenario "The layer teaches the ecosystem retry": a
+        // collision of one name that both tracks hold has a remedy, thus the
+        // agent must retry with `ecosystem` before it drops the package.
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
+
+        expect(def.systemPrompt).toContain("call `link_packages` again for that package");
+        expect(def.systemPrompt).toContain("`ecosystem` set to `python` or `r`");
+        expect(def.systemPrompt).toContain("Drop the package only after that second call also refuses");
+    });
+
+    it("the description names the ecosystem retry", () => {
+        // The spec scenario of the same name: the `ecosystem` field exists for
+        // this second call, thus a description that calls every collision
+        // terminal contradicts the field the tool carries.
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
+        const description = def.tools.find((tool) => tool.id === "link_packages")!.description;
+
+        expect(description).toContain("call this tool again for that package with `ecosystem` set");
+        expect(description).toContain("terminal only after that second call also refuses");
+    });
+
     it("the description of list_available_packages stops at absent only when the seam is bound", () => {
         const closedWorld = "only what this tool reports is importable";
         const descriptionOf = (def: ReturnType<typeof createSandboxAgent>): string =>

@@ -247,6 +247,17 @@ describe("describeRequestRefusal", () => {
         // only the requested NAME obeys the echo rule.
         expect(both).toContain("--lang python");
     });
+
+    test("an unknown name renders its suggestion before the store-add ask", () => {
+        // The pool holds `Seurat`, and an R name is case-sensitive. An
+        // acquisition of `seurat` would be needless work, thus the spelling
+        // that links comes first.
+        const refusal = describeRequestRefusal({ type: "unknown_distribution", name: "seurat", suggestion: "Seurat" }, "seurat");
+
+        expect(refusal).toContain('"Seurat"');
+        expect(refusal).toContain("store add seurat");
+        expect(refusal.indexOf('"Seurat"')).toBeLessThan(refusal.indexOf("store add seurat"));
+    });
 });
 
 describe("cancelCatalogTransfer", () => {

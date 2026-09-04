@@ -590,6 +590,10 @@ export type {
     ResolveAnalysisFarm,
     ToolchainSource,
 } from "./sandbox/types.js";
+// The shelf-key rule of the two tracks. An embedder reads `by_name` of the
+// dependency graph with it, thus the host lookup and the graph key never
+// disagree on the identity of a name.
+export { shelfKey } from "./sandbox/types.js";
 // The farm contract: one `inflexa.lock` per farm. An embedder that composes
 // farms writes this shape, and the mount gate reads it — one schema, no copy.
 export { FARM_LOCK_FILE, FarmLockSchema, readFarmLock, readFarmLockFile } from "./sandbox/farm.js";

@@ -144,9 +144,11 @@ HASH_EXCLUDE_SUFFIX = (".pyc", ".nbi", ".nbc")
 # name of its own. Outside a run the token is empty.
 RUN_TOKEN = ""
 
-# The two ecosystems that an acquire spec can name, as the internal prefix
-# format `python:` / `r:`. The prefix never reaches a user surface — the host
-# encodes the ecosystem into it where one is known.
+# The two ecosystems that an acquire spec can name, as the prefix format
+# `python:` / `r:`. The host encodes the ecosystem into it where one is known.
+# The same two words name the track of a package in the plan of an agent, thus
+# the prefix reaches an agent surface. It never reaches a human surface: a
+# person names the ecosystem with the `--lang` option of the host.
 ECOSYSTEMS = ("python", "r")
 
 # The internal spec format of one acquire request.

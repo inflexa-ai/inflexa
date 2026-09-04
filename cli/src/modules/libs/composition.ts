@@ -35,7 +35,7 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { FARM_LOCK_FILE, readFarmLock } from "@inflexa-ai/harness";
+import { FARM_LOCK_FILE, readFarmLock, shelfKey } from "@inflexa-ai/harness";
 import type { FarmLock, FarmResolution, PackageRequest, PackageRequestOutcome } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -55,8 +55,15 @@ const FARMS_DIR = "farms";
 /** The resolved dependency graph, at the store root. `emit_deps.py` publishes it. */
 const GRAPH_NAME = "deps.json";
 
-/** The schema version of the graph that this reader understands. */
-const GRAPH_VERSION = 1;
+/**
+ * The schema version of the graph that this reader understands.
+ *
+ * Version 2 keys the R shelf by the DESCRIPTION spelling, and version 1 keys it
+ * by the PEP 503 fold. A version-2 reader over a version-1 graph misses EVERY R
+ * package, and it gives no other sign. Thus the reader binds to one version, and
+ * a mismatch refuses with the remedy of its direction.
+ */
+export const GRAPH_VERSION = 2;
 
 /**
  * The farm that the published catalog brings. It is the TEMPLATE, never an
@@ -195,7 +202,11 @@ const depsGraphSchema = z.object({
 export type DepsNode = {
     /** Which runtime the store directory serves. */
     readonly track: Track;
-    /** The canonical distribution name, as the emitter minted it. */
+    /**
+     * The name of the package under the identity rule of its track, as the
+     * emitter minted it: the PEP 503 form of a Python distribution, and the
+     * DESCRIPTION spelling of an R package.
+     */
     readonly name: string;
     /** The resolved version, as the emitter minted it. */
     readonly version: string;
@@ -221,8 +232,8 @@ export type DepsGraph = {
     /** One node for each store directory, keyed by the name of that directory. */
     readonly nodes: ReadonlyMap<string, DepsNode>;
     /**
-     * The store directories of each distribution, for each track, keyed by the
-     * canonical name and ordered NEWEST FIRST.
+     * The store directories of each package, for each track, keyed by the
+     * {@link shelfKey} of that track and ordered NEWEST FIRST.
      *
      * The EMITTER settles the order through the `order` strings of the nodes, and
      * the host orders nothing itself. A request that names no version takes the
@@ -414,10 +425,17 @@ export function readDepsGraph(storeRoot: string): Result<DepsGraph, FarmComposit
             return err<DepsGraph, FarmCompositionError>({ type: "graph_unusable", path, detail: "the file is not a dependency graph" });
         }
         if (parsed.version !== GRAPH_VERSION) {
+            // The remedy goes by direction. A lower version on disk is an old
+            // store under a new host, thus the store moves. A higher version on
+            // disk is a new store under an old host, thus the host moves.
+            const remedy =
+                parsed.version < GRAPH_VERSION
+                    ? "run `inflexa store download --update` to replace the store"
+                    : "upgrade `inflexa`, because a newer host wrote this store";
             return err<DepsGraph, FarmCompositionError>({
                 type: "graph_unusable",
                 path,
-                detail: `the graph is version ${parsed.version}, and this reader understands version ${GRAPH_VERSION}`,
+                detail: `the graph is version ${parsed.version}, and this reader understands version ${GRAPH_VERSION} — ${remedy}`,
             });
         }
 
@@ -480,7 +498,10 @@ export function closureOf(graph: DepsGraph, roots: readonly string[]): Result<Re
 export type ResolvedRequest = {
     /** The store directory of the pool, which is a root of a composition. */
     readonly storeDir: string;
-    /** The canonical name of the distribution that the store directory holds. */
+    /**
+     * The identity of the package on its shelf: the PEP 503 form of a Python
+     * distribution, and the DESCRIPTION spelling of an R package.
+     */
     readonly name: string;
     /** The resolved version of that distribution. */
     readonly version: string;
@@ -495,11 +516,17 @@ export type RequestResolutionError =
           readonly type: "unknown_distribution";
           /** The canonical form of the name that the request named. */
           readonly name: string;
+          /**
+           * The one R key of the pool that folds onto this name, when exactly
+           * one does. An R name is case-sensitive, thus `seurat` is not the
+           * package `Seurat`; the suggestion carries the spelling that links.
+           */
+          readonly suggestion?: string;
       }
     | {
           /** The pool holds the name, and it holds no such version of it. */
           readonly type: "unknown_version";
-          /** The canonical form of the name that the request named. */
+          /** The shelf key that answered: the fold on the Python shelf, the request verbatim on the R shelf. */
           readonly name: string;
           /** The version that the request named. */
           readonly version: string;
@@ -521,6 +548,46 @@ export type RequestResolutionError =
       };
 
 /**
+ * The one R key of the pool that folds onto `fold`, when exactly one does.
+ *
+ * The R shelf keys the DESCRIPTION spelling, thus `seurat` reaches nothing while
+ * the pool holds `Seurat`. Two keys that fold alike carry no suggestion, because
+ * a guess between them would send the caller to the wrong package.
+ */
+function foldedRKey(graph: DepsGraph, fold: string): string | undefined {
+    const keys = [...graph.byName.r.keys()].filter((key) => canonicalDistributionName(key) === fold);
+    const [only, second] = keys;
+    return second === undefined ? only : undefined;
+}
+
+/**
+ * The refusal of a name that no shelf answers, with the folded R key as the
+ * suggestion. `withSuggestion` is false for a request that names the Python
+ * ecosystem, because an R spelling is no remedy for a Python request.
+ */
+function unknownDistribution(graph: DepsGraph, fold: string, withSuggestion: boolean): RequestResolutionError {
+    const suggestion = withSuggestion ? foldedRKey(graph, fold) : undefined;
+    return { type: "unknown_distribution", name: fold, ...(suggestion === undefined ? {} : { suggestion }) };
+}
+
+/** The store directory of one shelf key, at the pinned version or at the head of the ordering. */
+function pickFromShelf(graph: DepsGraph, request: PackageRequest, track: Track, key: string): Result<ResolvedRequest, RequestResolutionError> {
+    const candidates = (graph.byName[track].get(key) ?? []).flatMap((storeDir) => {
+        const node = graph.nodes.get(storeDir);
+        return node === undefined ? [] : [{ storeDir, name: key, version: node.version, track }];
+    });
+    const [head] = candidates;
+    if (head === undefined) return err(unknownDistribution(graph, canonicalDistributionName(request.name), track === "r"));
+    if (request.version === undefined) return ok(head);
+
+    const exact = candidates.find((candidate) => candidate.version === request.version);
+    if (exact === undefined) {
+        return err({ type: "unknown_version", name: key, version: request.version, available: candidates.map((candidate) => candidate.version) });
+    }
+    return ok(exact);
+}
+
+/**
  * The store directory of the pool that answers one package request.
  *
  * `store link`, `store add`, and the farm-extension seam of the harness share this
@@ -532,53 +599,78 @@ export type RequestResolutionError =
  * first, because the emitter has the metadata of each ecosystem and the host does
  * not. Thus a request with no version takes the head of that list.
  *
- * A request with no ecosystem searches both tracks. When both tracks hold the
- * name, the lookup refuses with the two candidates — there is no silent
- * Python-first pick.
+ * Each shelf reads under the identity rule of its own track ({@link shelfKey}):
+ * the Python shelf under the PEP 503 fold of the request, and the R shelf under
+ * the request verbatim. A request that names no ecosystem then follows one
+ * precedence ladder:
+ *
+ * 1. The R shelf holds the request, and the request differs from its own fold:
+ *    the R directory. An uppercase letter or a dot comes only from an R spelling.
+ * 2. The R shelf holds the request, and the Python shelf holds the fold: the
+ *    resolution stops as ambiguous, with the two head directories.
+ * 3. The R shelf holds the request: the R directory. An R name that is its own
+ *    fold, such as `dplyr`, reaches its package here.
+ * 4. The Python shelf holds the fold: the Python directory.
+ * 5. Exactly one R key folds onto the fold: unknown, with that key as the
+ *    suggestion.
+ * 6. Otherwise: unknown.
+ *
+ * A silent Python-first pick is a fault, thus step 2 refuses instead of picking.
+ * Step 1 before step 2 is what lets `decoupleR` resolve at all: its fold is
+ * `decoupler`, which the Python shelf holds.
  */
 export function resolvePackageRequest(graph: DepsGraph, request: PackageRequest): Result<ResolvedRequest, RequestResolutionError> {
-    const name = canonicalDistributionName(request.name);
-    const tracks: readonly Track[] = request.ecosystem === undefined ? TRACKS : [request.ecosystem];
+    const fold = canonicalDistributionName(request.name);
+    const holds = (track: Track, key: string): boolean => (graph.byName[track].get(key) ?? []).length > 0;
 
-    const held = tracks.filter((track) => (graph.byName[track].get(name) ?? []).length > 0);
-    const [track, second] = held;
-    if (track === undefined) return err({ type: "unknown_distribution", name });
-    if (second !== undefined) {
-        // `held` preserves the order of TRACKS, thus the pair is Python first.
-        const python = graph.byName[track].get(name)?.[0] as string;
-        const r = graph.byName[second].get(name)?.[0] as string;
-        return err({ type: "ambiguous_ecosystem", name, candidates: [python, r] });
+    // A qualified request reads that shelf only. A miss on the R shelf still
+    // carries the suggestion: the pool can hold the package in another case.
+    if (request.ecosystem !== undefined) {
+        const key = shelfKey(request.ecosystem, request.name);
+        if (holds(request.ecosystem, key)) return pickFromShelf(graph, request, request.ecosystem, key);
+        return err(unknownDistribution(graph, fold, request.ecosystem === "r"));
     }
 
-    const candidates = (graph.byName[track].get(name) ?? []).flatMap((storeDir) => {
-        const node = graph.nodes.get(storeDir);
-        return node === undefined ? [] : [{ storeDir, name, version: node.version, track }];
-    });
-    const [head] = candidates;
-    if (head === undefined) return err({ type: "unknown_distribution", name });
-    if (request.version === undefined) return ok(head);
+    const rKey = shelfKey("r", request.name);
+    const pythonKey = shelfKey("python", request.name);
+    const inR = holds("r", rKey);
+    const inPython = holds("python", pythonKey);
 
-    const exact = candidates.find((candidate) => candidate.version === request.version);
-    if (exact === undefined) {
-        return err({ type: "unknown_version", name, version: request.version, available: candidates.map((candidate) => candidate.version) });
+    if (inR && rKey !== fold) return pickFromShelf(graph, request, "r", rKey);
+    if (inR && inPython) {
+        const python = graph.byName.python.get(pythonKey)?.[0];
+        const r = graph.byName.r.get(rKey)?.[0];
+        // The pair is Python first, because a caller renders the tracks in that
+        // order. A shelf that holds a key holds a head, thus the guard below
+        // never falls through in practice — it stands in for the compiler.
+        if (python !== undefined && r !== undefined) return err({ type: "ambiguous_ecosystem", name: fold, candidates: [python, r] });
     }
-    return ok(exact);
+    if (inR) return pickFromShelf(graph, request, "r", rKey);
+    if (inPython) return pickFromShelf(graph, request, "python", pythonKey);
+    return err(unknownDistribution(graph, fold, true));
 }
 
 /**
  * The canonical form of a distribution name, in the rule of PEP 503: each run of
  * `-`, `_`, and `.` becomes one `-`, and the result is lower case.
  *
- * A store directory carries the canonical name already, and the emitter keys
- * {@link DepsGraph.byName} by that same form. Thus the rule applies to the name that
- * a CALLER gives, so `Typing_Ext` and `typing-ext` reach one pool. An R name reaches
- * the same rule, because a store directory of the R track carries a lowercase name
- * too.
+ * The canonical form is the identity of a PYTHON distribution, and of nothing
+ * else. PEP 503 defines that equivalence, thus `Typing_Ext` and `typing-ext` name
+ * one distribution and reach one pool directory. Two places on the host read it
+ * as an identity: the Python shelf of {@link DepsGraph.byName}, through
+ * {@link shelfKey}, and the flight key of an acquisition, where the flight
+ * carries its own ecosystem and the fold cannot cross a track.
  *
- * This is the one host copy of the rule. The flight key, the pool inventory, and the
- * request resolution each name one distribution, thus each one must agree. The
- * provisioner holds the matching copy (`emit_deps.py`, `canon`), because the graph
- * that it writes carries these names.
+ * An R package has a different identity: the DESCRIPTION spelling, which
+ * {@link shelfKey} keeps verbatim, because `library()` is case-sensitive. The
+ * store DIRECTORY of either track carries the canonical form, because a
+ * directory is an address and not an identity — thus `GO.db` addresses as
+ * `go-db` while it stays `GO.db` on the R shelf, in the pool inventory, and at
+ * an installer.
+ *
+ * This is the one host copy of the rule. The provisioner holds the matching copy
+ * (`emit_deps.py`, `canon`), because the graph that it writes carries these
+ * names.
  */
 export function canonicalDistributionName(name: string): string {
     return name.replace(/[-_.]+/g, "-").toLowerCase();
@@ -1522,12 +1614,28 @@ function acquisitionPossible(): boolean {
 function absentOutcome(request: PackageRequest, failure: RequestResolutionError): PackageRequestOutcome {
     switch (failure.type) {
         case "unknown_distribution":
+            // The suggestion rides in the detail, thus the launch refusal names
+            // the spelling the pool holds before it asks for an acquisition.
+            return {
+                kind: "absent",
+                name: request.name,
+                acquisitionPossible: acquisitionPossible(),
+                ...(failure.suggestion === undefined
+                    ? {}
+                    : { detail: `the pool holds "${failure.suggestion}" — an R package name is case-sensitive, thus the two spellings are two names` }),
+            };
         case "unknown_version":
             return { kind: "absent", name: request.name, acquisitionPossible: acquisitionPossible() };
         case "ambiguous_ecosystem":
-            // The pair is terminal for the request: only its caller can name the
-            // ecosystem. The two store directories ride back as the guidance.
-            return { kind: "collision", name: request.name, storeDirs: failure.candidates };
+            // The caller names the ecosystem to settle it. The detail names the
+            // TRACK of each directory, because two directories of one name can
+            // differ only in the version and the name alone tells them apart.
+            return {
+                kind: "collision",
+                name: request.name,
+                storeDirs: failure.candidates,
+                detail: `the Python track holds ${failure.candidates[0]}, and the R track holds ${failure.candidates[1]}`,
+            };
         default: {
             const unreachable: never = failure;
             throw new Error(`unhandled resolution failure: ${JSON.stringify(unreachable)}`);

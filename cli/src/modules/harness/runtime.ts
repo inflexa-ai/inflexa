@@ -30,6 +30,7 @@ import {
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
     type MachineBudget,
+    type PackageRequestOutcome,
     type Pool,
     type RegisterNotificationSweepDeps,
     type RegisterReaperDeps,
@@ -579,6 +580,28 @@ export function makeReportPageAssetLookup(assetsDir: string): ResolvePageAsset {
         if (file === undefined) throw new Error(`unknown report page asset specifier: ${specifier}`);
         return join(assetsDir, file);
     };
+}
+
+/**
+ * One outcome of the farm-extension seam, with the host remedy of a pool miss
+ * on it. Every other outcome rides through untouched.
+ *
+ * The harness names no remedy by design, thus the launch refusal renders what
+ * this wrapper writes. A host row wins: an acquisition that already runs is the
+ * true state of the name, and "launch again when it lands" is the whole answer.
+ *
+ * An unknown name carries the store-add ask, and the suggestion of the
+ * resolution leads it. The seam sets that suggestion when exactly one R key of
+ * the pool folds onto the request: the pool holds the package under another
+ * spelling, thus an acquisition would be wasted work.
+ */
+export function withPoolMissRemedy(outcome: PackageRequestOutcome): PackageRequestOutcome {
+    if (outcome.kind !== "absent") return outcome;
+    const classified = classifyPoolMiss(outcome.name);
+    const ask = outcome.acquisitionPossible ? `the pool does not hold it — run \`inflexa store add ${outcome.name}\` to acquire it` : undefined;
+    const unknown = [outcome.detail, ask].filter((part) => part !== undefined).join("; ");
+    const detail = classified ?? (unknown === "" ? undefined : unknown);
+    return detail === undefined ? outcome : { ...outcome, detail };
 }
 
 /**
@@ -1137,17 +1160,12 @@ async function bootHarnessRuntimeOnce(
             // recorded reason, or unknown with the store-add remedy — thus the
             // launch refusal tells the agent what to do instead of a bare "the
             // pool does not hold". The harness names no remedy by design, and the
-            // spec puts the exact command on this wrapper.
+            // spec puts the exact command on this wrapper. A host row beats the
+            // resolution: an acquisition that already runs is the true state, and
+            // a spelling suggestion under it would send the agent sideways.
             extendAnalysisFarm: async (id, requests) => {
                 const outcomes = await linkPackagesIntoFarm(env.packageStoreDir, id, requests);
-                return outcomes.map((outcome) => {
-                    if (outcome.kind !== "absent") return outcome;
-                    const classified = classifyPoolMiss(outcome.name);
-                    const detail =
-                        classified ??
-                        (outcome.acquisitionPossible ? `the pool does not hold it — run \`inflexa store add ${outcome.name}\` to acquire it` : undefined);
-                    return detail === undefined ? outcome : { ...outcome, detail };
-                });
+                return outcomes.map(withPoolMissRemedy);
             },
             chrome: {},
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess

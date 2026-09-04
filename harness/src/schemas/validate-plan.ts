@@ -30,6 +30,14 @@ const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
  */
 const RESERVED_STEP_IDS: ReadonlySet<string> = new Set([...STEP_SUBDIRS, SYNTHESIS_STEP_ID]);
 
+/**
+ * The ecosystem prefix of a package entry, as the link pass reads it. The
+ * group holds the word before the colon, thus the validation names an
+ * unknown prefix instead of letting it ride into the pool as part of the
+ * name. A colon is legal in neither ecosystem, thus the form is unambiguous.
+ */
+const PACKAGE_PREFIX = /^([A-Za-z][A-Za-z0-9_.-]*):/;
+
 export interface ValidationResult {
     valid: boolean;
     errors: string[];
@@ -147,13 +155,21 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
     //    array passes, because stored plans from before the field carry none.
     //    The specifier check exists because the link pass splits on `==` only:
     //    an unrefused `numpy>=1.26` becomes a package NAME, and the pool then
-    //    refuses a package it holds.
+    //    refuses a package it holds. The prefix check exists for the same
+    //    reason: the link pass reads `python:` and `r:` only, thus another
+    //    `<word>:` prefix rides into the pool as part of the NAME.
     for (const step of plan.steps) {
         for (const entry of step.packages ?? []) {
+            const prefix = PACKAGE_PREFIX.exec(entry);
             if (/^[.~]|[/\\]|:\/\//.test(entry)) {
                 errors.push(
                     `Step "${step.id}" names a package location "${entry}" — name each package as a requirement ` +
                         `(a bare name, or name==version), never a path, a URL, or a store directory`,
+                );
+            } else if (prefix !== null && prefix[1] !== "python" && prefix[1] !== "r") {
+                errors.push(
+                    `Step "${step.id}" names the ecosystem of "${entry}" with a prefix the link pass cannot read — ` +
+                        `the permitted prefixes are "python:" and "r:", and a bare name searches both tracks`,
                 );
             } else if (/[<>!~]/.test(entry) || (entry.includes("=") && !entry.includes("=="))) {
                 errors.push(

@@ -65,7 +65,12 @@ GRAPH_NAME = "deps.json"
 # A new field keeps this version, because a reader that does not know the field
 # ignores it. Only a change to a field that a reader already reads makes a new
 # version necessary.
-GRAPH_VERSION = 1
+#
+# Version 2 keys the R track by the DESCRIPTION spelling. A version-1 graph keys
+# it in lower case, thus a version-2 reader that reads a version-1 graph misses
+# every R package and gives no other sign. The version turns that silence into
+# one named refusal.
+GRAPH_VERSION = 2
 
 # The packages that the image owns, recorded beside the emitter.
 BASE_PACKAGES_FILE = Path(__file__).with_name("base-packages.json")
@@ -254,10 +259,15 @@ def order_string(track: str, version: str) -> str:
 
 
 def order_by_name(nodes: dict[str, dict]) -> dict[str, dict[str, list[str]]]:
-    """The store directories of each canonical name, newest first, inside a track.
+    """The store directories of each name, newest first, inside a track.
 
-    The track separates the two maps. One canonical name can reach a distribution
-    of each ecosystem, and the two versions of such a pair order under two rules.
+    The key is the IDENTITY of the track, not the canonical name: the PEP 503
+    form for a Python distribution, and the DESCRIPTION spelling for an R
+    package. One rule for both tracks folded `decoupleR` onto `decoupler`, and
+    a lookup then found one key in two tracks.
+
+    The track separates the two maps. One name can still reach a distribution of
+    each ecosystem, and the two versions of such a pair order under two rules.
     The sort reads the `order` string of each node, thus the emitter and a host
     commit order a name identically.
     """
@@ -471,8 +481,12 @@ def collect(store_dirs: list[Path], env: dict[str, str] | None = None) -> dict[s
             continue
         inner = r_package_of(store_dir)
         if inner is not None:
-            name = canon(inner.name)
-            version = dir_version(key, name)
+            # The DESCRIPTION spelling is the identity of an R package, because
+            # `library()` is case-sensitive. The store DIRECTORY keeps the
+            # folded form, because a directory is an address, thus the version
+            # strips against the folded name and never against the identity.
+            name = inner.name
+            version = dir_version(key, canon(inner.name))
             nodes[key] = {
                 "track": "r",
                 "name": name,
@@ -562,8 +576,46 @@ def dangling_edges(nodes: dict[str, dict]) -> list[tuple[str, str]]:
             if edge not in nodes]
 
 
+def folded_r_names(nodes: dict[str, dict]) -> list[str]:
+    """Each R node whose name is not the DESCRIPTION spelling of its package."""
+    return [key for key, node in sorted(nodes.items())
+            if node.get("track") == "r" and node.get("name") != node.get("r_dir")]
+
+
+def both_track_names(nodes: dict[str, dict]) -> list[str]:
+    """Each name that the Python track and the R track hold in ONE spelling."""
+    python = {node["name"] for node in nodes.values() if node.get("track") == "python"}
+    r = {node["name"] for node in nodes.values() if node.get("track") == "r"}
+    return sorted(python & r)
+
+
 def gate(nodes: dict[str, dict]) -> None:
-    """Stop the build when an edge names a node that the graph does not hold."""
+    """Stop the build on a folded R name, and on a dangling edge.
+
+    An R name is case-sensitive at `library()`, thus the name of an R node is
+    its `r_dir`. A node whose name differs from its `r_dir` carries the PEP 503
+    fold, and that fold gives one key to two packages of two ecosystems.
+
+    The gate also REPORTS each name that both tracks hold in one spelling. A
+    plan must qualify such a name with `python:` or `r:`, thus the planner must
+    see the list. The report is a log line, and the run continues.
+    """
+    folded = folded_r_names(nodes)
+    if folded:
+        lines = "\n".join(
+            f"  {key}: name {nodes[key].get('name')!r}, r_dir {nodes[key].get('r_dir')!r}"
+            for key in folded)
+        raise SystemExit(
+            f"[deps] {len(folded)} R node(s) carry a name that is not the DESCRIPTION "
+            f"spelling. `library()` is case-sensitive, thus the name of an R node is "
+            f"its r_dir:\n{lines}")
+
+    shared = both_track_names(nodes)
+    if shared:
+        log("the Python track and the R track hold these names in one spelling, "
+            "thus a plan must name the track of each one as `python:<name>` or "
+            f"`r:<name>`: {', '.join(shared)}")
+
     bad = dangling_edges(nodes)
     if not bad:
         return

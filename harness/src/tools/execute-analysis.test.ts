@@ -623,7 +623,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
     });
 
-    it("two spellings of one name send one request, with the first spelling of the plan", async () => {
+    it("two spellings of one fold send two requests, each with its own spelling", async () => {
         setEnv();
         const spelledPlan = {
             ...planWithPackages,
@@ -654,10 +654,160 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
 
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
 
-        // An outcome echoes the requested spelling, thus the folded key must
-        // not decide it: the first spelling of the plan rides the request.
+        // Two spellings are two identities, thus the union keeps both and the
+        // pool answers each one. An outcome echoes the requested spelling, and
+        // a fold would send a remedy after a package that no repository holds.
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.requests).toEqual([{ name: "Seurat" }]);
+        expect(seamCalls[0]!.requests).toEqual([{ name: "Seurat" }, { name: "seurat" }]);
+    });
+
+    it("a prefixed entry reaches the seam with its ecosystem", async () => {
+        setEnv();
+        const prefixedPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["python:igraph", "r:decoupleR"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["r:igraph", "scanpy"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: prefixedPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const seamCalls: Array<{ requests: Array<{ name: string; ecosystem?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: async (_analysisId, requests) => {
+                seamCalls.push({ requests: [...requests] });
+                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: "1.0.0" }));
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        // Two prefixes of one name make TWO requests: the plan names two
+        // packages. The union groups by the exact spelling, thus the second
+        // request of `igraph` rides beside the first.
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0]!.requests).toEqual([
+            { name: "igraph", ecosystem: "python" },
+            { name: "igraph", ecosystem: "r" },
+            { name: "decoupleR", ecosystem: "r" },
+            { name: "scanpy" },
+        ]);
+    });
+
+    it("two spellings of one fold reach the seam as two bare requests", async () => {
+        setEnv();
+        // `decoupler` is a Python distribution and `decoupleR` is an R package.
+        // A fold of the two would drop one, and the R package would never link.
+        const twoIdentityPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["decoupler"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["decoupleR"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: twoIdentityPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const seamCalls: Array<{ requests: Array<{ name: string; ecosystem?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: async (_analysisId, requests) => {
+                seamCalls.push({ requests: [...requests] });
+                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: "1.0.0" }));
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0]!.requests).toEqual([{ name: "decoupler" }, { name: "decoupleR" }]);
+    });
+
+    it("a prefixed entry absorbs a bare entry of the same name", async () => {
+        setEnv();
+        const absorbingPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["python:igraph"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["igraph"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: absorbingPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const seamCalls: Array<{ requests: Array<{ name: string; ecosystem?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: async (_analysisId, requests) => {
+                seamCalls.push({ requests: [...requests] });
+                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: "1.0.0" }));
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0]!.requests).toEqual([{ name: "igraph", ecosystem: "python" }]);
+    });
+
+    it("a collision refusal names the two store directories and the two prefixed forms", async () => {
+        setEnv();
+        const bareBothTrackPlan = {
+            ...planWithPackages,
+            steps: [{ ...makeStep("step-a"), packages: ["igraph"] }],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: bareBothTrackPlan }],
+        });
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: async (_analysisId, requests) =>
+                requests.map((r) => ({
+                    kind: "collision" as const,
+                    name: r.name,
+                    storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
+                    detail: "python igraph-0.11.9-aaaaaaaa, r igraph-2.1.4-bbbbbbbb",
+                })),
+            executeAnalysisWorkflow: async () => {
+                throw new Error("should not be called");
+            },
+        });
+
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/igraph-0\.11\.9-aaaaaaaa/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/igraph-2\.1\.4-bbbbbbbb/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.toThrow(/python:igraph/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-4"))).rejects.toThrow(/r:igraph/);
+        expect(launches).toHaveLength(0);
     });
 
     it("a realization throw refuses the launch as the one store reason, not as a raw error", async () => {

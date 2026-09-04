@@ -171,7 +171,7 @@ describe("readDepsGraph", () => {
     test("indexes each node by its store-directory name, and it keeps the R inner directory", () => {
         const graph = readDepsGraph(tempStore())._unsafeUnwrap();
 
-        expect(graph.version).toBe(1);
+        expect(graph.version).toBe(2);
         expect(graph.nodes.size).toBe(12);
         expect(graph.nodes.get(BETA)).toEqual({
             track: "python",
@@ -192,13 +192,15 @@ describe("readDepsGraph", () => {
         // The emitter settles the order, thus the reader keeps the list as it arrived.
         expect(graph.byName.python.get("alpha")).toEqual([ALPHA_2, ALPHA]);
         expect(graph.byName.python.get("typing-ext")).toEqual([TYPING]);
-        expect(graph.byName.r.get("rpkga")).toEqual([RPKGA]);
+        // The R shelf keys the DESCRIPTION spelling, thus the key is `Rpkga`.
+        expect(graph.byName.r.get("Rpkga")).toEqual([RPKGA]);
+        expect(graph.byName.r.has("rpkga")).toBe(false);
         expect(graph.byName.python.has("rpkga")).toBe(false);
     });
 
     test("refuses a graph that carries no version ordering", () => {
         const root = tempStore();
-        writeFileSync(join(root, "deps.json"), JSON.stringify({ version: 1, nodes: {} }));
+        writeFileSync(join(root, "deps.json"), JSON.stringify({ version: 2, nodes: {} }));
 
         expect(readDepsGraph(root)._unsafeUnwrapErr().type).toBe("graph_unusable");
     });
@@ -208,7 +210,7 @@ describe("readDepsGraph", () => {
         writeFileSync(
             join(root, "deps.json"),
             JSON.stringify({
-                version: 1,
+                version: 2,
                 nodes: { a: { track: "python", name: "a", version: "1", edges: ["b", "c"] } },
                 by_name: { python: {}, r: {} },
             }),
@@ -223,11 +225,25 @@ describe("readDepsGraph", () => {
         });
     });
 
-    test("refuses a graph of a version that it does not understand", () => {
+    test("refuses a version-1 graph, and it names the store update as the remedy", () => {
         const root = tempStore();
-        writeFileSync(join(root, "deps.json"), JSON.stringify({ version: 2, nodes: {}, by_name: { python: {}, r: {} } }));
+        writeFileSync(join(root, "deps.json"), JSON.stringify({ version: 1, nodes: {}, by_name: { python: {}, r: {} } }));
 
-        expect(readDepsGraph(root)._unsafeUnwrapErr().type).toBe("graph_unusable");
+        const error = readDepsGraph(root)._unsafeUnwrapErr();
+        expect(error.type).toBe("graph_unusable");
+        expect(error.type === "graph_unusable" ? error.detail : "").toContain("version 1");
+        expect(error.type === "graph_unusable" ? error.detail : "").toContain("version 2");
+        expect(error.type === "graph_unusable" ? error.detail : "").toContain("inflexa store download --update");
+    });
+
+    test("refuses a newer graph, and it names the host upgrade as the remedy", () => {
+        const root = tempStore();
+        writeFileSync(join(root, "deps.json"), JSON.stringify({ version: 3, nodes: {}, by_name: { python: {}, r: {} } }));
+
+        const error = readDepsGraph(root)._unsafeUnwrapErr();
+        expect(error.type).toBe("graph_unusable");
+        expect(error.type === "graph_unusable" ? error.detail : "").toContain("version 3");
+        expect(error.type === "graph_unusable" ? error.detail : "").toContain("upgrade `inflexa`");
     });
 
     test("an absent graph is an io failure that names the read", () => {
@@ -261,6 +277,48 @@ describe("closureOf", () => {
 });
 
 // --- The request resolution -------------------------------------------------------
+
+/**
+ * The two collision shapes of the real pool, in one graph.
+ *
+ * `igraph` is ONE spelling in both tracks, thus a bare request is ambiguous.
+ * `decoupler` and `decoupleR` are TWO spellings of one fold, thus each spelling
+ * answers its own track. `Seurat` proves the suggestion, `dplyr` proves that an
+ * R name which is its own fold still resolves, and `pyyaml` proves the fold of a
+ * Python request. The checked-in fixture pool holds none of these.
+ */
+const IGRAPH_PY = "igraph-0.11-00000000000000py";
+const IGRAPH_R = "igraph-2.0-000000000000000r";
+const DECOUPLER_PY = "decoupler-2.2.0-00000000000py2";
+const DECOUPLER_R = "decoupler-2.17.0-000000000r002";
+const SEURAT_R = "seurat-5.1.0-0000000000000sr1";
+const DPLYR_R = "dplyr-1.1.4-0000000000000dp1";
+const PYYAML_PY = "pyyaml-6.0.2-000000000000py3";
+
+function twoTrackStore(): string {
+    const root = mkdtempSync(join(tmpdir(), "inflexa-bothhit-"));
+    created.push(root);
+    writeFileSync(
+        join(root, "deps.json"),
+        JSON.stringify({
+            version: 2,
+            nodes: {
+                [IGRAPH_PY]: { track: "python", name: "igraph", version: "0.11" },
+                [IGRAPH_R]: { track: "r", name: "igraph", version: "2.0", r_dir: "igraph" },
+                [DECOUPLER_PY]: { track: "python", name: "decoupler", version: "2.2.0" },
+                [DECOUPLER_R]: { track: "r", name: "decoupleR", version: "2.17.0", r_dir: "decoupleR" },
+                [SEURAT_R]: { track: "r", name: "Seurat", version: "5.1.0", r_dir: "Seurat" },
+                [DPLYR_R]: { track: "r", name: "dplyr", version: "1.1.4", r_dir: "dplyr" },
+                [PYYAML_PY]: { track: "python", name: "pyyaml", version: "6.0.2" },
+            },
+            by_name: {
+                python: { igraph: [IGRAPH_PY], decoupler: [DECOUPLER_PY], pyyaml: [PYYAML_PY] },
+                r: { igraph: [IGRAPH_R], decoupleR: [DECOUPLER_R], Seurat: [SEURAT_R], dplyr: [DPLYR_R] },
+            },
+        }),
+    );
+    return root;
+}
 
 describe("resolvePackageRequest", () => {
     test("takes the head of the ordering when a request names no version", () => {
@@ -318,39 +376,102 @@ describe("resolvePackageRequest", () => {
 
         expect(resolvePackageRequest(graph, { name: "Rpkga" })._unsafeUnwrap()).toEqual({
             storeDir: RPKGA,
-            name: "rpkga",
+            name: "Rpkga",
             version: "1.0",
             track: "r",
         });
     });
 
     test("a name that both tracks hold stops with the two candidates, and no silent pick exists", () => {
-        // The fixture pool holds no both-hit name, so the graph of this test is its
-        // own: one distribution named `igraph` in each track, which is the real shape
-        // (PyPI and CRAN both serve igraph).
-        const root = mkdtempSync(join(tmpdir(), "inflexa-bothhit-"));
-        created.push(root);
-        writeFileSync(
-            join(root, "deps.json"),
-            JSON.stringify({
-                version: 1,
-                nodes: {
-                    "igraph-0.11-00000000000000py": { track: "python", name: "igraph", version: "0.11" },
-                    "igraph-2.0-000000000000000r": { track: "r", name: "igraph", version: "2.0", r_dir: "igraph" },
-                },
-                by_name: { python: { igraph: ["igraph-0.11-00000000000000py"] }, r: { igraph: ["igraph-2.0-000000000000000r"] } },
-            }),
-        );
-        const graph = readDepsGraph(root)._unsafeUnwrap();
+        const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
 
         expect(resolvePackageRequest(graph, { name: "igraph" })._unsafeUnwrapErr()).toEqual({
             type: "ambiguous_ecosystem",
             name: "igraph",
-            candidates: ["igraph-0.11-00000000000000py", "igraph-2.0-000000000000000r"],
+            candidates: [IGRAPH_PY, IGRAPH_R],
         });
         // The qualifier is what settles it, in either direction.
-        expect(resolvePackageRequest(graph, { name: "igraph", ecosystem: "python" })._unsafeUnwrap().storeDir).toBe("igraph-0.11-00000000000000py");
-        expect(resolvePackageRequest(graph, { name: "igraph", ecosystem: "r" })._unsafeUnwrap().storeDir).toBe("igraph-2.0-000000000000000r");
+        expect(resolvePackageRequest(graph, { name: "igraph", ecosystem: "python" })._unsafeUnwrap().storeDir).toBe(IGRAPH_PY);
+        expect(resolvePackageRequest(graph, { name: "igraph", ecosystem: "r" })._unsafeUnwrap().storeDir).toBe(IGRAPH_R);
+    });
+
+    test("an exact R spelling wins over the Python distribution of its own fold", () => {
+        // `decoupleR` folds onto `decoupler`, which the Python shelf holds. An
+        // uppercase letter comes only from an R spelling, thus the R shelf wins
+        // outright and no ask appears.
+        const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
+
+        expect(resolvePackageRequest(graph, { name: "decoupleR" })._unsafeUnwrap()).toEqual({
+            storeDir: DECOUPLER_R,
+            name: "decoupleR",
+            version: "2.17.0",
+            track: "r",
+        });
+    });
+
+    test("a folded Python spelling wins over the R package of the same fold", () => {
+        const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
+
+        expect(resolvePackageRequest(graph, { name: "decoupler" })._unsafeUnwrap()).toEqual({
+            storeDir: DECOUPLER_PY,
+            name: "decoupler",
+            version: "2.2.0",
+            track: "python",
+        });
+    });
+
+    test("an R name that is its own fold still resolves against the R shelf", () => {
+        const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
+
+        expect(resolvePackageRequest(graph, { name: "dplyr" })._unsafeUnwrap().storeDir).toBe(DPLYR_R);
+    });
+
+    test("a folded R spelling is unknown, and the refusal carries the suggestion", () => {
+        const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
+
+        expect(resolvePackageRequest(graph, { name: "seurat" })._unsafeUnwrapErr()).toEqual({
+            type: "unknown_distribution",
+            name: "seurat",
+            suggestion: "Seurat",
+        });
+    });
+
+    test("a Python spelling folds at the lookup, thus PyYAML reaches pyyaml", () => {
+        const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
+
+        expect(resolvePackageRequest(graph, { name: "PyYAML" })._unsafeUnwrap()).toEqual({
+            storeDir: PYYAML_PY,
+            name: "pyyaml",
+            version: "6.0.2",
+            track: "python",
+        });
+    });
+});
+
+describe("linkPackagesIntoFarm — the outcome of a two-track name", () => {
+    test("a same-spelling pair reports a collision whose detail names each track", async () => {
+        const root = twoTrackStore();
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ name: "igraph" }]);
+
+        expect(outcomes).toEqual([
+            {
+                kind: "collision",
+                name: "igraph",
+                storeDirs: [IGRAPH_PY, IGRAPH_R],
+                detail: `the Python track holds ${IGRAPH_PY}, and the R track holds ${IGRAPH_R}`,
+            },
+        ]);
+    });
+
+    test("a folded R spelling reports absent, and its detail carries the suggestion", async () => {
+        const root = twoTrackStore();
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ name: "seurat" }]);
+
+        expect(outcomes).toHaveLength(1);
+        expect(outcomes[0]).toMatchObject({ kind: "absent", name: "seurat", acquisitionPossible: true });
+        expect(outcomes[0]).toHaveProperty("detail", expect.stringContaining("Seurat"));
     });
 });
 

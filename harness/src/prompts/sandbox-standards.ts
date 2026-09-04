@@ -332,8 +332,12 @@ not missing until the pool has answered:
 - \`absent\` is a real answer: the pool does not hold the package. When
   \`acquisitionPossible\` is true, report the package as missing so the host can
   acquire it. Do not retry the link, and do not attempt an install.
-- \`collision\` is terminal for that package: the request resolves to two store
-  directories. Report it and continue without the package.
+- \`collision\` means the request resolved to two store directories. When one
+  name is held by both tracks, call \`link_packages\` again for that package
+  with \`ecosystem\` set to \`python\` or \`r\`.
+- Drop the package only after that second call also refuses. A collision of two
+  versions of one distribution is terminal at once: report it and continue
+  without the package.
 - Report a package as missing only after \`link_packages\` answered \`absent\` or
   \`unavailable\` for it.
 `;
