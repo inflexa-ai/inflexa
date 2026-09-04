@@ -7,6 +7,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
+import { generateText } from "ai";
 import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { ok } from "neverthrow";
@@ -61,14 +63,21 @@ function neverTerminating(): ScriptedProvider {
 }
 
 describe("promptCacheProviderOptions", () => {
-    it("defaults to the 5m ephemeral policy", () => {
+    it("marks every vendor that takes an explicit breakpoint", () => {
         expect(DEFAULT_PROMPT_CACHE).toEqual({ ttl: "5m" });
-        expect(promptCacheProviderOptions(DEFAULT_PROMPT_CACHE)).toEqual(ANTHROPIC_5M);
+        // Both namespaces ride together: a provider reads only its own key, so
+        // the pair costs nothing to whichever one is not serving the call and the
+        // placement never has to know which vendor it is talking to.
+        expect(promptCacheProviderOptions(DEFAULT_PROMPT_CACHE)).toEqual({
+            ...ANTHROPIC_5M,
+            bedrock: { cachePoint: { type: "default", ttl: "5m" } },
+        });
     });
 
-    it("carries the requested ttl through", () => {
+    it("carries the requested ttl through to each vendor", () => {
         expect(promptCacheProviderOptions({ ttl: "1h" })).toEqual({
             anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+            bedrock: { cachePoint: { type: "default", ttl: "1h" } },
         });
     });
 
@@ -151,6 +160,18 @@ describe("withPromptCacheBreakpoint", () => {
         const stale: ModelMessage = { ...userText("old"), providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } };
 
         expect(breakpointsOf(withPromptCacheBreakpoint([stale, userText("new")], DEFAULT_PROMPT_CACHE))).toEqual([1]);
+    });
+
+    it("strips a stale marker in ANY vendor namespace, not only anthropic", () => {
+        // The one-breakpoint invariant is per vendor. A bedrock marker left on an
+        // earlier message spends a Bedrock cache point the harness never budgeted,
+        // and Anthropic's own count would never notice.
+        const stale: ModelMessage = { ...userText("old"), providerOptions: { bedrock: { cachePoint: { type: "default" } } } };
+
+        const marked = withPromptCacheBreakpoint([stale, userText("new")], DEFAULT_PROMPT_CACHE);
+
+        expect(marked[0]?.providerOptions).toEqual({});
+        expect(marked[1]?.providerOptions?.["bedrock"]?.["cachePoint"]).toEqual({ type: "default", ttl: "5m" });
     });
 
     it("keeps the other provider keys of a message it strips", () => {
@@ -446,10 +467,11 @@ describe("prompt caching against an openai-compatible provider", () => {
         expect(result.finish.cappedOut).toBe(false);
 
         // And it never reached the wire — `providerOptions` is a client-side
-        // namespaced bag, so nothing anthropic-shaped appears in the request body.
+        // namespaced bag, so no vendor cache marker appears in the request body.
         expect(bodies).toHaveLength(1);
         expect(JSON.stringify(bodies[0])).not.toContain("cache_control");
         expect(JSON.stringify(bodies[0])).not.toContain("cacheControl");
+        expect(JSON.stringify(bodies[0])).not.toContain("cachePoint");
     });
 
     it("reports openai-family cached tokens on the same neutral usage field", async () => {
@@ -474,5 +496,64 @@ describe("prompt caching against an openai-compatible provider", () => {
         });
         // That family bills no separate cache write.
         expect(reply.usage?.cacheCreationInputTokens).toBeUndefined();
+    });
+});
+
+// ── The Bedrock marker, rendered by the real provider ───────────────
+//
+// The one placement carries a marker for both vendors that need one. Anthropic
+// and Bedrock disagree on more than spelling — Anthropic marks the last content
+// block of the message, Bedrock appends a `cachePoint` block after it — so the
+// only honest check is what the provider actually renders. `@ai-sdk/amazon-bedrock`
+// exports no type for the `cachePoint` value and forwards it to AWS verbatim,
+// thus a wrong shape here would reach the wire unchecked and nothing upstream
+// would catch it.
+
+/** A canned Bedrock Converse response — enough for the provider to parse a reply. */
+function cannedBedrockFetch(seen: Record<string, unknown>[]): typeof fetch {
+    return (async (_input: string | URL | Request, init?: RequestInit) => {
+        seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(
+            JSON.stringify({
+                output: { message: { role: "assistant", content: [{ text: "ok" }] } },
+                stopReason: "end_turn",
+                usage: { inputTokens: 10, outputTokens: 3, totalTokens: 13 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+        );
+    }) as typeof fetch;
+}
+
+describe("the bedrock marker on the wire", () => {
+    /** The content blocks Bedrock renders for the last message of the request. */
+    async function lastMessageBlocks(policy: PromptCachePolicy): Promise<Record<string, unknown>[]> {
+        const bodies: Record<string, unknown>[] = [];
+        const bedrock = createAmazonBedrock({ region: "us-east-1", apiKey: "test-key", fetch: cannedBedrockFetch(bodies) });
+
+        await generateText({
+            model: bedrock("anthropic.claude-sonnet-5"),
+            messages: [...withPromptCacheBreakpoint([userText("first"), assistantText("second"), userText("third")], policy)],
+        });
+
+        const messages = (bodies[0]?.["messages"] ?? []) as { content: Record<string, unknown>[] }[];
+        return messages.at(-1)?.content ?? [];
+    }
+
+    it("appends a cachePoint block after the last message, carrying the ttl", async () => {
+        const blocks = await lastMessageBlocks(DEFAULT_PROMPT_CACHE);
+
+        // Appended AFTER the text, not merged into it — that is Bedrock's shape.
+        expect(blocks.at(-1)).toEqual({ cachePoint: { type: "default", ttl: "5m" } });
+        expect(blocks.at(-2)).toEqual({ text: "third" });
+    });
+
+    it("carries an explicit 1h ttl", async () => {
+        expect((await lastMessageBlocks({ ttl: "1h" })).at(-1)).toEqual({ cachePoint: { type: "default", ttl: "1h" } });
+    });
+
+    it("renders no cachePoint at all when caching is off", async () => {
+        const blocks = await lastMessageBlocks("off" as PromptCachePolicy);
+
+        expect(blocks.some((b) => "cachePoint" in b)).toBe(false);
     });
 });

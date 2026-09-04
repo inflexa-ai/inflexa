@@ -1,3 +1,9 @@
+## 0. Vendors
+
+- [x] 0.1 Add `@ai-sdk/amazon-bedrock` as a dev dependency of the harness
+- [x] 0.2 Emit `bedrock.cachePoint` beside `anthropic.cacheControl`, each with the ttl of the policy
+- [x] 0.3 Bind the emitted shapes with `satisfies`, thus a renamed key breaks the build
+
 ## 1. Placement
 
 - [x] 1.1 Add `withPromptCacheBreakpoint(messages, policy)` to `src/providers/prompt-cache.ts`
@@ -18,6 +24,8 @@
 - [x] 3.2 Loop tests for the per-call placement, the roll-forward, and the unmarked result
 - [x] 3.3 A regression test that no call carries a request-level directive
 - [x] 3.4 Point the Anthropic caching integration test at the new placement
+- [x] 3.5 Render the bedrock marker through the real provider, and assert the `cachePoint` block and its ttl
+- [x] 3.6 Assert that the strip covers a stale marker of any vendor namespace
 
 ## 4. Verify
 

@@ -9,8 +9,19 @@ cache directive at all.
 
 `providers/prompt-cache.ts` MUST be the ONLY place in the harness that names a
 vendor for caching. `promptCacheProviderOptions(policy)` MUST return `undefined`
-for `"off"`. For each other policy it MUST return one `cacheControl` directive in
-the namespace of the provider.
+for `"off"`. For each other policy it MUST return one directive for each vendor
+that takes an explicit breakpoint, each in the namespace of that vendor:
+`anthropic.cacheControl` and `bedrock.cachePoint`. Both directives MUST carry the
+ttl of the policy.
+
+A provider reads only its own namespace, thus the directive of one vendor is
+inert on another. As a result the placement never learns which vendor serves the
+call. A vendor that caches without a marker gets none: the OpenAI family caches
+prefixes server-side and exposes no breakpoint, and Gemini caches implicitly.
+
+The two shapes differ in more than the name. Anthropic marks the last content
+block of the message. Bedrock appends a `cachePoint` block after it. Both land at
+the same position of the prefix.
 
 `withPromptCacheBreakpoint(messages, policy)` MUST place that directive, and it
 MUST be the only writer of one. It MUST put the directive on the LAST message that
@@ -51,10 +62,22 @@ OpenAI-compatible family does server-side prefix caching, unprompted.
 - **WHEN** `promptCacheProviderOptions("off")` is called
 - **THEN** it MUST return `undefined`, and the request MUST carry no `providerOptions`
 
-#### Scenario: A ttl policy emits one namespaced cache directive
+#### Scenario: A ttl policy emits one directive for each marker vendor
 
 - **WHEN** `promptCacheProviderOptions({ ttl: "1h" })` is called
-- **THEN** it MUST return a single provider-namespaced `cacheControl` directive that carries that ttl
+- **THEN** it MUST return `anthropic.cacheControl` and `bedrock.cachePoint`, and each one MUST carry that ttl
+
+#### Scenario: The bedrock marker reaches the wire in the shape of that vendor
+
+- **GIVEN** a transcript that `withPromptCacheBreakpoint` marked with a ttl policy
+- **WHEN** the Bedrock provider renders the request
+- **THEN** a `cachePoint` block MUST come after the content of the last message, and it MUST carry the ttl
+
+#### Scenario: A marker of another vendor is removed from an earlier message
+
+- **GIVEN** a transcript whose first message carries a `bedrock.cachePoint` directive
+- **WHEN** `withPromptCacheBreakpoint` is called with a ttl policy
+- **THEN** the first message MUST lose that directive, because the one-breakpoint invariant holds per vendor
 
 #### Scenario: The breakpoint goes on the last message
 
