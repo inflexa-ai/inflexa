@@ -56,7 +56,9 @@ takes the query.
 The flight id is `<track or any>::<spelling>::<specifier>`. The two
 request tables hold `spelling`, `ecosystem`, and `specifier`. Migration 10
 rebuilds both tables, and it fills `spelling` from `raw_name`, or from
-`name` when `raw_name` is null. The dedupe compares the three columns.
+`name` when `raw_name` is null. It mints each flight id again from that
+spelling. A kept id holds the fold, thus the next claim of the same spec
+misses its row. The dedupe compares the three columns.
 Two spellings of one fold are two rows, because they are two queries.
 
 Alternative: keep the folded `name` column beside `spelling`. Rejected,
@@ -66,7 +68,13 @@ because a folded column is the fourth copy of the fold, in SQL.
 
 `classifyPoolMiss(query)` matches a row by identity when both carry a
 track. It matches by spelling when neither carries a track. A Python flight for `seurat` and an R
-query for `Seurat` do not match, because their identities differ.
+query for `Seurat` do not match, because their identities differ. A pair
+with one track only matches nothing, because the side that names no track
+stands for both ecosystems.
+
+Alternative: match a one-sided pair by spelling. Rejected, because a bare
+`numpy` flight would then answer an `r:numpy` miss, which is the fault
+that this change removes.
 
 ### D5. The command surface parses a query and keeps its flags
 

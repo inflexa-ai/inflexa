@@ -40,14 +40,16 @@ A launch whose plan packages cannot link MUST refuse before the run
 reserves anything — the harness link pass is that gate. The remedy text of
 the refusal MUST classify each missing spelling against the host rows. A
 row matches a miss by identity when both carry a track. It matches by
-spelling when neither carries a track. A
-match with a pending add or a live flight reads as in flight, with
-"launch again when it lands". A match with a failed row carries the
-recorded reason, with the retry and the delete remedies. An unknown
-spelling carries the store-add ask. When the resolution carries a
-suggestion, the remedy MUST name its spelling before the store-add ask.
-The pool holds the package under that spelling. Thus the agent replans from the true state, and no run is
-wasted on a package that never landed.
+spelling when neither carries a track. A pair in which only one side
+carries a track matches nothing, because the side that names no track
+stands for both ecosystems. A match with a pending add or a live flight
+reads as in flight, with "launch again when it lands". A match with a
+failed row carries the recorded reason, with the retry and the delete
+remedies. An unknown spelling carries the store-add ask. When the
+resolution carries a suggestion, the remedy MUST name its spelling before
+the store-add ask. The pool holds the package under that spelling. Thus
+the agent replans from the true state, and no run is wasted on a package
+that never landed.
 
 A version collision MUST name the two store directories and the closure
 members that pull each side. The dependent is the remedy surface: the fix

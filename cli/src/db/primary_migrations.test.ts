@@ -328,11 +328,16 @@ describe("migration 10 — one spelling for each request", () => {
 
         expect(db.query<{ spelling: string }, []>("SELECT spelling FROM pending_store_adds").get()?.spelling).toBe("GO.db");
         expect(db.query<{ spelling: string }, []>("SELECT spelling FROM package_store_flights").get()?.spelling).toBe("GO.db");
+        // The id IS the key, and the key carries the spelling. A kept `r::go-db::`
+        // would miss the next claim of `GO.db`, and a second row would run beside
+        // this one.
+        expect(db.query<{ id: string }, []>("SELECT id FROM package_store_flights").get()?.id).toBe("r::GO.db::");
         // No folded column survives: the fold left the SQL with this rebuild.
         expect(() => db.run("SELECT name FROM package_store_flights")).toThrow();
         expect(() => db.run("SELECT raw_name FROM pending_store_adds")).toThrow();
-        // The subscription rode the rebuild of its parent, and the CASCADE of
-        // the old parent did not eat it.
+        // The subscription rode the rebuild of its parent onto the new key, and
+        // the CASCADE of the old parent did not eat it.
+        expect(db.query<{ flight_id: string }, []>("SELECT flight_id FROM package_store_flight_subscriptions").get()?.flight_id).toBe("r::GO.db::");
         expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions").get()?.n).toBe(1);
     });
 

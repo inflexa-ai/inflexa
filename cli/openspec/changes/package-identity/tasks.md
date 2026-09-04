@@ -15,10 +15,10 @@
 
 ## 3. The ledger
 
-- [x] 3.1 In `src/db/primary_migrations.ts`, add migration 10: rebuild `pending_store_adds` and `package_store_flights` with `spelling` in place of `name` and `raw_name`, filled from `raw_name` and else from `name`.
+- [x] 3.1 In `src/db/primary_migrations.ts`, add migration 10: rebuild `pending_store_adds` and `package_store_flights` with `spelling` in place of `name` and `raw_name`, filled from `raw_name` and else from `name`. Mint each flight id again from the backfilled spelling, and move the subscriptions onto the new id.
 - [x] 3.2 In `src/types/store.ts`, `src/db/primary_query.ts`, and `src/db/primary_mutation.ts`, replace `name` and `rawName` with `spelling`, and make the dedupe compare the spelling, the specifier, and the track.
 - [x] 3.3 In `src/modules/libs/store_flight.ts`, make the flight id `<track or any>::<spelling>::<specifier>`, make the spec mint take a `PackageQuery`, and make `provisionerSpec` call `formatQuery`.
-- [x] 3.4 In the same file, make `classifyPoolMiss` take a query, and match a row by identity when both carry a track, and by spelling otherwise.
+- [x] 3.4 In the same file, make `classifyPoolMiss` take a query. Match a row by identity when both carry a track, and by spelling when neither carries one. A pair with one track only matches nothing.
 - [x] 3.5 In the same file, resolve a bare edge of the acquisition commit through `identityOf(node.track, edge).name`.
 
 ## 4. The commands and the replay path
