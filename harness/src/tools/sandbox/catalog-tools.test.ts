@@ -5,14 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
-import { createListAvailablePackagesTool, queryPackages, type Section } from "./list-available-packages.js";
+import { createListAvailablePackagesTool, queryPackages, type CheckedPackage, type Section } from "./list-available-packages.js";
 
 // The shape every source is normalized into before `queryPackages` sees it:
 // one section per language track, each holding the canonical package names.
+// A package section carries its track as data; the two image sections do not.
 const SECTIONS: Section[] = [
-    { title: "R (CRAN)", packages: [{ name: "Seurat" }, { name: "dplyr" }, { name: "ggplot2" }] },
-    { title: "R (Bioconductor)", packages: [{ name: "DESeq2" }, { name: "edgeR" }, { name: "limma" }] },
-    { title: "Python (pip)", packages: [{ name: "anndata" }, { name: "scanpy" }, { name: "pydeseq2" }] },
+    { title: "R (CRAN)", track: "r", packages: [{ name: "Seurat" }, { name: "dplyr" }, { name: "ggplot2" }] },
+    { title: "R (Bioconductor)", track: "r", packages: [{ name: "DESeq2" }, { name: "edgeR" }, { name: "limma" }] },
+    { title: "Python (pip)", track: "python", packages: [{ name: "anndata" }, { name: "scanpy" }, { name: "pydeseq2" }, { name: "scikit-learn" }] },
     { title: "System tools (CLI)", packages: [{ name: "bcftools" }, { name: "samtools" }] },
     { title: "Node (npm)", packages: [{ name: "typescript" }] },
 ];
@@ -31,14 +32,32 @@ describe("queryPackages — names (presence check)", () => {
         expect(result).not.toHaveProperty("content");
     });
 
-    it("matches case-insensitively but echoes the catalog's canonical spelling", () => {
+    it("a folded R spelling answers absent with the suggestion, exactly as the link answers", () => {
         const result = queryPackages(SECTIONS, { names: ["seurat", "DESEQ2"] });
         if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
 
-        // R names are case-sensitive at `library()` — the caller needs the exact one.
+        // An R name is case-sensitive at `library()`. A lenient census would
+        // report both present, and the link would then refuse the same entry.
         expect(result.checked).toEqual([
-            { requested: "seurat", present: true, name: "Seurat", section: "R (CRAN)" },
-            { requested: "DESEQ2", present: true, name: "DESeq2", section: "R (Bioconductor)" },
+            { requested: "seurat", present: false, suggestion: "Seurat" },
+            { requested: "DESEQ2", present: false, suggestion: "DESeq2" },
+        ]);
+    });
+
+    it("a separator fold reaches the Python package", () => {
+        const result = queryPackages(SECTIONS, { names: ["scikit_learn"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([{ requested: "scikit_learn", present: true, name: "scikit-learn", section: "Python (pip)" }]);
+    });
+
+    it("a system tool matches its rendered name exactly", () => {
+        const result = queryPackages(SECTIONS, { names: ["samtools", "SAMTOOLS"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([
+            { requested: "samtools", present: true, name: "samtools", section: "System tools (CLI)" },
+            { requested: "SAMTOOLS", present: false },
         ]);
     });
 });
@@ -49,13 +68,14 @@ describe("queryPackages — the two tracks of one name", () => {
     const BOTH_TRACKS: Section[] = [
         {
             title: "Python (pip)",
+            track: "python",
             packages: [
                 { name: "igraph", version: "1.0.0" },
                 { name: "decoupler", version: "2.2.0" },
             ],
         },
-        { title: "R (CRAN)", packages: [{ name: "igraph", version: "2.1.4" }] },
-        { title: "R (Bioconductor)", packages: [{ name: "decoupleR", version: "2.17.0" }] },
+        { title: "R (CRAN)", track: "r", packages: [{ name: "igraph", version: "2.1.4" }] },
+        { title: "R (Bioconductor)", track: "r", packages: [{ name: "decoupleR", version: "2.17.0" }] },
     ];
 
     it("a both-track name answers once for each track", () => {
@@ -68,14 +88,20 @@ describe("queryPackages — the two tracks of one name", () => {
         ]);
     });
 
-    it("a two-spelling pair answers with both spellings", () => {
+    it("a folded spelling resolves to its Python identity alone", () => {
         const result = queryPackages(BOTH_TRACKS, { names: ["decoupler"] });
         if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
 
-        expect(result.checked).toEqual([
-            { requested: "decoupler", present: true, name: "decoupler", section: "Python (pip)", version: "2.2.0" },
-            { requested: "decoupler", present: true, name: "decoupleR", section: "R (Bioconductor)", version: "2.17.0" },
-        ]);
+        // `decoupler` and `decoupleR` are two identities. The exact spelling
+        // settles the track, thus one entry comes back for each of them.
+        expect(result.checked).toEqual([{ requested: "decoupler", present: true, name: "decoupler", section: "Python (pip)", version: "2.2.0" }]);
+    });
+
+    it("an exact R spelling resolves to its R identity alone", () => {
+        const result = queryPackages(BOTH_TRACKS, { names: ["decoupleR"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([{ requested: "decoupleR", present: true, name: "decoupleR", section: "R (Bioconductor)", version: "2.17.0" }]);
     });
 
     it("the listing marks a both-track name, and no other row", () => {
@@ -96,7 +122,7 @@ describe("queryPackages — listing", () => {
         const result = queryPackages(SECTIONS, { limit: 4 });
         if (!result.available || !("total" in result)) throw new Error("expected a listing result");
 
-        expect(result.total).toBe(12);
+        expect(result.total).toBe(13);
         expect(result.returned).toBe(4);
         expect(result.hasMore).toBe(true);
         expect(result.content).toContain("Seurat, dplyr, ggplot2");
@@ -108,8 +134,8 @@ describe("queryPackages — listing", () => {
         const result = queryPackages(SECTIONS, {});
         if (!result.available || !("total" in result)) throw new Error("expected a listing result");
 
-        expect(result.total).toBe(12);
-        expect(result.returned).toBe(12);
+        expect(result.total).toBe(13);
+        expect(result.returned).toBe(13);
         expect(result.hasMore).toBe(false);
     });
 
@@ -122,6 +148,22 @@ describe("queryPackages — listing", () => {
         expect(result.content).toContain("R (CRAN)");
         expect(result.content).toContain("R (Bioconductor)");
         expect(result.content).not.toContain("Python (pip)");
+    });
+
+    it("the language filter reads the track of a section, not its title", () => {
+        // A title is display text. A filter that read it would answer a
+        // different set the moment a heading is reworded.
+        const oddTitles: Section[] = [
+            { title: "Bioconductor 3.23", track: "r", packages: [{ name: "limma" }] },
+            { title: "PyPI wheels", track: "python", packages: [{ name: "numpy" }] },
+        ];
+
+        const result = queryPackages(oddTitles, { language: "r" });
+        if (!result.available || !("total" in result)) throw new Error("expected a listing result");
+
+        expect(result.total).toBe(1);
+        expect(result.content).toContain("Bioconductor 3.23");
+        expect(result.content).not.toContain("PyPI wheels");
     });
 
     it("filters by case-insensitive substring query", () => {
@@ -285,7 +327,7 @@ describe("list_available_packages — reading the inventory", () => {
 
         const result = (
             await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({ names: ["echarts"] }, makeToolContext().ctx)
-        )._unsafeUnwrap() as { available: true; checked: { version?: string; storeDir?: string }[] };
+        )._unsafeUnwrap() as { available: true; checked: readonly CheckedPackage[] };
 
         expect(result.checked[0]).toMatchObject({ present: true, name: "echarts", version: "5.4.0", storeDir: "echarts-5.4.0-abcd1234abcd1234" });
     });
@@ -325,6 +367,7 @@ describe("list_available_packages — reading the inventory", () => {
                 sections: [
                     {
                         title: "Python (pip)",
+                        track: "python",
                         packages: [{ name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000", hash: "b".repeat(64) }],
                     },
                 ],
@@ -337,7 +380,7 @@ describe("list_available_packages — reading the inventory", () => {
 
         const checked = (await tool.execute({ names: ["SCIPY"] }, makeToolContext().ctx))._unsafeUnwrap() as {
             available: true;
-            checked: { present: boolean; version?: string; storeDir?: string }[];
+            checked: readonly CheckedPackage[];
         };
         expect(checked.checked[0]).toMatchObject({ present: true, name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000" });
     });

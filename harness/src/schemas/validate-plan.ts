@@ -15,6 +15,7 @@
 import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
 import type { ResourceLimits } from "../config/resource-limits.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
+import { parseQuery, type ParseQueryError } from "../sandbox/package-identity.js";
 import { isSafeId, STEP_SUBDIRS, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
 import type { AnalysisPlan } from "./workflow-state.js";
 
@@ -29,14 +30,6 @@ const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
  * the row's `(run_id, step_id)` primary key (see the harness-workspace-tools spec).
  */
 const RESERVED_STEP_IDS: ReadonlySet<string> = new Set([...STEP_SUBDIRS, SYNTHESIS_STEP_ID]);
-
-/**
- * The ecosystem prefix of a package entry, as the link pass reads it. The
- * group holds the word before the colon, thus the validation names an
- * unknown prefix instead of letting it ride into the pool as part of the
- * name. A colon is legal in neither ecosystem, thus the form is unambiguous.
- */
-const PACKAGE_PREFIX = /^([A-Za-z][A-Za-z0-9_.-]*):/;
 
 export interface ValidationResult {
     valid: boolean;
@@ -53,6 +46,37 @@ export interface ValidatePlanOptions {
      * sandbox-creation clamp remains their backstop).
      */
     readonly perStepCeiling?: ResourceLimits;
+}
+
+/**
+ * One issue for one package entry that does not parse. Each message names the
+ * step and the entry, because a planner corrects the entry it wrote.
+ *
+ * The wording carries the reason of each refusal. A location publishes an
+ * installer detail as an interface. An unknown `<word>:` prefix rides into the
+ * pool as part of the name. A specifier that is not `==` turns a range such as
+ * `numpy>=1.26` into a package name, and the pool then refuses a package that
+ * it holds.
+ */
+function describeParseError(stepId: string, entry: string, error: ParseQueryError): string {
+    switch (error.type) {
+        case "empty":
+            return `Step "${stepId}" names an empty package entry — name each package as a requirement (a bare name, or name==version)`;
+        case "location":
+            return (
+                `Step "${stepId}" names a package location "${entry}" — name each package as a requirement ` +
+                `(a bare name, or name==version), never a path, a URL, or a store directory`
+            );
+        case "unknown_prefix":
+            return (
+                `Step "${stepId}" names the ecosystem of "${entry}" with a prefix the link pass cannot read — ` +
+                `the permitted prefixes are "python:" and "r:", and a bare name searches both tracks`
+            );
+        case "unsupported_specifier":
+            return (
+                `Step "${stepId}" pins "${entry}" with a specifier the link pass cannot honor — ` + `use a bare name, or name==version with one exact version`
+            );
+    }
 }
 
 /** Derive a filesystem-safe output prefix from a step ID. */
@@ -149,34 +173,14 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
         }
     }
 
-    // 6. Package entries are requirements, never locations. A path, a URL, or
-    //    a store directory in a plan would publish an installer detail as an
-    //    interface — the link pass resolves names against the pool. An absent
-    //    array passes, because stored plans from before the field carry none.
-    //    The specifier check exists because the link pass splits on `==` only:
-    //    an unrefused `numpy>=1.26` becomes a package NAME, and the pool then
-    //    refuses a package it holds. The prefix check exists for the same
-    //    reason: the link pass reads `python:` and `r:` only, thus another
-    //    `<word>:` prefix rides into the pool as part of the NAME.
+    // 6. Each package entry is a query of the one grammar. The validation IS
+    //    the parse, thus no second reader of the grammar can disagree with the
+    //    link pass. An absent array passes, because stored plans from before
+    //    the field carry none.
     for (const step of plan.steps) {
         for (const entry of step.packages ?? []) {
-            const prefix = PACKAGE_PREFIX.exec(entry);
-            if (/^[.~]|[/\\]|:\/\//.test(entry)) {
-                errors.push(
-                    `Step "${step.id}" names a package location "${entry}" — name each package as a requirement ` +
-                        `(a bare name, or name==version), never a path, a URL, or a store directory`,
-                );
-            } else if (prefix !== null && prefix[1] !== "python" && prefix[1] !== "r") {
-                errors.push(
-                    `Step "${step.id}" names the ecosystem of "${entry}" with a prefix the link pass cannot read — ` +
-                        `the permitted prefixes are "python:" and "r:", and a bare name searches both tracks`,
-                );
-            } else if (/[<>!~]/.test(entry) || (entry.includes("=") && !entry.includes("=="))) {
-                errors.push(
-                    `Step "${step.id}" pins "${entry}" with a specifier the link pass cannot honor — ` +
-                        `use a bare name, or name==version with one exact version`,
-                );
-            }
+            const parsed = parseQuery(entry);
+            if (parsed.isErr()) errors.push(describeParseError(step.id, entry, parsed.error));
         }
     }
 

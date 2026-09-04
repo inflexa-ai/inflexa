@@ -1,0 +1,60 @@
+{
+  "parse": [
+    {
+      "entry": " r:decoupleR==2.17.0 ",
+      "query": { "spelling": "decoupleR", "track": "r", "version": "2.17.0" }
+    },
+    {
+      "entry": "r:GO.db",
+      "query": { "spelling": "GO.db", "track": "r" }
+    },
+    {
+      "entry": "scanpy",
+      "query": { "spelling": "scanpy" }
+    },
+    {
+      "entry": "numpy==1.26.4",
+      "query": { "spelling": "numpy", "version": "1.26.4" }
+    },
+    {
+      "entry": "python:igraph",
+      "query": { "spelling": "igraph", "track": "python" }
+    },
+    {
+      "entry": "ANCOM-BC2",
+      "query": { "spelling": "ANCOM-BC2" }
+    },
+    { "entry": "", "error": "empty" },
+    { "entry": "   ", "error": "empty" },
+    { "entry": "r:", "error": "empty" },
+    { "entry": "/mnt/libs/store/scanpy-1.12.3-e71bae79", "error": "location" },
+    { "entry": "https://example.com/pkg.whl", "error": "location" },
+    { "entry": "./vendor/pkg", "error": "location" },
+    { "entry": "~/pkg", "error": "location" },
+    { "entry": "owner/repo", "error": "location" },
+    { "entry": " bioc:fgsea", "error": "unknown_prefix", "prefix": "bioc" },
+    { "entry": "git:owner", "error": "unknown_prefix", "prefix": "git" },
+    { "entry": "numpy>=1.26", "error": "unsupported_specifier", "specifier": ">=" },
+    { "entry": "numpy<2", "error": "unsupported_specifier", "specifier": "<" },
+    { "entry": "scanpy~=1.10", "error": "unsupported_specifier", "specifier": "~=" },
+    { "entry": "scanpy!=1.9", "error": "unsupported_specifier", "specifier": "!=" },
+    { "entry": "numpy=1.26", "error": "unsupported_specifier", "specifier": "=" }
+  ],
+  "identity": [
+    { "track": "python", "input": "PyYAML", "name": "pyyaml", "key": "python:pyyaml", "address": "pyyaml" },
+    { "track": "python", "input": "Decoupler", "name": "decoupler", "key": "python:decoupler", "address": "decoupler" },
+    { "track": "python", "input": "scikit_learn", "name": "scikit-learn", "key": "python:scikit-learn", "address": "scikit-learn" },
+    { "track": "python", "input": "Typing_Ext", "name": "typing-ext", "key": "python:typing-ext", "address": "typing-ext" },
+    { "track": "r", "input": "decoupleR", "name": "decoupleR", "key": "r:decoupleR", "address": "decoupler" },
+    { "track": "r", "input": "GO.db", "name": "GO.db", "key": "r:GO.db", "address": "go-db" },
+    { "track": "r", "input": "Seurat", "name": "Seurat", "key": "r:Seurat", "address": "seurat" },
+    { "track": "r", "input": "dplyr", "name": "dplyr", "key": "r:dplyr", "address": "dplyr" }
+  ],
+  "round_trip": [
+    { "query": { "spelling": "igraph", "track": "python", "version": "1.0.0" }, "formatted": "python:igraph==1.0.0" },
+    { "query": { "spelling": "decoupleR", "track": "r" }, "formatted": "r:decoupleR" },
+    { "query": { "spelling": "numpy", "version": "1.26.4" }, "formatted": "numpy==1.26.4" },
+    { "query": { "spelling": "scanpy" }, "formatted": "scanpy" },
+    { "query": { "spelling": "GO.db", "track": "r", "version": "3.21.0" }, "formatted": "r:GO.db==3.21.0" }
+  ]
+}

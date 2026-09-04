@@ -49,6 +49,7 @@ os.environ["LIB_ROOT"] = _IMPORT_ROOT
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import emit_deps  # noqa: E402  (import after LIB_ROOT/sys.path are set up)
+import package_identity  # noqa: E402  (import after LIB_ROOT/sys.path are set up)
 import provision  # noqa: E402  (import after LIB_ROOT/sys.path are set up)
 
 
@@ -339,9 +340,9 @@ class ReclaimTests(StoreTestCase):
         graph = {
             "version": 2,
             "nodes": {
-                keep: {"name": "keep", "version": "1.0", "track": "python", "order": "0001", "imports": [], "entry_points": [], "edges": [], "r_dir": None},
-                drop: {"name": "drop", "version": "2.0", "track": "python", "order": "0002", "imports": [], "entry_points": [], "edges": [], "r_dir": None},
-                ghost: {"name": "ghost", "version": "3.0", "track": "python", "order": "0003", "imports": [], "entry_points": [], "edges": [], "r_dir": None},
+                keep: {"name": "keep", "version": "1.0", "track": "python", "order": "0001", "imports": [], "entry_points": [], "edges": []},
+                drop: {"name": "drop", "version": "2.0", "track": "python", "order": "0002", "imports": [], "entry_points": [], "edges": []},
+                ghost: {"name": "ghost", "version": "3.0", "track": "python", "order": "0003", "imports": [], "entry_points": [], "edges": []},
             },
             "by_name": {"python": {"keep": [keep], "drop": [drop], "ghost": [ghost]}},
         }
@@ -690,29 +691,39 @@ class BiocReleaseTests(StoreTestCase):
 
 
 class SpecParsingTests(StoreTestCase):
-    """The acquire spec format, the location refusals, and the manifest shapes."""
+    """The acquire spec grammar, the location refusals, and the manifest shapes."""
 
-    def test_parse_spec_forms(self):
-        self.assertEqual(provision.parse_spec("python:numpy==1.26.4"),
-                         {"raw": "python:numpy==1.26.4", "name": "numpy",
-                          "version": "1.26.4", "ecosystem": "python"})
-        self.assertEqual(provision.parse_spec("r:limma"),
-                         {"raw": "r:limma", "name": "limma", "version": None,
-                          "ecosystem": "r"})
-        self.assertEqual(provision.parse_spec("igraph")["ecosystem"], None)
+    def test_a_spec_parses_through_the_twin(self):
+        self.assertEqual(package_identity.parse_query("python:numpy==1.26.4"),
+                         package_identity.PackageQuery("numpy", "python", "1.26.4"))
+        self.assertEqual(package_identity.parse_query("r:limma"),
+                         package_identity.PackageQuery("limma", "r", None))
+        self.assertIsNone(package_identity.parse_query("igraph").track)
+        # The dotted R spelling survives the parse, because `library()` is
+        # case-sensitive and the dot is part of the name.
+        self.assertEqual(package_identity.parse_query("r:GO.db==3.21.0"),
+                         package_identity.PackageQuery("GO.db", "r", "3.21.0"))
 
-    def test_reject_off_index(self):
+    def test_the_refusal_of_an_off_index_spec(self):
         # Naming a package is permitted.
         for good in ("numpy", "python:scipy==1.11.4", "r:DESeq2"):
-            self.assertIsNone(provision.reject_off_index(provision.parse_spec(good)))
-        # Naming a location — URL, local path, or artifact filename — refuses.
-        for bad in ("git+https://github.com/x/y", "./dist/pkg", "~/pkg",
-                    "pkg-1.0.tar.gz", "pkg-1.0.zip"):
-            self.assertIsNotNone(provision.reject_off_index(provision.parse_spec(bad)), bad)
+            package_identity.parse_query(good)
+        # Naming a location — a URL or a local path — refuses at the parse.
+        for bad in ("git+https://github.com/x/y", "./dist/pkg", "~/pkg"):
+            with self.assertRaises(package_identity.QueryError, msg=bad) as caught:
+                package_identity.parse_query(bad)
+            self.assertTrue(provision.refusal_reason(caught.exception), bad)
         # A slash names the github or git form, and those tracks are
         # catalog-only.
-        reason = provision.reject_off_index(provision.parse_spec("owner/repo"))
-        self.assertIn("catalog-only", reason)
+        with self.assertRaises(package_identity.QueryError) as caught:
+            package_identity.parse_query("owner/repo")
+        self.assertIn("catalog-only", provision.refusal_reason(caught.exception))
+        # An artifact file is a legal NAME by the grammar. The index policy of
+        # the provisioner refuses it, because a file name carries no hash.
+        for artifact in ("pkg-1.0.tar.gz", "pkg-1.0.zip", "pkg-1.0.whl"):
+            reason = provision.reject_off_index(package_identity.parse_query(artifact))
+            self.assertIn("artifact file", reason or "", artifact)
+        self.assertIsNone(provision.reject_off_index(package_identity.parse_query("numpy")))
 
     def test_manifest_python_specs_reads_both_entry_forms(self):
         manifest = {"python": {"pip": {
@@ -1157,8 +1168,9 @@ class AcquireRunTests(StoreTestCase):
         self.assertEqual(code, 0)
         outcome = report["outcomes"][0]
         self.assertEqual(outcome["outcome"], "both_hit")
-        self.assertEqual([c["ecosystem"] for c in outcome["candidates"]],
-                         ["python", "r"])
+        # The candidates are the two IDENTITIES, thus the host quotes one of
+        # them back at the user and never re-derives a name.
+        self.assertEqual(outcome["candidates"], ["python:igraph", "r:igraph"])
         # Nothing installed: the host asks the user first.
         self.assertEqual(list(provision.STORE.iterdir()), [])
 
@@ -1200,7 +1212,8 @@ class ParallelAcquisitionTests(StoreTestCase):
                 time.sleep(0.001)
             with contextlib.redirect_stdout(io.StringIO()):
                 with provision.store_lock(shared=True):
-                    outcome = provision.acquire_python_spec(provision.parse_spec(spec))
+                    outcome = provision.acquire_python_spec(
+                        package_identity.parse_query(spec), spec)
                     shutil.rmtree(provision.staging_dir("python"), ignore_errors=True)
                     code = 0 if outcome["outcome"] == "acquired" else 3
         except BaseException:                              # noqa: BLE001 (a child reports and exits)
@@ -1261,7 +1274,8 @@ class ParallelAcquisitionTests(StoreTestCase):
         self.compile_by_input = {"bar": BAR_2}
         self.install_tree = dict(BAR_2_TREE)
         with contextlib.redirect_stdout(io.StringIO()):
-            outcome = provision.acquire_python_spec(provision.parse_spec("python:bar"))
+            outcome = provision.acquire_python_spec(
+                package_identity.parse_query("python:bar"), "python:bar")
         self.assertEqual(outcome["outcome"], "acquired")
         # The run died before its report: nothing advertises the bytes.
         self.assertFalse((provision.LIBS / "deps.json").exists())
@@ -1381,7 +1395,8 @@ class DependencyGraphTests(StoreTestCase):
 
     def _python_store_dir(self, name: str, version: str, requires: list[str],
                           scripts: list[str] | None = None) -> Path:
-        store_dir = provision.STORE / f"{provision.canon(name)}-{version}-0000000000000000"
+        address = package_identity.address(package_identity.python_identity(name))
+        store_dir = provision.STORE / f"{address}-{version}-0000000000000000"
         (store_dir / name).mkdir(parents=True)
         (store_dir / name / "__init__.py").write_text("x = 1\n")
         info = store_dir / f"{name}-{version}.dist-info"
@@ -1395,9 +1410,10 @@ class DependencyGraphTests(StoreTestCase):
         return store_dir
 
     def _r_store_dir(self, name: str, version: str) -> Path:
-        # The DIRECTORY carries the canonical form, exactly as the store does:
+        # The DIRECTORY carries the address, exactly as the store does:
         # `GO.db` addresses as `go-db`. The DESCRIPTION carries the identity.
-        store_dir = provision.STORE / f"{provision.canon(name)}-{version}-0000000000000000"
+        address = package_identity.address(package_identity.r_identity(name))
+        store_dir = provision.STORE / f"{address}-{version}-0000000000000000"
         inner = store_dir / name
         (inner / "R").mkdir(parents=True)
         (inner / "DESCRIPTION").write_text(f"Package: {name}\nVersion: {version}\n")
@@ -1455,7 +1471,7 @@ class DependencyGraphTests(StoreTestCase):
         self.assertIn(f"{alpha.name} -> nowhere", str(cm.exception))
         self.assertFalse((provision.LIBS / "deps.json").exists())
 
-    def test_an_r_node_carries_its_inner_directory_and_its_dcf_edges(self):
+    def test_an_r_node_carries_its_identity_name_and_its_dcf_edges(self):
         rcpp = self._r_store_dir("Rcpp", "1.0.13")
         pkg = self._r_store_dir("myRpkg", "1.2.3")
         farm = provision.FARMS / "an1"
@@ -1483,7 +1499,8 @@ class DependencyGraphTests(StoreTestCase):
         self.assertEqual(len(seen), 1)                 # one call for the whole closure
         node = graph["nodes"][pkg.name]
         self.assertEqual(node["track"], "r")
-        self.assertEqual(node["r_dir"], "myRpkg")
+        self.assertNotIn("r_dir", node)
+        self.assertEqual(node["name"], "myRpkg")
         self.assertEqual(node["imports"], ["myRpkg"])
         # R, stats, and MASS belong to the image; only the store package stays.
         self.assertEqual(node["edges"], [rcpp.name])
@@ -1596,7 +1613,7 @@ class DependencyGraphTests(StoreTestCase):
         self.assertEqual(pkg.name, "decoupler-2.17.0-0000000000000000")
         node = graph["nodes"][pkg.name]
         self.assertEqual(node["name"], "decoupleR")
-        self.assertEqual(node["r_dir"], "decoupleR")
+        self.assertNotIn("r_dir", node)
         self.assertIn("decoupleR", graph["by_name"]["r"])
         self.assertNotIn("decoupler", graph["by_name"]["r"])
 
@@ -1609,38 +1626,31 @@ class DependencyGraphTests(StoreTestCase):
         self.assertEqual(graph["nodes"][alpha.name]["name"], "decoupler")
         self.assertIn("decoupler", graph["by_name"]["python"])
 
-    def test_a_go_db_directory_strips_its_version(self):
-        """The directory folds the dot, and the DESCRIPTION keeps it. The
-        version strips against the FOLDED name, thus a dotted R name still
-        reads its version."""
+    def test_a_go_db_directory_addresses_with_a_hyphen(self):
+        """The directory carries the ADDRESS and the DESCRIPTION carries the
+        identity. The version strips against the address, thus a dotted R name
+        still reads its version, and the inner directory keeps the dot."""
         pkg = self._r_store_dir("GO.db", "3.21.0")
         self._stub_r_dcf()
 
         with contextlib.redirect_stdout(io.StringIO()):
             graph = emit_deps.append_store_dirs(provision.LIBS, [pkg])
 
+        identity = package_identity.r_identity("GO.db")
+        self.assertEqual(package_identity.address(identity), "go-db")
+        self.assertEqual(package_identity.key(identity), "r:GO.db")
         self.assertEqual(pkg.name, "go-db-3.21.0-0000000000000000")
+        self.assertTrue((pkg / "GO.db" / "DESCRIPTION").is_file())
         node = graph["nodes"][pkg.name]
         self.assertEqual(node["version"], "3.21.0")
         self.assertEqual(node["name"], "GO.db")
-
-    def test_a_folded_r_name_stops_the_build(self):
-        nodes = {"decoupler-2.17.0-aaaa": {"track": "r", "name": "decoupler",
-                                           "version": "2.17.0", "edges": [],
-                                           "r_dir": "decoupleR"}}
-
-        with self.assertRaises(SystemExit) as cm:
-            emit_deps.gate(nodes)
-
-        self.assertIn("decoupler-2.17.0-aaaa", str(cm.exception))
-        self.assertIn("decoupleR", str(cm.exception))
+        self.assertIn("GO.db", graph["by_name"]["r"])
 
     def test_a_two_spelling_pair_does_not_stop_the_build(self):
         """`biomaRt` and `biomart` are the legitimate state of the two tracks
         after the fix. The gate must pass them."""
         nodes = {"biomart-2.64.0-aaaa": {"track": "r", "name": "biomaRt",
-                                         "version": "2.64.0", "edges": [],
-                                         "r_dir": "biomaRt"},
+                                         "version": "2.64.0", "edges": []},
                  "biomart-0.9.2-bbbb": {"track": "python", "name": "biomart",
                                         "version": "0.9.2", "edges": []}}
 
@@ -1651,8 +1661,7 @@ class DependencyGraphTests(StoreTestCase):
 
     def test_a_same_spelling_both_track_name_is_reported(self):
         nodes = {"igraph-2.1.4-aaaa": {"track": "r", "name": "igraph",
-                                       "version": "2.1.4", "edges": [],
-                                       "r_dir": "igraph"},
+                                       "version": "2.1.4", "edges": []},
                  "igraph-0.11.9-bbbb": {"track": "python", "name": "igraph",
                                         "version": "0.11.9", "edges": []}}
 
@@ -1670,6 +1679,8 @@ class DependencyGraphTests(StoreTestCase):
 
         self.assertEqual(graph["version"], 2)
         self.assertEqual(json.loads((provision.LIBS / "deps.json").read_text())["version"], 2)
+        # Version 2 holds one name per node. `r_dir` was a second copy of it.
+        self.assertTrue(all("r_dir" not in node for node in graph["nodes"].values()))
 
     def test_a_graph_of_another_schema_version_stops_the_run(self):
         graph_path = provision.LIBS / "deps.json"
@@ -1721,7 +1732,7 @@ def container_engine() -> str | None:
 
 
 def image_owned_sets(inventory: dict[str, list[str]]) -> dict[str, set[str]]:
-    return {"python": {emit_deps.canon(name) for name in inventory["python"]},
+    return {"python": {package_identity.python_identity(name).name for name in inventory["python"]},
             "r": set(inventory["r"])}
 
 

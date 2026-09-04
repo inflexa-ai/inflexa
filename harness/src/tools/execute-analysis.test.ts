@@ -540,15 +540,15 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
-        const seamCalls: Array<{ analysisId: string; requests: unknown[] }> = [];
+        const seamCalls: Array<{ analysisId: string; queries: unknown[] }> = [];
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async (analysisId, requests) => {
-                seamCalls.push({ analysisId, requests: [...requests] });
-                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: r.version ?? "1.0.0" }));
+            extendAnalysisFarm: async (analysisId, queries) => {
+                seamCalls.push({ analysisId, queries: [...queries] });
+                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: q.version ?? "1.0.0" }));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("the tool launches via the seam, never calls directly");
@@ -560,7 +560,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         // One call, with the union: "scanpy" appears in two steps and links once.
         expect(seamCalls).toHaveLength(1);
         expect(seamCalls[0]!.analysisId).toBe(ANALYSIS_ID);
-        expect(seamCalls[0]!.requests).toEqual([{ name: "scanpy" }, { name: "numpy", version: "1.26.4" }]);
+        expect(seamCalls[0]!.queries).toEqual([{ spelling: "scanpy" }, { spelling: "numpy", version: "1.26.4" }]);
         expect(launches).toHaveLength(1);
         expect(result.status).toBe("in_progress");
     });
@@ -576,11 +576,11 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
-            extendAnalysisFarm: async (_analysisId, requests) =>
-                requests.map((r) =>
-                    r.name === "scanpy"
-                        ? { kind: "absent" as const, name: r.name, acquisitionPossible: true }
-                        : { kind: "linked" as const, name: r.name, version: "1.0.0" },
+            extendAnalysisFarm: async (_analysisId, queries) =>
+                queries.map((q) =>
+                    q.spelling === "scanpy"
+                        ? { kind: "absent" as const, spelling: q.spelling, acquisitionPossible: true }
+                        : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
                 ),
             executeAnalysisWorkflow: async () => {
                 throw new Error("should not be called");
@@ -609,8 +609,12 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             // The realization reports a store it cannot read the same way for
             // every request; the refusal must carry the reason once and must
             // not name any package as missing.
-            extendAnalysisFarm: async (_analysisId, requests) =>
-                requests.map((r) => ({ kind: "unavailable" as const, name: r.name, reason: "the dependency graph names 1 edge(s) that it does not hold" })),
+            extendAnalysisFarm: async (_analysisId, queries) =>
+                queries.map((q) => ({
+                    kind: "unavailable" as const,
+                    spelling: q.spelling,
+                    reason: "the dependency graph names 1 edge(s) that it does not hold",
+                })),
             executeAnalysisWorkflow: async () => {
                 throw new Error("should not be called");
             },
@@ -637,15 +641,15 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
         const { authorizer } = recordingAuthorizer();
         const { launcher } = fakeLauncher();
-        const seamCalls: Array<{ requests: Array<{ name: string }> }> = [];
+        const seamCalls: Array<{ queries: Array<{ spelling: string }> }> = [];
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async (_analysisId, requests) => {
-                seamCalls.push({ requests: [...requests] });
-                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: "1.0.0" }));
+            extendAnalysisFarm: async (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("unused");
@@ -658,10 +662,10 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         // pool answers each one. An outcome echoes the requested spelling, and
         // a fold would send a remedy after a package that no repository holds.
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.requests).toEqual([{ name: "Seurat" }, { name: "seurat" }]);
+        expect(seamCalls[0]!.queries).toEqual([{ spelling: "Seurat" }, { spelling: "seurat" }]);
     });
 
-    it("a prefixed entry reaches the seam with its ecosystem", async () => {
+    it("a prefixed entry reaches the seam with its track", async () => {
         setEnv();
         const prefixedPlan = {
             ...planWithPackages,
@@ -675,15 +679,15 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
         const { authorizer } = recordingAuthorizer();
         const { launcher } = fakeLauncher();
-        const seamCalls: Array<{ requests: Array<{ name: string; ecosystem?: string }> }> = [];
+        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async (_analysisId, requests) => {
-                seamCalls.push({ requests: [...requests] });
-                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: "1.0.0" }));
+            extendAnalysisFarm: async (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("unused");
@@ -692,15 +696,14 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
 
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
 
-        // Two prefixes of one name make TWO requests: the plan names two
-        // packages. The union groups by the exact spelling, thus the second
-        // request of `igraph` rides beside the first.
+        // Two prefixes of one spelling make TWO queries: the plan names two
+        // packages. The union dedupes equal queries, in first-occurrence order.
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.requests).toEqual([
-            { name: "igraph", ecosystem: "python" },
-            { name: "igraph", ecosystem: "r" },
-            { name: "decoupleR", ecosystem: "r" },
-            { name: "scanpy" },
+        expect(seamCalls[0]!.queries).toEqual([
+            { spelling: "igraph", track: "python" },
+            { spelling: "decoupleR", track: "r" },
+            { spelling: "igraph", track: "r" },
+            { spelling: "scanpy" },
         ]);
     });
 
@@ -720,15 +723,15 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
         const { authorizer } = recordingAuthorizer();
         const { launcher } = fakeLauncher();
-        const seamCalls: Array<{ requests: Array<{ name: string; ecosystem?: string }> }> = [];
+        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async (_analysisId, requests) => {
-                seamCalls.push({ requests: [...requests] });
-                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: "1.0.0" }));
+            extendAnalysisFarm: async (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("unused");
@@ -738,12 +741,50 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
 
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.requests).toEqual([{ name: "decoupler" }, { name: "decoupleR" }]);
+        expect(seamCalls[0]!.queries).toEqual([{ spelling: "decoupler" }, { spelling: "decoupleR" }]);
     });
 
-    it("a prefixed entry absorbs a bare entry of the same name", async () => {
+    it("equal queries make one request", async () => {
         setEnv();
-        const absorbingPlan = {
+        const repeatedPlan = {
+            ...planWithPackages,
+            steps: [
+                { ...makeStep("step-a"), packages: ["scanpy"] },
+                { ...makeStep("step-b", ["step-a"]), packages: ["scanpy"] },
+            ],
+        };
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: repeatedPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: async (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0]!.queries).toEqual([{ spelling: "scanpy" }]);
+    });
+
+    it("a bare entry beside a qualified entry keeps its own refusal", async () => {
+        setEnv();
+        // The union absorbs nothing: the bare entry is its own ask, and the
+        // pool answers it as a collision. An absorption would drop that
+        // refusal, and a wrong track would then link in silence.
+        const mixedPlan = {
             ...planWithPackages,
             steps: [
                 { ...makeStep("step-a"), packages: ["python:igraph"] },
@@ -751,29 +792,36 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             ],
         };
         const { pool } = fakePool({
-            "SELECT plan FROM cortex_plans": [{ plan: absorbingPlan }],
+            "SELECT plan FROM cortex_plans": [{ plan: mixedPlan }],
         });
-        const { authorizer } = recordingAuthorizer();
-        const { launcher } = fakeLauncher();
-        const seamCalls: Array<{ requests: Array<{ name: string; ecosystem?: string }> }> = [];
+        const { launcher, launches } = fakeLauncher();
+        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,
             pool,
             runLauncher: launcher,
-            runAuthorizer: authorizer,
-            extendAnalysisFarm: async (_analysisId, requests) => {
-                seamCalls.push({ requests: [...requests] });
-                return requests.map((r) => ({ kind: "linked" as const, name: r.name, version: "1.0.0" }));
+            runAuthorizer: throwingAuthorizer,
+            extendAnalysisFarm: async (_analysisId, queries) => {
+                seamCalls.push({ queries: [...queries] });
+                return queries.map((q) =>
+                    q.track === undefined
+                        ? {
+                              kind: "collision" as const,
+                              spelling: q.spelling,
+                              storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
+                          }
+                        : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
+                );
             },
             executeAnalysisWorkflow: async () => {
-                throw new Error("unused");
+                throw new Error("should not be called");
             },
         });
 
-        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
-
-        expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.requests).toEqual([{ name: "igraph", ecosystem: "python" }]);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/python:igraph/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/r:igraph/);
+        expect(seamCalls[0]!.queries).toEqual([{ spelling: "igraph", track: "python" }, { spelling: "igraph" }]);
+        expect(launches).toHaveLength(0);
     });
 
     it("a collision refusal names the two store directories and the two prefixed forms", async () => {
@@ -791,10 +839,10 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
-            extendAnalysisFarm: async (_analysisId, requests) =>
-                requests.map((r) => ({
+            extendAnalysisFarm: async (_analysisId, queries) =>
+                queries.map((q) => ({
                     kind: "collision" as const,
-                    name: r.name,
+                    spelling: q.spelling,
                     storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
                     detail: "python igraph-0.11.9-aaaaaaaa, r igraph-2.1.4-bbbbbbbb",
                 })),

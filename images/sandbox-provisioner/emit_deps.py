@@ -3,13 +3,12 @@
 
 The graph is one file at the store root. A node is one store directory, and the
 name of that directory is the key of the node. A node carries its track, its
-canonical name, its version, its import names, its entry points, and, for an R
-package, the name of the inner directory. An edge names another node exactly. The
-graph holds no version range, because pip and pak resolve each constraint at build
-time.
+identity name, its version, its import names, its entry points, and its edges. An
+edge names another node exactly. The graph holds no version range, because pip and
+pak resolve each constraint at build time.
 
 The graph also carries an order. `by_name` holds, for each track and each
-canonical name, the store directories of that name with the newest first. A
+identity name, the store directories of that name with the newest first. A
 consumer that names no version takes the head, and a consumer that names one reads
 the version of each node. A release comes before a pre-release, thus a pre-release
 heads a name only when the pool holds no release of that name.
@@ -55,6 +54,8 @@ from importlib.metadata import Distribution
 from packaging.markers import InvalidMarker, Marker
 from packaging.version import InvalidVersion, Version
 from pathlib import Path
+
+from package_identity import address, identity_of, python_identity, r_identity
 
 # The graph, at the store root. The name is part of the store contract, because a
 # consumer reads the closure from it.
@@ -116,16 +117,6 @@ REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 def log(msg: str) -> None:
     print(f"[deps] {msg}", flush=True)
-
-
-def canon(name: str) -> str:
-    """PEP 503 normalized distribution name.
-
-    provision.py holds the same rule. The emitter keeps its own copy, because
-    provision.py imports the emitter, and an import in the other direction would
-    make a cycle.
-    """
-    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 # --- Environment markers ------------------------------------------------------
@@ -197,10 +188,10 @@ def edge_name(requirement: str, env: dict[str, str]) -> str | None:
 def dir_version(key: str, name: str) -> str:
     """The version that a store-directory name records.
 
-    A store directory is named `<canonical name>-<version>-<hash16>`. The name and
+    A store directory is named `<address>-<version>-<hash16>`. The address and
     the hash carry no ambiguity, but the version can hold a hyphen, because an R
-    version accepts one as a separator. Thus this function removes the known name
-    and the last field only, and it never splits on each hyphen.
+    version accepts one as a separator. Thus this function removes the known
+    address and the last field only, and it never splits on each hyphen.
     """
     rest = key[len(name) + 1:] if key.startswith(f"{name}-") else key
     version, _, _digest = rest.rpartition("-")
@@ -261,10 +252,10 @@ def order_string(track: str, version: str) -> str:
 def order_by_name(nodes: dict[str, dict]) -> dict[str, dict[str, list[str]]]:
     """The store directories of each name, newest first, inside a track.
 
-    The key is the IDENTITY of the track, not the canonical name: the PEP 503
-    form for a Python distribution, and the DESCRIPTION spelling for an R
-    package. One rule for both tracks folded `decoupleR` onto `decoupler`, and
-    a lookup then found one key in two tracks.
+    The key is the IDENTITY name of the track: the PEP 503 fold for a Python
+    distribution, and the DESCRIPTION spelling for an R package. One rule for
+    both tracks folds `decoupleR` onto `decoupler`, and a lookup then finds one
+    key in two tracks.
 
     The track separates the two maps. One name can still reach a distribution of
     each ecosystem, and the two versions of such a pair order under two rules.
@@ -291,7 +282,7 @@ def load_base_packages() -> dict[str, set[str]]:
     except (OSError, ValueError) as exc:
         raise SystemExit(f"[deps] cannot read the base package list {BASE_PACKAGES_FILE}: {exc}")
     return {
-        "python": {canon(name) for name in record.get("python", [])},
+        "python": {python_identity(name).name for name in record.get("python", [])},
         "r": set(record.get("r", [])),
     }
 
@@ -446,8 +437,9 @@ def collect(store_dirs: list[Path], env: dict[str, str] | None = None) -> dict[s
     """One node for each store directory, with each edge resolved inside the set.
 
     A store directory that is neither a Python distribution nor an R package gets
-    no node. Each edge that names no node of the set, and no image-owned package,
-    stays in the graph under its bare name. The gate then names it.
+    no node. A resolved edge names a store directory. Each edge that names no
+    node of the set, and no image-owned package, stays in the graph under its
+    bare name. The gate then names it, and the run stops.
     """
     env = env or marker_environment()
     base = load_base_packages()
@@ -464,17 +456,17 @@ def collect(store_dirs: list[Path], env: dict[str, str] | None = None) -> dict[s
         if info is not None:
             dist = Distribution.at(info)
             fallback, _version = _name_and_version(info)
-            name = canon(_metadata_name(dist) or fallback)
-            version = dir_version(key, name)
+            identity = python_identity(_metadata_name(dist) or fallback)
+            version = dir_version(key, address(identity))
             nodes[key] = {
                 "track": "python",
-                "name": name,
+                "name": identity.name,
                 "version": version,
                 "order": order_string("python", version),
                 "imports": import_names(store_dir, dist),
                 "entry_points": entry_point_names(dist),
             }
-            index["python"][name] = key
+            index["python"][identity.name] = key
             wanted[key] = ("python",
                            [n for n in (edge_name(req, env) for req in _requirements(dist))
                             if n])
@@ -483,20 +475,19 @@ def collect(store_dirs: list[Path], env: dict[str, str] | None = None) -> dict[s
         if inner is not None:
             # The DESCRIPTION spelling is the identity of an R package, because
             # `library()` is case-sensitive. The store DIRECTORY keeps the
-            # folded form, because a directory is an address, thus the version
-            # strips against the folded name and never against the identity.
-            name = inner.name
-            version = dir_version(key, canon(inner.name))
+            # address, thus the version strips against the address and never
+            # against the identity name.
+            identity = r_identity(inner.name)
+            version = dir_version(key, address(identity))
             nodes[key] = {
                 "track": "r",
-                "name": name,
+                "name": identity.name,
                 "version": version,
                 "order": order_string("r", version),
-                "imports": [inner.name],
+                "imports": [identity.name],
                 "entry_points": [],
-                "r_dir": inner.name,
             }
-            index["r"][inner.name] = key
+            index["r"][identity.name] = key
             r_inner[key] = inner
 
     fields = r_fields(sorted(r_inner.values()))
@@ -506,9 +497,10 @@ def collect(store_dirs: list[Path], env: dict[str, str] | None = None) -> dict[s
     for key, (track, names) in wanted.items():
         edges = set()
         for name in names:
-            target = index[track].get(canon(name) if track == "python" else name)
+            target_name = identity_of(track, name).name
+            target = index[track].get(target_name)
             if target is None:
-                if (canon(name) if track == "python" else name) in base[track]:
+                if target_name in base[track]:
                     continue
                 edges.add(name)
             elif target != key:
@@ -576,40 +568,23 @@ def dangling_edges(nodes: dict[str, dict]) -> list[tuple[str, str]]:
             if edge not in nodes]
 
 
-def folded_r_names(nodes: dict[str, dict]) -> list[str]:
-    """Each R node whose name is not the DESCRIPTION spelling of its package."""
-    return [key for key, node in sorted(nodes.items())
-            if node.get("track") == "r" and node.get("name") != node.get("r_dir")]
-
-
 def both_track_names(nodes: dict[str, dict]) -> list[str]:
-    """Each name that the Python track and the R track hold in ONE spelling."""
+    """Each identity name that the Python track and the R track both hold."""
     python = {node["name"] for node in nodes.values() if node.get("track") == "python"}
     r = {node["name"] for node in nodes.values() if node.get("track") == "r"}
     return sorted(python & r)
 
 
 def gate(nodes: dict[str, dict]) -> None:
-    """Stop the build on a folded R name, and on a dangling edge.
+    """Stop the build on a dangling edge, and report each both-track name.
 
-    An R name is case-sensitive at `library()`, thus the name of an R node is
-    its `r_dir`. A node whose name differs from its `r_dir` carries the PEP 503
-    fold, and that fold gives one key to two packages of two ecosystems.
+    A node carries ONE name, its identity name, thus no field of a node can
+    disagree with another about the identity of its package.
 
-    The gate also REPORTS each name that both tracks hold in one spelling. A
-    plan must qualify such a name with `python:` or `r:`, thus the planner must
-    see the list. The report is a log line, and the run continues.
+    The gate REPORTS each name that both tracks hold in one spelling. A plan
+    must qualify such a name with `python:` or `r:`, thus the planner must see
+    the list. The report is a log line, and the run continues.
     """
-    folded = folded_r_names(nodes)
-    if folded:
-        lines = "\n".join(
-            f"  {key}: name {nodes[key].get('name')!r}, r_dir {nodes[key].get('r_dir')!r}"
-            for key in folded)
-        raise SystemExit(
-            f"[deps] {len(folded)} R node(s) carry a name that is not the DESCRIPTION "
-            f"spelling. `library()` is case-sensitive, thus the name of an R node is "
-            f"its r_dir:\n{lines}")
-
     shared = both_track_names(nodes)
     if shared:
         log("the Python track and the R track hold these names in one spelling, "
