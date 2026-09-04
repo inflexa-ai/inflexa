@@ -30,6 +30,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { shelfKey } from "@inflexa-ai/harness";
 import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -49,7 +50,7 @@ import {
     settleStoreFlightFailure,
     subscribeStoreFlight,
 } from "../../db/primary_mutation.ts";
-import { analysisFarmPath, canonicalDistributionName, extendFarm, describeFarmCompositionError } from "./composition.ts";
+import { analysisFarmPath, canonicalDistributionName, describeFarmCompositionError, extendFarm, GRAPH_VERSION } from "./composition.ts";
 import {
     ACQUIRE_EGRESS_ALLOW,
     classifyProvisionerRun,
@@ -283,12 +284,29 @@ export async function commitStagedNodes(
                       (text) => JSON.parseWith(text, rawGraphSchema),
                       () => null,
                   )
-                : { version: 1, nodes: {}, by_name: { python: {}, r: {} } };
+                : { version: GRAPH_VERSION, nodes: {}, by_name: { python: {}, r: {} } };
             if (raw === null) {
                 return err<never, ProvisionerError>({
                     type: "provisioner_failed",
                     code: 1,
                     message: `The dependency graph at ${graphPath} is unreadable, thus the acquired nodes cannot commit. Run \`inflexa store download\` to restore it.`,
+                });
+            }
+            if (raw.version !== GRAPH_VERSION) {
+                // The commit READS the shelf of each track to resolve a bare
+                // edge, thus it obeys the one version that this host reads. A
+                // version-1 shelf keys the R track in lower case, and the read
+                // below would miss every R edge and refuse each R node with a
+                // dangling-edge reason that names the wrong fault.
+                return err<never, ProvisionerError>({
+                    type: "provisioner_failed",
+                    code: 1,
+                    message:
+                        `The dependency graph at ${graphPath} is version ${raw.version}, and this host reads version ${GRAPH_VERSION}, ` +
+                        `thus the acquired nodes cannot commit. ` +
+                        (raw.version < GRAPH_VERSION
+                            ? "Run `inflexa store download --update` to replace the store."
+                            : "Upgrade `inflexa`, because a newer host wrote this store."),
                 });
             }
 
@@ -323,7 +341,9 @@ export async function commitStagedNodes(
                             continue;
                         }
                         // A bare name: the pool satisfied this dependency before the run.
-                        const head = raw.by_name[node.track][canonicalDistributionName(edge)]?.[0];
+                        // The shelf key obeys the identity rule of the track, thus an R
+                        // edge reads the DESCRIPTION spelling and a Python edge folds.
+                        const head = raw.by_name[node.track][shelfKey(node.track, edge)]?.[0];
                         if (head === undefined) {
                             bad = edge;
                             break;

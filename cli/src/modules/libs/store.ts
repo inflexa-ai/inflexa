@@ -996,9 +996,9 @@ export async function runStoreLink(packages: string[], options: { readonly analy
         return;
     }
 
-    // Each answer keeps the spelling of its request. The graph speaks the
-    // canonical name, and an R name is case- and dot-sensitive, thus every
-    // render below echoes the raw spelling — the rule of the mgmt spec.
+    // Each answer keeps the spelling of its request. The Python shelf of the
+    // graph speaks the fold, and an R name is case- and dot-sensitive, thus
+    // every render below echoes the raw spelling — the rule of the mgmt spec.
     const resolved: { readonly answer: ResolvedRequest; readonly rawName: string }[] = [];
     const refusals: string[] = [];
     for (const requirement of packages) {
@@ -1065,8 +1065,15 @@ export async function runStoreLink(packages: string[], options: { readonly analy
  */
 export function describeRequestRefusal(error: RequestResolutionError, rawName: string): string {
     switch (error.type) {
-        case "unknown_distribution":
-            return `The package pool holds nothing named "${rawName}". Run \`inflexa store add ${rawName}\` to acquire it — the acquisition covers PyPI, CRAN, and Bioconductor.`;
+        case "unknown_distribution": {
+            // The suggestion comes BEFORE the ask: the pool holds the package
+            // under that spelling, thus an acquisition would be needless work.
+            const ask = `Run \`inflexa store add ${rawName}\` to acquire it — the acquisition covers PyPI, CRAN, and Bioconductor.`;
+            return error.suggestion === undefined
+                ? `The package pool holds nothing named "${rawName}". ${ask}`
+                : `The package pool holds nothing named "${rawName}". It holds "${error.suggestion}", and an R package name is case-sensitive — ` +
+                      `link that spelling instead. ${ask}`;
+        }
         case "unknown_version":
             return (
                 `The package pool holds no version ${error.version} of "${rawName}". It holds ${error.available.join(", ")}. ` +

@@ -12,8 +12,8 @@
             "typing-ext": ["typing-ext-4.9.0-00000000000eeeee"]
         },
         "r": {
-            "rpkga": ["rpkga-1.0-000000000000fff0"],
-            "rpkgb": ["rpkgb-2.1-000000000000fff1"]
+            "Rpkga": ["rpkga-1.0-000000000000fff0"],
+            "Rpkgb": ["rpkgb-2.1-000000000000fff1"]
         }
     },
     "nodes": {
@@ -93,7 +93,7 @@
             "edges": ["rpkgb-2.1-000000000000fff1"],
             "entry_points": [],
             "imports": ["Rpkga"],
-            "name": "rpkga",
+            "name": "Rpkga",
             "order": "0b",
             "r_dir": "Rpkga",
             "track": "r",
@@ -103,7 +103,7 @@
             "edges": [],
             "entry_points": [],
             "imports": ["Rpkgb"],
-            "name": "rpkgb",
+            "name": "Rpkgb",
             "order": "0b",
             "r_dir": "Rpkgb",
             "track": "r",
@@ -128,5 +128,5 @@
             "version": "4.9.0"
         }
     },
-    "version": 1
+    "version": 2
 }

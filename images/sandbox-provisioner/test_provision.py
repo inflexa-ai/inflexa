@@ -337,7 +337,7 @@ class ReclaimTests(StoreTestCase):
         # `ghost` has a node and no directory: the pre-dangling shape this
         # sweep heals, because it keys on the disk and not on the removals.
         graph = {
-            "version": 1,
+            "version": 2,
             "nodes": {
                 keep: {"name": "keep", "version": "1.0", "track": "python", "order": "0001", "imports": [], "entry_points": [], "edges": [], "r_dir": None},
                 drop: {"name": "drop", "version": "2.0", "track": "python", "order": "0002", "imports": [], "entry_points": [], "edges": [], "r_dir": None},
@@ -362,7 +362,7 @@ class ReclaimTests(StoreTestCase):
         farm = provision.FARMS / "f1"
         farm.mkdir(parents=True)
         os.symlink(f"{provision.LIBS}/store/{keep}/keep", farm / "keep-link")
-        graph = {"version": 1, "nodes": {keep: {"name": "keep"}}, "by_name": {"python": {"keep": [keep]}}}
+        graph = {"version": 2, "nodes": {keep: {"name": "keep"}}, "by_name": {"python": {"keep": [keep]}}}
         path = provision.LIBS / "deps.json"
         path.write_text(json.dumps(graph))
         before = path.stat().st_mtime_ns
@@ -386,7 +386,7 @@ class DebrisTests(StoreTestCase):
         os.symlink(f"{provision.LIBS}/store/{linked}/pkg", farm / "pkg-link")
         # `advertised` has a graph node and no farm link: a pre-fetched package,
         # and the debris pass must keep it.
-        graph = {"version": 1, "nodes": {advertised: {"name": "adver"}}, "by_name": {"python": {"adver": [advertised]}}}
+        graph = {"version": 2, "nodes": {advertised: {"name": "adver"}}, "by_name": {"python": {"adver": [advertised]}}}
         path = provision.LIBS / "deps.json"
         path.write_text(json.dumps(graph))
         before = path.stat().st_mtime_ns
@@ -409,7 +409,7 @@ class DebrisTests(StoreTestCase):
         # A node whose directory is gone is the full reclaim's work: the debris
         # pass narrows to removals, thus the graph file stays byte-identical.
         ghost = "ghost-1.0-dddd"
-        graph = {"version": 1, "nodes": {ghost: {"name": "ghost"}}, "by_name": {"python": {"ghost": [ghost]}}}
+        graph = {"version": 2, "nodes": {ghost: {"name": "ghost"}}, "by_name": {"python": {"ghost": [ghost]}}}
         path = provision.LIBS / "deps.json"
         path.write_text(json.dumps(graph))
         before = path.stat().st_mtime_ns
@@ -1073,7 +1073,7 @@ class AcquireRunTests(StoreTestCase):
         """An add reuses a held pin whenever its ranges permit it. The
         compile call must carry a constraints file with the shelf-head
         pins, or a blind resolve mints a needless second pin."""
-        graph = {"version": 1,
+        graph = {"version": 2,
                  "nodes": {"jinja2-3.0.3-aaaa": {"name": "jinja2",
                                                  "version": "3.0.3",
                                                  "track": "python"}},
@@ -1098,7 +1098,7 @@ class AcquireRunTests(StoreTestCase):
         """A true conflict must not refuse the add. The constrained resolve
         fails, the constraints drop, and the pin lands — the committed-lock
         pattern of the catalog build."""
-        graph = {"version": 1,
+        graph = {"version": 2,
                  "nodes": {"jinja2-3.0.3-aaaa": {"name": "jinja2",
                                                  "version": "3.0.3",
                                                  "track": "python"}},
@@ -1298,7 +1298,7 @@ class ReclaimTests(StoreTestCase):
         orphan = provision.STORE / "orphan-3.0-cccc"
         for d in (advertised, orphan):
             (d / "mod").mkdir(parents=True)
-        graph = {"version": 1, "nodes": {advertised.name: {"name": "adver"}},
+        graph = {"version": 2, "nodes": {advertised.name: {"name": "adver"}},
                  "by_name": {"python": {"adver": [advertised.name]}}}
         (provision.LIBS / "deps.json").write_text(json.dumps(graph))
 
@@ -1395,11 +1395,22 @@ class DependencyGraphTests(StoreTestCase):
         return store_dir
 
     def _r_store_dir(self, name: str, version: str) -> Path:
-        store_dir = provision.STORE / f"{name.lower()}-{version}-0000000000000000"
+        # The DIRECTORY carries the canonical form, exactly as the store does:
+        # `GO.db` addresses as `go-db`. The DESCRIPTION carries the identity.
+        store_dir = provision.STORE / f"{provision.canon(name)}-{version}-0000000000000000"
         inner = store_dir / name
         (inner / "R").mkdir(parents=True)
         (inner / "DESCRIPTION").write_text(f"Package: {name}\nVersion: {version}\n")
         return store_dir
+
+    @staticmethod
+    def _stub_r_dcf() -> None:
+        """Stand in for the one Rscript read.dcf call, with no fields."""
+        def fake(cmd, *args, **kwargs):
+            lines = "".join(f"{path}\t\n" for path in kwargs["input"].splitlines())
+            return SimpleNamespace(returncode=0, stdout=lines, stderr="")
+
+        provision.subprocess.run = fake
 
     def _farm_of(self, farm_name: str, store_dirs: list[Path]) -> Path:
         farm = provision.FARMS / farm_name
@@ -1554,7 +1565,9 @@ class DependencyGraphTests(StoreTestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             graph = emit_deps.append_store_dirs(provision.LIBS, [old, mid, new])
 
-        self.assertEqual(graph["by_name"]["r"]["myrpkg"],
+        # The R shelf keys the DESCRIPTION spelling, thus the key is `myRpkg`
+        # and never the folded directory name.
+        self.assertEqual(graph["by_name"]["r"]["myRpkg"],
                          [new.name, mid.name, old.name])
 
     def test_the_order_string_sorts_as_plain_text(self):
@@ -1567,6 +1580,96 @@ class DependencyGraphTests(StoreTestCase):
         ranked_r = sorted(["1.2-3", "1.10.0", "0.99.0-10"],
                           key=lambda v: emit_deps.order_string("r", v), reverse=True)
         self.assertEqual(ranked_r, ["1.10.0", "1.2-3", "0.99.0-10"])
+
+    # --- The identity rule of each track -------------------------------------
+
+    def test_an_r_node_keeps_its_description_spelling(self):
+        """The Python `decoupler` and the R `decoupleR` fold onto one name.
+        The R node keys the DESCRIPTION spelling, thus the two tracks key
+        apart and a lookup of either name reaches one track."""
+        pkg = self._r_store_dir("decoupleR", "2.17.0")
+        self._stub_r_dcf()
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_store_dirs(provision.LIBS, [pkg])
+
+        self.assertEqual(pkg.name, "decoupler-2.17.0-0000000000000000")
+        node = graph["nodes"][pkg.name]
+        self.assertEqual(node["name"], "decoupleR")
+        self.assertEqual(node["r_dir"], "decoupleR")
+        self.assertIn("decoupleR", graph["by_name"]["r"])
+        self.assertNotIn("decoupler", graph["by_name"]["r"])
+
+    def test_a_python_node_keeps_the_pep_503_form(self):
+        alpha = self._python_store_dir("Decoupler", "2.2.0", [])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_store_dirs(provision.LIBS, [alpha])
+
+        self.assertEqual(graph["nodes"][alpha.name]["name"], "decoupler")
+        self.assertIn("decoupler", graph["by_name"]["python"])
+
+    def test_a_go_db_directory_strips_its_version(self):
+        """The directory folds the dot, and the DESCRIPTION keeps it. The
+        version strips against the FOLDED name, thus a dotted R name still
+        reads its version."""
+        pkg = self._r_store_dir("GO.db", "3.21.0")
+        self._stub_r_dcf()
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_store_dirs(provision.LIBS, [pkg])
+
+        self.assertEqual(pkg.name, "go-db-3.21.0-0000000000000000")
+        node = graph["nodes"][pkg.name]
+        self.assertEqual(node["version"], "3.21.0")
+        self.assertEqual(node["name"], "GO.db")
+
+    def test_a_folded_r_name_stops_the_build(self):
+        nodes = {"decoupler-2.17.0-aaaa": {"track": "r", "name": "decoupler",
+                                           "version": "2.17.0", "edges": [],
+                                           "r_dir": "decoupleR"}}
+
+        with self.assertRaises(SystemExit) as cm:
+            emit_deps.gate(nodes)
+
+        self.assertIn("decoupler-2.17.0-aaaa", str(cm.exception))
+        self.assertIn("decoupleR", str(cm.exception))
+
+    def test_a_two_spelling_pair_does_not_stop_the_build(self):
+        """`biomaRt` and `biomart` are the legitimate state of the two tracks
+        after the fix. The gate must pass them."""
+        nodes = {"biomart-2.64.0-aaaa": {"track": "r", "name": "biomaRt",
+                                         "version": "2.64.0", "edges": [],
+                                         "r_dir": "biomaRt"},
+                 "biomart-0.9.2-bbbb": {"track": "python", "name": "biomart",
+                                        "version": "0.9.2", "edges": []}}
+
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            emit_deps.gate(nodes)
+
+        self.assertNotIn("biomaRt", buf.getvalue())
+
+    def test_a_same_spelling_both_track_name_is_reported(self):
+        nodes = {"igraph-2.1.4-aaaa": {"track": "r", "name": "igraph",
+                                       "version": "2.1.4", "edges": [],
+                                       "r_dir": "igraph"},
+                 "igraph-0.11.9-bbbb": {"track": "python", "name": "igraph",
+                                        "version": "0.11.9", "edges": []}}
+
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            emit_deps.gate(nodes)
+
+        self.assertIn("igraph", buf.getvalue())
+        self.assertIn("python:<name>", buf.getvalue())
+
+    def test_the_graph_carries_version_2(self):
+        alpha = self._python_store_dir("alpha", "1.0", [])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_store_dirs(provision.LIBS, [alpha])
+
+        self.assertEqual(graph["version"], 2)
+        self.assertEqual(json.loads((provision.LIBS / "deps.json").read_text())["version"], 2)
 
     def test_a_graph_of_another_schema_version_stops_the_run(self):
         graph_path = provision.LIBS / "deps.json"

@@ -425,6 +425,55 @@ describe("the graph commit", () => {
         // The shelf gains no duplicate entry for the kept node.
         expect(graph.by_name.python["beta"]).toEqual(["beta-0.4.1-000000000000bbbb"]);
     });
+
+    test("a bare R edge resolves against the exact key of the R shelf", async () => {
+        const root = tempStore();
+        // The fixture shelf keys `Rpkga`, the DESCRIPTION spelling. A staged
+        // node names that dependency bare, and the commit must read the shelf
+        // under the SAME spelling — a fold would reach `rpkga`, which no shelf
+        // holds, and the node would drop with a false dangling-edge refusal.
+        const staged = {
+            "rpkgc-3.0-000000000000fff2": { track: "r", name: "Rpkgc", version: "3.0", order: "0b", edges: ["Rpkga"], r_dir: "Rpkgc" },
+        } as Parameters<typeof commitStagedNodes>[1];
+
+        const outcome = (await commitStagedNodes(root, staged))._unsafeUnwrap();
+
+        expect(outcome.refused).toEqual([]);
+        expect(outcome.committed).toEqual(["rpkgc-3.0-000000000000fff2"]);
+        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as {
+            nodes: Record<string, { edges: string[] }>;
+            by_name: { r: Record<string, string[]> };
+        };
+        expect(graph.nodes["rpkgc-3.0-000000000000fff2"]?.edges).toEqual(["rpkga-1.0-000000000000fff0"]);
+        // The commit writes the shelf under the node name, thus the R shelf
+        // keys the DESCRIPTION spelling here too.
+        expect(graph.by_name.r["Rpkgc"]).toEqual(["rpkgc-3.0-000000000000fff2"]);
+    });
+
+    test("a graph of another version refuses the commit, and it names the remedy of its direction", async () => {
+        const root = tempStore();
+        const graphPath = join(root, "deps.json");
+        const published = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
+        const staged = {
+            "newpkg-1.0-000000000new0001": { track: "python", name: "newpkg", version: "1.0", order: "0b", edges: [] },
+        } as Parameters<typeof commitStagedNodes>[1];
+
+        // A version-1 shelf keys the R track in lower case. The commit reads
+        // that shelf to resolve a bare edge, thus it must stop instead of
+        // writing version-2 nodes beside version-1 keys.
+        writeFileSync(graphPath, JSON.stringify({ ...published, version: 1 }));
+        const older = (await commitStagedNodes(root, staged))._unsafeUnwrapErr();
+        expect(older.message).toContain("version 1");
+        expect(older.message).toContain("version 2");
+        expect(older.message).toContain("inflexa store download --update");
+
+        writeFileSync(graphPath, JSON.stringify({ ...published, version: 3 }));
+        const newer = (await commitStagedNodes(root, staged))._unsafeUnwrapErr();
+        expect(newer.message).toContain("version 3");
+        expect(newer.message).toContain("Upgrade `inflexa`");
+        // The refused commit left the graph exactly as it found it.
+        expect(JSON.parse(readFileSync(graphPath, "utf8")).nodes["newpkg-1.0-000000000new0001"]).toBeUndefined();
+    });
 });
 
 describe("the flush tail", () => {

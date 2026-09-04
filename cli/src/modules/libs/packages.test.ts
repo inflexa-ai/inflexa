@@ -39,7 +39,9 @@ describe("readPoolInventorySections", () => {
         expect(alpha).toMatchObject({ name: "alpha", version: "2.0.0", storeDir: "alpha-2.0.0-00000000000a2222" });
         // The fixture records a hash marker for this directory, and the entry carries it whole.
         expect(alpha?.hash).toMatch(/^[0-9a-f]{64}$/);
-        expect(sections[1]!.packages.map((p) => p.name)).toEqual(["rpkga", "rpkgb"]);
+        // The R section renders the DESCRIPTION spelling, because `library()` is
+        // case-sensitive and the store directory carries the folded form only.
+        expect(sections[1]!.packages.map((p) => p.name)).toEqual(["Rpkga", "Rpkgb"]);
     });
 
     test("a hash marker rides into the entry where the store directory records one", async () => {

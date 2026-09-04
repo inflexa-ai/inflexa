@@ -174,7 +174,12 @@ export type SectionPackage = PoolInventoryPackage;
 /** One language track of the store, in the section order of its source. The seam shape and the render shape are one. */
 export type Section = PoolInventorySection;
 
-/** One `names` lookup: present + canonical spelling + track + store identity, or absent. */
+/**
+ * One hit of a `names` lookup: present + exact spelling + track + store
+ * identity, or absent. A name that two sections hold answers with one entry
+ * for each of them, thus the array is longer than the `names` array and it is
+ * not aligned with it.
+ */
 export type CheckedPackage =
     | {
           readonly requested: string;
@@ -197,23 +202,53 @@ export type PackagesResult =
     | { readonly available: true; readonly checked: readonly CheckedPackage[] }
     | { readonly available: true; readonly total: number; readonly returned: number; readonly hasMore: boolean; readonly content: string };
 
+/** The R triple: `R (CRAN)`, `R (Bioconductor)`, `R (GitHub)`. */
+const isRSection = (title: string): boolean => /^r\b/i.test(title);
+
+/** The one Python heading: `Python (pip)`. */
+const isPythonSection = (title: string): boolean => /^python\b/i.test(title);
+
 /** The `language` filter values, mapped onto the concrete section headings. */
 const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
-    // The R triple: `R (CRAN)`, `R (Bioconductor)`, `R (GitHub)`.
-    r: (t) => /^r\b/i.test(t),
-    python: (t) => /^python\b/i.test(t),
+    r: isRSection,
+    python: isPythonSection,
     // `CLI_TITLE` — the conda-installed bioinformatics executables.
     cli: (t) => /system tools|\bcli\b/i.test(t),
     node: (t) => /^node\b/i.test(t),
 };
 
-/** One entry as the listing renders it: `name==version` where the source pins a version, the bare name otherwise. */
-function renderPackage(entry: SectionPackage): string {
-    return entry.version === undefined ? entry.name : `${entry.name}==${entry.version}`;
+/**
+ * The names that the Python section and an R section hold in ONE spelling.
+ *
+ * A plan entry of such a name cannot say which package it means, thus the
+ * link pass refuses it as a collision. The listing marks each of these rows
+ * with the prefixed forms, and the planner writes one of them. A pair of two
+ * spellings, such as `decoupler` and `decoupleR`, needs no mark, because the
+ * spelling itself settles the track.
+ */
+function bothTrackNames(sections: readonly Section[]): ReadonlySet<string> {
+    const python = new Set<string>();
+    const r = new Set<string>();
+    for (const section of sections) {
+        const holder = isPythonSection(section.title) ? python : isRSection(section.title) ? r : null;
+        if (holder === null) continue;
+        for (const pkg of section.packages) holder.add(pkg.name);
+    }
+    return new Set([...python].filter((name) => r.has(name)));
+}
+
+/**
+ * One entry as the listing renders it: `name==version` where the source pins
+ * a version, the bare name otherwise. A name that both tracks hold carries
+ * the two forms a plan writes, because a bare entry of it refuses the launch.
+ */
+function renderPackage(entry: SectionPackage, bothTracks: ReadonlySet<string>): string {
+    const rendered = entry.version === undefined ? entry.name : `${entry.name}==${entry.version}`;
+    return bothTracks.has(entry.name) ? `${rendered} [both tracks — write python:${entry.name} or r:${entry.name}]` : rendered;
 }
 
 /** Render sections to the agent-facing listing, bounded at `limit` packages. */
-function renderListing(sections: readonly Section[], limit: number): { content: string; returned: number } {
+function renderListing(sections: readonly Section[], limit: number, bothTracks: ReadonlySet<string>): { content: string; returned: number } {
     const lines: string[] = [];
     let returned = 0;
     for (const section of sections) {
@@ -225,7 +260,7 @@ function renderListing(sections: readonly Section[], limit: number): { content: 
         }
         const shown = section.packages.slice(0, room);
         returned += shown.length;
-        lines.push(`\n## ${section.title}`, `  ${shown.map(renderPackage).join(", ")}`);
+        lines.push(`\n## ${section.title}`, `  ${shown.map((entry) => renderPackage(entry, bothTracks)).join(", ")}`);
         const hidden = section.packages.length - shown.length;
         if (hidden > 0) lines.push(`  … and ${hidden} more in this section (raise \`limit\` or narrow with \`query\`).`);
     }
@@ -249,21 +284,26 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
     // Presence check — the cheap, targeted path. Answers "is X available, and in
     // which track" without returning the catalog.
     if (names && names.length > 0) {
-        const index = new Map<string, { entry: SectionPackage; section: string }>();
+        // EVERY section that holds the name answers, in the section order. A
+        // name that two tracks hold has two exact spellings and two store
+        // identities, and a first-writer answer would hide one of them —
+        // exactly the pair the caller asked about.
+        const index = new Map<string, { entry: SectionPackage; section: string }[]>();
         for (const section of sections) {
             for (const pkg of section.packages) {
-                // First writer wins: the sections arrive in a fixed order, so a
-                // name colliding across tracks resolves to the earliest one.
-                if (!index.has(pkg.name.toLowerCase())) index.set(pkg.name.toLowerCase(), { entry: pkg, section: section.title });
+                const key = pkg.name.toLowerCase();
+                const held = index.get(key) ?? [];
+                held.push({ entry: pkg, section: section.title });
+                index.set(key, held);
             }
         }
-        const checked = names.map((requested): CheckedPackage => {
-            const hit = index.get(requested.trim().toLowerCase());
-            if (!hit) return { requested, present: false };
+        const checked = names.flatMap((requested): CheckedPackage[] => {
+            const hits = index.get(requested.trim().toLowerCase()) ?? [];
+            if (hits.length === 0) return [{ requested, present: false }];
             // `name` echoes the catalog's canonical spelling — R package names are
             // case-sensitive at `library()`, so the exact one is what the caller needs.
             // The store identity rides only where the source records it.
-            return {
+            return hits.map((hit) => ({
                 requested,
                 present: true,
                 name: hit.entry.name,
@@ -271,7 +311,7 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
                 ...(hit.entry.version === undefined ? {} : { version: hit.entry.version }),
                 ...(hit.entry.storeDir === undefined ? {} : { storeDir: hit.entry.storeDir }),
                 ...(hit.entry.hash === undefined ? {} : { hash: hit.entry.hash }),
-            };
+            }));
         });
         return { available: true, checked };
     }
@@ -298,7 +338,9 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
         };
     }
 
-    const { content, returned } = renderListing(filtered, limit ?? DEFAULT_LIMIT);
+    // The mark reads every section, not the filtered set: a `language` listing
+    // must still say that the other track holds the same name.
+    const { content, returned } = renderListing(filtered, limit ?? DEFAULT_LIMIT, bothTrackNames(sections));
     return { available: true, total, returned, hasMore: returned < total, content };
 }
 
@@ -337,7 +379,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
         description:
             scopeSentence +
             "A full listing is small (a few hundred packages) and is returned whole by default, so a listing you get back is the complete set unless `hasMore` says otherwise. " +
-            '`names`: check specific packages (e.g. ["Seurat", "scanpy"]) — returns present/absent plus the language track for each, case-insensitively; this is the cheapest call and the right one for \'is X available?\'. ' +
+            '`names`: check specific packages (e.g. ["Seurat", "scanpy"]) — returns present/absent plus the language track for each, case-insensitively; a name that the Python track and the R track both hold answers once for each track; this is the cheapest call and the right one for \'is X available?\'. ' +
             "`query`: case-insensitive substring filter over package names. " +
             "`language`: restrict to one track (r | python | cli | node). " +
             "`limit`: cap the packages listed; the response always carries the true `total` and a `hasMore` flag, so truncation is never silent. " +
@@ -348,7 +390,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
                 .max(100)
                 .optional()
                 .describe(
-                    "Check these exact package names for presence (case-insensitive). Returns one entry per name: present/absent + the language track it lives in.",
+                    "Check these exact package names for presence (case-insensitive). Returns one entry for each track that holds the name: present/absent + the language track it lives in.",
                 ),
             query: z.string().optional().describe("Case-insensitive substring filter over package names."),
             language: z.enum(["r", "python", "cli", "node"]).optional().describe("Restrict results to one language track."),

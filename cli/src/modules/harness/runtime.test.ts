@@ -24,6 +24,7 @@ import {
     buildAuthInjectingFetch,
     describeBootError,
     makeReportPageAssetLookup,
+    withPoolMissRemedy,
     __resetHarnessRuntimeForTest,
     type BootSeams,
 } from "./runtime.ts";
@@ -1076,5 +1077,35 @@ describe("describeBootError", () => {
     // chases a container that is fine.
     test("model_unresolved cooling_down explains the proxy recovers on its own", () => {
         expect(describeBootError({ type: "model_unresolved", cause: { type: "cooling_down" } })).toContain("recovers on its own");
+    });
+});
+
+// The launch refusal renders what this wrapper writes, because the harness names
+// no remedy by design (the package-store-management spec).
+describe("withPoolMissRemedy", () => {
+    test("a folded R spelling names its suggestion before the store-add ask", () => {
+        // The seam resolved `seurat` against a pool that holds `Seurat`, thus
+        // its detail carries the spelling that links. An acquisition of a held
+        // package is wasted work, so the suggestion leads the remedy.
+        const remedied = withPoolMissRemedy({
+            kind: "absent",
+            name: "seurat",
+            acquisitionPossible: true,
+            detail: 'the pool holds "Seurat" — an R package name is case-sensitive, thus the two spellings are two names',
+        });
+
+        expect(remedied.kind).toBe("absent");
+        const detail = remedied.kind === "absent" ? (remedied.detail ?? "") : "";
+        expect(detail).toContain('"Seurat"');
+        expect(detail).toContain("inflexa store add seurat");
+        expect(detail.indexOf('"Seurat"')).toBeLessThan(detail.indexOf("inflexa store add seurat"));
+    });
+
+    test("a miss with no suggestion carries the store-add ask alone, and another outcome rides through", () => {
+        const bare = withPoolMissRemedy({ kind: "absent", name: "nosuchpkg", acquisitionPossible: true });
+        expect(bare.kind === "absent" ? bare.detail : "").toContain("inflexa store add nosuchpkg");
+
+        const collision = withPoolMissRemedy({ kind: "collision", name: "igraph", storeDirs: ["igraph-0.11-py", "igraph-2.0-r"], detail: "two tracks" });
+        expect(collision).toEqual({ kind: "collision", name: "igraph", storeDirs: ["igraph-0.11-py", "igraph-2.0-r"], detail: "two tracks" });
     });
 });

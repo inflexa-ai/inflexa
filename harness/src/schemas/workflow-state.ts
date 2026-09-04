@@ -36,6 +36,8 @@ export const AnalysisStepSchema = z.object({
         .optional()
         .describe(
             'The packages this step imports, each as a requirement: a bare name ("scanpy") or a name with one exact version ("numpy==1.26.4"). ' +
+                'An entry can name its ecosystem with a prefix, "python:igraph" or "r:decoupleR"; a bare name searches both tracks. ' +
+                "When the package census shows one name under the Python section and under the R section, write the prefixed form — a bare both-track name refuses the launch. " +
                 "Never a path, a URL, or a store directory. An empty array means the step needs nothing beyond the baked toolchain. " +
                 "The set is not a promise of completeness — the execution agent can still link a missing package.",
         ),
