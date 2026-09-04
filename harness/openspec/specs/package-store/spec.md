@@ -269,6 +269,17 @@ error. When the pool-scope source reports itself unavailable, the note
 MUST carry the reason of the embedder. Without the reason, a structural
 fault reads as a transient one, and the agent retries without end.
 
+The `names` path matches a name without case, and it echoes the exact
+spelling of the source, because an R name is case-sensitive at `library()`.
+It MUST answer with one entry for each section that holds the name, in the
+section order. A name that two tracks hold has two exact spellings and two
+store identities, and a first-writer answer hides one of them. A listing
+MUST mark each name that the Python section and the R section both hold.
+The mark MUST show the two forms that a plan writes, `python:<name>` and
+`r:<name>`. A name that the two sections hold in two spellings, such as
+`decoupler` and `decoupleR`, needs no mark, because the spelling settles
+it.
+
 #### Scenario: Packages available
 
 - **WHEN** `list_available_packages` is called and the `inflexa.lock` of the mounted farm is readable
@@ -312,6 +323,24 @@ fault reads as a transient one, and the agent retries without end.
 - **GIVEN** an `image-packages.json` that does not parse at schema 1
 - **WHEN** the tool lists
 - **THEN** it returns the farm tracks alone, without a throw
+
+#### Scenario: A both-track name answers once for each track
+
+- **GIVEN** a pool whose Python section holds `igraph==1.0.0` and whose R section holds `igraph==2.1.4`
+- **WHEN** the tool checks `names: ["igraph"]`
+- **THEN** the answer holds two present entries for `igraph`: one under the Python section, and one under the R section, each with its version
+
+#### Scenario: A two-spelling pair answers with both spellings
+
+- **GIVEN** a pool whose Python section holds `decoupler` and whose R section holds `decoupleR`
+- **WHEN** the tool checks `names: ["decoupler"]`
+- **THEN** the answer holds two present entries, `decoupler` under the Python section and `decoupleR` under the R section
+
+#### Scenario: The listing marks a both-track name
+
+- **GIVEN** a pool whose Python section and R section both hold `igraph`
+- **WHEN** the tool lists
+- **THEN** each `igraph` row carries a mark that names `python:igraph` and `r:igraph`, and no other row carries a mark
 
 ### Requirement: The lib-store resolver env is injected only when the store is mounted
 
