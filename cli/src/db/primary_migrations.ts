@@ -388,6 +388,15 @@ export const migrations: Migration[] = [
         // recorded, and it falls back to `name` for a row that predates that
         // column. A live flight of `GO.db` keeps `GO.db`.
         //
+        // The id of a flight IS its key, and the key now carries the spelling,
+        // thus the rebuild mints it again from the backfilled columns. A kept id
+        // would hold the fold: a later claim of `GO.db` computes `r::GO.db::`,
+        // misses the `r::go-db::` row, and starts a second flight beside a
+        // failed record that nothing ever clears. The recomputed key collides
+        // with nothing, because two rows that share it shared the folded one too.
+        // The subscriptions follow the same expression, because their foreign key
+        // names the row that moved.
+        //
         // A column cannot drop in place on the SQLite of this runtime, thus each
         // table rebuilds — the pattern of migration 7. The subscriptions rebuild
         // WITH the flights, child first on the drop side: a DROP of the old
@@ -424,14 +433,17 @@ export const migrations: Migration[] = [
                 holder_pid INTEGER NOT NULL
             );
             INSERT INTO package_store_flights_v10
-                SELECT id, created_at, updated_at, state, ecosystem, COALESCE(raw_name, name), specifier, progress, message, holder_pid
+                SELECT COALESCE(ecosystem, 'any') || '::' || COALESCE(raw_name, name) || '::' || specifier,
+                       created_at, updated_at, state, ecosystem, COALESCE(raw_name, name), specifier, progress, message, holder_pid
                 FROM package_store_flights;
             CREATE TABLE package_store_flight_subscriptions_v10 (
                 flight_id TEXT NOT NULL REFERENCES package_store_flights_v10(id) ON DELETE CASCADE,
                 analysis_id TEXT REFERENCES analyses(id) ON DELETE CASCADE
             );
             INSERT INTO package_store_flight_subscriptions_v10
-                SELECT flight_id, analysis_id FROM package_store_flight_subscriptions;
+                SELECT COALESCE(f.ecosystem, 'any') || '::' || COALESCE(f.raw_name, f.name) || '::' || f.specifier, s.analysis_id
+                FROM package_store_flight_subscriptions s
+                JOIN package_store_flights f ON f.id = s.flight_id;
             DROP TABLE package_store_flight_subscriptions;
             DROP TABLE package_store_flights;
             ALTER TABLE package_store_flights_v10 RENAME TO package_store_flights;
