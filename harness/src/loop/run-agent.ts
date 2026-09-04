@@ -23,7 +23,7 @@ import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError } from "../providers/errors.js";
-import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
+import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint } from "../providers/prompt-cache.js";
 import { DEFAULT_REASONING } from "../providers/reasoning.js";
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
@@ -232,10 +232,11 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     let toolCallCount = 0;
     let toolErrorCount = 0;
 
-    // Resolved once, not per iteration: an identical options object across every
-    // call is itself part of the cache contract — the request prefix has to be
-    // byte-identical to be read back.
-    const providerOptions = promptCacheProviderOptions(opts.promptCache ?? DEFAULT_PROMPT_CACHE);
+    // Resolved once, not per iteration: an identical policy across every call is
+    // itself part of the cache contract — the request prefix has to be
+    // byte-identical to be read back. The breakpoint it places is re-derived per
+    // call, because it rides the last message and the transcript grows.
+    const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
     // The depth is a neutral name, and the provider package resolves it for the
     // model. A vendor key here would turn that resolution off.
     const reasoning = opts.reasoning ?? DEFAULT_REASONING;
@@ -397,10 +398,9 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         iterations = i + 1;
         const request: ChatRequest = {
             system: agent.systemPrompt,
-            messages,
+            messages: withPromptCacheBreakpoint(messages, promptCache),
             tools: toolDefs,
             ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
-            providerOptions,
             reasoning,
         };
         const llmStepName = formatStepName.llm(i);
@@ -521,12 +521,16 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // Cache defeater (known; not fixed here). Emptying the tool set changes the
     // very front of the request prefix — tool definitions are cached ahead of
     // system and history — so this call reads *nothing* back from the cache and
-    // rewrites the whole prefix from scratch. It still carries the cache options
+    // rewrites the whole prefix from scratch. It still places the breakpoint
     // because it is the one call whose write is pure waste, and the
     // cache_write_tokens counter is what makes that waste visible.
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
     const wrapUp = await resultStep(runStep)(wrapUpStepName, () =>
-        provider.chat({ system: agent.systemPrompt, messages, tools: {}, toolChoice: "none", providerOptions, reasoning }, session, signal),
+        provider.chat(
+            { system: agent.systemPrompt, messages: withPromptCacheBreakpoint(messages, promptCache), tools: {}, toolChoice: "none", reasoning },
+            session,
+            signal,
+        ),
     );
     accountForCall(wrapUp, wrapUpStepName);
 

@@ -14,8 +14,8 @@ import { z } from "zod";
 
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { createConfiguredAiSdkProvider } from "../providers/ai-sdk.js";
-import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
-import type { PromptCachePolicy } from "../providers/types.js";
+import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint } from "../providers/prompt-cache.js";
+import type { ModelMessage, PromptCachePolicy } from "../providers/types.js";
 import { defineTool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { __resetMetricsForTest } from "./metrics.js";
@@ -77,8 +77,113 @@ describe("promptCacheProviderOptions", () => {
     });
 });
 
+// ── Breakpoint placement ────────────────────────────────────────────
+//
+// The marker has to ride a MESSAGE, never the request: a request-level directive
+// reaches the wire as a top-level `cache_control` field, and an intermediary that
+// counts blocks to stay under Anthropic's cap of four cannot see one. These
+// assert the placement itself, because the failure it prevents is a
+// non-retryable 400 that wedges a whole thread.
+
+/** Every message index carrying a cache marker. */
+function breakpointsOf(messages: readonly ModelMessage[]): number[] {
+    return messages.flatMap((m, i) => (m.providerOptions?.["anthropic"]?.["cacheControl"] === undefined ? [] : [i]));
+}
+
+const userText = (text: string): ModelMessage => ({ role: "user", content: [{ type: "text", text }] });
+const assistantText = (text: string): ModelMessage => ({ role: "assistant", content: [{ type: "text", text }] });
+/** An assistant turn that ends in a thinking block — a block that cannot carry a marker. */
+const assistantThinking = (): ModelMessage => ({
+    role: "assistant",
+    content: [
+        { type: "text", text: "answering" },
+        { type: "reasoning", text: "deliberating", providerOptions: { anthropic: { signature: "sig-1" } } },
+    ],
+});
+
+describe("withPromptCacheBreakpoint", () => {
+    it("places exactly one breakpoint, on the last message", () => {
+        const marked = withPromptCacheBreakpoint([userText("a"), assistantText("b"), userText("c")], DEFAULT_PROMPT_CACHE);
+
+        expect(breakpointsOf(marked)).toEqual([2]);
+        expect(marked[2]?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "5m" });
+    });
+
+    it("carries an explicit ttl onto the message", () => {
+        const marked = withPromptCacheBreakpoint([userText("a")], { ttl: "1h" });
+
+        expect(marked[0]?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
+    });
+
+    it("never mutates the caller's array or its messages", () => {
+        const transcript = [userText("a"), userText("b")];
+        const snapshot = structuredClone(transcript);
+
+        const marked = withPromptCacheBreakpoint(transcript, DEFAULT_PROMPT_CACHE);
+
+        // The transcript is what the loop keeps appending to and the host later
+        // persists. A marker written into it would ride into the stored thread and
+        // come back on every later turn, one more breakpoint per turn.
+        expect(transcript).toEqual(snapshot);
+        expect(breakpointsOf(transcript)).toEqual([]);
+        expect(marked[1]).not.toBe(transcript[1]);
+    });
+
+    it("walks back past an assistant turn that ends in a thinking block", () => {
+        // The provider drops a marker on a thinking block: no error, no breakpoint,
+        // and a silent miss on every call after it.
+        const marked = withPromptCacheBreakpoint([userText("a"), assistantThinking()], DEFAULT_PROMPT_CACHE);
+
+        expect(breakpointsOf(marked)).toEqual([0]);
+    });
+
+    it("skips a message with no content to host the marker", () => {
+        const empty: ModelMessage = { role: "user", content: [] };
+
+        expect(breakpointsOf(withPromptCacheBreakpoint([userText("a"), empty], DEFAULT_PROMPT_CACHE))).toEqual([0]);
+        expect(breakpointsOf(withPromptCacheBreakpoint([{ role: "user", content: "" }, empty], DEFAULT_PROMPT_CACHE))).toEqual([]);
+    });
+
+    it("strips a stale marker a stored message carried in, leaving exactly one", () => {
+        // `memory/ai-sdk-message-storage.ts` reads `cache_control` back off a stored
+        // block, so a row an older build wrote can arrive already marked. Left in
+        // place it spends a breakpoint slot the harness never budgeted.
+        const stale: ModelMessage = { ...userText("old"), providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } };
+
+        expect(breakpointsOf(withPromptCacheBreakpoint([stale, userText("new")], DEFAULT_PROMPT_CACHE))).toEqual([1]);
+    });
+
+    it("keeps the other provider keys of a message it strips", () => {
+        const stale: ModelMessage = {
+            ...assistantText("old"),
+            providerOptions: { anthropic: { cacheControl: { type: "ephemeral" }, signature: "sig-2" }, openai: { store: true } },
+        };
+
+        const marked = withPromptCacheBreakpoint([stale, userText("new")], DEFAULT_PROMPT_CACHE);
+
+        expect(marked[0]?.providerOptions).toEqual({ anthropic: { signature: "sig-2" }, openai: { store: true } });
+    });
+
+    it("places nothing when caching is off, and strips what a stored message carried", () => {
+        const stale: ModelMessage = { ...userText("old"), providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } };
+
+        const marked = withPromptCacheBreakpoint([stale, userText("new")], "off" as PromptCachePolicy);
+
+        expect(breakpointsOf(marked)).toEqual([]);
+        // The namespace held nothing else, thus it goes with the marker.
+        expect(marked[0]?.providerOptions).toEqual({});
+    });
+
+    it("returns the array itself when there is nothing to place and nothing to strip", () => {
+        const transcript = [userText("a")];
+
+        expect(withPromptCacheBreakpoint(transcript, "off" as PromptCachePolicy)).toBe(transcript);
+        expect(withPromptCacheBreakpoint([], DEFAULT_PROMPT_CACHE)).toEqual([]);
+    });
+});
+
 describe("runAgent prompt-cache directive", () => {
-    it("attaches the default 5m directive to every iteration, the wrap-up included", async () => {
+    it("marks the last message on every iteration, the wrap-up included", async () => {
         const chat = neverTerminating();
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
@@ -86,27 +191,53 @@ describe("runAgent prompt-cache directive", () => {
         // 3 iterations + the forced tool-less wrap-up.
         expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
-            expect(call.providerOptions).toEqual(ANTHROPIC_5M);
+            expect(breakpointsOf(call.messages)).toEqual([call.messages.length - 1]);
+            expect(call.messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual(ANTHROPIC_5M.anthropic.cacheControl);
         }
 
-        // The wrap-up is the call that empties the tool set — it must still carry
-        // the directive (its write is the one the cache_write_tokens metric exposes
+        // The wrap-up is the call that empties the tool set — it must still place
+        // the breakpoint (its write is the one the cache_write_tokens metric exposes
         // as waste).
         const wrapUp = chat.calls.at(-1)!;
         expect(Object.keys(wrapUp.tools)).toHaveLength(0);
         expect(wrapUp.toolChoice).toBe("none");
-        expect(wrapUp.providerOptions).toEqual(ANTHROPIC_5M);
+        expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
     });
 
-    it("sends the same directive object on every call, so the prefix stays byte-identical", async () => {
+    it("writes no request-level directive on any call", async () => {
         const chat = neverTerminating();
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
 
-        const first = chat.calls[0]!.providerOptions;
+        // The regression guard. A request-level bag reaches Anthropic as a top-level
+        // `cache_control`, which is a breakpoint no intermediary can count —
+        // CLIProxyAPI then trims its own markers to four and sends five.
         for (const call of chat.calls) {
-            expect(call.providerOptions).toBe(first);
+            expect(call.providerOptions).toBeUndefined();
         }
+    });
+
+    it("rolls the breakpoint forward as the transcript grows", async () => {
+        const chat = neverTerminating();
+
+        await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+
+        // Each iteration appends the assistant reply and its tool results, and the
+        // breakpoint advances with them: a pinned one would re-process the whole
+        // tool transcript uncached on every iteration.
+        const marked = chat.calls.map((call) => breakpointsOf(call.messages)[0]!);
+        for (let i = 1; i < marked.length; i++) {
+            expect(marked[i]!).toBeGreaterThan(marked[i - 1]!);
+        }
+    });
+
+    it("leaves the transcript it returns unmarked", async () => {
+        const chat = neverTerminating();
+
+        const result = await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+
+        // The host persists this array. A marker in it would be stored and replayed.
+        expect(breakpointsOf(result.messages)).toEqual([]);
     });
 
     it("honours an explicit 1h policy from the composition root", async () => {
@@ -115,7 +246,7 @@ describe("runAgent prompt-cache directive", () => {
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: { ttl: "1h" } }));
 
         for (const call of chat.calls) {
-            expect(call.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
+            expect(call.messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
         }
     });
 
@@ -125,9 +256,10 @@ describe("runAgent prompt-cache directive", () => {
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
 
         expect(chat.calls).toHaveLength(3);
-        // Caching off leaves no bag at all. The reasoning depth rides on its own
-        // neutral field, thus it writes no vendor key here.
+        // Caching off leaves no marker anywhere and no bag at all. The reasoning
+        // depth rides on its own neutral field, thus it writes no vendor key here.
         for (const call of chat.calls) {
+            expect(breakpointsOf(call.messages)).toEqual([]);
             expect(call.providerOptions).toBeUndefined();
             expect(call.reasoning).toBe("xhigh");
         }
