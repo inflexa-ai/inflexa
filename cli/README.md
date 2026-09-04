@@ -15,7 +15,7 @@ For the product overview, see the [repository README](../README.md). For archite
 cd cli
 bun install
 
-bun run dev setup           # one-time: model connection, sandbox image, local services
+bun run dev setup           # one-time: model connection, local services, sandbox images and packages
 bun run dev                 # launch the TUI
 bun run dev status          # what `inflexa` resolves to right now (loud context)
 ```
@@ -47,25 +47,31 @@ On macOS/Linux `dev:install` symlinks into `dist/`, so every `bun run build` is 
 
 Bring-your-own-key for supported LLM providers, plus local models end to end.
 
-`inflexa setup` walks the model connection: either **`cliproxy`** (the default — sign in to a provider through the local CLIProxyAPI container it provisions) or **`direct`** (your own Anthropic or OpenAI-compatible endpoint, with the key read from `INFLEXA_MODEL_API_KEY` in the environment — it is never written to config). It also provisions Postgres and pulls the sandbox image.
+`inflexa setup` walks the model connection: either **`cliproxy`** (the default — sign in to a provider through the local CLIProxyAPI container it provisions) or **`direct`** (your own Anthropic or OpenAI-compatible endpoint, with the key read from `INFLEXA_MODEL_API_KEY` in the environment — it is never written to config). It also provisions Postgres, and it starts the two sandbox-image transfers and the package-catalog transfer.
 
 Run `inflexa config` (or `bun run dev config`) to view and edit configuration afterwards. Auth0 settings are read from `.env` — copy `.env.example` to get started.
 
-## Sandbox image
+## Sandbox and packages
 
-Analyses run inside the one **sandbox image**, `sandbox-base`. It carries the language runtimes, the bioconda command-line tools, and the Node packages — and NO R or Python package. The packages come from the local **package store**:
+Analyses run inside the one runtime image, `sandbox-base`. It carries the language runtimes, the bioconda command-line tools at `/opt/conda`, and the Node packages at `/opt/node` — and NO R or Python package. The analysis packages come from the local **package store**, which a second image, `sandbox-provisioner`, writes. The provisioner is the only container with network access, and it never sees the data of a user.
 
 | Command | Does |
 |-|-|
-| `inflexa sandbox pull` | Pull `ghcr.io/inflexa-ai/sandbox-base` and configure sandboxes to use it |
-| `inflexa sandbox status` | Show the images, the live transfers, and the store state |
-| `inflexa store download` | Install the published package store (the catalog) |
-| `inflexa store add <pkg>` | Acquire one more package into the store pool |
+| `inflexa sandbox pull` | Start the two detached image transfers: the runtime image and the provisioner image |
+| `inflexa sandbox status` | Show the two images, the live transfer states, and the package-store summary |
+| `inflexa sandbox remove` | Remove the two images from the engine; the store and the farms stay |
+| `inflexa store download` | Start the detached transfer of the published catalog from GitHub Packages |
+| `inflexa store add <pkg>` | Acquire one package into the pool, from PyPI, CRAN, or Bioconductor |
+| `inflexa store link <pkgs...>` | Link packages the pool already holds into the farm of one analysis |
+| `inflexa store ls` | List the packages, the farms, the live flights, and the disk use |
+| `inflexa store reclaim` | Remove store content that no farm references |
 
-`inflexa setup` offers the image pulls and the catalog download as one consent, and they run detached. The published image is a multi-arch manifest, thus `docker pull` resolves the host architecture automatically.
+`inflexa setup` offers the two image transfers and the catalog transfer as ONE consent, and the three run detached. The published images are multi-arch manifests, thus `docker pull` resolves the host architecture automatically.
 
-- **The local store** — the packages live under `$XDG_DATA_HOME/inflexa/package-store`. Each sandbox mounts them read-only at `/mnt/libs`, beside the farm of its analysis.
-- **Extend it** — `inflexa store add <pkg>` acquires from PyPI, CRAN, or Bioconductor, and `inflexa store link` connects a pool package into the farm of an analysis.
+- **The store on the host** — the root is `<data dir>/inflexa/package-store`. It holds the content-addressed **pool** (`store/`, one write-once directory per installed distribution), one symlink **farm** per analysis (`farms/<analysis>`, with its own `inflexa.lock`), and the dependency graph (`deps.json`). Each sandbox mounts the store read-only at `/mnt/libs`, with the farm of its analysis nested at `/mnt/libs/farm` and a per-analysis writable cache at `/mnt/libs/cache`.
+- **Extend it** — `inflexa store add <pkg> [--version <v>] [--lang python|r] [--analysis <ref>]` resolves the package under the pins the pool already holds, installs it into the pool, and extends the named farm. Without `--lang` the search covers both ecosystems, and a hit in both stops with an ask.
+- **Link, do not install** — `inflexa store link` writes symbolic links only, thus it needs no download and no container. A launch links what the plan named, and a run never installs.
+- **The agent asks per package** — after the plan, the conversation agent marks each missing package and asks for it through the `run_inflexa` approval flow. A refusal returns as guidance, with an invitation to swap the package.
 - **Managed deployments** mount the same store from a shared volume, and the refresher fetches it with this CLI.
 
 ## Reference data

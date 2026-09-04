@@ -15,8 +15,10 @@ the agent loop and the DBOS durable workflows.
 
 A step with a large computation runs in the `images/sandbox-base/` container. The
 container runs the R code and the Python code that the agent writes, against the
-data of the user. Then the container sends a report through a callback with an
-HMAC signature.
+data of the user. The container bakes no analysis package. The host package store
+mounts read-only, and the container reads each R package and each Python package
+from that store. The host then retrieves the result of the command, and an HMAC
+signature covers the report.
 
 The agent reads the task knowledge from `skills/`. It makes the report of the
 results in a report session.
@@ -41,9 +43,13 @@ results in a report session.
 - **`skills/` — shared runtime content.** The harness reads the skill packs at
   runtime. They are not code, and no package holds them. They are at the root,
   thus the two hosts load the same content.
-- **`images/sandbox-base/` — the execution boundary.** One sandbox image for each
-  step. Its Go `sandbox-server` is the counterpart of the sandbox client in the
-  harness.
+- **`images/` — the execution boundary, and the package store.** `sandbox-base/`
+  is the one runtime image, and each step runs one container of it. Its Go
+  `sandbox-server` is the counterpart of the sandbox client in the harness.
+  `sandbox-provisioner/` is the network-enabled builder. It writes the host
+  package store, and it never sees the data of a user. `package-store/manifest.yaml`
+  declares the package set that the published catalog holds. Refer to
+  `images/README.md`.
 
 ## Why this split
 

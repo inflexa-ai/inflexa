@@ -92,8 +92,8 @@ and `index.ts` exports them: `createLocalRunAuthorizer`,
 `createNoopArtifactRegistry`, and `makeLocalAuth`.
 An embedder constructs them, or its own realizations, and passes them into
 `assembleCoreRuntime` at its composition root. The local sandbox path makes an
-ephemeral Docker container for each analysis step. The session data, the lib store,
-and the ref store are host directories, bind-mounted into them.
+ephemeral Docker container for each analysis step. The session data, the package
+store, and the ref store are host directories, bind-mounted into them.
 
 **LLM backend** is whatever the wired `ChatProvider` and `EmbeddingProvider` point
 at. An embedder supplies an AI SDK `LanguageModel` instance, or an endpoint, key,
@@ -239,8 +239,8 @@ distinct lifetimes (an exec command against a sandbox machine) are in
 
 **A single base image**: one `sandbox-base` image for each sandbox agent. It has
 the R, Python, and Node.js runtimes and the system libraries. No R package and no
-Python package is baked in. The packages are in the shared library store, mounted
-read-only at `/mnt/libs`.
+Python package is baked in. The packages are in the host package store, mounted
+read-only at `/mnt/libs`, with the farm of the analysis at `/mnt/libs/farm`.
 
 **sandbox-server**: a statically-linked Go binary at
 `images/sandbox-base/server/`. Its endpoints are:
