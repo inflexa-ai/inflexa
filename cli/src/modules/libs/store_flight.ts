@@ -8,11 +8,11 @@
  * direct terminal add flushes at once. Thus three approvals of one turn share
  * one provisioner container, and the store lock sees one writer per batch.
  *
- * A flight is the record of acquiring ONE normalized spec. The key of a flight
- * is that spec: the ecosystem (or none, for a name the run resolves), the
- * PEP 503 canonical name, and the specifier. One flight lives for each key,
- * thus a spec that another process already acquires starts no second run — the
- * flush subscribes its analysis to the live flight and drops the spec from its
+ * A flight is the record of acquiring ONE spec. The key of a flight is that
+ * spec: the track (or none, for a name the run resolves), the spelling of the
+ * request, and the specifier. One flight lives for each key, thus a spec that
+ * another process already acquires starts no second run — the flush subscribes
+ * its analysis to the live flight and drops the spec from its
  * own batch. A flight row also carries the liveness of the batch through its
  * `holder_pid`, and the reclamation waits on exactly that.
  *
@@ -30,7 +30,8 @@ import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { shelfKey } from "@inflexa-ai/harness";
+import { formatQuery, identityKey, identityOf } from "@inflexa-ai/harness";
+import type { PackageQuery } from "@inflexa-ai/harness";
 import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -50,7 +51,7 @@ import {
     settleStoreFlightFailure,
     subscribeStoreFlight,
 } from "../../db/primary_mutation.ts";
-import { analysisFarmPath, canonicalDistributionName, describeFarmCompositionError, extendFarm, GRAPH_VERSION } from "./composition.ts";
+import { analysisFarmPath, describeFarmCompositionError, extendFarm, GRAPH_VERSION } from "./composition.ts";
 import {
     ACQUIRE_EGRESS_ALLOW,
     classifyProvisionerRun,
@@ -65,20 +66,19 @@ import { readTransferReport } from "./transfers.ts";
 import type { StoreEcosystem, StoreFlightRow } from "../../types/store.ts";
 
 /**
- * The normalized spec that keys a flight, beside the spelling that the user gave.
+ * The spec that keys a flight, in the shape of the two request tables.
  *
- * `name` is PEP 503 canonical, thus `Scanpy`, `scan_py`, and `scan.py` all key
- * one flight. `rawName` is the spelling of the request: the installer and every
+ * `spelling` is the name of the request, verbatim: the installer and every
  * render need it, because an R name is case-sensitive and can carry dots —
- * `GO.db` installs, and `go-db` names nothing. `specifier` is the exact-version
+ * `GO.db` installs, and `go-db` names nothing. Two spellings of one fold are
+ * two specs, because they are two queries. `specifier` is the exact-version
  * constraint (`==<v>`), or empty. `ecosystem` is `null` for a name the acquire
  * run resolves — a name that both ecosystems satisfy then stops with the
- * both-hit ask, and that stop arms only when each probe gets the raw spelling.
+ * both-hit ask, and that stop arms only when each probe gets the spelling.
  */
 export type StoreFlightSpec = {
     readonly ecosystem: StoreEcosystem | null;
-    readonly name: string;
-    readonly rawName: string;
+    readonly spelling: string;
     readonly specifier: string;
 };
 
@@ -101,24 +101,37 @@ const RECLAIM_WAIT_MS = 120_000;
 /** How often a live batch writes its newest provisioner line, so a chatty container costs one row write per step. */
 const PROGRESS_WRITE_INTERVAL_MS = 500;
 
-/** The key of a flight: the ecosystem (or `any`), the canonical name, and the specifier, joined with `::`. */
+/** The key of a flight: the track (or `any`), the spelling, and the specifier, joined with `::`. */
 export function storeFlightKey(spec: StoreFlightSpec): string {
-    return `${spec.ecosystem ?? "any"}::${spec.name}::${spec.specifier}`;
+    return `${spec.ecosystem ?? "any"}::${spec.spelling}::${spec.specifier}`;
 }
 
-/** The spec as a user reads it: the raw requirement, with the ecosystem behind it when one was named. */
-export function describeStoreFlightSpec(spec: Pick<StoreFlightSpec, "ecosystem" | "rawName" | "specifier">): string {
-    return `${spec.rawName}${spec.specifier}${spec.ecosystem === null ? "" : ` (${spec.ecosystem})`}`;
+/** The spec as a user reads it: the requirement, with the ecosystem behind it when one was named. */
+export function describeStoreFlightSpec(spec: Pick<StoreFlightSpec, "ecosystem" | "spelling" | "specifier">): string {
+    return `${spec.spelling}${spec.specifier}${spec.ecosystem === null ? "" : ` (${spec.ecosystem})`}`;
 }
 
 /**
- * The spec in the internal format of the provisioner: an ecosystem prefix when one
- * is known, bare otherwise. The requirement carries the RAW spelling — pak needs
- * `GO.db` verbatim, and the provisioner canonicalizes the Python side itself.
+ * The query that one spec asks. The two shapes hold one fact: the spec is the
+ * row of the ledger, and the query is the grammar that crosses to the
+ * provisioner. Only this module mints a specifier, and it mints `==<v>` or
+ * nothing, thus the two characters after the `==` are the version.
  */
-function provisionerSpec(spec: Pick<StoreFlightSpec, "ecosystem" | "rawName" | "specifier">): string {
-    const requirement = `${spec.rawName}${spec.specifier}`;
-    return spec.ecosystem === null ? requirement : `${spec.ecosystem}:${requirement}`;
+function specQuery(spec: Pick<StoreFlightSpec, "ecosystem" | "spelling" | "specifier">): PackageQuery {
+    return {
+        spelling: spec.spelling,
+        ...(spec.ecosystem === null ? {} : { track: spec.ecosystem }),
+        ...(spec.specifier === "" ? {} : { version: spec.specifier.slice(2) }),
+    };
+}
+
+/**
+ * The spec in the grammar that the provisioner parses with the Python twin of
+ * `parseQuery`. The requirement carries the SPELLING — pak needs `GO.db`
+ * verbatim, and the provisioner folds the Python side itself.
+ */
+function provisionerSpec(spec: Pick<StoreFlightSpec, "ecosystem" | "spelling" | "specifier">): string {
+    return formatQuery(specQuery(spec));
 }
 
 /** The configured concurrency cap, or the default when the configuration names none. */
@@ -165,12 +178,7 @@ export type StoreEnqueueError =
  * the package-store-download spec names this refusal. A `running` row whose
  * holder is gone reads as failed, thus a dead downloader refuses nothing.
  */
-export function enqueueStoreAdd(entry: {
-    readonly name: string;
-    readonly version: string | null;
-    readonly ecosystem: StoreEcosystem | null;
-    readonly analysisId: string | null;
-}): Result<StoreFlightSpec, StoreEnqueueError> {
+export function enqueueStoreAdd(entry: { readonly query: PackageQuery; readonly analysisId: string | null }): Result<StoreFlightSpec, StoreEnqueueError> {
     const catalog = readTransferReport("catalog");
     if (catalog.live) {
         return err({
@@ -180,14 +188,12 @@ export function enqueueStoreAdd(entry: {
         });
     }
     const spec: StoreFlightSpec = {
-        ecosystem: entry.ecosystem,
-        name: canonicalDistributionName(entry.name),
-        rawName: entry.name.trim(),
-        specifier: entry.version === null ? "" : `==${entry.version.trim()}`,
+        ecosystem: entry.query.track ?? null,
+        spelling: entry.query.spelling,
+        specifier: entry.query.version === undefined ? "" : `==${entry.query.version}`,
     };
     return enqueuePendingStoreAdd({
-        name: spec.name,
-        rawName: spec.rawName,
+        spelling: spec.spelling,
         specifier: spec.specifier,
         ecosystem: spec.ecosystem,
         analysisId: entry.analysisId,
@@ -341,9 +347,9 @@ export async function commitStagedNodes(
                             continue;
                         }
                         // A bare name: the pool satisfied this dependency before the run.
-                        // The shelf key obeys the identity rule of the track, thus an R
-                        // edge reads the DESCRIPTION spelling and a Python edge folds.
-                        const head = raw.by_name[node.track][shelfKey(node.track, edge)]?.[0];
+                        // The identity of the track is the shelf key, thus an R edge reads
+                        // the DESCRIPTION spelling and a Python edge folds.
+                        const head = raw.by_name[node.track][identityOf(node.track, edge).name]?.[0];
                         if (head === undefined) {
                             bad = edge;
                             break;
@@ -462,7 +468,7 @@ type BatchEntry = { readonly key: string; readonly spec: StoreFlightSpec; readon
 function groupPendingAdds(entries: readonly PendingStoreAdd[]): BatchEntry[] {
     const byKey = new Map<string, BatchEntry>();
     for (const entry of entries) {
-        const spec: StoreFlightSpec = { ecosystem: entry.ecosystem, name: entry.name, rawName: entry.rawName, specifier: entry.specifier };
+        const spec: StoreFlightSpec = { ecosystem: entry.ecosystem, spelling: entry.spelling, specifier: entry.specifier };
         const key = storeFlightKey(spec);
         const existing = byKey.get(key) ?? { key, spec, analysisIds: new Set<string>() };
         if (entry.analysisId !== null) existing.analysisIds.add(entry.analysisId);
@@ -475,8 +481,7 @@ function groupPendingAdds(entries: readonly PendingStoreAdd[]): BatchEntry[] {
 function requeueBatch(entries: readonly PendingStoreAdd[]): void {
     for (const entry of entries) {
         enqueuePendingStoreAdd({
-            name: entry.name,
-            rawName: entry.rawName,
+            spelling: entry.spelling,
             specifier: entry.specifier,
             ecosystem: entry.ecosystem,
             analysisId: entry.analysisId,
@@ -537,8 +542,7 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
         const claim = claimStoreFlight({
             id: entry.key,
             ecosystem: entry.spec.ecosystem,
-            name: entry.spec.name,
-            rawName: entry.spec.rawName,
+            spelling: entry.spec.spelling,
             specifier: entry.spec.specifier,
             holderPid: process.pid,
         });
@@ -660,8 +664,8 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
                         candidates.length > 0 ? candidates.map((candidate) => `--lang ${candidate.ecosystem}`).join(" or ") : "--lang python or --lang r";
                     failures.set(
                         entry.key,
-                        `resolve: both ecosystems hold "${entry.spec.rawName}" — nothing was installed. ` +
-                            `Run \`inflexa store add ${entry.spec.rawName}\` again with ${pair} to name the one you want.`,
+                        `resolve: both ecosystems hold "${entry.spec.spelling}" — nothing was installed. ` +
+                            `Run \`inflexa store add ${entry.spec.spelling}\` again with ${pair} to name the one you want.`,
                     );
                     break;
                 }
@@ -832,20 +836,36 @@ export function describeRecordedFlightFailure(message: string | null): string {
 }
 
 /**
+ * Whether one request row answers one pool miss.
+ *
+ * A row and a query that BOTH name a track compare by identity, thus a Python
+ * flight for `seurat` does not answer an R miss of `Seurat`. A row and a query
+ * that name NO track compare by spelling, because neither side knows which
+ * ecosystem folds. A pair where only one side names a track matches nothing:
+ * the unnamed side stands for both ecosystems, and a match would claim a
+ * knowledge that no row holds.
+ */
+function answersMiss(row: Pick<StoreFlightSpec, "ecosystem" | "spelling">, query: PackageQuery): boolean {
+    if (row.ecosystem === null || query.track === undefined) {
+        return row.ecosystem === null && query.track === undefined && row.spelling === query.spelling;
+    }
+    return identityKey(identityOf(row.ecosystem, row.spelling)) === identityKey(identityOf(query.track, query.spelling));
+}
+
+/**
  * Classify one pool miss against the host rows, for the launch refusal: in
  * flight, failed with its recorded reason, or unknown. `undefined` is the
  * unknown case — each caller appends its own remedy for it, thus this
  * classifier stays a pure read of the host rows.
  */
-export function classifyPoolMiss(name: string): string | undefined {
-    const canonical = canonicalDistributionName(name);
+export function classifyPoolMiss(query: PackageQuery): string | undefined {
     const pending = listPendingStoreAdds()
         .unwrapOr([])
-        .some((entry) => entry.name === canonical);
+        .some((entry) => answersMiss(entry, query));
     const rows = readStoreFlights();
-    const live = rows.some((flight) => flight.row.name === canonical && flight.row.state !== "failed");
+    const live = rows.some((flight) => answersMiss(flight.row, query) && flight.row.state !== "failed");
     if (pending || live) return "its acquisition is in flight — launch again when it lands";
-    const failed = rows.find((flight) => flight.row.name === canonical && flight.row.state === "failed");
+    const failed = rows.find((flight) => answersMiss(flight.row, query) && flight.row.state === "failed");
     if (failed !== undefined) return `its last flight failed: ${describeRecordedFlightFailure(failed.row.message)} — retry it or delete the record`;
     return undefined;
 }

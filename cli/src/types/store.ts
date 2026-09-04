@@ -83,7 +83,7 @@ export type StoreFlightStatus = "queued" | "running" | "failed";
 
 /** The persisted row of one live flight. */
 export type StoreFlightRow = {
-    /** The flight key: the ecosystem, the canonical name, and the specifier, joined. */
+    /** The flight key: the track (or `any`), the spelling, and the specifier, joined. */
     readonly id: string;
     /** When the owner claimed the key, epoch millis. */
     readonly createdAt: number;
@@ -93,14 +93,12 @@ export type StoreFlightRow = {
     readonly state: StoreFlightStatus;
     /** The ecosystem of the spec, or `null` for a name the run resolves. */
     readonly ecosystem: StoreEcosystem | null;
-    /** The PEP 503 canonical distribution name. */
-    readonly name: string;
     /**
-     * The spelling the user gave, which the installer and every render need. An R
-     * name is case-sensitive and can carry dots, thus the canonical form cannot
-     * serve as an installer ref. A row from before the column backfills from `name`.
+     * The spelling of the request, verbatim. The installer and every render need
+     * it: an R name is case-sensitive and can carry dots, thus `GO.db` installs
+     * and `go-db` names nothing. A request is a query, and a query holds one name.
      */
-    readonly rawName: string;
+    readonly spelling: string;
     /** The exact-version specifier, or empty. */
     readonly specifier: string;
     /** The newest provisioner line, or `null` before the container writes one. */

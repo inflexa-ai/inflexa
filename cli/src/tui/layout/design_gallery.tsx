@@ -261,12 +261,11 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         <FailedFlightDialog
                             flight={{
                                 id: "python::scipy::==1.18.1",
-                                rawName: "scipy",
                                 createdAt: 0,
                                 updatedAt: 0,
                                 state: "failed",
                                 ecosystem: "python",
-                                name: "scipy",
+                                spelling: "scipy",
                                 specifier: "==1.18.1",
                                 progress: null,
                                 message: 'commit: the dependency "scipy-1.18.1-ac47ce3c59033b5f" resolves to nothing in the pool',

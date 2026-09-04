@@ -95,7 +95,6 @@
             "imports": ["Rpkga"],
             "name": "Rpkga",
             "order": "0b",
-            "r_dir": "Rpkga",
             "track": "r",
             "version": "1.0"
         },
@@ -105,7 +104,6 @@
             "imports": ["Rpkgb"],
             "name": "Rpkgb",
             "order": "0b",
-            "r_dir": "Rpkgb",
             "track": "r",
             "version": "2.1"
         },

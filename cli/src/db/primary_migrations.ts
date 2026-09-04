@@ -376,6 +376,75 @@ export const migrations: Migration[] = [
             UPDATE package_store_flights SET raw_name = name;
         `,
     },
+    {
+        // One spelling for each request. A request is a `PackageQuery` of the
+        // harness `package-identity` capability, and a query holds ONE name: the
+        // spelling that the caller wrote. The folded `name` column was the
+        // identity of a Python distribution only, and on the R side it named
+        // nothing that an installer can reach. Thus the two columns become one,
+        // and the fold leaves the SQL.
+        //
+        // The backfill takes `raw_name`, which is the spelling that migration 9
+        // recorded, and it falls back to `name` for a row that predates that
+        // column. A live flight of `GO.db` keeps `GO.db`.
+        //
+        // A column cannot drop in place on the SQLite of this runtime, thus each
+        // table rebuilds — the pattern of migration 7. The subscriptions rebuild
+        // WITH the flights, child first on the drop side: a DROP of the old
+        // parent under `PRAGMA foreign_keys = ON` runs an implicit DELETE, and
+        // the old CASCADE would then eat the copied subscriptions. The RENAME at
+        // the end rewrites the FK of the new child onto the final table name,
+        // and the indexes come back with their own names, because a DROP TABLE
+        // took the originals with it.
+        version: 10,
+        up: `
+            CREATE TABLE pending_store_adds_v10 (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                spelling TEXT NOT NULL,
+                specifier TEXT NOT NULL,
+                ecosystem TEXT CHECK (ecosystem IN ('python', 'r') OR ecosystem IS NULL),
+                analysis_id TEXT REFERENCES analyses(id) ON DELETE SET NULL
+            );
+            INSERT INTO pending_store_adds_v10
+                SELECT id, created_at, COALESCE(raw_name, name), specifier, ecosystem, analysis_id
+                FROM pending_store_adds;
+            DROP TABLE pending_store_adds;
+            ALTER TABLE pending_store_adds_v10 RENAME TO pending_store_adds;
+            CREATE TABLE package_store_flights_v10 (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'failed')),
+                ecosystem TEXT CHECK (ecosystem IN ('python', 'r') OR ecosystem IS NULL),
+                spelling TEXT NOT NULL,
+                specifier TEXT NOT NULL,
+                progress TEXT,
+                message TEXT,
+                holder_pid INTEGER NOT NULL
+            );
+            INSERT INTO package_store_flights_v10
+                SELECT id, created_at, updated_at, state, ecosystem, COALESCE(raw_name, name), specifier, progress, message, holder_pid
+                FROM package_store_flights;
+            CREATE TABLE package_store_flight_subscriptions_v10 (
+                flight_id TEXT NOT NULL REFERENCES package_store_flights_v10(id) ON DELETE CASCADE,
+                analysis_id TEXT REFERENCES analyses(id) ON DELETE CASCADE
+            );
+            INSERT INTO package_store_flight_subscriptions_v10
+                SELECT flight_id, analysis_id FROM package_store_flight_subscriptions;
+            DROP TABLE package_store_flight_subscriptions;
+            DROP TABLE package_store_flights;
+            ALTER TABLE package_store_flights_v10 RENAME TO package_store_flights;
+            ALTER TABLE package_store_flight_subscriptions_v10 RENAME TO package_store_flight_subscriptions;
+            CREATE INDEX idx_ps_flight_subs_flight ON package_store_flight_subscriptions(flight_id);
+            CREATE UNIQUE INDEX uq_ps_flight_subs_analysis
+                ON package_store_flight_subscriptions(flight_id, analysis_id)
+                WHERE analysis_id IS NOT NULL;
+            CREATE UNIQUE INDEX uq_ps_flight_subs_host
+                ON package_store_flight_subscriptions(flight_id)
+                WHERE analysis_id IS NULL;
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

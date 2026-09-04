@@ -85,7 +85,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -200,7 +200,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {
@@ -305,25 +305,60 @@ describe("migration 8 — the transfer phase column", () => {
     });
 });
 
-describe("migration 9 — the raw spelling of a store-add request", () => {
-    test("a version-8 row backfills its raw name from the canonical one", () => {
-        // The upgrade an installed user takes: an old row knows only the canonical
-        // spelling, and the backfill copies it. The readers then never meet a null,
-        // and a render of an old failed flight stays a name rather than an empty cell.
+describe("migration 10 — one spelling for each request", () => {
+    test("a row with a raw name keeps that spelling, and the folded column goes", () => {
+        // The live case: migration 9 recorded `GO.db` beside the folded `go-db`,
+        // and a request holds ONE name. The spelling is the half that an
+        // installer can reach, thus it is the half that survives.
+        const db = new Database(":memory:");
+        runMigrations(
+            db,
+            migrations.filter((m) => m.version <= 9),
+        )._unsafeUnwrap();
+        db.run(
+            "INSERT INTO pending_store_adds (id, created_at, name, raw_name, specifier, ecosystem, analysis_id) VALUES ('p1', 1, 'go-db', 'GO.db', '', 'r', NULL)",
+        );
+        db.run(
+            `INSERT INTO package_store_flights (id, created_at, updated_at, state, ecosystem, name, raw_name, specifier, progress, message, holder_pid)
+             VALUES ('r::go-db::', 1, 1, 'queued', 'r', 'go-db', 'GO.db', '', NULL, NULL, 4242)`,
+        );
+        db.run("INSERT INTO package_store_flight_subscriptions (flight_id, analysis_id) VALUES ('r::go-db::', NULL)");
+
+        runMigrations(db, migrations)._unsafeUnwrap();
+
+        expect(db.query<{ spelling: string }, []>("SELECT spelling FROM pending_store_adds").get()?.spelling).toBe("GO.db");
+        expect(db.query<{ spelling: string }, []>("SELECT spelling FROM package_store_flights").get()?.spelling).toBe("GO.db");
+        // No folded column survives: the fold left the SQL with this rebuild.
+        expect(() => db.run("SELECT name FROM package_store_flights")).toThrow();
+        expect(() => db.run("SELECT raw_name FROM pending_store_adds")).toThrow();
+        // The subscription rode the rebuild of its parent, and the CASCADE of
+        // the old parent did not eat it.
+        expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions").get()?.n).toBe(1);
+    });
+
+    test("a row from before the raw-name column takes its folded name as the spelling", () => {
+        // The upgrade of an older install: `raw_name` is null, and the folded
+        // name is the only spelling that the row still knows.
         const db = new Database(":memory:");
         runMigrations(
             db,
             migrations.filter((m) => m.version <= 8),
         )._unsafeUnwrap();
-        db.run("INSERT INTO pending_store_adds (id, created_at, name, specifier, ecosystem, analysis_id) VALUES ('p1', 1, 'go-db', '', 'r', NULL)");
+        db.run("INSERT INTO pending_store_adds (id, created_at, name, specifier, ecosystem, analysis_id) VALUES ('p1', 1, 'scanpy', '==1.11', 'python', NULL)");
         db.run(
             `INSERT INTO package_store_flights (id, created_at, updated_at, state, ecosystem, name, specifier, progress, message, holder_pid)
-             VALUES ('r::go-db::', 1, 1, 'queued', 'r', 'go-db', '', NULL, NULL, 4242)`,
+             VALUES ('python::scanpy::', 1, 1, 'failed', 'python', 'scanpy', '', NULL, 'resolve: offline', 4242)`,
         );
 
         runMigrations(db, migrations)._unsafeUnwrap();
 
-        expect(db.query<{ raw_name: string | null }, []>("SELECT raw_name FROM pending_store_adds").get()?.raw_name).toBe("go-db");
-        expect(db.query<{ raw_name: string | null }, []>("SELECT raw_name FROM package_store_flights").get()?.raw_name).toBe("go-db");
+        expect(db.query<{ spelling: string; specifier: string }, []>("SELECT spelling, specifier FROM pending_store_adds").get()).toEqual({
+            spelling: "scanpy",
+            specifier: "==1.11",
+        });
+        const flight = db
+            .query<{ spelling: string; state: string; message: string | null }, []>("SELECT spelling, state, message FROM package_store_flights")
+            .get();
+        expect(flight).toEqual({ spelling: "scanpy", state: "failed", message: "resolve: offline" });
     });
 });

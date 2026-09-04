@@ -12,12 +12,19 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "@inflexa-ai/harness";
+import type { PoolInventoryPackage, PoolInventoryRead, PoolInventorySection, Track } from "@inflexa-ai/harness";
 
 import { describeFarmCompositionError, readDepsGraph } from "./composition.ts";
 
-/** The section title of each graph track, in the vocabulary of the inventory tool. */
-const POOL_TRACK_TITLES: Record<string, string> = { python: "Python (pip)", r: "R" };
+/**
+ * The section of each graph track: the track as DATA, and the title as display.
+ * A `language` filter of the tool reads the track, thus a reworded heading
+ * changes no answer.
+ */
+const POOL_TRACK_SECTIONS: readonly { readonly track: Track; readonly title: string }[] = [
+    { track: "python", title: "Python (pip)" },
+    { track: "r", title: "R" },
+];
 
 /**
  * Read the full content hash a store directory records. The marker sits at the
@@ -63,9 +70,9 @@ export async function readPoolInventorySections(storeRoot: string): Promise<Pool
     const graph = readDepsGraph(storeRoot);
     if (graph.isErr()) return { kind: "unavailable", reason: describeFarmCompositionError(graph.error) };
     const sections: PoolInventorySection[] = [];
-    for (const [track, title] of Object.entries(POOL_TRACK_TITLES)) {
-        const shelf = graph.value.byName[track as keyof typeof graph.value.byName];
-        if (shelf === undefined || shelf.size === 0) continue;
+    for (const { track, title } of POOL_TRACK_SECTIONS) {
+        const shelf = graph.value.byName[track];
+        if (shelf.size === 0) continue;
         const packages: PoolInventoryPackage[] = [];
         for (const [name, dirs] of [...shelf.entries()].sort(([a], [b]) => a.localeCompare(b))) {
             // The head of the shelf is the newest pin — the emitter settles that
@@ -81,7 +88,7 @@ export async function readPoolInventorySections(storeRoot: string): Promise<Pool
                 ...(hash === undefined ? {} : { hash }),
             });
         }
-        if (packages.length > 0) sections.push({ title, packages });
+        if (packages.length > 0) sections.push({ title, track, packages });
     }
     return { kind: "sections", sections };
 }

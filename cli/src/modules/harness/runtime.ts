@@ -30,6 +30,7 @@ import {
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
     type MachineBudget,
+    type PackageQuery,
     type PackageRequestOutcome,
     type Pool,
     type RegisterNotificationSweepDeps,
@@ -588,17 +589,19 @@ export function makeReportPageAssetLookup(assetsDir: string): ResolvePageAsset {
  *
  * The harness names no remedy by design, thus the launch refusal renders what
  * this wrapper writes. A host row wins: an acquisition that already runs is the
- * true state of the name, and "launch again when it lands" is the whole answer.
+ * true state of the query, and "launch again when it lands" is the whole
+ * answer. The classification takes the QUERY and not the spelling, because a
+ * Python flight for `seurat` must not answer an R miss of `Seurat`.
  *
  * An unknown name carries the store-add ask, and the suggestion of the
- * resolution leads it. The seam sets that suggestion when exactly one R key of
- * the pool folds onto the request: the pool holds the package under another
- * spelling, thus an acquisition would be wasted work.
+ * resolution leads it. The seam sets that suggestion when exactly one R
+ * identity of the pool folds onto the query: the pool holds the package under
+ * another spelling, thus an acquisition would be wasted work.
  */
-export function withPoolMissRemedy(outcome: PackageRequestOutcome): PackageRequestOutcome {
+export function withPoolMissRemedy(outcome: PackageRequestOutcome, query: PackageQuery): PackageRequestOutcome {
     if (outcome.kind !== "absent") return outcome;
-    const classified = classifyPoolMiss(outcome.name);
-    const ask = outcome.acquisitionPossible ? `the pool does not hold it — run \`inflexa store add ${outcome.name}\` to acquire it` : undefined;
+    const classified = classifyPoolMiss(query);
+    const ask = outcome.acquisitionPossible ? `the pool does not hold it — run \`inflexa store add ${outcome.spelling}\` to acquire it` : undefined;
     const unknown = [outcome.detail, ask].filter((part) => part !== undefined).join("; ");
     const detail = classified ?? (unknown === "" ? undefined : unknown);
     return detail === undefined ? outcome : { ...outcome, detail };
@@ -1073,7 +1076,7 @@ async function bootHarnessRuntimeOnce(
             // reads, thus a step reaches a package that the plan did not name. It
             // acquires nothing: this call runs in the harness host process, and an
             // acquisition is a host action behind its own approval.
-            extendAnalysisFarm: (id, requests) => linkPackagesIntoFarm(env.packageStoreDir, id, requests),
+            extendAnalysisFarm: (id, queries) => linkPackagesIntoFarm(env.packageStoreDir, id, queries),
             bioKeys: cfg.bioKeys,
         };
 
@@ -1115,7 +1118,7 @@ async function bootHarnessRuntimeOnce(
                 // emptiest, and `link_packages` is how it reads an input whose
                 // reader the farm does not hold yet. The link runs without an
                 // ask — the analysis consent covered the store at setup.
-                extendAnalysisFarm: (id, requests) => linkPackagesIntoFarm(env.packageStoreDir, id, requests),
+                extendAnalysisFarm: (id, queries) => linkPackagesIntoFarm(env.packageStoreDir, id, queries),
             },
         };
         // The conversation agent's dep surface minus the three fields
@@ -1163,9 +1166,14 @@ async function bootHarnessRuntimeOnce(
             // spec puts the exact command on this wrapper. A host row beats the
             // resolution: an acquisition that already runs is the true state, and
             // a spelling suggestion under it would send the agent sideways.
-            extendAnalysisFarm: async (id, requests) => {
-                const outcomes = await linkPackagesIntoFarm(env.packageStoreDir, id, requests);
-                return outcomes.map(withPoolMissRemedy);
+            extendAnalysisFarm: async (id, queries) => {
+                const outcomes = await linkPackagesIntoFarm(env.packageStoreDir, id, queries);
+                // The seam answers one outcome for each query, in the order of
+                // the queries, thus the index pairs them.
+                return outcomes.map((outcome, index) => {
+                    const query = queries[index];
+                    return query === undefined ? outcome : withPoolMissRemedy(outcome, query);
+                });
             },
             chrome: {},
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess

@@ -55,12 +55,14 @@ export function FailedFlightDialog(props: { flight: StoreFlightRow; onClose: () 
     }
 
     function retryFlight(): void {
-        // The raw spelling, not the canonical key: the retry is a new request, and
-        // the installer needs the name exactly as the user gave it.
+        // The retry is a new query, and the row already holds it: the spelling,
+        // the track, and the specifier are the three fields of the ask.
         const enqueued = enqueueStoreAdd({
-            name: props.flight.rawName,
-            version: props.flight.specifier.startsWith("==") ? props.flight.specifier.slice(2) : null,
-            ecosystem: props.flight.ecosystem,
+            query: {
+                spelling: props.flight.spelling,
+                ...(props.flight.ecosystem === null ? {} : { track: props.flight.ecosystem }),
+                ...(props.flight.specifier.startsWith("==") ? { version: props.flight.specifier.slice(2) } : {}),
+            },
             analysisId: null,
         });
         enqueued.match(

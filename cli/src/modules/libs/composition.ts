@@ -35,8 +35,8 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { FARM_LOCK_FILE, readFarmLock, shelfKey } from "@inflexa-ai/harness";
-import type { FarmLock, FarmResolution, PackageRequest, PackageRequestOutcome } from "@inflexa-ai/harness";
+import { FARM_LOCK_FILE, formatQuery, identityAddress, identityKey, identityOf, readFarmLock, resolveQuery } from "@inflexa-ai/harness";
+import type { FarmLock, FarmResolution, PackageIdentity, PackageQuery, PackageRequestOutcome, PoolIndex } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -174,6 +174,10 @@ type ReclaimYield = { readonly waitMs: number; readonly pollMs: number };
 
 // --- The graph ----------------------------------------------------------------
 
+// The node holds ONE name. The inner directory of an R store directory carries
+// that same name, thus the emitter publishes no `r_dir` and the reader wants
+// none. A development store from an earlier build still carries the field, and
+// zod strips it: an unread extra key is not a fault.
 const depsNodeSchema = z.object({
     track: z.enum(["python", "r"]),
     name: z.string(),
@@ -181,7 +185,6 @@ const depsNodeSchema = z.object({
     imports: z.array(z.string()).default([]),
     entry_points: z.array(z.string()).default([]),
     edges: z.array(z.string()).default([]),
-    r_dir: z.string().optional(),
 });
 
 /** The store directories of each distribution name of one track, newest first. */
@@ -221,8 +224,6 @@ export type DepsNode = {
     readonly entryPoints: readonly string[];
     /** The store directories that this node depends on. Each one names a node of the graph. */
     readonly edges: readonly string[];
-    /** The inner directory of an R store directory, whose name is the real package name. `null` for a Python node. */
-    readonly rDir: string | null;
 };
 
 /** The resolved dependency graph of the pool, indexed by store-directory name. */
@@ -233,7 +234,7 @@ export type DepsGraph = {
     readonly nodes: ReadonlyMap<string, DepsNode>;
     /**
      * The store directories of each package, for each track, keyed by the
-     * {@link shelfKey} of that track and ordered NEWEST FIRST.
+     * identity NAME of that track and ordered NEWEST FIRST.
      *
      * The EMITTER settles the order through the `order` strings of the nodes, and
      * the host orders nothing itself. A request that names no version takes the
@@ -448,7 +449,6 @@ export function readDepsGraph(storeRoot: string): Result<DepsGraph, FarmComposit
                 imports: node.imports,
                 entryPoints: node.entry_points,
                 edges: node.edges,
-                rDir: node.r_dir ?? null,
             });
         }
 
@@ -512,168 +512,136 @@ export type ResolvedRequest = {
 /** Why the graph answers a request with nothing. */
 export type RequestResolutionError =
     | {
-          /** No track of the pool holds the name. */
+          /** No track of the pool holds the spelling. */
           readonly type: "unknown_distribution";
-          /** The canonical form of the name that the request named. */
-          readonly name: string;
           /**
-           * The one R key of the pool that folds onto this name, when exactly
-           * one does. An R name is case-sensitive, thus `seurat` is not the
-           * package `Seurat`; the suggestion carries the spelling that links.
+           * The identity key (`<track>:<name>`) of the one R identity of the
+           * pool that folds onto the spelling, when exactly one does. An R name
+           * is case-sensitive, thus `seurat` is not the package `Seurat`; the
+           * suggestion carries the identity that links.
            */
           readonly suggestion?: string;
       }
     | {
-          /** The pool holds the name, and it holds no such version of it. */
+          /** The pool holds the identity, and it holds no such version of it. */
           readonly type: "unknown_version";
-          /** The shelf key that answered: the fold on the Python shelf, the request verbatim on the R shelf. */
-          readonly name: string;
-          /** The version that the request named. */
+          /** The version that the query named. */
           readonly version: string;
           /** The versions that the pool does hold, newest first. */
           readonly available: readonly string[];
       }
     | {
           /**
-           * The Python track and the R track both hold the name, and the request
-           * names no ecosystem. A silent pick is a fault, thus the resolution
-           * stops with the two candidates. An interactive caller asks the user,
-           * and the seam route reports the pair as agent guidance.
+           * The Python track and the R track both hold the spelling, and the
+           * query names no ecosystem. A silent pick is a fault, thus the
+           * resolution stops with the two candidates. An interactive caller
+           * asks the user, and the seam route reports the pair as agent
+           * guidance.
            */
           readonly type: "ambiguous_ecosystem";
-          /** The canonical form of the name that the request named. */
-          readonly name: string;
-          /** The head store directory of each track that holds the name: Python first, then R. */
+          /** The identity key of each track that holds the spelling: Python first, then R. */
+          readonly identities: readonly [string, string];
+          /** The head store directory of each track that holds the spelling: Python first, then R. */
           readonly candidates: readonly [string, string];
       };
 
 /**
- * The one R key of the pool that folds onto `fold`, when exactly one does.
- *
- * The R shelf keys the DESCRIPTION spelling, thus `seurat` reaches nothing while
- * the pool holds `Seurat`. Two keys that fold alike carry no suggestion, because
- * a guess between them would send the caller to the wrong package.
+ * The spelling inside an identity key. `identityKey` writes `<track>:<name>`,
+ * and neither track name nor package name carries a colon, thus the first
+ * colon splits the two. A remedy quotes the spelling and never the key: the
+ * pool holds `Seurat`, and `r:Seurat` names nothing at an installer.
  */
-function foldedRKey(graph: DepsGraph, fold: string): string | undefined {
-    const keys = [...graph.byName.r.keys()].filter((key) => canonicalDistributionName(key) === fold);
-    const [only, second] = keys;
-    return second === undefined ? only : undefined;
+export function identityKeySpelling(key: string): string {
+    const at = key.indexOf(":");
+    return at < 0 ? key : key.slice(at + 1);
 }
 
 /**
- * The refusal of a name that no shelf answers, with the folded R key as the
- * suggestion. `withSuggestion` is false for a request that names the Python
- * ecosystem, because an R spelling is no remedy for a Python request.
+ * The pool index of one graph, in the vocabulary of the harness
+ * `package-identity` capability.
+ *
+ * `has` reads the shelf of the track of the identity under the name of that
+ * identity, because the emitter keys each shelf by the identity name of its
+ * own track. `rIdentitiesFoldingTo` scans the keys of the R shelf and keeps
+ * the ones whose address equals the fold, which is what makes `seurat` suggest
+ * `Seurat`.
  */
-function unknownDistribution(graph: DepsGraph, fold: string, withSuggestion: boolean): RequestResolutionError {
-    const suggestion = withSuggestion ? foldedRKey(graph, fold) : undefined;
-    return { type: "unknown_distribution", name: fold, ...(suggestion === undefined ? {} : { suggestion }) };
+function poolIndexOf(graph: DepsGraph): PoolIndex {
+    return {
+        has: (identity) => (graph.byName[identity.track].get(identity.name) ?? []).length > 0,
+        rIdentitiesFoldingTo: (fold) => [...graph.byName.r.keys()].map((key) => identityOf("r", key)).filter((identity) => identityAddress(identity) === fold),
+    };
 }
 
-/** The store directory of one shelf key, at the pinned version or at the head of the ordering. */
-function pickFromShelf(graph: DepsGraph, request: PackageRequest, track: Track, key: string): Result<ResolvedRequest, RequestResolutionError> {
-    const candidates = (graph.byName[track].get(key) ?? []).flatMap((storeDir) => {
+/** The store directory of one identity, at the pinned version or at the head of the ordering. */
+function pickVersion(graph: DepsGraph, query: PackageQuery, identity: PackageIdentity): Result<ResolvedRequest, RequestResolutionError> {
+    const candidates = (graph.byName[identity.track].get(identity.name) ?? []).flatMap((storeDir) => {
         const node = graph.nodes.get(storeDir);
-        return node === undefined ? [] : [{ storeDir, name: key, version: node.version, track }];
+        return node === undefined ? [] : [{ storeDir, name: identity.name, version: node.version, track: identity.track }];
     });
     const [head] = candidates;
-    if (head === undefined) return err(unknownDistribution(graph, canonicalDistributionName(request.name), track === "r"));
-    if (request.version === undefined) return ok(head);
+    // A shelf whose every directory lost its node answers nothing. The
+    // resolution said `resolved`, thus the shelf was not empty; only a graph
+    // that disagrees with itself reaches here.
+    if (head === undefined) return err({ type: "unknown_distribution" });
+    if (query.version === undefined) return ok(head);
 
-    const exact = candidates.find((candidate) => candidate.version === request.version);
+    const exact = candidates.find((candidate) => candidate.version === query.version);
     if (exact === undefined) {
-        return err({ type: "unknown_version", name: key, version: request.version, available: candidates.map((candidate) => candidate.version) });
+        return err({ type: "unknown_version", version: query.version, available: candidates.map((candidate) => candidate.version) });
     }
     return ok(exact);
 }
 
 /**
- * The store directory of the pool that answers one package request.
+ * The store directory of the pool that answers one package query.
  *
- * `store link`, `store add`, and the farm-extension seam of the harness share this
- * one lookup, thus a package that a person names and a package that a failed
- * import names reach the pool by one rule. The answer is a root of a composition,
- * and the composition takes its closure.
+ * `store link`, `store add`, and the farm-extension seam of the harness share
+ * this one lookup, thus a package that a person names and a package that a
+ * failed import names reach the pool by one rule. The answer is a root of a
+ * composition, and the composition takes its closure.
  *
- * The lookup NEVER orders two versions. {@link DepsGraph.byName} arrives newest
- * first, because the emitter has the metadata of each ecosystem and the host does
- * not. Thus a request with no version takes the head of that list.
+ * The ladder itself is `resolveQuery` of the harness, over the pool index of
+ * this graph. The host holds no ladder, because the rule is host-agnostic: the
+ * census of the agent and this link must answer `decoupleR` alike, and two
+ * copies of a six-step ladder cannot stay alike.
  *
- * Each shelf reads under the identity rule of its own track ({@link shelfKey}):
- * the Python shelf under the PEP 503 fold of the request, and the R shelf under
- * the request verbatim. A request that names no ecosystem then follows one
- * precedence ladder:
- *
- * 1. The R shelf holds the request, and the request differs from its own fold:
- *    the R directory. An uppercase letter or a dot comes only from an R spelling.
- * 2. The R shelf holds the request, and the Python shelf holds the fold: the
- *    resolution stops as ambiguous, with the two head directories.
- * 3. The R shelf holds the request: the R directory. An R name that is its own
- *    fold, such as `dplyr`, reaches its package here.
- * 4. The Python shelf holds the fold: the Python directory.
- * 5. Exactly one R key folds onto the fold: unknown, with that key as the
- *    suggestion.
- * 6. Otherwise: unknown.
- *
- * A silent Python-first pick is a fault, thus step 2 refuses instead of picking.
- * Step 1 before step 2 is what lets `decoupleR` resolve at all: its fold is
- * `decoupler`, which the Python shelf holds.
+ * The host picks the VERSION, because the graph holds the versions and
+ * `resolveQuery` does not. {@link DepsGraph.byName} arrives newest first,
+ * because the emitter has the metadata of each ecosystem and the host does not.
+ * Thus a query with no version takes the head of that list.
  */
-export function resolvePackageRequest(graph: DepsGraph, request: PackageRequest): Result<ResolvedRequest, RequestResolutionError> {
-    const fold = canonicalDistributionName(request.name);
-    const holds = (track: Track, key: string): boolean => (graph.byName[track].get(key) ?? []).length > 0;
-
-    // A qualified request reads that shelf only. A miss on the R shelf still
-    // carries the suggestion: the pool can hold the package in another case.
-    if (request.ecosystem !== undefined) {
-        const key = shelfKey(request.ecosystem, request.name);
-        if (holds(request.ecosystem, key)) return pickFromShelf(graph, request, request.ecosystem, key);
-        return err(unknownDistribution(graph, fold, request.ecosystem === "r"));
+export function resolvePackageRequest(graph: DepsGraph, query: PackageQuery): Result<ResolvedRequest, RequestResolutionError> {
+    const resolution = resolveQuery(query, poolIndexOf(graph));
+    switch (resolution.kind) {
+        case "resolved":
+            return pickVersion(graph, query, resolution.identity);
+        case "ambiguous": {
+            const python = graph.byName.python.get(resolution.python.name)?.[0];
+            const r = graph.byName.r.get(resolution.r.name)?.[0];
+            // `ambiguous` means the index answered `has` for both identities,
+            // and `has` reads a non-empty shelf, thus both heads exist. The
+            // guard stands in for the compiler.
+            if (python === undefined || r === undefined) return err({ type: "unknown_distribution" });
+            // The pair is Python first, because a caller renders the tracks in
+            // that order.
+            return err({
+                type: "ambiguous_ecosystem",
+                identities: [identityKey(resolution.python), identityKey(resolution.r)],
+                candidates: [python, r],
+            });
+        }
+        case "unknown":
+            return err({
+                type: "unknown_distribution",
+                ...(resolution.suggestion === undefined ? {} : { suggestion: identityKey(resolution.suggestion) }),
+            });
+        default: {
+            // The union is closed, thus the compiler proves that this is unreachable.
+            const unreachable: never = resolution;
+            throw new Error(`unhandled query resolution: ${JSON.stringify(unreachable)}`);
+        }
     }
-
-    const rKey = shelfKey("r", request.name);
-    const pythonKey = shelfKey("python", request.name);
-    const inR = holds("r", rKey);
-    const inPython = holds("python", pythonKey);
-
-    if (inR && rKey !== fold) return pickFromShelf(graph, request, "r", rKey);
-    if (inR && inPython) {
-        const python = graph.byName.python.get(pythonKey)?.[0];
-        const r = graph.byName.r.get(rKey)?.[0];
-        // The pair is Python first, because a caller renders the tracks in that
-        // order. A shelf that holds a key holds a head, thus the guard below
-        // never falls through in practice — it stands in for the compiler.
-        if (python !== undefined && r !== undefined) return err({ type: "ambiguous_ecosystem", name: fold, candidates: [python, r] });
-    }
-    if (inR) return pickFromShelf(graph, request, "r", rKey);
-    if (inPython) return pickFromShelf(graph, request, "python", pythonKey);
-    return err(unknownDistribution(graph, fold, true));
-}
-
-/**
- * The canonical form of a distribution name, in the rule of PEP 503: each run of
- * `-`, `_`, and `.` becomes one `-`, and the result is lower case.
- *
- * The canonical form is the identity of a PYTHON distribution, and of nothing
- * else. PEP 503 defines that equivalence, thus `Typing_Ext` and `typing-ext` name
- * one distribution and reach one pool directory. Two places on the host read it
- * as an identity: the Python shelf of {@link DepsGraph.byName}, through
- * {@link shelfKey}, and the flight key of an acquisition, where the flight
- * carries its own ecosystem and the fold cannot cross a track.
- *
- * An R package has a different identity: the DESCRIPTION spelling, which
- * {@link shelfKey} keeps verbatim, because `library()` is case-sensitive. The
- * store DIRECTORY of either track carries the canonical form, because a
- * directory is an address and not an identity — thus `GO.db` addresses as
- * `go-db` while it stays `GO.db` on the R shelf, in the pool inventory, and at
- * an installer.
- *
- * This is the one host copy of the rule. The provisioner holds the matching copy
- * (`emit_deps.py`, `canon`), because the graph that it writes carries these
- * names.
- */
-export function canonicalDistributionName(name: string): string {
-    return name.replace(/[-_.]+/g, "-").toLowerCase();
 }
 
 // --- The two path spaces ------------------------------------------------------
@@ -956,7 +924,9 @@ function hostArch(): FarmLock["arch"] {
  */
 function storedFullHash(storeRoot: string, storeDir: string, node: DepsNode): Result<string, FarmCompositionError> {
     const base = join(storeRoot, POOL_DIR, storeDir);
-    const marker = node.rDir === null ? join(base, HASH_MARKER) : join(base, node.rDir, HASH_MARKER);
+    // An R store directory nests the package one level down, under the
+    // DESCRIPTION spelling — which is the identity name that the node carries.
+    const marker = node.track === "python" ? join(base, HASH_MARKER) : join(base, node.name, HASH_MARKER);
     return readFileResult(marker, `read the hash marker of ${storeDir}`).map((raw) => raw.trim());
 }
 
@@ -1091,13 +1061,13 @@ function linkClosure(
         // is the real package name. Thus a package that rebuilds its own path as
         // `libname/packagename` resolves itself through the link.
         for (const key of rNodes) {
-            const rDir = graph.nodes.get(key)?.rDir;
-            if (rDir === undefined || rDir === null) continue;
+            const inner = graph.nodes.get(key)?.name;
+            if (inner === undefined) continue;
             const subtree = template.rSubtrees.get(key) ?? "cran";
-            const link = join(farmPath, "r", subtree, rDir);
+            const link = join(farmPath, "r", subtree, inner);
             if (entryAt(plan, link).kind !== "absent") continue;
-            plan.ops.push({ kind: "mkdir", path: join(farmPath, "r", subtree) }, { kind: "symlink", path: link, target: `${bakedPoolPath(key)}/${rDir}` });
-            plan.planned.set(link, { kind: "link", target: `${bakedPoolPath(key)}/${rDir}` });
+            plan.ops.push({ kind: "mkdir", path: join(farmPath, "r", subtree) }, { kind: "symlink", path: link, target: `${bakedPoolPath(key)}/${inner}` });
+            plan.planned.set(link, { kind: "link", target: `${bakedPoolPath(key)}/${inner}` });
         }
         return plan;
     });
@@ -1605,36 +1575,46 @@ function acquisitionPossible(): boolean {
 }
 
 /**
- * The `absent` outcome of one request that did not resolve, in the vocabulary of the seam.
+ * The `absent` outcome of one query that did not resolve, in the vocabulary of the seam.
  *
- * The outcome echoes the REQUESTED spelling, never the canonical form. The caller
- * quotes this name into a remedy (`inflexa store add <name>`), and an R installer
- * needs the exact spelling — a canonical echo would teach the caller `go-db`.
+ * The outcome echoes the SPELLING of the query, never an identity name. The
+ * caller quotes this name into a remedy (`inflexa store add <name>`), and an R
+ * installer needs the exact spelling — a folded echo would teach the caller
+ * `go-db`.
  */
-function absentOutcome(request: PackageRequest, failure: RequestResolutionError): PackageRequestOutcome {
+function absentOutcome(query: PackageQuery, failure: RequestResolutionError): PackageRequestOutcome {
     switch (failure.type) {
         case "unknown_distribution":
             // The suggestion rides in the detail, thus the launch refusal names
             // the spelling the pool holds before it asks for an acquisition.
             return {
                 kind: "absent",
-                name: request.name,
+                spelling: query.spelling,
                 acquisitionPossible: acquisitionPossible(),
                 ...(failure.suggestion === undefined
                     ? {}
-                    : { detail: `the pool holds "${failure.suggestion}" — an R package name is case-sensitive, thus the two spellings are two names` }),
+                    : {
+                          detail:
+                              `the pool holds "${identityKeySpelling(failure.suggestion)}" (${failure.suggestion}) — ` +
+                              `an R package name is case-sensitive, thus the two spellings are two names`,
+                      }),
             };
         case "unknown_version":
-            return { kind: "absent", name: request.name, acquisitionPossible: acquisitionPossible() };
+            return { kind: "absent", spelling: query.spelling, acquisitionPossible: acquisitionPossible() };
         case "ambiguous_ecosystem":
             // The caller names the ecosystem to settle it. The detail names the
-            // TRACK of each directory, because two directories of one name can
-            // differ only in the version and the name alone tells them apart.
+            // IDENTITY of each directory, because two directories of one
+            // spelling can differ only in the track, and it names the two
+            // prefixed queries that settle it.
             return {
                 kind: "collision",
-                name: request.name,
+                spelling: query.spelling,
                 storeDirs: failure.candidates,
-                detail: `the Python track holds ${failure.candidates[0]}, and the R track holds ${failure.candidates[1]}`,
+                detail:
+                    `the Python track holds ${failure.candidates[0]} as ${failure.identities[0]}, ` +
+                    `and the R track holds ${failure.candidates[1]} as ${failure.identities[1]} — ` +
+                    `ask again for \`${formatQuery({ spelling: query.spelling, track: "python" })}\` ` +
+                    `or \`${formatQuery({ spelling: query.spelling, track: "r" })}\``,
             };
         default: {
             const unreachable: never = failure;
@@ -1644,11 +1624,11 @@ function absentOutcome(request: PackageRequest, failure: RequestResolutionError)
 }
 
 /**
- * The farm-extension seam realization (`link_packages`): the requests of one
- * sandbox step in, one outcome for each request out, in the order of the requests.
+ * The farm-extension seam realization (`link_packages`): the queries of one
+ * sandbox step in, one outcome for each query out, in the order of the queries.
  *
  * The seam runs in THIS process, beside the tool that calls it. It reads the
- * graph, it resolves each request against the pool, and it links what resolved.
+ * graph, it resolves each query against the pool, and it links what resolved.
  * Thus it starts no container, it opens no network connection, and it starts no
  * `inflexa` child: an acquisition is a host action, behind its own approval, and
  * it is never a step of a run.
@@ -1658,24 +1638,20 @@ function absentOutcome(request: PackageRequest, failure: RequestResolutionError)
  * whole batch, because the link pass plans the whole extension before it writes
  * anything.
  */
-export async function linkPackagesIntoFarm(
-    storeRoot: string,
-    analysisId: string,
-    requests: readonly PackageRequest[],
-): Promise<readonly PackageRequestOutcome[]> {
+export async function linkPackagesIntoFarm(storeRoot: string, analysisId: string, queries: readonly PackageQuery[]): Promise<readonly PackageRequestOutcome[]> {
     const read = readDepsGraph(storeRoot);
     if (read.isErr()) {
         // A store with no readable graph answers NOTHING about presence, thus
-        // each request reports `unavailable` with the one graph reason. A bare
+        // each query reports `unavailable` with the one graph reason. A bare
         // "absent" here would be a fabrication: it sends the agent after
         // packages the pool holds, while the true fault sits in the graph.
         const reason = describeFarmCompositionError(read.error);
-        // The requested spelling rides back, because a caller quotes it into a remedy.
-        return requests.map((request) => ({ kind: "unavailable", name: request.name, reason }));
+        // The asked spelling rides back, because a caller quotes it into a remedy.
+        return queries.map((query) => ({ kind: "unavailable", spelling: query.spelling, reason }));
     }
     const graph = read.value;
 
-    const resolutions = requests.map((request) => ({ request, resolved: resolvePackageRequest(graph, request) }));
+    const resolutions = queries.map((query) => ({ query, resolved: resolvePackageRequest(graph, query) }));
     const roots = [
         ...new Set(
             resolutions.flatMap(({ resolved }) =>
@@ -1693,26 +1669,31 @@ export async function linkPackagesIntoFarm(
     const linkedAlready = roots.length === 0 ? new Set<string>() : readFarmClosure(analysisFarmPath(storeRoot, analysisId));
     const extended = roots.length === 0 ? null : await extendFarm({ storeRoot, analysisId, roots });
 
-    return resolutions.map(({ request, resolved }) =>
+    return resolutions.map(({ query, resolved }) =>
         resolved.match(
             (answer): PackageRequestOutcome => {
                 if (extended === null || extended.isOk()) {
-                    // The requested spelling rides back — the caller reads its own vocabulary.
-                    return { kind: linkedAlready.has(answer.storeDir) ? "present" : "linked", name: request.name, version: answer.version };
+                    // The asked spelling rides back — the caller reads its own vocabulary.
+                    return { kind: linkedAlready.has(answer.storeDir) ? "present" : "linked", spelling: query.spelling, version: answer.version };
                 }
                 const error = extended.error;
                 // A version collision names the two store directories WITH their
                 // dependents, and the tool reports both and stops. Each resolved
-                // request of the batch carries it, because the extension refused
+                // query of the batch carries it, because the extension refused
                 // whole and the farm stayed exactly as it was. Every other
                 // extension error reports `unavailable` with its reason — a
                 // locked farm or a failed write says nothing about presence, and
                 // an "absent" there would misdirect the caller into asks.
                 return error.type === "version_collision"
-                    ? { kind: "collision", name: error.name, storeDirs: [error.existing, error.incoming], detail: describeFarmCompositionError(error) }
-                    : { kind: "unavailable", name: request.name, reason: describeFarmCompositionError(error) };
+                    ? {
+                          kind: "collision",
+                          spelling: query.spelling,
+                          storeDirs: [error.existing, error.incoming],
+                          detail: describeFarmCompositionError(error),
+                      }
+                    : { kind: "unavailable", spelling: query.spelling, reason: describeFarmCompositionError(error) };
             },
-            (failure) => absentOutcome(request, failure),
+            (failure) => absentOutcome(query, failure),
         ),
     );
 }

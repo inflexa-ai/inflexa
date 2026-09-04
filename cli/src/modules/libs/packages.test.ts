@@ -33,6 +33,9 @@ describe("readPoolInventorySections", () => {
         if (read.kind !== "sections") throw new Error("expected sections from a readable graph");
         const sections = read.sections;
         expect(sections.map((s) => s.title)).toEqual(["Python (pip)", "R"]);
+        // The section carries its track as DATA. A `language` filter of the tool
+        // reads that field, thus a reworded title changes no answer.
+        expect(sections.map((s) => s.track)).toEqual(["python", "r"]);
         const python = sections[0]!;
         const alpha = python.packages.find((p) => p.name === "alpha");
         // The shelf of `alpha` holds two pins, newest first — the head is the answer.

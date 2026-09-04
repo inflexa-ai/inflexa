@@ -23,6 +23,7 @@ import {
     insertRun,
     loadDataProfileStatus,
     makeLocalAuth,
+    parseQuery,
     queryActiveRun,
     queryRun,
     queryRunsByAnalysis,
@@ -39,6 +40,8 @@ import {
     type ExecuteAnalysisInput,
     type InsertRunInput,
     type MachineBudget,
+    type PackageQuery,
+    type ParseQueryError,
     type Pool,
     type Provenance,
     type RunAuthorization,
@@ -306,6 +309,31 @@ function describePlanIntakeError(e: PlanIntakeError): string {
     }
 }
 
+/**
+ * One line that names why a plan entry is not a package query.
+ *
+ * The plan speaks the full grammar `[python:|r:]<spelling>[==<version>]`, thus
+ * the remedy of an unknown prefix names the two prefixes and not the `--lang`
+ * flag of the command surface: a plan file carries no flag.
+ */
+function describePlanEntryError(error: ParseQueryError): string {
+    switch (error.type) {
+        case "empty":
+            return "A step of the plan names an empty package. Remove it, or write the package name.";
+        case "location":
+            return `The plan names "${error.entry}", which is a path or a URL. Write the package name, because the pool answers names.`;
+        case "unknown_prefix":
+            return `The plan names "${error.entry}", whose prefix "${error.prefix}:" names no ecosystem. Write \`python:\` or \`r:\`, or the bare name.`;
+        case "unsupported_specifier":
+            return `The plan names "${error.entry}", whose specifier "${error.specifier}" is not \`==\`. The pool pins one exact version only.`;
+        default: {
+            // The union is closed, thus the compiler proves that this is unreachable.
+            const unreachable: never = error;
+            throw new Error(`unhandled plan entry parse error: ${JSON.stringify(unreachable)}`);
+        }
+    }
+}
+
 /** Each trigger failure, as one actionable line. The post-reserve failures note the row was released for retry. */
 function describeTriggerError(e: TriggerAnalysisRunError): string {
     switch (e.type) {
@@ -410,14 +438,22 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     const planPackages = [...new Set(intake.plan.steps.flatMap((step) => step.packages ?? []))];
     if (planPackages.length > 0) {
         s.start(`Linking ${planPackages.length} plan package(s) into the farm`);
-        const outcomes = await linkPackagesIntoFarm(
-            env.packageStoreDir,
-            analysis.id,
-            planPackages.map((entry) => {
-                const split = entry.indexOf("==");
-                return split < 0 ? { name: entry.trim() } : { name: entry.slice(0, split).trim(), version: entry.slice(split + 2).trim() };
-            }),
-        );
+        // The one grammar reads a plan entry, the same as the launch of the chat
+        // reads it. A replay that parsed a prefix its own way would link a
+        // package that the validation of the plan never accepted.
+        const queries: PackageQuery[] = [];
+        const unreadable: string[] = [];
+        for (const entry of planPackages) {
+            parseQuery(entry).match(
+                (query) => queries.push(query),
+                (error) => unreadable.push(describePlanEntryError(error)),
+            );
+        }
+        if (unreadable.length > 0) {
+            s.error("The packages of this plan cannot link");
+            fail(unreadable.join("\n"));
+        }
+        const outcomes = await linkPackagesIntoFarm(env.packageStoreDir, analysis.id, queries);
         // An `unavailable` outcome preempts the per-package lists: the pass
         // could not answer at all, and one reason covers the batch.
         const unavailable = outcomes.find((o) => o.kind === "unavailable");
@@ -425,8 +461,8 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
             s.error("The packages of this plan cannot link");
             fail(`The store cannot answer: ${unavailable.reason}.`);
         }
-        const missing = outcomes.filter((o) => o.kind === "absent").map((o) => o.name);
-        const collided = outcomes.filter((o) => o.kind === "collision").map((o) => (o.detail === undefined ? o.name : `${o.name} — ${o.detail}`));
+        const missing = outcomes.filter((o) => o.kind === "absent").map((o) => o.spelling);
+        const collided = outcomes.filter((o) => o.kind === "collision").map((o) => (o.detail === undefined ? o.spelling : `${o.spelling} — ${o.detail}`));
         if (missing.length > 0 || collided.length > 0) {
             s.error("The packages of this plan cannot link");
             const remedy = missing.map((name) => `  inflexa store add ${name}`).join("\n");
