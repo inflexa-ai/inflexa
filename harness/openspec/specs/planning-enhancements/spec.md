@@ -234,14 +234,14 @@ validation.
 ### Requirement: Each plan step names its packages
 
 In `PlanStepSchema`, the `packages` array MUST be a necessary field of every
-planned step. Each entry MUST be a requirement: a bare name, or a name with
-one exact version. An entry can carry an ecosystem prefix before the name,
-`python:` or `r:`. The prefix names the track of the pool that the link
-pass searches. A bare name searches both tracks. The persistence schema
-MUST keep the field optional, thus a stored plan from before this change
-still parses. The briefing MUST withhold the `packages` field from the
-rendered task, because the link pass consumes it and a step agent must not
-re-litigate it.
+planned step. Each entry MUST be a query in the one grammar of the
+`package-identity` capability: an optional track prefix, a spelling, and
+an optional exact version. The prefix names the track of the pool that the
+link pass searches. A bare spelling searches both tracks. The persistence
+schema MUST keep the field optional, thus a stored plan from before this
+change still parses. The briefing MUST withhold the `packages` field from
+the rendered task, because the link pass consumes it and a step agent must
+not re-litigate it.
 
 #### Scenario: A new plan carries packages on every step
 
@@ -260,30 +260,27 @@ re-litigate it.
 - **WHEN** the briefing renders the task
 - **THEN** the rendered text does not name the array
 
-#### Scenario: A prefixed entry parses into a qualified request
+#### Scenario: An entry parses into a query
 
 - **GIVEN** a step whose packages are `["python:igraph", "r:decoupleR", "scanpy", "numpy==1.26.4"]`
 - **WHEN** the link pass parses the entries
-- **THEN** the requests carry the ecosystems `python`, `r`, none, and none, with the names `igraph`, `decoupleR`, `scanpy`, and `numpy`
+- **THEN** the queries carry the tracks `python`, `r`, none, and none, with the spellings `igraph`, `decoupleR`, `scanpy`, and `numpy`
 
 ### Requirement: The plan validation refuses a package location
 
-The shared plan validation MUST report an issue for every package entry that
-names a path, a URL, or a store directory. The two callers of the validation
-are the re-validation of `submit_plan` and the pre-launch re-validation of a
-stored plan. The issue MUST name the step and the offending entry. An absent
-`packages` array MUST pass, because the stored plans from before this change
-carry none.
+The shared plan validation MUST parse each package entry with `parseQuery`,
+and it MUST report one issue for each parse error. The two callers of the
+validation are the re-validation of `submit_plan` and the pre-launch
+re-validation of a stored plan. The issue MUST name the step and the
+offending entry. An absent `packages` array MUST pass, because the stored
+plans from before this change carry none. The validation holds no parser
+of its own, thus it cannot disagree with the link pass.
 
-The validation MUST also refuse a version specifier that is not `==`. The
-two permitted forms are a bare name and `name==version`. A range such as
-`numpy>=1.26` otherwise becomes a package NAME, and the link pass then
-refuses a package that the pool holds.
-
-The validation MUST also refuse a prefix that is not `python:` or `r:`. An
-entry such as `bioc:fgsea` otherwise becomes a package NAME, and the pool
-refuses a package that it holds. The issue MUST name the two permitted
-prefixes.
+A `location` error refuses a path, a URL, or a store directory. An
+`unsupported_specifier` error refuses a version specifier that is not
+`==`, because a range such as `numpy>=1.26` otherwise becomes a package
+name. An `unknown_prefix` error refuses a prefix that is not `python:` or
+`r:`, and the issue MUST name the two permitted prefixes.
 
 #### Scenario: A path is refused
 
@@ -301,7 +298,7 @@ prefixes.
 
 - **GIVEN** a step whose packages include `numpy>=1.26`
 - **WHEN** the plan validates
-- **THEN** an issue names the step and the entry, and it names the two permitted forms
+- **THEN** an issue names the step and the entry, and it names the `==` form
 
 #### Scenario: A prefixed form passes
 
@@ -314,6 +311,12 @@ prefixes.
 - **GIVEN** a step whose packages include `bioc:fgsea`
 - **WHEN** the plan validates
 - **THEN** an issue names the step and the entry, and it names `python:` and `r:` as the permitted prefixes
+
+#### Scenario: A leading space does not defeat the prefix guard
+
+- **GIVEN** a step whose packages include `" bioc:fgsea"`
+- **WHEN** the plan validates
+- **THEN** an issue names the step and the entry
 
 ### Requirement: The planner prompt teaches the package field
 
@@ -340,20 +343,19 @@ the location form.
 
 When the farm-extension seam is bound, the launch MUST link the plan's
 packages before the run reserves anything. The linked set is the union of
-the packages of each step, and it goes into the farm of the analysis. The
-union keys entries by their exact spelling, because two spellings are two
-identities: `decoupler` and `decoupleR` name two packages. A prefixed
-entry and a bare entry of one spelling make one request, and the request
-carries the prefix. Two entries of one spelling with two prefixes make two
-requests, because the plan names two packages.
-The pass MUST pass the ecosystem of a prefixed entry to the seam.
+the queries of each step, and it goes into the farm of the analysis. The
+union MUST dedupe equal queries only: two entries are one request when
+their spelling, their track, and their version are equal. A bare entry
+and a qualified entry of one spelling are two requests. The pass MUST pass
+each query to the seam as it was parsed.
 
 A pool miss MUST refuse the launch with an error that names the missing
-packages. A `collision` outcome MUST refuse the launch with an error that
-names the two store directories and the two prefixed forms to write. The
-harness MUST NOT name a remedy command, because the remedy belongs to the
-embedder. The prefix is a plan form and not a command, thus the refusal
-names it. Without a bound seam, the pass MUST return at once.
+spellings. A `collision` outcome MUST refuse the launch with an error that
+names the two store directories and the two prefixed forms, written with
+`formatQuery`. The harness MUST NOT name a remedy command, because the
+remedy belongs to the embedder. The prefix is a plan form and not a
+command, thus the refusal names it. Without a bound seam, the pass MUST
+return at once.
 
 #### Scenario: The link pass runs before the run
 
@@ -365,7 +367,7 @@ names it. Without a bound seam, the pass MUST return at once.
 
 - **GIVEN** a plan that names a package the pool does not hold
 - **WHEN** the launch runs
-- **THEN** the launch refuses with the missing names, and no run starts
+- **THEN** the launch refuses with the missing spellings, and no run starts
 
 #### Scenario: No seam means no pass
 
@@ -373,23 +375,29 @@ names it. Without a bound seam, the pass MUST return at once.
 - **WHEN** the launch runs
 - **THEN** the link pass returns at once, and the launch continues
 
-#### Scenario: A prefixed entry reaches the seam with its ecosystem
+#### Scenario: A prefixed entry reaches the seam with its track
 
 - **GIVEN** a plan whose steps name `python:igraph` and `r:igraph`
 - **WHEN** the link pass runs
-- **THEN** the seam receives two requests for `igraph`, one with `ecosystem: "python"` and one with `ecosystem: "r"`
+- **THEN** the seam receives two queries with the spelling `igraph`, one with the track `python` and one with the track `r`
 
-#### Scenario: A prefixed entry absorbs a bare entry of the same name
+#### Scenario: Equal queries make one request
 
-- **GIVEN** a plan whose steps name `python:igraph` and `igraph`
+- **GIVEN** a plan whose steps name `scanpy` two times
 - **WHEN** the link pass runs
-- **THEN** the seam receives one request for `igraph`, with `ecosystem: "python"`
+- **THEN** the seam receives one query with the spelling `scanpy`
+
+#### Scenario: A bare entry beside a qualified entry keeps its own refusal
+
+- **GIVEN** a plan whose steps name `python:igraph` and `igraph`, against a pool that holds `igraph` in both tracks
+- **WHEN** the link pass runs
+- **THEN** the seam receives two queries, and the launch refuses on the bare one with `python:igraph` and `r:igraph` in the message
 
 #### Scenario: Two spellings of one fold make two requests
 
 - **GIVEN** a plan whose steps name `decoupler` and `decoupleR`, both bare
 - **WHEN** the link pass runs
-- **THEN** the seam receives two requests, `decoupler` and `decoupleR`, each with no ecosystem
+- **THEN** the seam receives two queries, `decoupler` and `decoupleR`, each with no track
 
 #### Scenario: A collision refusal names the prefixed forms
 
