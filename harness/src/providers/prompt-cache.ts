@@ -60,13 +60,27 @@
  * `prompts/briefing.ts`). Keep it that way — one interpolated id or path there
  * makes every step's ~20k-char prefix unique.
  *
- * ## Where caching is a no-op regardless
+ * ## What the cache-token metrics do and do not prove
  *
- * The Claude Max OAuth path does not honour cache directives, and the OSS CLI
- * defaults to routing through a local CLIProxyAPI on exactly that path. Caching
- * only engages against a direct API key or a gateway. The cache-token metrics
- * (`loop/metrics.ts`) are what tell the two apart at runtime — a flat-zero
- * `cache_read_tokens` counter is the symptom.
+ * Caching DOES engage on the Claude OAuth path the OSS CLI routes through a
+ * local CLIProxyAPI: measured, 2050-2151 cache-read tokens on the turns after
+ * the first. An earlier note here claimed that path ignores cache directives
+ * outright. It does not.
+ *
+ * But a read there is not evidence that OUR breakpoint earned it. While cloaking
+ * — which is what that path does — the proxy places breakpoints of its own on
+ * the system block, the first user message, the system message it relocates, and
+ * the last message. Those cache the prefix whatever the harness sends: with
+ * `promptCache: "off"` and no marker of ours on the wire, a repeat request still
+ * read 1902 tokens back.
+ *
+ * So on that path `cache_read_tokens` (`loop/metrics.ts`) reports whether the
+ * deployment gets caching at all, which is what the counter is for. It does not
+ * attribute the read, and it cannot tell a working harness breakpoint from a
+ * proxy that is quietly doing the work. Against a direct API key or a gateway,
+ * where nothing injects markers, the counter does mean exactly that — and a
+ * flat-zero read counter beside a non-zero write counter is still the signature
+ * of an endpoint billing for writes and serving no reads.
  */
 
 import type { ModelMessage, PromptCachePolicy, ProviderOptions } from "./types.js";

@@ -6,19 +6,22 @@
  * message → a served cache read → `ChatResponse.usage.cacheReadInputTokens`. If
  * any link breaks, the second identical request reports a zero cache read.
  *
- * ## Caching is a NO-OP on the Claude Max OAuth path — read this first
+ * ## Why this is gated on a direct API key — read this first
  *
- * The Claude Max OAuth path does not honour cache directives, and the OSS CLI
- * defaults to routing through a local CLIProxyAPI on exactly that path. Caching
- * therefore engages only against a **direct API key or a gateway** — which is
- * what this test uses, and why it is gated on a real `ANTHROPIC_API_KEY` rather
- * than on whatever the CLI happens to be wired to.
+ * A direct API key or a gateway is the only endpoint where a cache read proves
+ * that OUR breakpoint works. The OSS CLI routes through a local CLIProxyAPI on
+ * the Claude OAuth path, and that proxy places breakpoints of its own while it
+ * cloaks the request. Caching does engage there — but it engages with
+ * `promptCache: "off"` too, so a read there attributes nothing.
  *
- * This is not a footnote: it is the single most likely reason a deployment sees
- * no cache benefit, and it is precisely what the new
- * `cortex.harness.agent.cache_read_tokens` metric exposes at runtime — a
+ * Hence the `ANTHROPIC_API_KEY` gate rather than whatever the CLI happens to be
+ * wired to. Nothing injects markers on this path, so a served read is the
+ * placement in this module working, end to end.
+ *
+ * At runtime the same distinction applies to
+ * `cortex.harness.agent.cache_read_tokens`: against a direct endpoint a
  * flat-zero read counter beside a non-zero write counter is the signature of an
- * endpoint that is billing for cache writes and serving no reads.
+ * endpoint billing for cache writes and serving no reads.
  *
  * Gated on `ANTHROPIC_API_KEY`; skipped otherwise. `ANTHROPIC_BASE_URL`
  * optionally points at a gateway instead of the public API.
