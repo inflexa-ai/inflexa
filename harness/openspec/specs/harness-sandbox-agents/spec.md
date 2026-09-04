@@ -148,6 +148,13 @@ pool holds. A realization throw MUST read as `unavailable` with the thrown
 reason, at each call site of the seam. A link MUST be live in the running
 sandbox, with no restart. The tool description MUST state these facts.
 
+The description MUST also state the remedy of a `collision` of one name in
+two tracks: call the tool again for that package with `ecosystem` set. It
+MUST state that a collision is terminal only after that call also refuses,
+or when the collision is two versions of one distribution. The `ecosystem`
+field exists for this call, and a description that calls each collision
+terminal contradicts the field.
+
 #### Scenario: A bound seam adds the tool
 
 - **GIVEN** sandbox agent deps with `extendAnalysisFarm` bound
@@ -178,16 +185,23 @@ sandbox, with no restart. The tool description MUST state these facts.
 - **WHEN** `link_packages` returns
 - **THEN** each outcome is `unavailable` with the thrown reason, and the loop sees no raw error
 
+#### Scenario: The description names the ecosystem retry
+
+- **WHEN** the description of `link_packages` is inspected
+- **THEN** it directs the agent to call the tool again with `ecosystem` after a two-track `collision`, before it reports the package as unusable
+
 ### Requirement: The package-link prompt layer appends only with the seam
 
 A static prompt layer for the link tool MUST append to the sandbox system
 prompt only when the seam is bound. The layer MUST teach: call
 `link_packages` after a failed import, and after `list_available_packages`
 reports a package absent. It MUST teach: pass the module name verbatim, a
-refusal is a real answer, and a version collision is terminal. It MUST place
-the report of a missing package after an `absent` or `unavailable` answer of
-the link tool. With the seam bound, the description of
-`list_available_packages` MUST NOT state that only its own report is
+refusal is a real answer, and a version collision is terminal. It MUST
+teach: after a `collision` of one name in two tracks, call the tool again
+with `ecosystem`. It MUST teach: drop the package only when that call also
+refuses. It MUST place the report of a missing package after an `absent` or
+`unavailable` answer of the link tool. With the seam bound, the description
+of `list_available_packages` MUST NOT state that only its own report is
 importable. The reason: the link tool can extend the farm from the pool. The
 layer is a composition-time constant, thus the prompt stays byte-identical
 across the steps of one composition.
@@ -203,6 +217,12 @@ across the steps of one composition.
 - **GIVEN** a composition with the seam bound
 - **WHEN** the system prompt and the description of `list_available_packages` are inspected
 - **THEN** both direct the agent to call `link_packages` before it reports a package missing
+
+#### Scenario: The layer teaches the ecosystem retry
+
+- **GIVEN** a composition with the seam bound
+- **WHEN** the system prompt is inspected
+- **THEN** it directs the agent to call `link_packages` again with `ecosystem` after a two-track `collision`, and to drop the package only after that call refuses
 
 ### Requirement: Sandbox agent system prompt is a pure function of the agent type
 
