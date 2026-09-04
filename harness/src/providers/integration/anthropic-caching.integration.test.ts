@@ -2,9 +2,9 @@
  * Integration test — Anthropic prompt caching through the real provider seam.
  *
  * Proves the whole chain end to end against a live endpoint: the harness's
- * neutral `PromptCachePolicy` → the `anthropic.cacheControl` wire option →
- * a served cache read → `ChatResponse.usage.cacheReadInputTokens`. If any link
- * breaks, the second identical request reports a zero cache read.
+ * neutral `PromptCachePolicy` → the `anthropic.cacheControl` marker on the last
+ * message → a served cache read → `ChatResponse.usage.cacheReadInputTokens`. If
+ * any link breaks, the second identical request reports a zero cache read.
  *
  * ## Caching is a NO-OP on the Claude Max OAuth path — read this first
  *
@@ -29,7 +29,7 @@ import { jsonSchema, tool as aiTool } from "ai";
 
 import { makeSession } from "../__fixtures__/session.js";
 import { createConfiguredAiSdkProvider } from "../ai-sdk.js";
-import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../prompt-cache.js";
+import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint } from "../prompt-cache.js";
 import type { ChatRequest } from "../types.js";
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -48,10 +48,13 @@ const LARGE_SYSTEM = Array.from(
 
 /**
  * The request the loop builds: a `system` string, an AI SDK `ToolSet`, and the
- * cache directive as request-level `providerOptions`. The provider emits a
- * single top-level `cache_control` from it and the server places the breakpoint
- * on the last cacheable block, so tools + system are cached without the harness
- * hand-marking blocks.
+ * cache breakpoint placed on the LAST MESSAGE, exactly as `runAgent` places it.
+ * One breakpoint at the end of the messages caches the whole prefix, because the
+ * cache keys on a prefix and the render order is tools → system → messages.
+ *
+ * The placement is the part under test as much as the caching is: the marker has
+ * to be a per-block one that an intermediary can count, never the request-level
+ * directive that reaches the wire as a top-level `cache_control` field.
  *
  * Byte-identical across both calls — that is the whole point: the prefix must
  * not shift or nothing is read back.
@@ -68,8 +71,7 @@ const CACHED_REQUEST: ChatRequest = {
             }),
         }),
     },
-    messages: [{ role: "user", content: "Reply with the single word: ok" }],
-    providerOptions: promptCacheProviderOptions(DEFAULT_PROMPT_CACHE),
+    messages: withPromptCacheBreakpoint([{ role: "user", content: "Reply with the single word: ok" }], DEFAULT_PROMPT_CACHE),
 };
 
 describe.skipIf(!API_KEY)("Anthropic prompt caching", () => {
