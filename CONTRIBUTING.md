@@ -11,7 +11,7 @@ Inflexa is scientific software, so some of the most valuable contributions aren'
 - **Bug reports** - especially install and first-run failures, and anything platform-specific (macOS Intel/Apple Silicon, Linux, Windows/WSL).
 - **Example datasets and analysis problems** - realistic, public-data examples (see [Adding an example](#adding-an-example)).
 - **Tools and adapters** - new agent tools, and adapters for the model providers and execution backends Inflexa runs against.
-- **Sandbox libraries and reference offerings** - the analysis packages baked into the sandbox image, and the reference data (pathways, annotations, signatures) served read-only from the reference store. Broadening what an analysis can reach for, without giving sandboxes network access, is high-value work.
+- **Packages and reference offerings** - the analysis packages the published package catalog ships, declared in [`images/package-store/manifest.yaml`](./images/package-store/manifest.yaml) rather than in a Dockerfile, and the reference data (pathways, annotations, signatures) served read-only from the reference store. Broadening what an analysis can reach for, without giving sandboxes network access, is high-value work.
 - **Documentation** - quickstarts, tutorials, clarifications, translations.
 - **Validation and reproducibility reports** - "I ran X on dataset Y and got Z; here's whether it reproduced."
 - **Benchmark cases.**

@@ -50,7 +50,7 @@ Inflexa is scientific software, and some of the most valuable contributions are 
 
 - realistic example datasets and analysis problems
 - new analysis workflows and pathway/reference integrations
-- Docker sandbox image packages and tooling
+- package-store entries, the sandbox images, and their tooling
 - documentation, tutorials, and translations
 - validation reports and reproducibility checks
 - benchmark cases

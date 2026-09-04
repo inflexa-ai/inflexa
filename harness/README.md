@@ -9,6 +9,7 @@ Requirements:
 - Node.js `>=24` (the runtime; Bun is used only to run tests)
 - Postgres with pgvector (app tables + durable workflow state)
 - a sandbox backend, selected by `SANDBOX_BACKEND` (`docker` | `k8s`)
+- a package store, plus a `farmSource` that names where the package farm of an analysis comes from
 - a chat/embedding provider — Anthropic, or any OpenAI-compatible endpoint
 
 ```bash
@@ -17,6 +18,8 @@ npm install @inflexa-ai/harness   # or add file:../harness from an in-repo embed
 tsc -p tsconfig.json              # build: emit dist/ from src/ (also `npm run build`)
 bun test                          # run the test suite
 ```
+
+The runtime image bakes no R or Python package, so the packages arrive from a host **package store** that the backend mounts read-only at `/mnt/libs`. `farmSource` is a **required** backend config field, and it has two kinds: `fixed` names one farm for every analysis (the managed shape), and `per-analysis` supplies a resolver of the embedder. `ExtendAnalysisFarm` is the optional link seam behind the `link_packages` tool. The harness composes no farm and installs nothing — the embedder owns the store — and the harness names the missing packages but no host command, because a managed deployment holds no `inflexa` binary.
 
 The package emits `dist/` from `src/` and publishes only `dist`. Most configuration arrives through dependency objects passed to the composition point — the LLM backend, for instance, is a fully injected provider config (endpoint/key/model or a `LanguageModel` instance), not read from env; helper modules read conventional env vars (`DB_PG_*`, sandbox limits) — see `CONTEXT.md` and the specs for the catalog.
 

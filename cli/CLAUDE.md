@@ -426,8 +426,10 @@ layer directories.
     lifecycle
   - `infra/` — the container stack. `setup`, `up`, and `down` provision CLIProxyAPI
     and Postgres with pgvector, through a generated Docker Compose file
-  - `libs/` — the published sandbox image variants (the GHCR refs), plus the
-    `sandbox pull` and `status` actions
+  - `libs/` — the package store on the host: the content-addressed pool, the
+    per-analysis farms, the acquisition flights, the catalog transfer, and the
+    GHCR refs of the two images (`sandbox-base`, `sandbox-provisioner`) with the
+    `sandbox` and `store` command actions
   - `project/` — the project CRUD command actions (`project new`, `project ls`)
   - `prov/` — the provenance recorder. It is a bus subscriber that builds, signs,
     and stores the PROV document of each analysis. It gives `prov export` and

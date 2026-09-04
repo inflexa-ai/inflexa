@@ -31,6 +31,7 @@ It is built for scientists, bioinformaticians, and engineers who need analysis t
 - **Reproducible by construction.** Every run records its full provenance and lineage in a local SQLite database, with export and replay.
 - **Sandboxed execution.** Generated code runs in an isolated, unprivileged, resource-limited sandbox with no network access by default. The full isolation model is described in [`SECURITY.md`](./SECURITY.md).
 - **Bring your own model.** Use any supported LLM provider via API key, or run local models end to end, offline.
+- **Packages you can extend.** Analyses draw their R and Python packages from a local package store, not from a baked image. `inflexa store add <package>` installs one more, per analysis, in seconds and with no image rebuild.
 - **Open source, in full.** The CLI is a complete product under Apache-2.0, not a limited trial. See [Open source and commercial](#open-source-and-commercial).
 
 ## Quick start
@@ -64,7 +65,7 @@ On other platforms, download a binary from the [latest release](https://github.c
 All you need is [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image. The `inflexa` CLI itself is self-contained.
 
 ```bash
-inflexa setup            # one-time: connect a model provider, pull the sandbox image, start local services
+inflexa setup            # one-time: connect a model provider, start local services, download the sandbox images and the packages
 cd path/to/your/data     # go where your data lives
 inflexa                  # launch the TUI
 ```
@@ -81,7 +82,7 @@ In one pass it provisions everything an analysis needs:
 - **Postgres + pgvector** — the database the harness runs on, provisioned as a local container via Docker Compose.
 - **Analysis resource allowance** — the share of your machine's CPU and memory that analyses may use in total.
 - **Embeddings** — an in-process local model, your own API key, or off.
-- **Sandbox image** — pulls the Docker image analyses execute in (Python, or Python + R).
+- **Sandbox and packages** — starts three background transfers: the `sandbox-base` runtime image, the `sandbox-provisioner` image, and the published package catalog. The runtime image bakes no analysis package; the analysis packages come from the local package store.
 
 To change any of it later, run `inflexa config`.
 
@@ -110,8 +111,8 @@ This repository is a monorepo of independent subsystems — work inside the one 
 | [`harness/`](./harness) | `@inflexa-ai/harness`, the host-agnostic agent harness: agent loop, durable workflows, sandbox protocol, providers. The execution model and its design decisions live here — see [`harness/CONTEXT.md`](./harness/CONTEXT.md) and the specs in [`harness/openspec/specs/`](./harness/openspec/specs/). |
 | [`prov-kernel/`](./prov-kernel) | `@inflexa-ai/prov-kernel`, the provenance format kernel: the PROV dialect vocabulary, document model, and chain/signature primitives. The harness emits observation hooks; hosts own their recorders and consume this kernel. |
 | [`skills/`](./skills) | Shared bioinformatics skill packs the agent loads at runtime. |
-| [`images/`](./images) | The sandbox images: the base image with its Go execution server, and the published `python` / `python-r` variants with the analysis packages baked in. |
-| [`scripts/`](./scripts) | Build, validation, and publishing tooling for the sandbox library store. |
+| [`images/`](./images) | The two sandbox images — `sandbox-base`, the runtime image with its Go execution server, and `sandbox-provisioner`, the network-enabled builder that writes the package store — plus the package-set manifest the store builds from. |
+| [`scripts/`](./scripts) | Build, validation, and publishing tooling for the package store. |
 
 ## Open source and commercial
 
