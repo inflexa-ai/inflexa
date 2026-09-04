@@ -560,6 +560,45 @@ def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
     return _publish_store_dir(wrap, final)
 
 
+def stage_r_subtrees(stage_root: Path, r_names: dict[str, list[str]],
+                     ) -> tuple[dict[str, list[tuple[str, Path]]], list[dict]]:
+    """Store each staged R package, and record each store directory once.
+
+    The github stage installs every dependency of a repository into the
+    github library, even one that the bulk libraries already hold, because
+    `pak::pkg_install(lib=)` reads "installed" from that one library alone.
+    The reinstall carries the same version and the same bytes, thus the
+    store answers with the same content-addressed directory. That address
+    is the exact test of "the same package", and a directory that an
+    earlier subtree recorded is not a github entry: the github subtree
+    holds only what the repositories add, the lock holds one entry per
+    directory, and the load check loads each package once. A different
+    version has a different address, and it stays: the github library
+    precedes the bulk libraries on the load path, thus that version is the
+    one that loads.
+    """
+    stored: dict[str, list[tuple[str, Path]]] = {sub: [] for sub in R_SUBTREES}
+    packages: list[dict] = []
+    seen: set[Path] = set()
+    for sub in R_SUBTREES:
+        libdir = stage_root / "r" / sub
+        if not libdir.is_dir():
+            continue
+        repeated = 0
+        for pkg_dir in sorted(p for p in libdir.iterdir() if (p / "DESCRIPTION").is_file()):
+            name, _version = read_r_pkg(pkg_dir)
+            store_dir, _is_new = store_r_package(pkg_dir)
+            if store_dir in seen:
+                repeated += 1
+                continue
+            seen.add(store_dir)
+            stored[sub].append((name, store_dir))
+            packages.append(lock_package_entry(store_dir, sub, r_entry_requested(name, r_names)))
+        if repeated:
+            log(f"R {sub}: {repeated} package(s) are directories that an earlier subtree recorded; each recorded once")
+    return stored, packages
+
+
 def build_r_track(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None:
     """Link stored R packages into farm/r/{cran,bioconductor,github}."""
     for sub in R_SUBTREES:
@@ -1521,9 +1560,12 @@ def cmd_build(args) -> int:
                 github_lib = stage_root / "r" / "github"
                 github_lib.mkdir(parents=True, exist_ok=True)
                 log(f"R github: installing {repo} through pak (incremental, best-effort)")
-                # The bulk libraries ride in .libPaths, thus pak reuses a
-                # dependency that a range already satisfies and installs
-                # only what the repository truly adds.
+                # The bulk libraries ride in .libPaths for the resolve, but
+                # pak installs every dependency of the repository into `lib`,
+                # even one that the bulk libraries already hold: pkg_install
+                # reads "installed" from that one library alone. The
+                # reinstall lands on the same bytes, and stage_r_subtrees
+                # records the directory once.
                 rexpr = (
                     f".libPaths(c('{github_lib}', '{stage_root}/r/bioconductor', "
                     f"'{stage_root}/r/cran', .libPaths())); "
@@ -1536,16 +1578,8 @@ def cmd_build(args) -> int:
                     if subprocess.run(["R", "-q", "-e", rexpr]).returncode != 0:
                         log(f"WARNING: github install of {repo} did not finish cleanly; keeping what installed")
 
-            stored: dict[str, list[tuple[str, Path]]] = {sub: [] for sub in R_SUBTREES}
-            for sub in R_SUBTREES:
-                libdir = stage_root / "r" / sub
-                if not libdir.is_dir():
-                    continue
-                for pkg_dir in sorted(p for p in libdir.iterdir() if (p / "DESCRIPTION").is_file()):
-                    name, _version = read_r_pkg(pkg_dir)
-                    store_dir, _is_new = store_r_package(pkg_dir)
-                    stored[sub].append((name, store_dir))
-                    packages.append(lock_package_entry(store_dir, sub, r_entry_requested(name, r_names)))
+            stored, r_packages = stage_r_subtrees(stage_root, r_names)
+            packages.extend(r_packages)
 
             old_lock_data: dict = {}
             if (farm / "inflexa.lock").is_file():

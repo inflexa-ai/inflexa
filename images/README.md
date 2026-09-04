@@ -105,9 +105,9 @@ and the builder stages. Runtime system libraries live in
 
 Published for `linux/amd64` and, best-effort, `linux/arm64`. The amd64 leg
 is the primary target. On arm64 the R tracks compile from source, thus the
-arm64 store is best-effort: what builds and loads ships, and the coverage
-report names the rest. The builds need the large self-hosted runners
-(`inflexa-builder`, `inflexa-builder-arm64`).
+arm64 leg can fail without a red build. A load failure fails a leg on each
+arch. No package ships that did not load. The builds need the large
+self-hosted runners (`inflexa-builder`, `inflexa-builder-arm64`).
 
 ## Building locally
 

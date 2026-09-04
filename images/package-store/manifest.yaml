@@ -427,6 +427,10 @@ python:
               warm: warm/matplotlib.py
             - seaborn
             - plotly
+            - dash # itables (transitive via pharmpy-core) ships a second top-level
+              # module, itables_for_dash, which imports dash. itables lists dash only
+              # as an extra, and the load check imports every top-level name, so
+              # without dash the whole itables distribution drops from the inventory.
             - kaleido # Resolves to 1.x, which no longer embeds a browser — it drives
               # one over CDP instead. fig.write_image() therefore depends on the
               # chromium staged in images/sandbox-base/Dockerfile (same arrangement
@@ -450,7 +454,12 @@ python:
             - PyWGCNA
 
             # Single-cell
-            - anndata
+            # Cap anndata <0.13.3: anndata 0.13.3.post0 removed H5Group and ZarrGroup from
+            # anndata._io.specs.methods, and cellrank 2.3.2 (the newest release) still
+            # imports them, so `import cellrank` fails and the load check drops it.
+            # cellrank main carries the fix (theislab/cellrank#1378); lift the cap at
+            # the next cellrank release.
+            - "anndata<0.13.3"
             - mudata
             - name: scanpy
               reason: "The single-cell pipeline; its warm run prepares the numba kernels of a first analysis."
