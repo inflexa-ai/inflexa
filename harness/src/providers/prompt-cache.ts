@@ -39,6 +39,30 @@
  * A marker on a message block is counted, trimmed, and reasoned about by every
  * hop. Keep it there. {@link withPromptCacheBreakpoint} is the only writer.
  *
+ * ## Which vendors need a marker at all
+ *
+ * Only two of them, and both take it on a message:
+ *
+ *  - **Anthropic** — `anthropic.cacheControl`. Fully opt-in: no marker, no
+ *    caching, at full price.
+ *  - **Amazon Bedrock** — `bedrock.cachePoint`. Also fully opt-in.
+ *
+ * The OpenAI family caches prefixes server-side, unprompted, and exposes no
+ * breakpoint to place (`promptCacheKey` and `promptCacheRetention` are request
+ * settings for affinity and retention, not placement — a separate concern from
+ * this policy). Gemini caches implicitly by default, and its explicit mode is a
+ * cache RESOURCE created out of band and referenced by name, which is not a
+ * marker and does not fit a ttl policy.
+ *
+ * So both markers ride together on the one chosen message. A provider reads only
+ * its own namespace, thus the pair is free to whichever vendor is not serving
+ * the call, and the placement never learns which one that is.
+ *
+ * The asymmetry worth remembering: under-marking silently costs money, while
+ * over-marking hard-fails. Anthropic answers 400 past four breakpoints, and the
+ * legacy Bedrock integration answers 400 on a top-level `cache_control`. Every
+ * failure in this area comes from asking for too much.
+ *
  * ## Cache defeaters — what silently kills the hit rate
  *
  * The cache keys on an *exact prefix*. Anything that perturbs the head of the
@@ -83,6 +107,8 @@
  * of an endpoint billing for writes and serving no reads.
  */
 
+import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
+
 import type { ModelMessage, PromptCachePolicy, ProviderOptions } from "./types.js";
 
 /**
@@ -100,10 +126,38 @@ import type { ModelMessage, PromptCachePolicy, ProviderOptions } from "./types.j
 export const DEFAULT_PROMPT_CACHE: PromptCachePolicy = { ttl: "5m" };
 
 /**
+ * Amazon Bedrock's cache marker, from the Converse API's `CachePointBlock`:
+ * `type` is required and its only valid value is `default`; `ttl` is optional
+ * and accepts exactly `5m` or `1h`, the same pair `PromptCachePolicy` offers.
+ *
+ * Declared here rather than imported because `@ai-sdk/amazon-bedrock` exports no
+ * type for it — `BedrockProviderOptions` covers the request-level options only,
+ * and the provider passes a `cachePoint` value through to AWS verbatim. Thus a
+ * wrong shape here reaches the wire unchecked, and this declaration is the only
+ * guard. Refer to the CachePointBlock page of the Bedrock API reference.
+ */
+interface BedrockCacheOptions {
+    readonly cachePoint: { readonly type: "default"; readonly ttl?: "5m" | "1h" };
+}
+
+/**
  * Translate a neutral cache policy into provider wire options.
  *
  * Returns `undefined` for `"off"` so the caller can leave the bag entirely unset
  * rather than sending an empty one.
+ *
+ * Both vendors that take an explicit marker get one, in their own namespace. A
+ * provider reads only its own key, so the pair costs nothing to whichever one is
+ * not serving the call, and the placement needs no idea which vendor it is
+ * talking to. The two shapes differ in more than spelling: Anthropic marks the
+ * last content block of the message, while Bedrock appends a `cachePoint` block
+ * after it. Both end up at the same position in the prefix.
+ *
+ * The `satisfies` clauses are the point of naming the vendor types at all. This
+ * bag is a `Record<string, JSONObject>`, thus nothing here is checked by
+ * default, and a renamed key would compile and silently stop caching —
+ * `cacheControl` has already been renamed once, and the provider still accepts
+ * `cache_control` as its alias.
  *
  * CAUTION: this is the marker's VALUE, not its placement. Attaching it to a
  * `ChatRequest` emits the invisible top-level field the module header warns
@@ -111,15 +165,23 @@ export const DEFAULT_PROMPT_CACHE: PromptCachePolicy = { ttl: "5m" };
  */
 export function promptCacheProviderOptions(policy: PromptCachePolicy): ProviderOptions | undefined {
     if (policy === "off") return undefined;
-    return { anthropic: { cacheControl: { type: "ephemeral", ttl: policy.ttl } } };
+    const anthropic = { cacheControl: { type: "ephemeral", ttl: policy.ttl } } satisfies AnthropicProviderOptions;
+    const bedrock = { cachePoint: { type: "default", ttl: policy.ttl } } satisfies BedrockCacheOptions;
+    return { anthropic, bedrock };
 }
 
 /**
- * The `anthropic` namespace key that carries the marker. Named once so the
- * writer and the stripper cannot drift apart.
+ * Every namespace that can carry a breakpoint, and the key it carries it under.
+ *
+ * The writer and the stripper both read this list, thus they cannot drift apart,
+ * and the one-breakpoint invariant covers each vendor rather than only the one
+ * that happens to be serving the call. `@ai-sdk/amazon-bedrock` reads either
+ * `bedrock` or `amazonBedrock`; its own documentation uses `bedrock`.
  */
-const CACHE_CONTROL_KEY = "cacheControl";
-const ANTHROPIC = "anthropic";
+const BREAKPOINT_SITES: readonly (readonly [namespace: string, key: string])[] = [
+    ["anthropic", "cacheControl"],
+    ["bedrock", "cachePoint"],
+];
 
 /**
  * Whether a message can HOST the breakpoint — that is, whether the marker put on
@@ -154,31 +216,34 @@ function lastHostIndex(messages: readonly ModelMessage[]): number {
     return -1;
 }
 
-/** Whether this message already carries a cache marker in the anthropic namespace. */
+/** Whether this message already carries a cache marker in ANY breakpoint namespace. */
 function carriesBreakpoint(message: ModelMessage): boolean {
-    return message.providerOptions?.[ANTHROPIC]?.[CACHE_CONTROL_KEY] !== undefined;
+    return BREAKPOINT_SITES.some(([namespace, key]) => message.providerOptions?.[namespace]?.[key] !== undefined);
 }
 
-/** The same message with the marker added to its anthropic namespace. */
+/** The same message with each namespace of `options` merged into its own bag. */
 function withBreakpoint<M extends ModelMessage>(message: M, options: ProviderOptions): M {
-    return {
-        ...message,
-        providerOptions: {
-            ...message.providerOptions,
-            [ANTHROPIC]: { ...message.providerOptions?.[ANTHROPIC], ...options[ANTHROPIC] },
-        },
-    };
+    const merged: Record<string, Record<string, unknown>> = { ...message.providerOptions };
+    for (const [namespace] of BREAKPOINT_SITES) {
+        const marker = options[namespace];
+        if (marker === undefined) continue;
+        merged[namespace] = { ...message.providerOptions?.[namespace], ...marker };
+    }
+    return { ...message, providerOptions: merged as NonNullable<M["providerOptions"]> };
 }
 
-/** The same message with the marker removed, and the namespace dropped when it held nothing else. */
+/** The same message with every marker removed, and each namespace dropped when it held nothing else. */
 function withoutBreakpoint<M extends ModelMessage>(message: M): M {
     if (!carriesBreakpoint(message)) return message;
-    const { [CACHE_CONTROL_KEY]: _dropped, ...rest } = message.providerOptions?.[ANTHROPIC] ?? {};
-    const { [ANTHROPIC]: _namespace, ...others } = message.providerOptions ?? {};
-    return {
-        ...message,
-        providerOptions: Object.keys(rest).length === 0 ? others : { ...others, [ANTHROPIC]: rest },
-    };
+    const remaining: Record<string, Record<string, unknown>> = { ...message.providerOptions };
+    for (const [namespace, key] of BREAKPOINT_SITES) {
+        const bag = remaining[namespace];
+        if (bag?.[key] === undefined) continue;
+        const { [key]: _dropped, ...rest } = bag;
+        if (Object.keys(rest).length === 0) delete remaining[namespace];
+        else remaining[namespace] = rest;
+    }
+    return { ...message, providerOptions: remaining as NonNullable<M["providerOptions"]> };
 }
 
 /**

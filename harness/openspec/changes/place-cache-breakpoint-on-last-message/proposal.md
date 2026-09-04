@@ -33,6 +33,14 @@ three markers to it. Each turn after the first fails.
 - `runAgent` places the breakpoint on each call, and no longer sets
   `ChatRequest.providerOptions`. The breakpoint rides the last message, and the
   transcript grows with each iteration.
+- The marker goes into the namespace of each vendor that takes an explicit
+  breakpoint: `anthropic.cacheControl` and `bedrock.cachePoint`. A provider reads
+  only its own namespace. Thus the pair is inert for the other vendor, and the
+  placement needs no idea which one serves the call.
+- `@ai-sdk/amazon-bedrock` becomes a dev dependency. The code imports nothing
+  from it. One unit test renders the marker through the real Bedrock provider.
+  That package exports no type for `cachePoint`, and it passes the value to AWS
+  as it is.
 
 ## Capabilities
 

@@ -94,6 +94,7 @@
         "uuid": "^11.1.1"
     },
     "devDependencies": {
+        "@ai-sdk/amazon-bedrock": "^5.0.74",
         "@eslint/js": "^10.0.1",
         "@types/bun": "latest",
         "@types/dockerode": "^3.3.47",
