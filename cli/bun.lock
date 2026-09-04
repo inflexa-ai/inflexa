@@ -7,7 +7,7 @@
       "dependencies": {
         "@clack/core": "1.4.3",
         "@clack/prompts": "^1.7.0",
-        "@inflexa-ai/harness": "^0.35.0",
+        "@inflexa-ai/harness": "^0.35.1",
         "@inflexa-ai/prov-kernel": "^0.7.0",
         "@inflexa-ai/tsprov": "0.5.1",
         "@opentelemetry/api": "^1.9.1",
@@ -168,7 +168,7 @@
 
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, "sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ=="],
 
-    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.35.0", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.38", "@ai-sdk/openai": "^4.0.39", "@ai-sdk/openai-compatible": "^3.0.30", "@ai-sdk/provider": "^4.0.7", "@ai-sdk/provider-utils": "5.0.27", "@anthropic-ai/sdk": "^0.116.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@fontsource-variable/space-grotesk": "5.1.1", "@fontsource/ibm-plex-mono": "5.1.1", "@inflexa-ai/tsprov": "0.6.0", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ag-grid-community": "36.1.0", "ai": "^7.0.61", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "echarts": "6.1.0", "fast-xml-parser": "^5.10.1", "hono": "^4.12.34", "hyparquet": "^1.28.1", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "openai": "^7.4.0", "p-queue": "^9.3.3", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-ycgklliBkGavSHAjgrpw6IO4OrcN0GTL6gmJPAuMVCdIHIMSlPalY15TnOwe6U7v9XLjk7b+V0+hbpSNjgcx0Q=="],
+    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.35.1", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.38", "@ai-sdk/openai": "^4.0.39", "@ai-sdk/openai-compatible": "^3.0.30", "@ai-sdk/provider": "^4.0.7", "@ai-sdk/provider-utils": "5.0.27", "@anthropic-ai/sdk": "^0.116.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@fontsource-variable/space-grotesk": "5.1.1", "@fontsource/ibm-plex-mono": "5.1.1", "@inflexa-ai/tsprov": "0.6.0", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ag-grid-community": "36.1.0", "ai": "^7.0.61", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "echarts": "6.1.0", "fast-xml-parser": "^5.10.1", "hono": "^4.12.34", "hyparquet": "^1.28.1", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "openai": "^7.4.0", "p-queue": "^9.3.3", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-wc1OWSCvojfOQIgwacFeyeQkIjbNnFku4GH8+D6GJhPUpksz/vuWZP2PWiwGG3quIod5UrL4oSZIrurN8EvSxg=="],
 
     "@inflexa-ai/prov-kernel": ["@inflexa-ai/prov-kernel@0.7.0", "", { "dependencies": { "@noble/hashes": "^2.3.0", "neverthrow": "^8.2.0", "zod": "^4.4.3" }, "peerDependencies": { "@inflexa-ai/tsprov": "^0.5.1" } }, "sha512-hDjufm3CxBl64GVlBSulli9mUTFUQqjuTkj5GKODPuAZf0Lx2woBFpvJBVuV5avgin/JWHT3i/5/NE4dIw+PhA=="],
 
