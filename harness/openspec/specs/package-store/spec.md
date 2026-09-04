@@ -259,6 +259,12 @@ and the report MUST stay whole. A `system_tools` entry MUST render under
 the title `System tools (CLI)`, by its `executable` name, and a `node`
 entry under the title `Node (npm)`.
 
+A package section MUST carry its `track` as data, `python` or `r`. One
+mapping turns a lock subtree into a track: `python` gives `python`, and
+`cran`, `bioconductor`, and `github` give `r`. A title is display only,
+and no reader MUST derive a track from a title. A section of system tools
+or of node packages carries no track.
+
 Each answer MUST render the version beside the name, as `name==version`.
 The targeted `names` path MUST also carry the store directory and the full
 content hash when the source gives them. A full listing carries no hashes,
@@ -269,16 +275,16 @@ error. When the pool-scope source reports itself unavailable, the note
 MUST carry the reason of the embedder. Without the reason, a structural
 fault reads as a transient one, and the agent retries without end.
 
-The `names` path matches a name without case, and it echoes the exact
-spelling of the source, because an R name is case-sensitive at `library()`.
-It MUST answer with one entry for each section that holds the name, in the
-section order. A name that two tracks hold has two exact spellings and two
-store identities, and a first-writer answer hides one of them. A listing
-MUST mark each name that the Python section and the R section both hold.
-The mark MUST show the two forms that a plan writes, `python:<name>` and
-`r:<name>`. A name that the two sections hold in two spellings, such as
-`decoupler` and `decoupleR`, needs no mark, because the spelling settles
-it.
+The `names` path MUST resolve each name as a query, through `resolveQuery`
+of the `package-identity` capability, over an index of the package
+sections. A resolved query answers one present entry, with the exact
+spelling and the section of its identity. An ambiguous query answers one
+present entry for each track. An unknown query answers absent, and it
+carries the `suggestion` when the resolution gives one. A name of a
+system tool or of a node package matches its rendered name exactly. A
+listing MUST mark each name that the Python track and the R track both
+hold as one identity name. The mark MUST show the two forms that a plan
+writes, `python:<name>` and `r:<name>`.
 
 #### Scenario: Packages available
 
@@ -324,17 +330,35 @@ it.
 - **WHEN** the tool lists
 - **THEN** it returns the farm tracks alone, without a throw
 
+#### Scenario: A section carries its track
+
+- **GIVEN** a farm lock with rows in the `cran` and `bioconductor` subtrees
+- **WHEN** the tool lists with `language: "r"`
+- **THEN** both sections are listed, and the filter reads the track of the section and not its title
+
 #### Scenario: A both-track name answers once for each track
 
 - **GIVEN** a pool whose Python section holds `igraph==1.0.0` and whose R section holds `igraph==2.1.4`
 - **WHEN** the tool checks `names: ["igraph"]`
 - **THEN** the answer holds two present entries for `igraph`: one under the Python section, and one under the R section, each with its version
 
-#### Scenario: A two-spelling pair answers with both spellings
+#### Scenario: A folded spelling resolves to its Python identity
 
 - **GIVEN** a pool whose Python section holds `decoupler` and whose R section holds `decoupleR`
 - **WHEN** the tool checks `names: ["decoupler"]`
-- **THEN** the answer holds two present entries, `decoupler` under the Python section and `decoupleR` under the R section
+- **THEN** the answer holds one present entry, `decoupler` under the Python section
+
+#### Scenario: A separator fold reaches the package
+
+- **GIVEN** a pool whose Python section holds `scikit-learn`
+- **WHEN** the tool checks `names: ["scikit_learn"]`
+- **THEN** the answer marks it present as `scikit-learn` under the Python section
+
+#### Scenario: A folded R spelling answers absent with the suggestion
+
+- **GIVEN** a pool whose R section holds `Seurat` and whose Python section holds no `seurat`
+- **WHEN** the tool checks `names: ["seurat"]`
+- **THEN** the answer marks it absent, with the suggestion `Seurat`
 
 #### Scenario: The listing marks a both-track name
 
