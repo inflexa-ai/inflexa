@@ -311,14 +311,18 @@ type Held = { readonly entry: SectionPackage; readonly section: string; readonly
  */
 function poolIndexOf(held: readonly Held[]): PoolIndex {
     const keys = new Set(held.map((row) => identityKey(row.identity)));
-    const rByAddress = new Map<string, PackageIdentity>();
+    // Keyed by the identity KEY, not by the address: two R sections can list
+    // one package, and a suggestion must count that package once. Two R
+    // identities of one address stay two entries, and the ladder then gives no
+    // suggestion, because a guess between them is a coin flip.
+    const rByKey = new Map<string, PackageIdentity>();
     for (const row of held) {
         if (row.identity.track !== "r") continue;
-        rByAddress.set(identityKey(row.identity), row.identity);
+        rByKey.set(identityKey(row.identity), row.identity);
     }
     return {
         has: (identity) => keys.has(identityKey(identity)),
-        rIdentitiesFoldingTo: (fold) => [...rByAddress.values()].filter((identity) => identityAddress(identity) === fold),
+        rIdentitiesFoldingTo: (fold) => [...rByKey.values()].filter((identity) => identityAddress(identity) === fold),
     };
 }
 
@@ -401,6 +405,10 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
         return { available: true, checked };
     }
 
+    // A browse filter, not an identity rule: the lower case here makes a
+    // substring search forgiving, and it never decides which package a name
+    // means. The `names` path above owns that decision, and `resolveQuery` is
+    // the one place that folds.
     const needle = query?.trim().toLowerCase();
     const filtered: Section[] = sections
         .filter((s) => matchesLanguage(s, language))
