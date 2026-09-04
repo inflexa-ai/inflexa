@@ -37,16 +37,20 @@ error. When the pool-scope source reports itself unavailable, the note
 MUST carry the reason of the embedder. Without the reason, a structural
 fault reads as a transient one, and the agent retries without end.
 
-The `names` path MUST resolve each name as a query, through `resolveQuery`
-of the `package-identity` capability, over an index of the package
-sections. A resolved query answers one present entry, with the exact
-spelling and the section of its identity. An ambiguous query answers one
-present entry for each track. An unknown query answers absent, and it
-carries the `suggestion` when the resolution gives one. A name of a
-system tool or of a node package matches its rendered name exactly. A
-listing MUST mark each name that the Python track and the R track both
-hold as one identity name. The mark MUST show the two forms that a plan
-writes, `python:<name>` and `r:<name>`.
+The `names` path MUST read each entry with `parseQuery` of the
+`package-identity` capability. It MUST then resolve the query through
+`resolveQuery`, over an index of the package sections. An entry that does
+not parse MUST answer absent, because a census reports a state and it
+never refuses a call. A resolved query answers one present entry, with the
+exact spelling and the section of its identity. An ambiguous query answers
+one present entry for each track. An unknown query answers absent, and it
+carries the `suggestion` when the resolution gives one.
+
+A name of a system tool or of a node package matches its rendered name
+without case. The identity rule covers a distribution of an ecosystem, and
+it does not cover a binary. A listing MUST mark each name that the Python
+track and the R track both hold as one identity name. The mark MUST show
+the two forms that a plan writes, `python:<name>` and `r:<name>`.
 
 #### Scenario: Packages available
 
@@ -79,6 +83,18 @@ writes, `python:<name>` and `r:<name>`.
 - **GIVEN** a `system_tools` entry with `name` `eagle2` and `executable` `eagle`
 - **WHEN** the tool checks `names: ["eagle"]`
 - **THEN** the answer marks it present under `System tools (CLI)`
+
+#### Scenario: A system tool matches without case
+
+- **GIVEN** a `system_tools` entry whose executable is `bcftools`
+- **WHEN** the tool checks `names: ["BCFtools"]`
+- **THEN** the answer marks it present under `System tools (CLI)`
+
+#### Scenario: A qualified entry reads one track
+
+- **GIVEN** a pool whose R section holds `Seurat` and whose Python section holds `igraph`
+- **WHEN** the tool checks `names: ["r:Seurat", "python:igraph"]`
+- **THEN** the answer marks both present, each under the section of its own track
 
 #### Scenario: An absent image record merges nothing
 

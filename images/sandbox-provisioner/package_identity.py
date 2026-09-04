@@ -36,6 +36,12 @@ _PREFIX = re.compile(r"^([A-Za-z][A-Za-z0-9_.-]*):")
 # A run of specifier characters. Only the exact run `==` names a version.
 _SPECIFIER = re.compile(r"[<>!~=]+")
 
+# A run of characters that an exact version cannot hold: a specifier
+# character, a comma, or whitespace. `_SPECIFIER` reads the FIRST run only,
+# thus `numpy==1.26,<2` gives the version `1.26,<2` without this guard, and the
+# compound range then rides into the pool as a version string.
+_VERSION_INTRUDER = re.compile(r"[<>!~=,\s]+")
+
 
 @dataclass(frozen=True)
 class PackageIdentity:
@@ -114,6 +120,25 @@ def key(identity: PackageIdentity) -> str:
     return f"{identity.track}:{identity.name}"
 
 
+def parse_identity_key(key_text: str) -> PackageIdentity | None:
+    """The identity that a key names, or None when the string is not a key.
+
+    The FIRST colon splits the two halves. A track name holds no colon, and
+    neither a PEP 503 name nor an R name can hold one, thus `r:GO.db` gives the
+    R identity `GO.db`, dot and all. The name rides through `identity_of`, and
+    the fold is idempotent, thus a key that `key` wrote comes back as the
+    identity that wrote it.
+    """
+    at = key_text.find(":")
+    if at < 0:
+        return None
+    track = key_text[:at]
+    name = key_text[at + 1:]
+    if not name or track not in TRACKS:
+        return None
+    return identity_of(track, name)
+
+
 def address(identity: PackageIdentity) -> str:
     """The store address of an identity: the PEP 503 fold of its name, for both
     tracks.
@@ -152,13 +177,20 @@ def parse_query(entry: str) -> PackageQuery:
     if specifier.group(0) != "==":
         raise QueryError("unsupported_specifier", trimmed,
                          specifier=specifier.group(0))
-    spelling = rest[:specifier.start()]
+    # Both halves strip: `numpy == 1.26.4` is one ask, and an unstripped half
+    # makes the spelling `numpy ` and the version ` 1.26.4`, neither of which
+    # any index holds.
+    spelling = rest[:specifier.start()].strip()
     if not spelling:
         raise QueryError("empty", trimmed)
     # `name==` names no version, thus the query pins none and the pool answers
     # the newest. The round-trip law holds, because `format_query` writes the
     # specifier only beside a version.
-    version = rest[specifier.start() + 2:]
+    version = rest[specifier.start() + 2:].strip()
+    intruder = _VERSION_INTRUDER.search(version)
+    if intruder is not None:
+        raise QueryError("unsupported_specifier", trimmed,
+                         specifier=intruder.group(0))
     return PackageQuery(spelling, track, version or None)
 
 

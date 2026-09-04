@@ -593,7 +593,17 @@ export type {
 // between the two. An embedder reads `by_name` of the dependency graph with
 // these, thus the host lookup, the census, and the graph key never disagree on
 // the identity of a name.
-export { formatQuery, identityAddress, identityKey, identityOf, parseQuery, pythonIdentity, resolveQuery, rIdentity } from "./sandbox/package-identity.js";
+export {
+    formatQuery,
+    identityAddress,
+    identityKey,
+    identityOf,
+    parseIdentityKey,
+    parseQuery,
+    pythonIdentity,
+    resolveQuery,
+    rIdentity,
+} from "./sandbox/package-identity.js";
 export type { PackageIdentity, PackageQuery, ParseQueryError, PoolIndex, QueryResolution, Track } from "./sandbox/package-identity.js";
 // The farm contract: one `inflexa.lock` per farm. An embedder that composes
 // farms writes this shape, and the mount gate reads it — one schema, no copy.

@@ -22,6 +22,7 @@ from package_identity import (
     format_query,
     identity_of,
     key,
+    parse_identity_key,
     parse_query,
     python_identity,
     r_identity,
@@ -105,6 +106,16 @@ class TwinIndependenceTests(unittest.TestCase):
 
     def test_a_dispatch_over_an_emitted_name_is_stable(self):
         self.assertEqual(identity_of("python", "pyyaml"), python_identity("PyYAML"))
+
+    def test_a_key_round_trips_through_the_parse(self):
+        # The FIRST colon splits the key, thus a dotted R name survives.
+        for identity in (r_identity("GO.db"), r_identity("decoupleR"),
+                         python_identity("scikit_learn")):
+            self.assertEqual(parse_identity_key(key(identity)), identity)
+
+    def test_a_string_that_is_not_a_key_parses_to_nothing(self):
+        for bad in ("igraph", "bioc:fgsea", "python:", ":igraph", ""):
+            self.assertIsNone(parse_identity_key(bad), bad)
 
 
 if __name__ == "__main__":

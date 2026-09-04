@@ -60,6 +60,7 @@ import { classifyProvisionerRun, runProvisioner, type ProvisionerError, type Pro
 import { cancelCatalogTransfer, installedCatalogManifest, runCatalogTransfer, startCatalogTransfer } from "./store_download.ts";
 import {
     anyLiveStoreFlight,
+    bothHitRemedy,
     describeStoreFlightSpec,
     enqueueStoreAdd,
     flushPendingStoreAdds,
@@ -898,7 +899,7 @@ function printFlushOutcome(outcome: FlushSpecOutcome): void {
             reportError({ message: `${describeStoreFlightSpec(outcome.spec)}: ${outcome.reason}` });
             return;
         case "both_hit": {
-            const pair = outcome.candidates.map((candidate) => `--lang ${candidate.ecosystem}`).join(" or ");
+            const pair = bothHitRemedy(outcome.candidates);
             reportError({
                 message:
                     `Both ecosystems hold "${outcome.spec.spelling}". Nothing was installed. ` +

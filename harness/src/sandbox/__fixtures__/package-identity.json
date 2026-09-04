@@ -17,6 +17,10 @@
       "query": { "spelling": "numpy", "version": "1.26.4" }
     },
     {
+      "entry": "numpy == 1.26.4",
+      "query": { "spelling": "numpy", "version": "1.26.4" }
+    },
+    {
       "entry": "python:igraph",
       "query": { "spelling": "igraph", "track": "python" }
     },
@@ -38,7 +42,8 @@
     { "entry": "numpy<2", "error": "unsupported_specifier", "specifier": "<" },
     { "entry": "scanpy~=1.10", "error": "unsupported_specifier", "specifier": "~=" },
     { "entry": "scanpy!=1.9", "error": "unsupported_specifier", "specifier": "!=" },
-    { "entry": "numpy=1.26", "error": "unsupported_specifier", "specifier": "=" }
+    { "entry": "numpy=1.26", "error": "unsupported_specifier", "specifier": "=" },
+    { "entry": "numpy==1.26,<2", "error": "unsupported_specifier", "specifier": ",<" }
   ],
   "identity": [
     { "track": "python", "input": "PyYAML", "name": "pyyaml", "key": "python:pyyaml", "address": "pyyaml" },
@@ -56,5 +61,10 @@
     { "query": { "spelling": "numpy", "version": "1.26.4" }, "formatted": "numpy==1.26.4" },
     { "query": { "spelling": "scanpy" }, "formatted": "scanpy" },
     { "query": { "spelling": "GO.db", "track": "r", "version": "3.21.0" }, "formatted": "r:GO.db==3.21.0" }
-  ]
+  ],
+  "both_hit_report": {
+    "spec": "igraph",
+    "outcome": "both_hit",
+    "candidates": ["python:igraph", "r:igraph"]
+  }
 }

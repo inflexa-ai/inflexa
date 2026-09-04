@@ -120,6 +120,30 @@ export function identityKey(identity: PackageIdentity): string {
 }
 
 /**
+ * The identity that a key names, or `undefined` when the string is not a key.
+ *
+ * The FIRST colon splits the two halves. A track name holds no colon, and
+ * neither a PEP 503 name nor an R name can hold one, thus `r:GO.db` gives the
+ * R identity `GO.db`, dot and all. The name rides through {@link identityOf},
+ * and the fold is idempotent, thus a key that {@link identityKey} wrote comes
+ * back as the identity that wrote it.
+ *
+ * The key format is minted here, thus it is read here: a reader that splits
+ * the string itself owns a second copy of the format.
+ *
+ * @param key A `<track>:<name>` string, as {@link identityKey} writes it.
+ */
+export function parseIdentityKey(key: string): PackageIdentity | undefined {
+    const at = key.indexOf(":");
+    if (at < 0) return undefined;
+    const track = key.slice(0, at);
+    const name = key.slice(at + 1);
+    if (name === "") return undefined;
+    if (track !== "python" && track !== "r") return undefined;
+    return identityOf(track, name);
+}
+
+/**
  * The store address of an identity: the PEP 503 fold of its name, for both
  * tracks. A store directory is an address and not an identity, thus two
  * identities can share one address — `r:decoupleR` and `python:decoupler`
@@ -160,6 +184,14 @@ const PREFIX = /^([A-Za-z][A-Za-z0-9_.-]*):/;
 const SPECIFIER = /[<>!~=]+/;
 
 /**
+ * A run of characters that an exact version cannot hold: a specifier
+ * character, a comma, or whitespace. `SPECIFIER` reads the FIRST run only,
+ * thus `numpy==1.26,<2` gives the version `1.26,<2` without this guard, and
+ * the compound range then rides into the pool as a version string.
+ */
+const VERSION_INTRUDER = /[<>!~=,\s]+/;
+
+/**
  * Read one entry of the grammar `[python:|r:]<spelling>[==<version>]`.
  *
  * The entry trims once, and the parts keep what the trim left. Every reader of
@@ -188,12 +220,19 @@ export function parseQuery(entry: string): Result<PackageQuery, ParseQueryError>
     if (specifier[0] !== "==") {
         return err({ type: "unsupported_specifier", specifier: specifier[0], entry: trimmed });
     }
-    const spelling = rest.slice(0, specifier.index);
+    // Both halves trim: `numpy == 1.26.4` is one ask, and an untrimmed half
+    // makes the spelling `numpy ` and the version ` 1.26.4`, neither of which
+    // any index holds.
+    const spelling = rest.slice(0, specifier.index).trim();
     if (spelling === "") return err({ type: "empty" });
     // `name==` names no version, thus the query pins none and the pool answers
     // the newest. The round-trip law holds, because `formatQuery` writes the
     // specifier only beside a version.
-    const version = rest.slice(specifier.index + 2);
+    const version = rest.slice(specifier.index + 2).trim();
+    const intruder = VERSION_INTRUDER.exec(version);
+    if (intruder !== null) {
+        return err({ type: "unsupported_specifier", specifier: intruder[0], entry: trimmed });
+    }
     return ok({
         spelling,
         ...(track === undefined ? {} : { track }),

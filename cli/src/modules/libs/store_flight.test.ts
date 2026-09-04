@@ -14,6 +14,7 @@ import { claimPendingStoreAdds, claimStoreFlight, deleteStoreFlight, promoteStor
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { CaptureResult } from "../../lib/container.ts";
 import {
+    acquireReportSchema,
     classifyPoolMiss,
     commitStagedNodes,
     describeRecordedFlightFailure,
@@ -32,6 +33,17 @@ import type { LoadCheckRunner, ProvisionerRunner } from "./provisioner.ts";
 // seam is injected, so nothing here starts an engine.
 
 const FIXTURE = join(import.meta.dir, "test-fixtures", "farm-parity");
+
+/**
+ * The shared package-identity fixture, read by a path that climbs to the
+ * repository root — the Python twin of the provisioner reads the same file the
+ * same way. `both_hit_report` is the exact outcome the provisioner emits for an
+ * unqualified `igraph` that both ecosystems hold, thus this suite and the
+ * provisioner suite cannot drift on the wire shape.
+ */
+const IDENTITY_FIXTURE = JSON.parse(
+    readFileSync(join(import.meta.dir, "..", "..", "..", "..", "harness", "src", "sandbox", "__fixtures__", "package-identity.json"), "utf8"),
+) as { readonly both_hit_report: { readonly spec: string; readonly outcome: string; readonly candidates: readonly string[] } };
 
 const created: string[] = [];
 
@@ -196,21 +208,21 @@ describe("flushPendingStoreAdds", () => {
         expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(0);
     });
 
+    test("the both-hit report of the shared fixture parses through the acquire schema", () => {
+        // The candidates are identity keys. A schema that wants another shape
+        // makes the whole report unreadable, and every spec of the batch then
+        // fails at `resolve` instead of one spec asking its question.
+        const parsed = acquireReportSchema.safeParse({ schema: 1, outcomes: [IDENTITY_FIXTURE.both_hit_report], nodes: {} });
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.data?.outcomes[0]?.candidates).toEqual(["python:igraph", "r:igraph"]);
+    });
+
     test("a both-hit spec stops with its two candidates, and the rest of the set still lands", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ query: { spelling: "igraph" }, analysisId: null })._unsafeUnwrap();
-        const run = acquiringRunner(
-            {
-                igraph: {
-                    outcome: "both_hit",
-                    candidates: [
-                        { ecosystem: "python", name: "igraph" },
-                        { ecosystem: "r", name: "igraph" },
-                    ],
-                },
-            },
-            {},
-        );
+        const { spec: spelling, ...emitted } = IDENTITY_FIXTURE.both_hit_report;
+        enqueueStoreAdd({ query: { spelling }, analysisId: null })._unsafeUnwrap();
+        const run = acquiringRunner({ [spelling]: emitted }, {});
 
         const result = (await flushPendingStoreAdds(root, { run, loadCheck: loadCheck([]) }))._unsafeUnwrap();
 
@@ -219,12 +231,14 @@ describe("flushPendingStoreAdds", () => {
             {
                 kind: "both_hit",
                 spec: { ecosystem: null, spelling: "igraph", specifier: "" },
-                candidates: [
-                    { ecosystem: "python", name: "igraph" },
-                    { ecosystem: "r", name: "igraph" },
-                ],
+                candidates: ["python:igraph", "r:igraph"],
             },
         ]);
+        // The durable row carries the ask, and its `--lang` remedy comes from
+        // the tracks inside the two identity keys.
+        const rows = readStoreFlights();
+        expect(rows[0]?.row.state).toBe("failed");
+        expect(rows[0]?.row.message).toContain("--lang python or --lang r");
     });
 
     test("a red load check drops the spec, commits nothing for it, and reports the refusal", async () => {

@@ -52,13 +52,79 @@ describe("queryPackages — names (presence check)", () => {
         expect(result.checked).toEqual([{ requested: "scikit_learn", present: true, name: "scikit-learn", section: "Python (pip)" }]);
     });
 
-    it("a system tool matches its rendered name exactly", () => {
-        const result = queryPackages(SECTIONS, { names: ["samtools", "SAMTOOLS"] });
+    it("a system tool matches its rendered name without case", () => {
+        // The identity rule covers a distribution of an ecosystem. A binary is
+        // neither, thus `BCFtools` must still reach the executable `bcftools`.
+        const result = queryPackages(SECTIONS, { names: ["samtools", "SAMTOOLS", "BCFtools"] });
         if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
 
         expect(result.checked).toEqual([
             { requested: "samtools", present: true, name: "samtools", section: "System tools (CLI)" },
-            { requested: "SAMTOOLS", present: false },
+            { requested: "SAMTOOLS", present: true, name: "samtools", section: "System tools (CLI)" },
+            { requested: "BCFtools", present: true, name: "bcftools", section: "System tools (CLI)" },
+        ]);
+    });
+
+    it("a node package matches its rendered name without case", () => {
+        const result = queryPackages(SECTIONS, { names: ["TypeScript"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([{ requested: "TypeScript", present: true, name: "typescript", section: "Node (npm)" }]);
+    });
+});
+
+describe("queryPackages — names speak the query grammar", () => {
+    // The listing writes `python:igraph` and the planner writes it back, thus
+    // the census must read the same grammar or it answers absent for a name it
+    // holds.
+    const QUALIFIED: Section[] = [
+        {
+            title: "R (CRAN)",
+            track: "r",
+            packages: [
+                { name: "Seurat", version: "5.1.0" },
+                { name: "igraph", version: "2.1.4" },
+            ],
+        },
+        { title: "Python (pip)", track: "python", packages: [{ name: "igraph", version: "1.0.0" }] },
+        { title: "System tools (CLI)", packages: [{ name: "samtools" }] },
+    ];
+
+    it("a qualified entry resolves against its own track", () => {
+        const result = queryPackages(QUALIFIED, { names: ["r:Seurat", "python:igraph"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([
+            { requested: "r:Seurat", present: true, name: "Seurat", section: "R (CRAN)", version: "5.1.0" },
+            { requested: "python:igraph", present: true, name: "igraph", section: "Python (pip)", version: "1.0.0" },
+        ]);
+    });
+
+    it("a qualified entry of the other track answers absent", () => {
+        const result = queryPackages(QUALIFIED, { names: ["python:Seurat"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([{ requested: "python:Seurat", present: false }]);
+    });
+
+    it("a qualified entry never reaches an untracked section", () => {
+        // `python:samtools` names a Python distribution, and the executable
+        // `samtools` is not one.
+        const result = queryPackages(QUALIFIED, { names: ["python:samtools"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([{ requested: "python:samtools", present: false }]);
+    });
+
+    it("an entry that is not a query answers absent, and the census does not refuse the call", () => {
+        const result = queryPackages(QUALIFIED, { names: ["/mnt/libs/store/igraph-1.0.0-abcd", "bioc:igraph", "igraph"] });
+        if (!result.available || !("checked" in result)) throw new Error("expected a checked result");
+
+        expect(result.checked).toEqual([
+            { requested: "/mnt/libs/store/igraph-1.0.0-abcd", present: false },
+            { requested: "bioc:igraph", present: false },
+            { requested: "igraph", present: true, name: "igraph", section: "Python (pip)", version: "1.0.0" },
+            { requested: "igraph", present: true, name: "igraph", section: "R (CRAN)", version: "2.1.4" },
         ]);
     });
 });
