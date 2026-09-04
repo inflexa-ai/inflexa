@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
-import { createListAvailablePackagesTool, queryPackages, type CheckedPackage, type Section } from "./list-available-packages.js";
+import { createListAvailablePackagesTool, lockSections, queryPackages, type CheckedPackage, type Section } from "./list-available-packages.js";
+import type { FarmLock } from "../../sandbox/farm.js";
 
 // The shape every source is normalized into before `queryPackages` sees it:
 // one section per language track, each holding the canonical package names.
@@ -145,6 +146,38 @@ describe("queryPackages — listing", () => {
 
         // The R triple only: CRAN + Bioconductor (+ GitHub when present).
         expect(result.total).toBe(6);
+        expect(result.content).toContain("R (CRAN)");
+        expect(result.content).toContain("R (Bioconductor)");
+        expect(result.content).not.toContain("Python (pip)");
+    });
+
+    it("a section carries its track", () => {
+        // The scenario starts at a farm LOCK, not at hand-built sections: the
+        // mapping from a lock subtree to a track is what the filter reads, and
+        // `cran` and `bioconductor` are two subtrees of one ecosystem.
+        const lock: FarmLock = {
+            schema: 1,
+            arch: "arm64",
+            packages: [
+                { name: "Seurat", version: "5.1.0", track: "cran", store_dir: "seurat-5.1.0-abcd1234abcd1234", hash: "a".repeat(64), requested: true },
+                { name: "limma", version: "3.64.0", track: "bioconductor", store_dir: "limma-3.64.0-abcd1234abcd1234", hash: "b".repeat(64), requested: true },
+                { name: "scanpy", version: "1.10.0", track: "python", store_dir: "scanpy-1.10.0-abcd1234abcd1234", hash: "c".repeat(64), requested: true },
+            ],
+            languages: {},
+        };
+
+        const sections = lockSections(lock);
+
+        expect(sections.map((s) => [s.title, s.track])).toEqual([
+            ["Python (pip)", "python"],
+            ["R (CRAN)", "r"],
+            ["R (Bioconductor)", "r"],
+        ]);
+
+        const result = queryPackages(sections, { language: "r" });
+        if (!result.available || !("total" in result)) throw new Error("expected a listing result");
+
+        expect(result.total).toBe(2);
         expect(result.content).toContain("R (CRAN)");
         expect(result.content).toContain("R (Bioconductor)");
         expect(result.content).not.toContain("Python (pip)");
