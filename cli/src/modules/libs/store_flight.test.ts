@@ -100,31 +100,31 @@ afterEach(() => {
 });
 
 describe("the pending set", () => {
-    test("an enqueue lands once per spec and analysis, and the listing renders it", () => {
-        enqueueStoreAdd({ name: "Scanpy", version: null, ecosystem: null, analysisId: null })._unsafeUnwrap();
-        enqueueStoreAdd({ name: "SCAN_PY", version: null, ecosystem: null, analysisId: null })._unsafeUnwrap();
+    test("an enqueue lands once per query, and two spellings of one fold are two queries", () => {
+        enqueueStoreAdd({ query: { spelling: "Scanpy" }, analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "SCAN_PY" }, analysisId: null })._unsafeUnwrap();
+        // The same query again is the same row: the dedupe compares the
+        // spelling, the specifier, and the track.
+        enqueueStoreAdd({ query: { spelling: "Scanpy" }, analysisId: null })._unsafeUnwrap();
 
         const pending = listPendingStoreAdds()._unsafeUnwrap();
-        // PEP 503 canonicalizes: the case folds, and each separator run becomes
-        // one hyphen. `SCAN_PY` is a different distribution (`scan-py`), and a
-        // second spelling of `scanpy` is the same one.
-        expect(pending.map((entry) => entry.name).sort()).toEqual(["scan-py", "scanpy"]);
-        enqueueStoreAdd({ name: "SCANPY", version: null, ecosystem: null, analysisId: null })._unsafeUnwrap();
-        expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(2);
-        expect(pending[0]?.name).toBe("scanpy");
+        // A query is what a person asked, thus a caller who wrote `SCAN_PY` did
+        // not ask for `Scanpy`, and the two rows stay two rows.
+        expect(pending.map((entry) => entry.spelling).sort()).toEqual(["SCAN_PY", "Scanpy"]);
+        expect(pending[0]?.spelling).toBe("Scanpy");
         expect(pending[0]?.ecosystem).toBeNull();
     });
 
     test("a version and an ecosystem key separate entries", () => {
-        enqueueStoreAdd({ name: "igraph", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
-        enqueueStoreAdd({ name: "igraph", version: null, ecosystem: "r", analysisId: null })._unsafeUnwrap();
-        enqueueStoreAdd({ name: "igraph", version: "0.11", ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "igraph", track: "python" }, analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "igraph", track: "r" }, analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "igraph", track: "python", version: "0.11" }, analysisId: null })._unsafeUnwrap();
 
         expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(3);
     });
 
     test("the claim takes the whole set atomically, thus a second flusher runs nothing", () => {
-        enqueueStoreAdd({ name: "alpha", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "alpha", track: "python" }, analysisId: null })._unsafeUnwrap();
 
         const first = claimPendingStoreAdds()._unsafeUnwrap();
         const second = claimPendingStoreAdds()._unsafeUnwrap();
@@ -150,8 +150,8 @@ describe("flushPendingStoreAdds", () => {
 
     test("one batch, one acquire run, per-spec outcomes, and the green set commits to the graph", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "newpkg", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
-        enqueueStoreAdd({ name: "ghost", version: null, ecosystem: null, analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "newpkg", track: "python" }, analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "ghost" }, analysisId: null })._unsafeUnwrap();
         const NEW_DIR = "newpkg-1.0-00000000000new01";
         const invocations: string[][] = [];
         const run: ProvisionerRunner = async (invocation, onLine) => {
@@ -173,7 +173,7 @@ describe("flushPendingStoreAdds", () => {
         expect(invocations[0]).toContain("python:newpkg");
         expect(invocations[0]).toContain("ghost");
         if (result.type !== "flew") throw new Error(`expected a flight, got ${result.type}`);
-        const kinds = new Map(result.outcomes.map((outcome) => [outcome.spec.name, outcome.kind]));
+        const kinds = new Map(result.outcomes.map((outcome) => [outcome.spec.spelling, outcome.kind]));
         expect(kinds.get("newpkg")).toBe("acquired");
         expect(kinds.get("ghost")).toBe("refused");
         // The commit appended the staged node under the metadata lock, and the graph
@@ -190,7 +190,7 @@ describe("flushPendingStoreAdds", () => {
         const rows = readStoreFlights();
         expect(rows).toHaveLength(1);
         expect(rows[0]?.row.state).toBe("failed");
-        expect(rows[0]?.row.name).toBe("ghost");
+        expect(rows[0]?.row.spelling).toBe("ghost");
         expect(rows[0]?.row.message).toBe("resolve: no ecosystem holds the name");
         // The pending set drained.
         expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(0);
@@ -198,7 +198,7 @@ describe("flushPendingStoreAdds", () => {
 
     test("a both-hit spec stops with its two candidates, and the rest of the set still lands", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "igraph", version: null, ecosystem: null, analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "igraph" }, analysisId: null })._unsafeUnwrap();
         const run = acquiringRunner(
             {
                 igraph: {
@@ -218,7 +218,7 @@ describe("flushPendingStoreAdds", () => {
         expect(result.outcomes).toEqual([
             {
                 kind: "both_hit",
-                spec: { ecosystem: null, name: "igraph", rawName: "igraph", specifier: "" },
+                spec: { ecosystem: null, spelling: "igraph", specifier: "" },
                 candidates: [
                     { ecosystem: "python", name: "igraph" },
                     { ecosystem: "r", name: "igraph" },
@@ -229,7 +229,7 @@ describe("flushPendingStoreAdds", () => {
 
     test("a red load check drops the spec, commits nothing for it, and reports the refusal", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "badpkg", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "badpkg", track: "python" }, analysisId: null })._unsafeUnwrap();
         const BAD_DIR = "badpkg-1.0-00000000000bad01";
         const run = acquiringRunner(
             { "python:badpkg": { outcome: "acquired", store_dirs: [BAD_DIR] } },
@@ -255,7 +255,7 @@ describe("flushPendingStoreAdds", () => {
 
     test("a retry of a failed spec claims the same row, and its success clears the failure", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "flaky", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "flaky", track: "python" }, analysisId: null })._unsafeUnwrap();
         const refusing = acquiringRunner({ "python:flaky": { outcome: "refused", reason: "the index timed out" } }, {});
         (await flushPendingStoreAdds(root, { run: refusing, loadCheck: loadCheck([]) }))._unsafeUnwrap();
         const failedRow = readStoreFlights()[0];
@@ -263,7 +263,7 @@ describe("flushPendingStoreAdds", () => {
         expect(failedRow?.row.message).toBe("resolve: the index timed out");
 
         const FLAKY_DIR = "flaky-1.0-0000000000flaky1";
-        enqueueStoreAdd({ name: "flaky", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "flaky", track: "python" }, analysisId: null })._unsafeUnwrap();
         const succeeding = acquiringRunner(
             { "python:flaky": { outcome: "acquired", store_dirs: [FLAKY_DIR] } },
             { [FLAKY_DIR]: { track: "python", name: "flaky", version: "1.0", order: "0a", edges: [] } },
@@ -279,7 +279,7 @@ describe("flushPendingStoreAdds", () => {
 
     test("a broken flight ledger is its own refusal, never a join", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "alpha", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "alpha", track: "python" }, analysisId: null })._unsafeUnwrap();
         let ran = 0;
         const run: ProvisionerRunner = async () => {
             ran += 1;
@@ -305,7 +305,7 @@ describe("flushPendingStoreAdds", () => {
 
     test("a live reclamation defers the batch and puts the approvals back", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "alpha", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "alpha", track: "python" }, analysisId: null })._unsafeUnwrap();
         const holder = Bun.spawn(["sleep", "60"]);
         mkdirSync(env.locksDir, { recursive: true });
         writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), String(holder.pid));
@@ -343,8 +343,7 @@ describe("flushPendingStoreAdds", () => {
                 claimStoreFlight({
                     id: "any::blocker::",
                     ecosystem: null,
-                    name: "blocker",
-                    rawName: "blocker",
+                    spelling: "blocker",
                     specifier: "",
                     holderPid: dead.pid,
                 })._unsafeUnwrap();
@@ -353,7 +352,7 @@ describe("flushPendingStoreAdds", () => {
             return promoteStoreFlightBatch(params);
         };
 
-        enqueueStoreAdd({ name: "alpha", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "alpha", track: "python" }, analysisId: null })._unsafeUnwrap();
         const DIR = "alpha-1.0-0000000000alpha1";
         const run = acquiringRunner(
             { "python:alpha": { outcome: "acquired", store_dirs: [DIR] } },
@@ -372,7 +371,7 @@ describe("flushPendingStoreAdds", () => {
 
     test("a promote that cannot read the ledger fails the batch and settles the rows failed", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "alpha", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "alpha", track: "python" }, analysisId: null })._unsafeUnwrap();
         let ran = 0;
         const run: ProvisionerRunner = async () => {
             ran += 1;
@@ -433,7 +432,7 @@ describe("the graph commit", () => {
         // under the SAME spelling — a fold would reach `rpkga`, which no shelf
         // holds, and the node would drop with a false dangling-edge refusal.
         const staged = {
-            "rpkgc-3.0-000000000000fff2": { track: "r", name: "Rpkgc", version: "3.0", order: "0b", edges: ["Rpkga"], r_dir: "Rpkgc" },
+            "rpkgc-3.0-000000000000fff2": { track: "r", name: "Rpkgc", version: "3.0", order: "0b", edges: ["Rpkga"] },
         } as Parameters<typeof commitStagedNodes>[1];
 
         const outcome = (await commitStagedNodes(root, staged))._unsafeUnwrap();
@@ -482,7 +481,7 @@ describe("the flush tail", () => {
 
     test("a refusal triggers the debris pass over the refused bytes", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "badpkg", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "badpkg", track: "python" }, analysisId: null })._unsafeUnwrap();
         const BAD_DIR = "badpkg-1.0-00000000000bad02";
         const run = acquiringRunner(
             { "python:badpkg": { outcome: "acquired", store_dirs: [BAD_DIR] } },
@@ -508,7 +507,7 @@ describe("the flush tail", () => {
 
     test("a clean flush starts no debris pass", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "goodpkg", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "goodpkg", track: "python" }, analysisId: null })._unsafeUnwrap();
         const GOOD_DIR = "goodpkg-1.0-0000000000good1";
         const run = acquiringRunner(
             { "python:goodpkg": { outcome: "acquired", store_dirs: [GOOD_DIR] } },
@@ -549,49 +548,73 @@ describe("describeRecordedFlightFailure", () => {
 
 describe("classifyPoolMiss", () => {
     test("a pending add and a live flight read as in flight", () => {
-        enqueueStoreAdd({ name: "Scanpy", version: null, ecosystem: "python", analysisId: null })._unsafeUnwrap();
-        expect(classifyPoolMiss("scanpy")).toContain("in flight");
+        enqueueStoreAdd({ query: { spelling: "Scanpy", track: "python" }, analysisId: null })._unsafeUnwrap();
+        expect(classifyPoolMiss({ spelling: "Scanpy", track: "python" })).toContain("in flight");
 
         claimStoreFlight({
             id: "python::igraph::",
             ecosystem: "python",
-            name: "igraph",
-            rawName: "igraph",
+            spelling: "igraph",
             specifier: "",
             holderPid: process.pid,
         })._unsafeUnwrap();
-        expect(classifyPoolMiss("igraph")).toContain("in flight");
+        expect(classifyPoolMiss({ spelling: "igraph", track: "python" })).toContain("in flight");
     });
 
     test("a failed row carries its translated reason, and an unknown name carries nothing", () => {
         claimStoreFlight({
             id: "python::numba::",
             ecosystem: "python",
-            name: "numba",
-            rawName: "numba",
+            spelling: "numba",
             specifier: "",
             holderPid: process.pid,
         })._unsafeUnwrap();
         settleStoreFlightFailure({ id: "python::numba::", message: "resolve: the index timed out" })._unsafeUnwrap();
 
-        const detail = classifyPoolMiss("numba");
+        const detail = classifyPoolMiss({ spelling: "numba", track: "python" });
         expect(detail).toContain("its last flight failed");
         expect(detail).toContain("the version did not resolve against the index");
-        expect(classifyPoolMiss("nonesuch")).toBeUndefined();
+        expect(classifyPoolMiss({ spelling: "nonesuch", track: "python" })).toBeUndefined();
+    });
+
+    test("a row and a query that both carry a track match by identity, and never across a track", () => {
+        claimStoreFlight({ id: "python::seurat::", ecosystem: "python", spelling: "seurat", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+
+        // The Python identity folds, thus a second spelling of the same
+        // distribution reads the same live flight.
+        expect(classifyPoolMiss({ spelling: "Seurat", track: "python" })).toContain("in flight");
+        // The two tracks hold two identities. A Python flight for `seurat` must
+        // NOT answer an R miss of `Seurat`, or the launch defers for ever on a
+        // package that nothing acquires.
+        expect(classifyPoolMiss({ spelling: "Seurat", track: "r" })).toBeUndefined();
+    });
+
+    test("a row and a query that name no track match by spelling, and a mixed pair matches nothing", () => {
+        enqueueStoreAdd({ query: { spelling: "polars" }, analysisId: null })._unsafeUnwrap();
+
+        expect(classifyPoolMiss({ spelling: "polars" })).toContain("in flight");
+        // Neither side folds here, thus a second spelling reads as its own ask.
+        expect(classifyPoolMiss({ spelling: "Polars" })).toBeUndefined();
+        // One side names a track and the other stands for both ecosystems. No
+        // row holds the knowledge that would settle the pair.
+        expect(classifyPoolMiss({ spelling: "polars", track: "python" })).toBeUndefined();
     });
 });
 
 describe("the flight key", () => {
-    test("carries the ecosystem, the canonical name, and the specifier", () => {
-        expect(storeFlightKey({ ecosystem: "python", name: "scanpy", rawName: "scanpy", specifier: "==1.10" })).toBe("python::scanpy::==1.10");
-        expect(storeFlightKey({ ecosystem: null, name: "scanpy", rawName: "scanpy", specifier: "" })).toBe("any::scanpy::");
+    test("carries the track (or `any`), the spelling, and the specifier", () => {
+        expect(storeFlightKey({ ecosystem: "python", spelling: "scanpy", specifier: "==1.10" })).toBe("python::scanpy::==1.10");
+        expect(storeFlightKey({ ecosystem: null, spelling: "scanpy", specifier: "" })).toBe("any::scanpy::");
+        // The key carries the SPELLING, thus `GO.db` keys its own flight and the
+        // address `go-db` keys nothing.
+        expect(storeFlightKey({ ecosystem: "r", spelling: "GO.db", specifier: "" })).toBe("r::GO.db::");
     });
 });
 
-describe("the raw spelling of a request", () => {
-    test("a flush of GO.db --lang r hands the provisioner the raw ref, and the row keeps both names", async () => {
+describe("the spelling of a request", () => {
+    test("a flush of GO.db --lang r hands the provisioner the spelling, and the row keeps it", async () => {
         const root = tempStore();
-        enqueueStoreAdd({ name: "GO.db", version: null, ecosystem: "r", analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "GO.db", track: "r" }, analysisId: null })._unsafeUnwrap();
         const invocations: string[][] = [];
         const acquire = acquiringRunner({ "r:GO.db": { outcome: "refused", reason: "offline test" } }, {});
         const run: ProvisionerRunner = async (invocation, onLine) => {
@@ -601,22 +624,19 @@ describe("the raw spelling of a request", () => {
 
         (await flushPendingStoreAdds(root, { run, loadCheck: loadCheck([]) }))._unsafeUnwrap();
 
-        // The installer ref is the raw spelling — pak resolves `GO.db`, and `go-db` names nothing.
+        // The installer ref is the spelling — pak resolves `GO.db`, and `go-db` names nothing.
         expect(invocations[0]).toContain("r:GO.db");
         expect(invocations[0]?.join(" ")).not.toContain("go-db");
-        const flight = readStoreFlights().find((entry) => entry.row.id === "r::go-db::");
-        expect(flight?.row.name).toBe("go-db");
-        expect(flight?.row.rawName).toBe("GO.db");
+        const flight = readStoreFlights().find((entry) => entry.row.id === "r::GO.db::");
+        expect(flight?.row.spelling).toBe("GO.db");
         expect(describeStoreFlightSpec(flight!.row)).toBe("GO.db (r)");
     });
 
-    test("two spellings of one identity dedupe, and the first raw spelling wins", () => {
-        enqueueStoreAdd({ name: "GO.db", version: null, ecosystem: "r", analysisId: null })._unsafeUnwrap();
-        enqueueStoreAdd({ name: "go.db", version: null, ecosystem: "r", analysisId: null })._unsafeUnwrap();
+    test("two spellings of one fold are two rows, because they are two queries", () => {
+        enqueueStoreAdd({ query: { spelling: "GO.db", track: "r" }, analysisId: null })._unsafeUnwrap();
+        enqueueStoreAdd({ query: { spelling: "go.db", track: "r" }, analysisId: null })._unsafeUnwrap();
 
         const pending = listPendingStoreAdds()._unsafeUnwrap();
-        expect(pending).toHaveLength(1);
-        expect(pending[0]?.name).toBe("go-db");
-        expect(pending[0]?.rawName).toBe("GO.db");
+        expect(pending.map((entry) => entry.spelling).sort()).toEqual(["GO.db", "go.db"]);
     });
 });

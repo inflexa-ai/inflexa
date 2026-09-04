@@ -106,7 +106,7 @@ export type SandboxGateSeams = {
     /** The acquisition flights that are live now. Real: {@link readStoreFlights}. */
     readonly readFlights: () => readonly StoreFlightReport[];
     /** The pending adds that no flush took yet. Real: the pending-set listing. */
-    readonly readPending: () => readonly { readonly ecosystem: "python" | "r" | null; readonly rawName: string; readonly specifier: string }[];
+    readonly readPending: () => readonly { readonly ecosystem: "python" | "r" | null; readonly spelling: string; readonly specifier: string }[];
     /** The cheap local state of the store content. Real: {@link inspectStoreContent}. */
     readonly inspect: (root: string) => Promise<StoreContentState>;
     /**

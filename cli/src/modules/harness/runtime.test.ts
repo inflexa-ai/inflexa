@@ -18,6 +18,7 @@ import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
+import { claimStoreFlight, deleteStoreFlight } from "../../db/primary_mutation.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import {
     bootHarnessRuntime,
@@ -1087,12 +1088,15 @@ describe("withPoolMissRemedy", () => {
         // The seam resolved `seurat` against a pool that holds `Seurat`, thus
         // its detail carries the spelling that links. An acquisition of a held
         // package is wasted work, so the suggestion leads the remedy.
-        const remedied = withPoolMissRemedy({
-            kind: "absent",
-            name: "seurat",
-            acquisitionPossible: true,
-            detail: 'the pool holds "Seurat" — an R package name is case-sensitive, thus the two spellings are two names',
-        });
+        const remedied = withPoolMissRemedy(
+            {
+                kind: "absent",
+                spelling: "seurat",
+                acquisitionPossible: true,
+                detail: 'the pool holds "Seurat" (r:Seurat) — an R package name is case-sensitive, thus the two spellings are two names',
+            },
+            { spelling: "seurat" },
+        );
 
         expect(remedied.kind).toBe("absent");
         const detail = remedied.kind === "absent" ? (remedied.detail ?? "") : "";
@@ -1102,10 +1106,29 @@ describe("withPoolMissRemedy", () => {
     });
 
     test("a miss with no suggestion carries the store-add ask alone, and another outcome rides through", () => {
-        const bare = withPoolMissRemedy({ kind: "absent", name: "nosuchpkg", acquisitionPossible: true });
+        const bare = withPoolMissRemedy({ kind: "absent", spelling: "nosuchpkg", acquisitionPossible: true }, { spelling: "nosuchpkg" });
         expect(bare.kind === "absent" ? bare.detail : "").toContain("inflexa store add nosuchpkg");
 
-        const collision = withPoolMissRemedy({ kind: "collision", name: "igraph", storeDirs: ["igraph-0.11-py", "igraph-2.0-r"], detail: "two tracks" });
-        expect(collision).toEqual({ kind: "collision", name: "igraph", storeDirs: ["igraph-0.11-py", "igraph-2.0-r"], detail: "two tracks" });
+        const collision = withPoolMissRemedy(
+            { kind: "collision", spelling: "igraph", storeDirs: ["igraph-0.11-py", "igraph-2.0-r"], detail: "two tracks" },
+            { spelling: "igraph" },
+        );
+        expect(collision).toEqual({ kind: "collision", spelling: "igraph", storeDirs: ["igraph-0.11-py", "igraph-2.0-r"], detail: "two tracks" });
+    });
+
+    test("a Python flight does not answer an R miss", () => {
+        // A live Python flight for `seurat` and an R query for `Seurat` are two
+        // identities. A match here would defer the launch for ever on a package
+        // that nothing acquires, thus the remedy stays the store-add ask.
+        claimStoreFlight({ id: "python::seurat::", ecosystem: "python", spelling: "seurat", specifier: "", holderPid: process.pid })._unsafeUnwrap();
+        try {
+            const remedied = withPoolMissRemedy({ kind: "absent", spelling: "Seurat", acquisitionPossible: true }, { spelling: "Seurat", track: "r" });
+
+            const detail = remedied.kind === "absent" ? (remedied.detail ?? "") : "";
+            expect(detail).toContain("inflexa store add Seurat");
+            expect(detail).not.toContain("in flight");
+        } finally {
+            deleteStoreFlight("python::seurat::").unwrapOr(0);
+        }
     });
 });

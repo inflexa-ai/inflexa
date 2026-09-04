@@ -35,6 +35,7 @@ import { isCancel, select as clackSelect } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { parseQuery, type PackageQuery, type ParseQueryError } from "@inflexa-ai/harness";
 import { readFarmLock } from "@inflexa-ai/harness";
 
 import { env } from "../../lib/env.ts";
@@ -48,6 +49,7 @@ import {
     extendFarm,
     FARM_LOCK_KEY_PREFIX,
     readDepsGraph,
+    identityKeySpelling,
     removeAnalysisFarm,
     resolvePackageRequest,
     CATALOG_FARM,
@@ -640,7 +642,7 @@ async function waitForNoLiveWork(waitMs: number, pollMs: number): Promise<Result
         if (flights.length === 0 && compositions.length === 0) return ok(undefined);
         if (waited >= waitMs) {
             if (flights.length > 0) {
-                const names = flights.map((flight) => `${flight.row.rawName}${flight.row.specifier}`).join(", ");
+                const names = flights.map((flight) => `${flight.row.spelling}${flight.row.specifier}`).join(", ");
                 return err({
                     type: "acquisition_in_flight",
                     message: `A package acquisition is still in flight (${names}), and a reclaim must not free what it is about to reference. Wait for it to finish, then run this command again.`,
@@ -789,6 +791,84 @@ function resolveFarmAnalysis(ref: IdOrName): Result<Analysis, FarmAnalysisError>
         );
 }
 
+/**
+ * One line that names why a command argument is not a package query, with the
+ * remedy of the command surface.
+ *
+ * An unknown prefix does NOT read as a grammar fault here. The two commands
+ * carry `--lang`, and the command spec keeps a prefix off the command surface,
+ * thus the flag is the one remedy that this surface can offer.
+ */
+function describeCommandParseError(error: ParseQueryError): string {
+    switch (error.type) {
+        case "empty":
+            return "A package argument is empty. Write one package name, with `==<version>` for one exact version.";
+        case "location":
+            return `"${error.entry}" is a path or a URL, and the package store answers names. Write the package name instead.`;
+        case "unknown_prefix":
+            return (
+                `"${error.entry}" carries the unknown prefix "${error.prefix}:". Write the package name alone, ` +
+                "and name the ecosystem with `--lang python` or `--lang r`."
+            );
+        case "unsupported_specifier":
+            return `"${error.entry}" carries the specifier "${error.specifier}". The store pins one exact version only — write \`<name>==<version>\`.`;
+        default: {
+            // The union is closed, thus the compiler proves that this is unreachable.
+            const unreachable: never = error;
+            throw new Error(`unhandled package query parse error: ${JSON.stringify(unreachable)}`);
+        }
+    }
+}
+
+/**
+ * The query that one command argument asks, or the refusal that names the
+ * remedy. `store add` and `store link` share it, thus one argument reaches one
+ * query by one grammar.
+ *
+ * A prefix inside the argument REFUSES. The command surface names an ecosystem
+ * with `--lang`, and two ways to say one thing is what lets a flag and an
+ * argument disagree — the command spec keeps the prefix out.
+ */
+function commandQuery(entry: string): Result<PackageQuery, { readonly message: string }> {
+    return parseQuery(entry)
+        .mapErr((error) => ({ message: describeCommandParseError(error) }))
+        .andThen((query) =>
+            query.track === undefined
+                ? ok<PackageQuery, { readonly message: string }>(query)
+                : err<PackageQuery, { readonly message: string }>({
+                      message:
+                          `"${entry.trim()}" names its ecosystem with the prefix "${query.track}:". ` +
+                          `Write \`${query.spelling}\` with \`--lang ${query.track}\` instead.`,
+                  }),
+        );
+}
+
+/**
+ * Merge the flags of a command into the query of its argument.
+ *
+ * A version in the argument and a `--version` that name two versions refuse:
+ * one call asks for one version, and a silent pick between the two would
+ * install what the caller did not name. `--lang` cannot disagree, because a
+ * prefix never reaches here.
+ */
+function mergeCommandFlags(
+    query: PackageQuery,
+    flags: { readonly version: string | null; readonly lang: StoreEcosystem | null },
+): Result<PackageQuery, { readonly message: string }> {
+    const flagVersion = flags.version === null ? undefined : flags.version.trim();
+    if (flagVersion !== undefined && query.version !== undefined && query.version !== flagVersion) {
+        return err({
+            message: `"${query.spelling}==${query.version}" and \`--version ${flagVersion}\` name two versions. Name one version, in the argument or in the flag.`,
+        });
+    }
+    const version = query.version ?? flagVersion;
+    return ok({
+        spelling: query.spelling,
+        ...(flags.lang === null ? {} : { track: flags.lang }),
+        ...(version === undefined ? {} : { version }),
+    });
+}
+
 /** The flags of `inflexa store add`. */
 export type StoreAddOptions = {
     /** One exact version, or `null` for the newest the index serves. */
@@ -821,8 +901,8 @@ function printFlushOutcome(outcome: FlushSpecOutcome): void {
             const pair = outcome.candidates.map((candidate) => `--lang ${candidate.ecosystem}`).join(" or ");
             reportError({
                 message:
-                    `Both ecosystems hold "${outcome.spec.rawName}". Nothing was installed. ` +
-                    `Run \`inflexa store add ${outcome.spec.rawName}\` again with ${pair} to name the one you want.`,
+                    `Both ecosystems hold "${outcome.spec.spelling}". Nothing was installed. ` +
+                    `Run \`inflexa store add ${outcome.spec.spelling}\` again with ${pair} to name the one you want.`,
             });
             return;
         }
@@ -917,7 +997,13 @@ export async function runStoreAdd(pkg: string | undefined, options: StoreAddOpti
         analysisId = target.value.id;
     }
 
-    const enqueued = enqueueStoreAdd({ name: pkg.trim(), version: options.version, ecosystem: options.lang, analysisId });
+    const asked = commandQuery(pkg).andThen((query) => mergeCommandFlags(query, { version: options.version, lang: options.lang }));
+    if (asked.isErr()) {
+        reportError(asked.error);
+        return;
+    }
+
+    const enqueued = enqueueStoreAdd({ query: asked.value, analysisId });
     if (enqueued.isErr()) {
         reportError(enqueued.error);
         return;
@@ -996,21 +1082,21 @@ export async function runStoreLink(packages: string[], options: { readonly analy
         return;
     }
 
-    // Each answer keeps the spelling of its request. The Python shelf of the
-    // graph speaks the fold, and an R name is case- and dot-sensitive, thus
-    // every render below echoes the raw spelling — the rule of the mgmt spec.
-    const resolved: { readonly answer: ResolvedRequest; readonly rawName: string }[] = [];
+    // Each answer keeps the spelling of its query. The Python shelf of the graph
+    // speaks the fold, and an R name is case- and dot-sensitive, thus every
+    // render below echoes the spelling — the rule of the mgmt spec.
+    const resolved: { readonly answer: ResolvedRequest; readonly spelling: string }[] = [];
     const refusals: string[] = [];
     for (const requirement of packages) {
-        const split = requirement.indexOf("==");
-        const request = {
-            name: split < 0 ? requirement.trim() : requirement.slice(0, split).trim(),
-            ...(split < 0 ? {} : { version: requirement.slice(split + 2).trim() }),
-            ...(options.lang === null ? {} : { ecosystem: options.lang }),
-        };
-        const answer = resolvePackageRequest(graph.value, request);
+        const asked = commandQuery(requirement).andThen((parsed) => mergeCommandFlags(parsed, { version: null, lang: options.lang }));
+        if (asked.isErr()) {
+            refusals.push(asked.error.message);
+            continue;
+        }
+        const query = asked.value;
+        const answer = resolvePackageRequest(graph.value, query);
         if (answer.isOk()) {
-            resolved.push({ answer: answer.value, rawName: request.name });
+            resolved.push({ answer: answer.value, spelling: query.spelling });
             continue;
         }
         // The both-hit stops with an ask on a terminal, because an interactive
@@ -1018,23 +1104,23 @@ export async function runStoreLink(packages: string[], options: { readonly analy
         // the two candidates as guidance, and it re-runs with `--lang`.
         if (answer.error.type === "ambiguous_ecosystem" && process.stdin.isTTY) {
             const chosen = await clackSelect({
-                message: `Both ecosystems hold "${request.name}". Which one do you mean?`,
+                message: `Both ecosystems hold "${query.spelling}". Which one do you mean?`,
                 options: [
                     { value: "python" as const, label: `Python (${answer.error.candidates[0]})` },
                     { value: "r" as const, label: `R (${answer.error.candidates[1]})` },
                 ],
             });
             if (!isCancel(chosen)) {
-                const retried = resolvePackageRequest(graph.value, { ...request, ecosystem: chosen });
+                const retried = resolvePackageRequest(graph.value, { ...query, track: chosen });
                 if (retried.isOk()) {
-                    resolved.push({ answer: retried.value, rawName: request.name });
+                    resolved.push({ answer: retried.value, spelling: query.spelling });
                     continue;
                 }
-                refusals.push(describeRequestRefusal(retried.error, request.name));
+                refusals.push(describeRequestRefusal(retried.error, query));
                 continue;
             }
         }
-        refusals.push(describeRequestRefusal(answer.error, request.name));
+        refusals.push(describeRequestRefusal(answer.error, query));
     }
     if (refusals.length > 0) {
         reportError({ message: refusals.join("\n\n  ") });
@@ -1045,7 +1131,7 @@ export async function runStoreLink(packages: string[], options: { readonly analy
     const extended = await extendFarm({ storeRoot, analysisId: analysis.id, roots: resolved.map((item) => item.answer.storeDir) });
     extended.match(
         (composition) => {
-            for (const item of resolved) console.log(`Linked ${item.rawName}==${item.answer.version} into the farm of "${analysis.name}".`);
+            for (const item of resolved) console.log(`Linked ${item.spelling}==${item.answer.version} into the farm of "${analysis.name}".`);
             console.log(`That farm links ${composition.storeDirs.length} store directories now.`);
             console.log("A live sandbox of the analysis resolves them at its next import, thus no restart is necessary.");
         },
@@ -1058,30 +1144,31 @@ export async function runStoreLink(packages: string[], options: { readonly analy
  * what sends a caller around the same loop for ever, thus each message names
  * the remedy.
  *
- * `rawName` is the spelling of the request, and each render echoes it. The
- * error carries the canonical form, and a remedy in that form breaks: `store
- * add go-db` resolves nothing, because the R name is `GO.db`. Exported for
- * the test that pins the echo rule.
+ * The query carries the spelling of the request, and each render echoes it.
+ * The suggestion of the error is an identity KEY, and a remedy in that form
+ * breaks: `store add r:Seurat` refuses at this surface, thus the render quotes
+ * the spelling that the key holds. Exported for the test that pins the echo
+ * rule.
  */
-export function describeRequestRefusal(error: RequestResolutionError, rawName: string): string {
+export function describeRequestRefusal(error: RequestResolutionError, query: PackageQuery): string {
     switch (error.type) {
         case "unknown_distribution": {
             // The suggestion comes BEFORE the ask: the pool holds the package
             // under that spelling, thus an acquisition would be needless work.
-            const ask = `Run \`inflexa store add ${rawName}\` to acquire it — the acquisition covers PyPI, CRAN, and Bioconductor.`;
+            const ask = `Run \`inflexa store add ${query.spelling}\` to acquire it — the acquisition covers PyPI, CRAN, and Bioconductor.`;
             return error.suggestion === undefined
-                ? `The package pool holds nothing named "${rawName}". ${ask}`
-                : `The package pool holds nothing named "${rawName}". It holds "${error.suggestion}", and an R package name is case-sensitive — ` +
-                      `link that spelling instead. ${ask}`;
+                ? `The package pool holds nothing named "${query.spelling}". ${ask}`
+                : `The package pool holds nothing named "${query.spelling}". It holds "${identityKeySpelling(error.suggestion)}", ` +
+                      `and an R package name is case-sensitive — link that spelling instead. ${ask}`;
         }
         case "unknown_version":
             return (
-                `The package pool holds no version ${error.version} of "${rawName}". It holds ${error.available.join(", ")}. ` +
-                `Link one of those versions, or run \`inflexa store add ${rawName} --version ${error.version}\` to acquire the one you named.`
+                `The package pool holds no version ${error.version} of "${query.spelling}". It holds ${error.available.join(", ")}. ` +
+                `Link one of those versions, or run \`inflexa store add ${query.spelling} --version ${error.version}\` to acquire the one you named.`
             );
         case "ambiguous_ecosystem":
             return (
-                `Both ecosystems hold "${rawName}" (${error.candidates.join(" and ")}), and the request names none. ` +
+                `Both ecosystems hold "${query.spelling}" (${error.candidates.join(" and ")}), and the request names none. ` +
                 "Run the command again with `--lang python` or `--lang r`."
             );
         default: {

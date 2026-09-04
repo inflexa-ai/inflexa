@@ -168,7 +168,7 @@ afterEach(() => {
 // --- The graph reader -----------------------------------------------------------
 
 describe("readDepsGraph", () => {
-    test("indexes each node by its store-directory name, and it keeps the R inner directory", () => {
+    test("indexes each node by its store-directory name, and one name serves both tracks", () => {
         const graph = readDepsGraph(tempStore())._unsafeUnwrap();
 
         expect(graph.version).toBe(2);
@@ -180,10 +180,27 @@ describe("readDepsGraph", () => {
             imports: ["beta", "nsroot"],
             entryPoints: ["beta-run"],
             edges: [ALPHA],
-            rDir: null,
         });
-        expect(graph.nodes.get(RPKGA)?.rDir).toBe("Rpkga");
-        expect(graph.nodes.get(ALPHA)?.rDir).toBeNull();
+        // The inner directory of an R store directory carries the identity name,
+        // thus the node needs no second copy of it.
+        expect(graph.nodes.get(RPKGA)?.name).toBe("Rpkga");
+    });
+
+    test("a development store that still carries `r_dir` reads, and the field passes unread", () => {
+        const root = mkdtempSync(join(tmpdir(), "inflexa-rdir-"));
+        created.push(root);
+        writeFileSync(
+            join(root, "deps.json"),
+            JSON.stringify({
+                version: 2,
+                nodes: { [SEURAT_R]: { track: "r", name: "Seurat", version: "5.1.0" } },
+                by_name: { python: {}, r: { Seurat: [SEURAT_R] } },
+            }),
+        );
+
+        const graph = readDepsGraph(root)._unsafeUnwrap();
+
+        expect(graph.nodes.get(SEURAT_R)).toEqual({ track: "r", name: "Seurat", version: "5.1.0", imports: [], entryPoints: [], edges: [] });
     });
 
     test("keeps the version ordering of the emitter, one pool for each track, newest first", () => {
@@ -304,11 +321,11 @@ function twoTrackStore(): string {
             version: 2,
             nodes: {
                 [IGRAPH_PY]: { track: "python", name: "igraph", version: "0.11" },
-                [IGRAPH_R]: { track: "r", name: "igraph", version: "2.0", r_dir: "igraph" },
+                [IGRAPH_R]: { track: "r", name: "igraph", version: "2.0" },
                 [DECOUPLER_PY]: { track: "python", name: "decoupler", version: "2.2.0" },
-                [DECOUPLER_R]: { track: "r", name: "decoupleR", version: "2.17.0", r_dir: "decoupleR" },
-                [SEURAT_R]: { track: "r", name: "Seurat", version: "5.1.0", r_dir: "Seurat" },
-                [DPLYR_R]: { track: "r", name: "dplyr", version: "1.1.4", r_dir: "dplyr" },
+                [DECOUPLER_R]: { track: "r", name: "decoupleR", version: "2.17.0" },
+                [SEURAT_R]: { track: "r", name: "Seurat", version: "5.1.0" },
+                [DPLYR_R]: { track: "r", name: "dplyr", version: "1.1.4" },
                 [PYYAML_PY]: { track: "python", name: "pyyaml", version: "6.0.2" },
             },
             by_name: {
@@ -326,7 +343,7 @@ describe("resolvePackageRequest", () => {
 
         // The pool holds two versions of alpha. The emitter ordered them, thus the head
         // is the newest and the host compares nothing.
-        expect(resolvePackageRequest(graph, { name: "alpha" })._unsafeUnwrap()).toEqual({
+        expect(resolvePackageRequest(graph, { spelling: "alpha" })._unsafeUnwrap()).toEqual({
             storeDir: ALPHA_2,
             name: "alpha",
             version: "2.0.0",
@@ -337,13 +354,13 @@ describe("resolvePackageRequest", () => {
     test("takes the name in any spelling, because PEP 503 gives one canonical form", () => {
         const graph = readDepsGraph(tempStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "Typing_Ext" })._unsafeUnwrap().storeDir).toBe(TYPING);
+        expect(resolvePackageRequest(graph, { spelling: "Typing_Ext" })._unsafeUnwrap().storeDir).toBe(TYPING);
     });
 
     test("resolves an exact version", () => {
         const graph = readDepsGraph(tempStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "alpha", version: "1.2.0" })._unsafeUnwrap()).toEqual({
+        expect(resolvePackageRequest(graph, { spelling: "alpha", version: "1.2.0" })._unsafeUnwrap()).toEqual({
             storeDir: ALPHA,
             name: "alpha",
             version: "1.2.0",
@@ -354,9 +371,8 @@ describe("resolvePackageRequest", () => {
     test("refuses a version that the pool lacks, and it names the versions that the pool holds", () => {
         const graph = readDepsGraph(tempStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "alpha", version: "3.0.0" })._unsafeUnwrapErr()).toEqual({
+        expect(resolvePackageRequest(graph, { spelling: "alpha", version: "3.0.0" })._unsafeUnwrapErr()).toEqual({
             type: "unknown_version",
-            name: "alpha",
             version: "3.0.0",
             available: ["2.0.0", "1.2.0"],
         });
@@ -365,16 +381,13 @@ describe("resolvePackageRequest", () => {
     test("refuses a name that no track of the pool holds", () => {
         const graph = readDepsGraph(tempStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "scanpy" })._unsafeUnwrapErr()).toEqual({
-            type: "unknown_distribution",
-            name: "scanpy",
-        });
+        expect(resolvePackageRequest(graph, { spelling: "scanpy" })._unsafeUnwrapErr()).toEqual({ type: "unknown_distribution" });
     });
 
     test("searches the R track too, thus an R package reaches the same path", () => {
         const graph = readDepsGraph(tempStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "Rpkga" })._unsafeUnwrap()).toEqual({
+        expect(resolvePackageRequest(graph, { spelling: "Rpkga" })._unsafeUnwrap()).toEqual({
             storeDir: RPKGA,
             name: "Rpkga",
             version: "1.0",
@@ -385,14 +398,14 @@ describe("resolvePackageRequest", () => {
     test("a name that both tracks hold stops with the two candidates, and no silent pick exists", () => {
         const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "igraph" })._unsafeUnwrapErr()).toEqual({
+        expect(resolvePackageRequest(graph, { spelling: "igraph" })._unsafeUnwrapErr()).toEqual({
             type: "ambiguous_ecosystem",
-            name: "igraph",
+            identities: ["python:igraph", "r:igraph"],
             candidates: [IGRAPH_PY, IGRAPH_R],
         });
         // The qualifier is what settles it, in either direction.
-        expect(resolvePackageRequest(graph, { name: "igraph", ecosystem: "python" })._unsafeUnwrap().storeDir).toBe(IGRAPH_PY);
-        expect(resolvePackageRequest(graph, { name: "igraph", ecosystem: "r" })._unsafeUnwrap().storeDir).toBe(IGRAPH_R);
+        expect(resolvePackageRequest(graph, { spelling: "igraph", track: "python" })._unsafeUnwrap().storeDir).toBe(IGRAPH_PY);
+        expect(resolvePackageRequest(graph, { spelling: "igraph", track: "r" })._unsafeUnwrap().storeDir).toBe(IGRAPH_R);
     });
 
     test("an exact R spelling wins over the Python distribution of its own fold", () => {
@@ -401,7 +414,7 @@ describe("resolvePackageRequest", () => {
         // outright and no ask appears.
         const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "decoupleR" })._unsafeUnwrap()).toEqual({
+        expect(resolvePackageRequest(graph, { spelling: "decoupleR" })._unsafeUnwrap()).toEqual({
             storeDir: DECOUPLER_R,
             name: "decoupleR",
             version: "2.17.0",
@@ -412,7 +425,7 @@ describe("resolvePackageRequest", () => {
     test("a folded Python spelling wins over the R package of the same fold", () => {
         const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "decoupler" })._unsafeUnwrap()).toEqual({
+        expect(resolvePackageRequest(graph, { spelling: "decoupler" })._unsafeUnwrap()).toEqual({
             storeDir: DECOUPLER_PY,
             name: "decoupler",
             version: "2.2.0",
@@ -423,23 +436,22 @@ describe("resolvePackageRequest", () => {
     test("an R name that is its own fold still resolves against the R shelf", () => {
         const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "dplyr" })._unsafeUnwrap().storeDir).toBe(DPLYR_R);
+        expect(resolvePackageRequest(graph, { spelling: "dplyr" })._unsafeUnwrap().storeDir).toBe(DPLYR_R);
     });
 
     test("a folded R spelling is unknown, and the refusal carries the suggestion", () => {
         const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "seurat" })._unsafeUnwrapErr()).toEqual({
+        expect(resolvePackageRequest(graph, { spelling: "seurat" })._unsafeUnwrapErr()).toEqual({
             type: "unknown_distribution",
-            name: "seurat",
-            suggestion: "Seurat",
+            suggestion: "r:Seurat",
         });
     });
 
     test("a Python spelling folds at the lookup, thus PyYAML reaches pyyaml", () => {
         const graph = readDepsGraph(twoTrackStore())._unsafeUnwrap();
 
-        expect(resolvePackageRequest(graph, { name: "PyYAML" })._unsafeUnwrap()).toEqual({
+        expect(resolvePackageRequest(graph, { spelling: "PyYAML" })._unsafeUnwrap()).toEqual({
             storeDir: PYYAML_PY,
             name: "pyyaml",
             version: "6.0.2",
@@ -452,14 +464,16 @@ describe("linkPackagesIntoFarm — the outcome of a two-track name", () => {
     test("a same-spelling pair reports a collision whose detail names each track", async () => {
         const root = twoTrackStore();
 
-        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ name: "igraph" }]);
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "igraph" }]);
 
         expect(outcomes).toEqual([
             {
                 kind: "collision",
-                name: "igraph",
+                spelling: "igraph",
                 storeDirs: [IGRAPH_PY, IGRAPH_R],
-                detail: `the Python track holds ${IGRAPH_PY}, and the R track holds ${IGRAPH_R}`,
+                detail:
+                    `the Python track holds ${IGRAPH_PY} as python:igraph, and the R track holds ${IGRAPH_R} as r:igraph — ` +
+                    "ask again for `python:igraph` or `r:igraph`",
             },
         ]);
     });
@@ -467,11 +481,12 @@ describe("linkPackagesIntoFarm — the outcome of a two-track name", () => {
     test("a folded R spelling reports absent, and its detail carries the suggestion", async () => {
         const root = twoTrackStore();
 
-        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ name: "seurat" }]);
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "seurat" }]);
 
         expect(outcomes).toHaveLength(1);
-        expect(outcomes[0]).toMatchObject({ kind: "absent", name: "seurat", acquisitionPossible: true });
-        expect(outcomes[0]).toHaveProperty("detail", expect.stringContaining("Seurat"));
+        expect(outcomes[0]).toMatchObject({ kind: "absent", spelling: "seurat", acquisitionPossible: true });
+        expect(outcomes[0]).toHaveProperty("detail", expect.stringContaining('"Seurat"'));
+        expect(outcomes[0]).toHaveProperty("detail", expect.stringContaining("r:Seurat"));
     });
 });
 
@@ -987,12 +1002,23 @@ describe("linkPackagesIntoFarm", () => {
         delete graph.nodes[ALPHA];
         writeFileSync(graphPath, JSON.stringify(graph));
 
-        const outcomes = await linkPackagesIntoFarm(root, analysisId, [{ name: "polars" }, { name: "numpy" }]);
+        const outcomes = await linkPackagesIntoFarm(root, analysisId, [{ spelling: "polars" }, { spelling: "numpy" }]);
 
         expect(outcomes.map((outcome) => outcome.kind)).toEqual(["unavailable", "unavailable"]);
         for (const outcome of outcomes) {
             if (outcome.kind === "unavailable") expect(outcome.reason).toContain("edge(s) that it does not hold");
         }
+    });
+
+    test("the outcome echoes the spelling of the query, never an address", async () => {
+        const root = tempStore();
+
+        // `GO.db` addresses as `go-db`, and the pool holds neither. The outcome
+        // must still carry `GO.db`: the caller quotes it into `store add`, and
+        // pak installs under that exact spelling.
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "GO.db", track: "r" }]);
+
+        expect(outcomes).toEqual([{ kind: "absent", spelling: "GO.db", acquisitionPossible: true }]);
     });
 
     test("a collision outcome carries the two pins and the dependents in its detail", async () => {
@@ -1002,7 +1028,7 @@ describe("linkPackagesIntoFarm", () => {
         // BETA pulls alpha 1.2.0 through its edge while the caller requests
         // alpha 2.0.0: the batch refuses whole, and the detail names the
         // dependent, because the remedy is to drop or re-pin the dependent.
-        const outcomes = await linkPackagesIntoFarm(root, analysisId, [{ name: "beta" }, { name: "alpha", version: "2.0.0" }]);
+        const outcomes = await linkPackagesIntoFarm(root, analysisId, [{ spelling: "beta" }, { spelling: "alpha", version: "2.0.0" }]);
 
         expect(outcomes.map((outcome) => outcome.kind)).toEqual(["collision", "collision"]);
         const [first] = outcomes;
