@@ -61,6 +61,11 @@ directory is an address and not an identity. Two identities can share one
 address. The fold MUST exist in exactly one TypeScript function, inside
 this module.
 
+`parseIdentityKey(key)` MUST read a key back, and it MUST split at the
+FIRST colon. It MUST answer nothing when the track is neither `python` nor
+`r`, and nothing when the name is empty. Thus a reader of a key never
+splits the string itself, and a dotted R name survives the read.
+
 #### Scenario: Two identities share one address
 
 - **GIVEN** `rIdentity("decoupleR")` and `pythonIdentity("decoupler")`
@@ -72,15 +77,33 @@ this module.
 - **WHEN** the address of `rIdentity("GO.db")` is read
 - **THEN** it is `go-db`, and the name stays `GO.db`
 
+#### Scenario: A key reads back as its identity
+
+- **WHEN** `parseIdentityKey("r:GO.db")` runs
+- **THEN** it answers the identity of `rIdentity("GO.db")`
+
+#### Scenario: A string that is not a key answers nothing
+
+- **WHEN** `parseIdentityKey("bioc:fgsea")` runs
+- **THEN** it answers nothing
+
 ### Requirement: One grammar, one parser, and one formatter
 
 The grammar of a query MUST be `[python:|r:]<spelling>[==<version>]`.
-`parseQuery(entry)` MUST trim the entry once, and it MUST answer a
-`Result`. Its errors are typed: `empty`, `location` (a path, a URL, or a
-store directory), `unknown_prefix` (any other `<word>:`), and
-`unsupported_specifier` (any specifier that is not `==`). An
-`unknown_prefix` error MUST carry the offending prefix. Each reader of that
-error in the harness MUST name `python:` and `r:` in its own refusal.
+`parseQuery(entry)` MUST trim the entry, and it MUST answer a `Result`. It
+MUST also trim the two halves of `==`, thus `numpy == 1.26.4` gives the
+spelling `numpy` and the version `1.26.4`. Its errors are typed: `empty`,
+`location` (a path, a URL, or a store directory), `unknown_prefix` (any
+other `<word>:`), and `unsupported_specifier`. An `unknown_prefix` error
+MUST carry the offending prefix. Each reader of that error in the harness
+MUST name `python:` and `r:` in its own refusal.
+
+A specifier that is not `==` MUST answer `unsupported_specifier`. A version
+MUST hold no specifier character, no comma, and no space. Thus a compound
+range such as `numpy==1.26,<2` answers that same error, and the error
+carries the offending text. Without the second rule the range rides into
+the pool as a version string.
+
 `formatQuery(query)` MUST write the prefix only when the query names a track,
 and `==<version>` only when it names a version. For every query,
 `parseQuery(formatQuery(query))` MUST equal the query.
@@ -108,6 +131,16 @@ the grammar exists in the harness.
 
 - **WHEN** `parseQuery("numpy>=1.26")` runs
 - **THEN** it answers the error `unsupported_specifier`
+
+#### Scenario: A spaced pin trims to its two halves
+
+- **WHEN** `parseQuery("numpy == 1.26.4")` runs
+- **THEN** it answers `{ spelling: "numpy", version: "1.26.4" }`
+
+#### Scenario: A compound specifier is refused
+
+- **WHEN** `parseQuery("numpy==1.26,<2")` runs
+- **THEN** it answers the error `unsupported_specifier`, and the error carries the text `,<`
 
 #### Scenario: A location is refused
 
@@ -200,9 +233,9 @@ embedder MUST both resolve through this function.
 The provisioner MUST hold a twin module,
 `images/sandbox-provisioner/package_identity.py`, with `PackageIdentity`,
 `PackageQuery`, `python_identity`, `r_identity`, `identity_of`, `key`,
-`address`, `parse_query`, and `format_query`. The twin MUST import neither
-`provision.py` nor `emit_deps.py`. The fold MUST exist in exactly one
-Python function, inside the twin.
+`parse_identity_key`, `address`, `parse_query`, and `format_query`. The
+twin MUST import neither `provision.py` nor `emit_deps.py`. The fold MUST
+exist in exactly one Python function, inside the twin.
 
 One fixture, `harness/src/sandbox/__fixtures__/package-identity.json`,
 MUST list inputs with their expected parse, key, and address. The

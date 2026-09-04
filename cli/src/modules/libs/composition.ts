@@ -35,7 +35,7 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { FARM_LOCK_FILE, formatQuery, identityAddress, identityKey, identityOf, readFarmLock, resolveQuery } from "@inflexa-ai/harness";
+import { FARM_LOCK_FILE, formatQuery, identityAddress, identityKey, identityOf, parseIdentityKey, readFarmLock, resolveQuery } from "@inflexa-ai/harness";
 import type { FarmLock, FarmResolution, PackageIdentity, PackageQuery, PackageRequestOutcome, PoolIndex } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -546,14 +546,16 @@ export type RequestResolutionError =
       };
 
 /**
- * The spelling inside an identity key. `identityKey` writes `<track>:<name>`,
- * and neither track name nor package name carries a colon, thus the first
- * colon splits the two. A remedy quotes the spelling and never the key: the
- * pool holds `Seurat`, and `r:Seurat` names nothing at an installer.
+ * The spelling inside an identity key. `parseIdentityKey` of the harness owns
+ * the key format, thus this reader never splits the string itself. A remedy
+ * quotes the spelling and never the key: the pool holds `Seurat`, and
+ * `r:Seurat` names nothing at an installer.
+ *
+ * A string that is not a key comes back unchanged, because a remedy that
+ * prints nothing is worse than one that prints what it was handed.
  */
 export function identityKeySpelling(key: string): string {
-    const at = key.indexOf(":");
-    return at < 0 ? key : key.slice(at + 1);
+    return parseIdentityKey(key)?.name ?? key;
 }
 
 /**

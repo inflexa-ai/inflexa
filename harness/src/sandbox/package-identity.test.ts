@@ -6,6 +6,7 @@ import {
     identityAddress,
     identityKey,
     identityOf,
+    parseIdentityKey,
     parseQuery,
     pythonIdentity,
     rIdentity,
@@ -81,6 +82,20 @@ describe("package-identity — the two constructors", () => {
 
         expect([identityKey(r), identityKey(python)]).toEqual(["r:decoupleR", "python:decoupler"]);
         expect([identityAddress(r), identityAddress(python)]).toEqual(["decoupler", "decoupler"]);
+    });
+
+    it("a key round-trips through the parse, and the first colon splits it", () => {
+        for (const identity of [rIdentity("GO.db"), rIdentity("decoupleR"), pythonIdentity("scikit_learn")]) {
+            expect(parseIdentityKey(identityKey(identity))).toEqual(identity);
+        }
+    });
+
+    it("a string that is not a key parses to nothing", () => {
+        // A bare name, an unknown track, and an empty name each name no
+        // identity, thus a reader gets `undefined` and never a half-identity.
+        for (const bad of ["igraph", "bioc:fgsea", "python:", ":igraph", ""]) {
+            expect(parseIdentityKey(bad)).toBeUndefined();
+        }
     });
 
     it("a literal is not an identity", () => {

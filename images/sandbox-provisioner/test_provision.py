@@ -53,6 +53,28 @@ import package_identity  # noqa: E402  (import after LIB_ROOT/sys.path are set u
 import provision  # noqa: E402  (import after LIB_ROOT/sys.path are set up)
 
 
+# The shared conformance fixture, which the cli suite reads too. It lives in
+# the repository and not in the provisioner image, thus a case that needs it
+# skips outside a checkout.
+_FIXTURE = (Path(os.path.abspath(__file__)).resolve().parent
+            / ".." / ".." / "harness" / "src" / "sandbox" / "__fixtures__"
+            / "package-identity.json")
+
+
+def _fixture_cases() -> dict | None:
+    try:
+        return json.loads(_FIXTURE.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+FIXTURE_CASES = _fixture_cases()
+
+FIXTURE_SKIP_REASON = (f"the conformance fixture {_FIXTURE.name} is not at "
+                       f"{_FIXTURE}; it lives in the repository, not in the "
+                       "provisioner image")
+
+
 def tearDownModule():
     shutil.rmtree(_IMPORT_ROOT, ignore_errors=True)
 
@@ -723,6 +745,30 @@ class SpecParsingTests(StoreTestCase):
         for artifact in ("pkg-1.0.tar.gz", "pkg-1.0.zip", "pkg-1.0.whl"):
             reason = provision.reject_off_index(package_identity.parse_query(artifact))
             self.assertIn("artifact file", reason or "", artifact)
+
+    def _location_reason(self, entry: str) -> str:
+        with self.assertRaises(package_identity.QueryError, msg=entry) as caught:
+            package_identity.parse_query(entry)
+        self.assertEqual(caught.exception.type, "location", entry)
+        return provision.refusal_reason(caught.exception)
+
+    def test_the_refusal_classifies_the_body_after_the_prefix(self):
+        # `parse_query` refuses a location before it reads the prefix, thus the
+        # entry still carries `python:`. A classification over the whole entry
+        # reads the colon form as `owner/repo` and gives the git-track reason
+        # for a local path.
+        for path in ("python:./vendor/pkg", "r:~/pkg", "python:/mnt/libs/pkg"):
+            self.assertIn("not a package request", self._location_reason(path), path)
+
+    def test_a_url_refuses_as_a_location_whatever_its_suffix(self):
+        # A URL carries a scheme. The artifact rule reads the suffix alone,
+        # thus it claimed every wheel URL before the scheme was tested.
+        for url in ("https://x/y.whl", "https://x/y.tar.gz", "git+https://github.com/x/y"):
+            self.assertIn("not a package request", self._location_reason(url), url)
+
+    def test_a_repository_form_still_names_the_catalog_only_tracks(self):
+        self.assertIn("catalog-only", self._location_reason("owner/repo"))
+        self.assertIn("artifact file", self._location_reason("dist/pkg-1.0.whl"))
         self.assertIsNone(provision.reject_off_index(package_identity.parse_query("numpy")))
 
     def test_manifest_python_specs_reads_both_entry_forms(self):
@@ -1173,6 +1219,18 @@ class AcquireRunTests(StoreTestCase):
         self.assertEqual(outcome["candidates"], ["python:igraph", "r:igraph"])
         # Nothing installed: the host asks the user first.
         self.assertEqual(list(provision.STORE.iterdir()), [])
+
+    @unittest.skipIf(FIXTURE_CASES is None, FIXTURE_SKIP_REASON)
+    def test_the_emitted_both_hit_equals_the_shared_fixture(self):
+        # The cli reads the same case through its own report schema. One wire
+        # shape binds the two sides, thus a change here fails there.
+        with unittest.mock.patch.object(provision, "python_index_holds",
+                                        return_value=True), \
+                unittest.mock.patch.object(provision, "r_repos_hold",
+                                           return_value={"igraph": True}):
+            _code, report = self._acquire(["igraph"])
+
+        self.assertEqual(report["outcomes"][0], FIXTURE_CASES["both_hit_report"])
 
     def test_an_unqualified_single_hit_takes_that_ecosystem(self):
         self.compile_by_input = {"foo": FOO_1}

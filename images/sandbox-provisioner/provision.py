@@ -76,8 +76,9 @@ import uuid
 from pathlib import Path
 
 import emit_deps
-from package_identity import (PackageQuery, QueryError, address, identity_of, key,
-                              parse_query, python_identity, r_identity)
+from package_identity import (TRACKS, PackageQuery, QueryError, address,
+                              identity_of, key, parse_query, python_identity,
+                              r_identity)
 
 LIBS = Path(os.environ.get("LIB_ROOT", "/mnt/libs"))
 STORE = LIBS / "store"
@@ -999,6 +1000,26 @@ def cmd_remove_farm(args) -> int:
 # --- acquire ---------------------------------------------------------------------
 
 
+# The location message of a URL and of a local path. Neither names a package,
+# and both bypass the pinned index.
+_NOT_A_PACKAGE = "a location is not a package request — name the package as a requirement"
+
+
+def _location_body(entry: str) -> str:
+    """The location that a spec wrote, without a `python:` or `r:` prefix.
+
+    `parse_query` refuses a location before it reads the prefix, thus the entry
+    of the error still carries one. A classification over the whole entry then
+    reads `python:./vendor/pkg` as a repository, because the colon form hides
+    the leading dot. Only the two track prefixes strip: `https:` is a scheme
+    and not a track, and the caller tests `://` before this function runs.
+    """
+    for track in TRACKS:
+        if entry.startswith(f"{track}:"):
+            return entry[len(track) + 1:]
+    return entry
+
+
 def refusal_reason(error: QueryError) -> str:
     """The refusal text of one spec that `parse_query` would not read.
 
@@ -1009,12 +1030,22 @@ def refusal_reason(error: QueryError) -> str:
     """
     entry = error.entry
     if error.type == "location":
-        if entry.endswith((".whl", ".tar.gz", ".zip")):
+        # A URL settles first, because its scheme carries the same `://` that
+        # a suffix rule cannot see: `https://x/y.whl` is a URL, not a file
+        # beside the caller.
+        if "://" in entry:
+            return _NOT_A_PACKAGE
+        body = _location_body(entry)
+        # A path settles next. A leading `.`, `~`, or `/` is a path and never
+        # an `owner/repo` form, whatever the name at the end of it looks like.
+        if body.startswith((".", "~", "/", "\\")):
+            return _NOT_A_PACKAGE
+        if body.endswith((".whl", ".tar.gz", ".zip")):
             return "an artifact file bypasses the pinned index and its hashes"
-        if "://" not in entry and not entry.startswith((".", "~")) and "/" in entry:
+        if "/" in body:
             return ("the github and git tracks are catalog-only — an acquisition "
                     "covers CRAN, Bioconductor, and the Python index")
-        return "a location is not a package request — name the package as a requirement"
+        return _NOT_A_PACKAGE
     if error.type == "unknown_prefix":
         return (f"the prefix {error.prefix!r} names no ecosystem — the permitted "
                 "prefixes are 'python:' and 'r:', and a bare name searches both")

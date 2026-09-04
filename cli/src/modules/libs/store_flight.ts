@@ -30,7 +30,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { formatQuery, identityKey, identityOf } from "@inflexa-ai/harness";
+import { formatQuery, identityKey, identityOf, parseIdentityKey } from "@inflexa-ai/harness";
 import type { PackageQuery } from "@inflexa-ai/harness";
 import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
@@ -220,12 +220,21 @@ const reportOutcomeSchema = z
         spec: z.string(),
         outcome: z.enum(["acquired", "refused", "both_hit"]),
         reason: z.string().optional(),
-        candidates: z.array(z.object({ ecosystem: z.enum(["python", "r"]), name: z.string() }).passthrough()).optional(),
+        // The candidates of a both-hit are IDENTITY KEYS, `<track>:<name>`, the
+        // form `identityKey` of the harness mints and the provisioner writes.
+        // A second shape here would make every spec of the batch fail the
+        // schema, because a report that misses drops the whole run.
+        candidates: z.array(z.string()).optional(),
         store_dirs: z.array(z.string()).optional(),
     })
     .passthrough();
 
-const acquireReportSchema = z
+/**
+ * The acquire report of the provisioner. Exported so the conformance test can
+ * parse the shared fixture through the very schema the flight reads, thus the
+ * two sides of the wire cannot drift.
+ */
+export const acquireReportSchema = z
     .object({
         schema: z.literal(1),
         outcomes: z.array(reportOutcomeSchema),
@@ -426,8 +435,26 @@ export type FlushSpecOutcome =
     | {
           readonly kind: "both_hit";
           readonly spec: StoreFlightSpec;
-          readonly candidates: readonly { readonly ecosystem: StoreEcosystem; readonly name: string }[];
+          /** The identity key of each ecosystem that holds the spelling: `python:igraph`, `r:igraph`. */
+          readonly candidates: readonly string[];
       };
+
+/**
+ * The `--lang` remedy of a both-hit, read from the identity keys the report
+ * carries. `parseIdentityKey` of the harness owns the key format, thus this
+ * reader never splits the string itself.
+ *
+ * A key that does not parse contributes nothing. The provisioner writes two
+ * keys on every both-hit, thus the fixed pair only guards the wire: a report
+ * that ever arrives without them still prints a remedy the user can run.
+ */
+export function bothHitRemedy(candidates: readonly string[]): string {
+    const flags = candidates.flatMap((candidate) => {
+        const identity = parseIdentityKey(candidate);
+        return identity === undefined ? [] : [`--lang ${identity.track}`];
+    });
+    return flags.length > 0 ? flags.join(" or ") : "--lang python or --lang r";
+}
 
 /** What one flush produced: nothing to do, a refusal that put the batch back, or the outcomes of a run. */
 export type FlushResult =
@@ -657,11 +684,7 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
                     // the row is the one durable surface of a detached flush: a
                     // stop that only rides the in-process outcomes would vanish
                     // with the child, and no ask would reach the asker.
-                    // The provisioner writes two candidates on every both-hit; the
-                    // `?? []` above only guards the wire. The fixed pair keeps the
-                    // durable message whole if a report ever arrives without them.
-                    const pair =
-                        candidates.length > 0 ? candidates.map((candidate) => `--lang ${candidate.ecosystem}`).join(" or ") : "--lang python or --lang r";
+                    const pair = bothHitRemedy(candidates);
                     failures.set(
                         entry.key,
                         `resolve: both ecosystems hold "${entry.spec.spelling}" — nothing was installed. ` +

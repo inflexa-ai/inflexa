@@ -217,6 +217,11 @@ that the spelling is the R identity. When both hold the name, the run MUST
 stop with a both-hit outcome that names the two identities, and the host
 asks the user. A silent Python-first win is a fault.
 
+The two candidates MUST be identity keys. The shared fixture
+`harness/src/sandbox/__fixtures__/package-identity.json` MUST carry that
+outcome under `both_hit_report`. The provisioner suite and the host suite
+MUST both read that case, thus the two sides of the wire cannot drift.
+
 #### Scenario: A both-hit name asks instead of guessing
 
 - **GIVEN** a request for a name that PyPI and CRAN both hold, with no track given
@@ -228,6 +233,12 @@ asks the user. A silent Python-first win is a fault.
 - **GIVEN** an unqualified request `igraph` that PyPI and CRAN both hold
 - **WHEN** the acquire run reports the both-hit
 - **THEN** the candidates are `python:igraph` and `r:igraph`
+
+#### Scenario: One fixture case binds the two sides of the wire
+
+- **GIVEN** the fixture case `both_hit_report`
+- **WHEN** the provisioner suite and the host suite run
+- **THEN** each suite asserts that case, and a side that answers otherwise fails its suite
 
 #### Scenario: A spec parses through the twin
 

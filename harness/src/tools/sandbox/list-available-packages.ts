@@ -25,7 +25,16 @@ import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "../../config/environment-stores.js";
-import { identityAddress, identityKey, identityOf, resolveQuery, type PackageIdentity, type PoolIndex, type Track } from "../../sandbox/package-identity.js";
+import {
+    identityAddress,
+    identityKey,
+    identityOf,
+    parseQuery,
+    resolveQuery,
+    type PackageIdentity,
+    type PoolIndex,
+    type Track,
+} from "../../sandbox/package-identity.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
@@ -148,8 +157,13 @@ function foldSections(sections: readonly Section[]): Section[] {
             byTitle.set(section.title, open);
         }
         for (const pkg of section.packages) {
-            if (open.seen.has(pkg.name)) continue;
-            open.seen.add(pkg.name);
+            // An untracked section holds an executable or a node module, and
+            // the identity rule of a package track does not reach either one.
+            // Such a row folds by case alone, thus two sources that spell one
+            // executable differently still render one row.
+            const seen = section.track === undefined ? pkg.name.toLowerCase() : pkg.name;
+            if (open.seen.has(seen)) continue;
+            open.seen.add(seen);
             open.packages.push(pkg);
         }
     }
@@ -365,15 +379,17 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
         // through `resolveQuery` — the same ladder the link of the embedder
         // runs, so the census and the link never disagree. An untracked section
         // (system tools, node packages) holds no package of an ecosystem, thus
-        // its rows match their rendered name exactly.
+        // its rows match their rendered name without case: an identity rule
+        // covers a distribution, and `BCFtools` must still reach `bcftools`.
         const held: Held[] = [];
-        const exact = new Map<string, { entry: SectionPackage; section: string }[]>();
+        const untracked = new Map<string, { entry: SectionPackage; section: string }[]>();
         for (const section of sections) {
             for (const pkg of section.packages) {
                 if (section.track === undefined) {
-                    const rows = exact.get(pkg.name) ?? [];
+                    const lowered = pkg.name.toLowerCase();
+                    const rows = untracked.get(lowered) ?? [];
                     rows.push({ entry: pkg, section: section.title });
-                    exact.set(pkg.name, rows);
+                    untracked.set(lowered, rows);
                     continue;
                 }
                 held.push({ entry: pkg, section: section.title, identity: identityOf(section.track, pkg.name) });
@@ -384,9 +400,17 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
         for (const row of held) if (!bySection.has(identityKey(row.identity))) bySection.set(identityKey(row.identity), row);
 
         const checked = names.flatMap((requested): CheckedPackage[] => {
-            const spelling = requested.trim();
+            // The entry speaks the one grammar, thus `python:igraph` reads as
+            // the Python track and not as a package named `python:igraph`. The
+            // listing and the planner both write that form.
+            const parsed = parseQuery(requested);
+            // A census reports a state, it never refuses a call: an entry that
+            // is not a query names nothing that the pool holds, thus it answers
+            // absent and the caller reads its own entry back.
+            if (parsed.isErr()) return [{ requested, present: false }];
+            const query = parsed.value;
             const hits: CheckedPackage[] = [];
-            const resolution = resolveQuery({ spelling }, pool);
+            const resolution = resolveQuery(query, pool);
             // An ambiguous spelling answers once for each track, because the
             // caller asked about exactly that pair.
             const identities =
@@ -395,8 +419,12 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
                 const row = bySection.get(identityKey(identity));
                 if (row !== undefined) hits.push(presentEntry(requested, row));
             }
-            for (const row of exact.get(spelling) ?? []) {
-                hits.push(presentEntry(requested, { entry: row.entry, section: row.section }));
+            // A track-qualified entry names one ecosystem, thus it never
+            // reaches an executable or a node module.
+            if (query.track === undefined) {
+                for (const row of untracked.get(query.spelling.toLowerCase()) ?? []) {
+                    hits.push(presentEntry(requested, { entry: row.entry, section: row.section }));
+                }
             }
             if (hits.length > 0) return hits;
             const suggestion = resolution.kind === "unknown" ? resolution.suggestion : undefined;
@@ -472,7 +500,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
         description:
             scopeSentence +
             "A full listing is small (a few hundred packages) and is returned whole by default, so a listing you get back is the complete set unless `hasMore` says otherwise. " +
-            '`names`: check specific packages (e.g. ["Seurat", "scanpy"]) — returns present/absent plus the language track for each; this is the cheapest call and the right one for \'is X available?\'. ' +
+            '`names`: check specific packages — each entry is a query in the one grammar, `[python:|r:]<name>` (e.g. ["Seurat", "python:igraph"]) — returns present/absent plus the language track for each; this is the cheapest call and the right one for \'is X available?\'. ' +
             "A Python name matches under PEP 503, thus `scikit_learn` reaches `scikit-learn`. An R name matches its DESCRIPTION spelling exactly, thus `seurat` answers absent and carries `Seurat` as the suggestion. " +
             "A name that the Python track and the R track both hold answers once for each track. " +
             "`query`: case-insensitive substring filter over package names. " +
@@ -485,7 +513,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
                 .max(100)
                 .optional()
                 .describe(
-                    "Check these package names for presence. Returns one entry for each track that holds the name: present/absent + the language track it lives in. An absent name carries the spelling the pool holds, where there is one.",
+                    "Check these packages for presence. Each entry is a query in the one grammar, `[python:|r:]<name>`. Returns one entry for each track that holds the name: present/absent + the language track it lives in. An absent name carries the spelling the pool holds, where there is one.",
                 ),
             query: z.string().optional().describe("Case-insensitive substring filter over package names."),
             language: z.enum(["r", "python", "cli", "node"]).optional().describe("Restrict results to one language track."),
