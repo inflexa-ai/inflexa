@@ -2,20 +2,17 @@
 """The per-arch coverage report of the package-store build.
 
 After the load check, the build reports, per track: the wanted names (the
-manifest entries), the loaded names (the advertised inventory of the farm
-lock), and the missing names. The report then diffs the loaded set against
-the last published artifact of the SAME arch:
-
-- A package that the last artifact advertised, that the manifest still holds,
-  and that is now missing is a REGRESSION, and the build fails.
-- A package that never built for this arch reports informationally, and the
-  build does not fail on it.
-- A package that the manifest no longer holds reports as dropped, by name,
-  and the build does not fail on it.
+manifest entries), the loaded names, and the missing names. A wanted name
+counts as loaded in two cases: the farm lock holds it (each entry of the
+lock loaded in the check before this report), or the R library of the
+sandbox image loaded it (the base and recommended packages of R, which the
+store never holds). One missing wanted name fails the build. The report
+compares against nothing older: a regression is a missing wanted name, and
+this rule catches it with no baseline.
 
 Usage:
     package-store-coverage.py --manifest <manifest.yaml> --lock <inflexa.lock>
-        [--previous-lock <inflexa.lock of the last published artifact>]
+        [--r-base-loaded <one R package name per line, as the image loaded them>]
         --arch <amd64|arm64> [--summary <path of the step summary>]
 """
 
@@ -28,6 +25,9 @@ import sys
 from pathlib import Path
 
 import yaml
+
+R_TRACKS = ("cran", "bioconductor", "github")
+TRACKS = ("python",) + R_TRACKS
 
 
 def canon(name: str) -> str:
@@ -73,9 +73,9 @@ def wanted_by_track(manifest: dict, arch: str, gh_display: dict[str, str]) -> di
     for track in ("cran", "bioconductor"):
         out[track] = {n for raw in r.get(track) or [] if (n := entry_name(raw))}
     # A github entry names a repository, not a package. The wanted name is
-    # the normalized repository tail, and loaded_by_track normalizes the
-    # lock side the same way. The entry_name regex stops at the slash, thus
-    # it would name the OWNER, and the gate would go blind for the track.
+    # the normalized repository tail, and loaded_names normalizes the lock
+    # side the same way. The entry_name regex stops at the slash, thus it
+    # would name the OWNER, and the gate would go blind for the track.
     out["github"] = set()
     for raw in r.get("github") or []:
         if (tail := github_tail(raw)):
@@ -88,83 +88,86 @@ def wanted_by_track(manifest: dict, arch: str, gh_display: dict[str, str]) -> di
     return out
 
 
-def loaded_by_track(lock: dict, gh_display: dict[str, str]) -> dict[str, set[str]]:
-    out: dict[str, set[str]] = {}
+def loaded_names(lock: dict, r_base_loaded: set[str], gh_display: dict[str, str]) -> dict[str, set[str]]:
+    """The loaded names, in the comparison space of each manifest track.
+
+    Python compares in the PEP 503 fold. The three R subtrees share one
+    library path, and the subtree of a package is the closure that placed
+    it: gen-r-lock.R puts the closure of the CRAN refs in r/cran and the
+    rest in r/bioconductor, and the github stage keeps its own closure. A
+    Bioconductor entry of the manifest thus lands in r/cran when a CRAN
+    package reaches it first. One R set serves the three tracks: the
+    DESCRIPTION spelling for cran and bioconductor entries, the gh_canon
+    space for github entries. The R packages that the image loaded join
+    the set, because the manifest names recommended packages that no
+    subtree holds.
+    """
+    python: set[str] = set()
+    r_names: set[str] = set(r_base_loaded)
     for pkg in lock.get("packages") or []:
         track = pkg.get("track")
         name = pkg.get("name")
         if not track or not name:
             continue
-        if track == "github":
-            key = gh_canon(name)
-            gh_display.setdefault(key, name)
-            out.setdefault(track, set()).add(key)
-        else:
-            out.setdefault(track, set()).add(canon(name) if track == "python" else name)
-    return out
+        if track == "python":
+            python.add(canon(name))
+        elif track in R_TRACKS:
+            r_names.add(name)
+    github: set[str] = set()
+    for name in r_names:
+        key = gh_canon(name)
+        gh_display.setdefault(key, name)
+        github.add(key)
+    return {"python": python, "cran": r_names, "bioconductor": r_names, "github": github}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--lock", required=True)
-    ap.add_argument("--previous-lock", default=None)
+    ap.add_argument("--r-base-loaded", default=None,
+                    help="one R package name per line: the packages of the sandbox image that loaded")
     ap.add_argument("--arch", required=True)
     ap.add_argument("--summary", default=None)
     args = ap.parse_args()
 
     manifest = yaml.safe_load(Path(args.manifest).read_text()) or {}
     lock = json.loads(Path(args.lock).read_text())
-    previous = json.loads(Path(args.previous_lock).read_text()) if args.previous_lock else None
+    r_base_loaded = set()
+    if args.r_base_loaded:
+        r_base_loaded = {line.strip() for line in Path(args.r_base_loaded).read_text().splitlines() if line.strip()}
 
     # The github sets compare in the gh_canon space, and the report prints
     # the spelling of the source through this map (manifest tail first).
     gh_display: dict[str, str] = {}
     wanted = wanted_by_track(manifest, args.arch, gh_display)
-    loaded = loaded_by_track(lock, gh_display)
-    previous_loaded = loaded_by_track(previous, gh_display) if previous else {}
+    loaded = loaded_names(lock, r_base_loaded, gh_display)
 
     def disp(track: str, name: str) -> str:
         return gh_display.get(name, name) if track == "github" else name
 
     lines = [f"## Package-store coverage ({args.arch})", "", "| Track | Wanted | Loaded | Missing |", "|-|-|-|-|"]
-    regressions: list[str] = []
-    for track in ("python", "cran", "bioconductor", "github"):
+    missing_all: list[str] = []
+    for track in TRACKS:
         want = wanted.get(track, set())
         have = loaded.get(track, set())
         missing = sorted(disp(track, n) for n in want - have)
         lines.append(f"| {track} | {len(want)} | {len(want & have)} | {len(missing)} |")
         if missing:
             lines.append(f"| | | | {', '.join(missing)} |")
-        # The regression gate: published before for this arch, still wanted,
-        # now missing.
-        before = previous_loaded.get(track, set())
-        for name in sorted((before & want) - have):
-            regressions.append(f"{track}/{disp(track, name)}")
-        # A wanted name that the last artifact did not carry either is
-        # informational — it never built for this arch.
-        never = sorted(disp(track, n) for n in (want - have) - before)
-        if never and previous is not None:
-            lines.append(f"| | | | note — never built for {args.arch}: {', '.join(never)} |")
+            missing_all.extend(f"{track}/{name}" for name in missing)
 
-    if previous is not None:
-        dropped = sorted({disp(track, name) for track, names in previous_loaded.items()
-                          for name in names if name not in wanted.get(track, set())})
-        if dropped:
-            lines.append("")
-            lines.append(f"Dropped from the manifest (not a regression): {', '.join(dropped)}")
-
-    if regressions:
+    if missing_all:
         lines.append("")
-        lines.append(f"REGRESSION: published before, still in the manifest, now missing: {', '.join(regressions)}")
+        lines.append(f"MISSING: wanted by the manifest, loaded by nothing: {', '.join(missing_all)}")
 
     text = "\n".join(lines) + "\n"
     print(text)
     if args.summary:
         with open(args.summary, "a") as handle:
             handle.write(text)
-    if regressions:
-        print(f"::error::{len(regressions)} coverage regression(s): {', '.join(regressions)}")
+    if missing_all:
+        print(f"::error::{len(missing_all)} wanted package(s) did not load: {', '.join(missing_all)}")
         return 1
     return 0
 

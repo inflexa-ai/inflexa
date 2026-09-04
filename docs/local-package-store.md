@@ -237,6 +237,12 @@ packages: six workers against a 300-second timeout for 3.5 hours.
     REJECT, thus a blocked connect fails in milliseconds and names its
     host. A fatal canary fetches one pinned binary whole and proves a fast
     refusal of an off-list host, before the build.
+39. One load failure fails the build, and one missing wanted name fails the
+    build. The best-effort drop and the non-empty floor are gone. A package
+    that does not load is a defect to decide on, and the lock stays as
+    built. The base and recommended packages of R count as loaded when the
+    sandbox image loads them, and an R name compares across the three
+    subtrees.
 
 ### The image-hygiene decisions (round 12, 2026-08-20)
 
@@ -297,9 +303,10 @@ and a failing spec drops out alone.
 - The `inflexa.lock` draft: schema, arch, tracks, packages with
   `store_dir` + full hash + `requested`, the embedded pak lock, the warm
   record, and collisions.
-- The coverage guard diffs the loadable set against the last published
-  artifact per arch: a load regression fails the build, an intentional
-  removal reports and passes, an arm64 gap informs.
+- The coverage guard compares the manifest against the loaded set per
+  arch: the farm lock, whose entries all loaded, plus the R packages that
+  the sandbox image loads. One missing wanted name fails the build. The
+  guard holds no baseline.
 - The egress classes per track: the Python index, the pak repositories, the
   GitHub hosts (catalog only), and `git.bioconductor.org` (catalog only).
   An acquisition needs only the first two.

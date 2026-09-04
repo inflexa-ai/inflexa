@@ -2091,5 +2091,51 @@ class CarryHeldREntriesTests(StoreTestCase):
         self.assertEqual(kept, [])
 
 
+
+class StageRSubtreesTests(StoreTestCase):
+    """One store directory gives one lock entry and one farm link, whatever
+    the number of subtrees that pak installed it into."""
+
+    R_NAMES = {"cran": ["dplyr"], "bioconductor": [], "git": [],
+               "github": ["AlmogAngel/xCell2"]}
+
+    def test_a_reinstalled_dependency_records_once_under_the_bulk(self):
+        stage_root = provision.STORE / ".staging-r"
+        # pak installs the github closure again: dplyr and abind land in the
+        # github library beside the bulk copies. dplyr is the same version,
+        # thus the same bytes; abind is a newer version, thus a new address.
+        self._make_r_pkg(stage_root / "r" / "cran" / "dplyr", "dplyr", "1.2.1")
+        self._make_r_pkg(stage_root / "r" / "cran" / "abind", "abind", "1.4-8")
+        self._make_r_pkg(stage_root / "r" / "github" / "dplyr", "dplyr", "1.2.1")
+        self._make_r_pkg(stage_root / "r" / "github" / "abind", "abind", "1.5-0")
+        self._make_r_pkg(stage_root / "r" / "github" / "xCell2", "xCell2", "1.2.3")
+
+        stored, packages = provision.stage_r_subtrees(stage_root, self.R_NAMES)
+
+        self.assertEqual([name for name, _ in stored["cran"]], ["abind", "dplyr"])
+        self.assertEqual(stored["bioconductor"], [])
+        self.assertEqual([name for name, _ in stored["github"]], ["abind", "xCell2"])
+        self.assertEqual([(e["track"], e["name"], e["version"], e["requested"]) for e in packages],
+                         [("cran", "abind", "1.4-8", False),
+                          ("cran", "dplyr", "1.2.1", True),
+                          ("github", "abind", "1.5-0", False),
+                          ("github", "xCell2", "1.2.3", True)])
+        dirs = [e["store_dir"] for e in packages]
+        self.assertEqual(len(dirs), len(set(dirs)))
+        # The github copy of dplyr went to the store and came back as the
+        # bulk directory, thus the pool holds one dplyr.
+        self.assertEqual(sum(1 for d in provision.STORE.iterdir() if d.name.startswith("dplyr-")), 1)
+
+    def test_an_absent_subtree_records_nothing(self):
+        stage_root = provision.STORE / ".staging-r"
+        self._make_r_pkg(stage_root / "r" / "bioconductor" / "limma", "limma", "3.68.5")
+
+        stored, packages = provision.stage_r_subtrees(stage_root, self.R_NAMES)
+
+        self.assertEqual({sub: [name for name, _ in pkgs] for sub, pkgs in stored.items()},
+                         {"cran": [], "bioconductor": ["limma"], "github": []})
+        self.assertEqual([e["name"] for e in packages], ["limma"])
+
+
 if __name__ == "__main__":
     unittest.main()

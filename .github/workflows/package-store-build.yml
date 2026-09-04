@@ -8,17 +8,17 @@ name: Build the package store
 #   1. resolve — `provision build` resolves the manifest, with the committed
 #      per-arch lock second (the `npm install` model), and builds the catalog
 #      farm. The updated lock files commit back with a signed-off commit.
-#   2. load check — inside sandbox-base, never inside the provisioner. A
-#      single load failure drops one package from the advertised inventory; a
-#      track that loaded zero packages fails the build (the non-empty floor).
+#   2. load check — inside sandbox-base, never inside the provisioner. One
+#      load failure fails the build, and the log names the package and the
+#      error. The lock is not rewritten: each entry of a published lock loaded.
 #   3. prepare — the per-package warm scripts run against the catalog farm,
 #      and the cache entries record per package in the farm lock.
 #   4. cache check — the recorded workloads replay inside sandbox-base; a
 #      recorded entry that does not load, or that writes again, fails the
 #      artifact.
-#   5. coverage — per track: wanted, loaded, missing; a package published for
-#      this arch, still in the manifest, and now missing is a regression and
-#      fails the build.
+#   5. coverage — per track: wanted, loaded, missing. A wanted name counts as
+#      loaded from the farm lock or from the R library of sandbox-base. One
+#      missing wanted name fails the build.
 #   6. pack + publish — one zstd layer per track plus one base layer, pushed
 #      under an immutable version tag. Only a push moves `latest-<arch>`.
 #
@@ -333,11 +333,13 @@ jobs:
         # through the store mount at farms/<name>, with NO nested bind: runc
         # cannot make a mountpoint inside a read-only mount, and the check
         # derives the farm from the lock argument. The farm links are
-        # absolute /mnt/libs targets, thus the load path is the same. The
-        # exit code is tolerated here — the next step applies the
-        # best-effort semantics and the non-empty floor.
+        # absolute /mnt/libs targets, thus the load path is the same. One
+        # failure fails the build: a package that does not load is a defect
+        # to decide on, never a silent drop. The lock stays as built, thus a
+        # published lock holds only packages that loaded.
         run: |
           set -euo pipefail
+          rc=0
           docker run --rm --network none \
             --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
             -v "${STORE_VOLUME}:/mnt/libs:ro" \
@@ -345,72 +347,26 @@ jobs:
             --entrypoint python3 \
             "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" \
             /opt/load-check.py --farm-lock "/mnt/libs/farms/${FARM}/inflexa.lock" \
-            > load-check.json || true
-          cat load-check.json
-
-      - name: Apply the load-check verdicts to the advertised inventory
-        # Best-effort with a floor: a single load failure drops that one
-        # package from the advertised inventory of the lock; a track in which
-        # zero packages loaded fails the build. The lock rewrite runs through
-        # the provisioner image, because the volume is root-owned.
-        run: |
-          docker run --rm -i \
-            -e ARCH -e FARM \
-            -v "${STORE_VOLUME}:/mnt/libs:rw" \
-            -v "${GITHUB_WORKSPACE}/load-check.json:/load-check.json:ro" \
-            -v "${GITHUB_WORKSPACE}/images/package-store:/package-store:ro" \
-            --entrypoint python3 \
-            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" - <<'PY'
+            > load-check.json || rc=$?
+          python3 - <<'PY'
           import json, os, sys
           from pathlib import Path
-          import yaml
-          lock_path = Path(f"/mnt/libs/farms/{os.environ['FARM']}/inflexa.lock")
-          lock = json.loads(lock_path.read_text())
-          results = json.loads(Path("/load-check.json").read_text()).get("results", [])
-          failed = {(r.get("track"), r.get("package")) for r in results if not r.get("ok")}
-          # The load check keys python results by package name and R results by
-          # name too; the lock's own track names are finer (cran/bioconductor/
-          # github map onto the check's "r").
-          def check_track(track):
-              return "python" if track == "python" else "r"
-          kept, dropped = [], []
-          for pkg in lock.get("packages", []):
-              if (check_track(pkg["track"]), pkg["name"]) in failed:
-                  dropped.append(f"{pkg['track']}/{pkg['name']}")
-              else:
-                  kept.append(pkg)
-          per_track = {}
-          for pkg in kept:
-              per_track[pkg["track"]] = per_track.get(pkg["track"], 0) + 1
-          # The floor measures against the MANIFEST, never against the lock. A
-          # lock that lost a track names no track of its own, and a floor that
-          # asks the lock what to expect never fires on the loss. An empty lock
-          # is the extreme of the same fault, and it must fail here.
-          manifest = yaml.safe_load(Path("/package-store/manifest.yaml").read_text()) or {}
-          arch = os.environ["ARCH"]
-          pip = (manifest.get("python") or {}).get("pip") or {}
-          r = manifest.get("r") or {}
-          expected = set()
-          if list(pip.get("common") or []) + list(pip.get(arch) or []):
-              expected.add("python")
-          if r.get("cran"):
-              expected.add("cran")
-          if list(r.get("bioconductor") or []) + list(r.get("git") or []):
-              expected.add("bioconductor")
-          if r.get("github"):
-              expected.add("github")
-          empty = sorted(t for t in expected if per_track.get(t, 0) == 0)
-          if dropped:
-              print("dropped from the advertised inventory:", ", ".join(sorted(dropped)))
-          if empty:
-              print(f"ERROR: track(s) with zero loaded packages (the non-empty floor): {', '.join(empty)}", file=sys.stderr)
+          results = json.loads(Path("load-check.json").read_text())["results"]
+          failed = [r for r in results if not r["ok"]]
+          for r in failed:
+              print(f"::error title={r['track']}/{r['package']} does not load::{r['error']}")
+          if failed:
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write(f"## Load failures ({os.environ['ARCH']})\n\n| Track | Package | Error |\n|-|-|-|\n")
+                  summary.writelines(
+                      f"| {r['track']} | {r['package']} | `{r['error'].replace('|', chr(92) + '|')}` |\n" for r in failed)
               sys.exit(1)
-          lock["packages"] = kept
-          tmp = lock_path.with_suffix(".tmp")
-          tmp.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n")
-          tmp.replace(lock_path)
-          print(f"advertised inventory: {len(kept)} package(s), {len(dropped)} dropped")
+          print(f"load check: {len(results)} package(s) loaded")
           PY
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::the load check exited with $rc, and no failed row explains it"
+            exit "$rc"
+          fi
 
       - name: Prepare the caches of the catalog farm (provision prepare)
         # The farm binds read-write at /mnt/libs/farm — the container path a
@@ -451,37 +407,40 @@ jobs:
               seed_caches
               python3 /opt/warm-check.py'
 
-      - name: Coverage report (regression gate)
-        # The report diffs the advertised inventory against the last published
-        # artifact of THIS arch. The previous lock comes out of the published
-        # base layer, fetched by digest — no full pull.
+      - name: Prove the R packages of the base image
+        # The manifest names packages that R itself carries (survival, mgcv,
+        # nlme, and the other recommended packages), and the store never
+        # holds them. The coverage gate counts such a name as loaded only
+        # when the image loads it, thus this step is the proof, not a record.
+        # A base package that no manifest entry wants (tcltk has no Tcl in
+        # the image) fails here without consequence: the gate reads only the
+        # wanted names. The posture is the posture of the load check.
         run: |
           set -euo pipefail
-          MT_BASE="application/vnd.inflexa.package-store.base.v1.tar+zstd"
-          PREV_ARGS=()
-          REF="${STORE_IMAGE}:latest-${ARCH}"
-          if oras manifest fetch "$REF" > previous-manifest.json 2>/dev/null; then
-            DIGEST=$(python3 -c "import json;print(next((l['digest'] for l in json.load(open('previous-manifest.json')).get('layers',[]) if l.get('mediaType')=='${MT_BASE}'),''))")
-            if [ -n "$DIGEST" ]; then
-              oras blob fetch "${STORE_IMAGE}@${DIGEST}" --output - \
-                | zstd -dc \
-                | tar -xO "./farms/catalog/inflexa.lock" > previous-lock.json \
-                || tar_rc=$?
-              if [ -s previous-lock.json ]; then
-                PREV_ARGS=(--previous-lock previous-lock.json)
-              else
-                echo "::warning::the previous base layer carries no catalog lock; the regression gate has no baseline"
-              fi
-            fi
-          else
-            echo "::notice::no published ${REF}; the first publish has no regression baseline"
-          fi
+          docker run --rm --network none \
+            --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint Rscript \
+            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" -e '
+              for (p in rownames(installed.packages(priority = c("base", "recommended")))) {
+                ok <- tryCatch({ suppressPackageStartupMessages(library(p, character.only = TRUE)); TRUE },
+                               error = function(e) FALSE)
+                if (ok) cat(p, "\n", sep = "")
+              }' > r-base-loaded.txt
+          echo "R packages of the image that load: $(tr '\n' ' ' < r-base-loaded.txt)"
+
+      - name: Coverage report
+        # Wanted is the manifest. Loaded is the farm lock, whose entries all
+        # loaded in the check above, plus the R packages that the image
+        # loaded. One missing wanted name fails the build. The report holds
+        # no baseline: a regression is a missing wanted name.
+        run: |
+          set -euo pipefail
           read_lock() { docker run --rm -v "${STORE_VOLUME}:/mnt/libs:ro" --entrypoint cat "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" "/mnt/libs/farms/${FARM}/inflexa.lock"; }
           read_lock > current-lock.json
           python3 scripts/package-store-coverage.py \
             --manifest "$MANIFEST" \
             --lock current-lock.json \
-            "${PREV_ARGS[@]}" \
+            --r-base-loaded r-base-loaded.txt \
             --arch "$ARCH" \
             --summary "$GITHUB_STEP_SUMMARY"
 
@@ -679,7 +638,7 @@ jobs:
           docker rmi "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" 2>/dev/null || true
           docker rmi "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" 2>/dev/null || true
           docker volume rm "$STORE_VOLUME" 2>/dev/null || true
-          rm -rf dist lockout load-check.json previous-manifest.json previous-lock.json current-lock.json
+          rm -rf dist lockout load-check.json r-base-loaded.txt current-lock.json
           docker image prune -f 2>/dev/null || true
           docker container prune -f 2>/dev/null || true
 

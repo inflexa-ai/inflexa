@@ -188,51 +188,62 @@ acceptance run.
 - **WHEN** it resolves a manifest that pins digest D
 - **THEN** it does not download that layer again
 
-### Requirement: The load check is best-effort with a non-empty-track floor
+### Requirement: The load check fails the build on one load failure
 
-The store build MUST run a load check inside `sandbox-base` — not inside the
-provisioner — because the check must prove the image that runs the code. The
-check loads each installed package: an import for Python, a namespace load
-for R. A single load failure MUST NOT fail the track — the package is absent
-from the advertised inventory of the lock. A track that loaded zero packages
-MUST fail the build (the non-empty floor).
+The store build MUST run a load check inside `sandbox-base`, not inside the
+provisioner, because the check must prove the image that runs the code. The
+check loads each package of the farm lock: an import for Python, a namespace
+load for R. One load failure MUST fail the build. The log and the step
+summary MUST name each failed package and its error. Thus a reader knows the
+reason before the decision. The build MUST NOT rewrite the lock after the
+check. The lock is the inventory, and each entry of a published lock loaded.
 
-#### Scenario: A single load failure drops one package, not the track
+#### Scenario: One load failure fails the build
 
-- **GIVEN** one manifest package that installs but fails to load, beside others that load
+- **GIVEN** one package that installs but fails to load, beside others that load
 - **WHEN** the load check runs
-- **THEN** the failing package is absent from the advertised inventory, and the track still builds
+- **THEN** the build fails, no artifact publishes, and the log names the package and the error
 
-#### Scenario: An all-failed track fails the build
+#### Scenario: A clean check publishes the lock as built
 
-- **GIVEN** a track in which no package loaded
+- **GIVEN** a farm in which each package loads
 - **WHEN** the load check runs
-- **THEN** the build fails, and no artifact publishes
+- **THEN** the lock publishes with each entry, and no entry is absent
 
-### Requirement: The build emits a per-arch coverage report and guards against regressions
+### Requirement: The coverage report fails the build on a wanted package that is not loaded
 
 After the load check, the build MUST emit a coverage report: per arch and
-track, the wanted, loaded, and missing counts and names. The report MUST
-diff the loaded set against the last published artifact of that arch. A
-package that was published for `linux/amd64`, is still in the manifest, and
-is now missing MUST fail the build as a regression. A package that never
-built for `linux/arm64` reports informationally and MUST NOT fail the build.
-A package that the manifest no longer holds reports as dropped, by name, and
-MUST NOT fail the build.
+track, the wanted, loaded, and missing counts and names. A wanted name is a
+manifest entry. A wanted name counts as loaded in two cases: the farm lock
+holds it, or the R library of the `sandbox-base` image loads it. The second
+case covers the base and recommended packages of R, which the image carries
+and the store never holds. The build MUST prove the second case with a load
+in the image, not with a record. An R name MUST compare across the three R
+subtrees, because the three share one library path. The subtree of a package
+is the closure that placed it, not its manifest section. One missing wanted
+name MUST fail the build, and the report MUST name it. The report MUST NOT
+compare against a previous artifact. A regression is a missing wanted name,
+thus the rule above catches it with no baseline.
 
-#### Scenario: A silent amd64 drop is a regression
+#### Scenario: A missing wanted package fails the build
 
-- **GIVEN** a package in the last published `linux/amd64` artifact, still in the manifest, that no longer loads
+- **GIVEN** a manifest entry that neither the lock nor the image library loads
 - **WHEN** the coverage report runs
-- **THEN** it flags a regression and the build fails
+- **THEN** the report names the entry as missing, and the build fails
 
-#### Scenario: An intentional removal is not a regression
+#### Scenario: A base package of the image counts as loaded
 
-- **GIVEN** a package in the last published artifact that the manifest no longer holds
+- **GIVEN** a manifest entry such as `survival` that the R installation of the image carries
 - **WHEN** the coverage report runs
-- **THEN** it lists the package as dropped and the build does not fail
+- **THEN** the entry counts as loaded, because the image loaded it
 
-### Requirement: Each architecture publishes the tracks that pass the floor
+#### Scenario: A Bioconductor entry in the cran subtree counts as loaded
+
+- **GIVEN** a manifest entry under `bioconductor` that the lock holds under `cran`
+- **WHEN** the coverage report runs
+- **THEN** the entry counts as loaded
+
+### Requirement: Each architecture publishes the tracks that pass the load check
 
 Both legs MUST attempt every track, and the store stays per arch.
 `linux/amd64` is the primary leg, and `linux/arm64` is a best-effort leg
@@ -242,7 +253,7 @@ library path and form one dependency chain.
 
 #### Scenario: arm64 publishes R when it builds
 
-- **GIVEN** a build in which the arm64 R tracks meet the floor
+- **GIVEN** a build in which the arm64 R tracks pass the load check
 - **WHEN** the arm64 artifact is written
 - **THEN** it holds the R track layers beside the Python layer
 
