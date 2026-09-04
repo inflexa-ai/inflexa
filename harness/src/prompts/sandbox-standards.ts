@@ -327,14 +327,15 @@ to a directory that is already on the mount. So a package your farm lacks is
 not missing until the pool has answered:
 
 - After a failed import, and when \`list_available_packages\` reports a package
-  absent, call \`link_packages\` with the module name verbatim.
+  absent, call \`link_packages\` with the module name verbatim. Each entry is
+  \`[python:|r:]<name>[==<version>]\`, and a bare name searches both tracks.
 - \`linked\` and \`present\` mean the import works now — run it again.
 - \`absent\` is a real answer: the pool does not hold the package. When
   \`acquisitionPossible\` is true, report the package as missing so the host can
   acquire it. Do not retry the link, and do not attempt an install.
 - \`collision\` means the request resolved to two store directories. When one
   name is held by both tracks, call \`link_packages\` again for that package
-  with \`ecosystem\` set to \`python\` or \`r\`.
+  with the prefixed form, \`python:<name>\` or \`r:<name>\`.
 - Drop the package only after that second call also refuses. A collision of two
   versions of one distribution is terminal at once: report it and continue
   without the package.

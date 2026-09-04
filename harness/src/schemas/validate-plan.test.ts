@@ -173,4 +173,12 @@ describe("validatePlan package entries", () => {
         expect(result.valid).toBe(false);
         expect(result.errors.some((e) => e.includes("T1S1") && e.includes("bioc:fgsea") && e.includes('"python:"') && e.includes('"r:"'))).toBe(true);
     });
+
+    it("a leading space does not defeat the prefix guard", () => {
+        // The parser trims the entry once, thus the guard reads the same bytes
+        // the link pass reads. An untrimmed guard passed " bioc:fgsea" through.
+        const result = validatePlan(plan([step({ id: "T1S1", packages: [" bioc:fgsea"] })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("T1S1") && e.includes("bioc:fgsea"))).toBe(true);
+    });
 });

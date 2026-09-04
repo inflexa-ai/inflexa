@@ -9,6 +9,8 @@
  * this interface keeps one description of a field that has one meaning.
  */
 
+import type { Track } from "../sandbox/package-identity.js";
+
 /**
  * Host paths of the environment's two read-only stores.
  *
@@ -93,5 +95,14 @@ export interface PoolInventoryPackage {
 /** One language-track section of an inventory, as `list_available_packages` renders it. */
 export interface PoolInventorySection {
     readonly title: string;
+    /**
+     * The ecosystem that holds the packages of this section. It carries the
+     * track as DATA, thus no reader derives one from the title: a title is
+     * display text, and a heading that changes wording would silently change
+     * which packages a `language` filter answers. A section of system tools or
+     * of node packages carries none, because neither is a package track of the
+     * pool.
+     */
+    readonly track?: Track;
     readonly packages: readonly PoolInventoryPackage[];
 }

@@ -154,7 +154,9 @@ def from_nodes(store_root: Path, report: dict) -> list[dict]:
     imports_by_pkg = {key: testable_imports(node, node.get("name") or key)
                       for key, node in nodes.items() if node.get("track") == "python"}
     r_paths = sorted({str(store / key) for key, node in nodes.items() if node.get("track") == "r"})
-    r_pkgs = [(key, node.get("r_dir") or node.get("name"))
+    # The name of an R node IS its DESCRIPTION spelling, thus the inner
+    # directory of its store directory carries that same name.
+    r_pkgs = [(key, node.get("name"))
               for key, node in sorted(nodes.items()) if node.get("track") == "r"]
     return check_python(imports_by_pkg, python_paths) + check_r(r_pkgs, r_paths)
 

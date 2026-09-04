@@ -12,6 +12,7 @@
 import { z } from "zod";
 
 import type { ResourceSpec } from "../config/resource-limits.js";
+import type { PackageQuery } from "./package-identity.js";
 import { PersistedSandboxRefSchema } from "../state/schema.js";
 
 export const SandboxBackend = z.enum(["docker", "k8s"]);
@@ -75,45 +76,12 @@ export type ResolveAnalysisFarm = (analysisId: string) => Promise<FarmResolution
 export type FarmSource = { readonly kind: "fixed"; readonly location: FarmLocation } | { readonly kind: "per-analysis"; readonly resolve: ResolveAnalysisFarm };
 
 /**
- * One package ask of the farm-extension seam. `version` pins one exact
- * version. `ecosystem` qualifies a name that both tracks can hold. Without
- * it, a name that both tracks hold comes back as a `collision` outcome.
- */
-export interface PackageRequest {
-    readonly name: string;
-    readonly version?: string;
-    readonly ecosystem?: "python" | "r";
-}
-
-/**
- * The `by_name` key of one package name, on the shelf of its track.
+ * One outcome per query, index-aligned with the query array.
  *
- * Each ecosystem owns its identity rule, and the key obeys the rule of the
- * track that holds it. PEP 503 defines the equivalence of a Python
- * distribution name, thus the Python key folds each run of `-`, `_`, and `.`
- * into one `-` and lowers the case. An R name is case-sensitive at
- * `library()`, thus the R key is the DESCRIPTION spelling, verbatim.
- *
- * One rule for both tracks made `decoupleR` and `decoupler` into one key, and
- * a lookup of either name then found the key in both tracks. This function is
- * the one TypeScript home of the rule: `emit_deps.py` holds the matching
- * Python copy, because the emitter runs inside the provisioner image.
- *
- * @param track The ecosystem that holds the name.
- * @param name The package name, as the caller spells it.
- * @returns The key that `by_name` of that track carries.
- */
-export function shelfKey(track: "python" | "r", name: string): string {
-    return track === "python" ? name.replace(/[-_.]+/g, "-").toLowerCase() : name;
-}
-
-/**
- * One outcome per request, index-aligned with the request array.
- *
- * `name` echoes the REQUESTED spelling verbatim, never a normalized form. A
- * caller quotes it into a remedy (`inflexa store add <name>`), and an R name
- * is case-sensitive with dots, thus a normalized echo would name a package
- * that no repository holds.
+ * `spelling` echoes the spelling of its query verbatim, never a normalized
+ * form. A caller quotes it into a remedy (`inflexa store add <spelling>`), and
+ * an R name is case-sensitive with dots, thus a normalized echo would name a
+ * package that no repository holds.
  *
  * - `linked` — the pool held the package, and this call linked it.
  * - `present` — the farm linked it already.
@@ -122,12 +90,13 @@ export function shelfKey(track: "python" | "r", name: string): string {
  *   the realization gives one, classifies the miss in host terms — in
  *   flight, failed with a recorded reason, or never requested — and the
  *   launch refusal renders it beside the name.
- * - `collision` — the request resolves to two store directories: two
- *   versions of one distribution, or one name that both tracks hold. The
- *   outcome is terminal for the request. `detail`, when the realization
+ * - `collision` — the query resolves to two store directories: two
+ *   versions of one distribution, or one spelling that both tracks hold. The
+ *   outcome is terminal for the query. `detail`, when the realization
  *   gives one, names the two pins and the packages that need each side —
  *   without it, a caller must guess which package pulls each pin, and a
- *   wrong guess sends it into store surgery.
+ *   wrong guess sends it into store surgery. For one spelling in two tracks
+ *   the detail names the two identity keys instead.
  * - `unavailable` — the link pass itself could not answer: an unreadable
  *   dependency graph, a locked farm. The reason says why. It says NOTHING
  *   about the presence of the package, and it must never render as an
@@ -135,19 +104,22 @@ export function shelfKey(track: "python" | "r", name: string): string {
  *   holds.
  */
 export type PackageRequestOutcome =
-    | { readonly kind: "linked"; readonly name: string; readonly version: string }
-    | { readonly kind: "present"; readonly name: string; readonly version: string }
-    | { readonly kind: "absent"; readonly name: string; readonly acquisitionPossible: boolean; readonly detail?: string }
-    | { readonly kind: "collision"; readonly name: string; readonly storeDirs: readonly [string, string]; readonly detail?: string }
-    | { readonly kind: "unavailable"; readonly name: string; readonly reason: string };
+    | { readonly kind: "linked"; readonly spelling: string; readonly version: string }
+    | { readonly kind: "present"; readonly spelling: string; readonly version: string }
+    | { readonly kind: "absent"; readonly spelling: string; readonly acquisitionPossible: boolean; readonly detail?: string }
+    | { readonly kind: "collision"; readonly spelling: string; readonly storeDirs: readonly [string, string]; readonly detail?: string }
+    | { readonly kind: "unavailable"; readonly spelling: string; readonly reason: string };
 
 /**
  * The farm-extension seam. The realization of the embedder links host-staged
  * packages into the farm of the analysis. It never installs, downloads, or
  * acquires. A link is live in a sandbox that already runs, because the farm
  * rides a bind mount.
+ *
+ * The seam speaks the query of the `package-identity` capability, thus the
+ * host resolves the identity and the harness never folds a name.
  */
-export type ExtendAnalysisFarm = (analysisId: string, requests: readonly PackageRequest[]) => Promise<readonly PackageRequestOutcome[]>;
+export type ExtendAnalysisFarm = (analysisId: string, queries: readonly PackageQuery[]) => Promise<readonly PackageRequestOutcome[]>;
 
 /**
  * Per-sandbox-machine liveness verdict. `oomKilled` is meaningful only when

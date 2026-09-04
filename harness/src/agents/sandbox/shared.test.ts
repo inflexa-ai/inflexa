@@ -268,25 +268,25 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         expect(def.systemPrompt).toContain("Report a package as missing only after");
     });
 
-    it("the layer teaches the ecosystem retry after a two-track collision", () => {
-        // The spec scenario "The layer teaches the ecosystem retry": a
-        // collision of one name that both tracks hold has a remedy, thus the
-        // agent must retry with `ecosystem` before it drops the package.
+    it("the layer teaches the prefixed retry after a two-track collision", () => {
+        // The spec scenario "The layer teaches the prefixed retry": a
+        // collision of one spelling that both tracks hold has a remedy, thus
+        // the agent must retry with the prefix before it drops the package.
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
 
         expect(def.systemPrompt).toContain("call `link_packages` again for that package");
-        expect(def.systemPrompt).toContain("`ecosystem` set to `python` or `r`");
+        expect(def.systemPrompt).toContain("with the prefixed form, `python:<name>` or `r:<name>`");
         expect(def.systemPrompt).toContain("Drop the package only after that second call also refuses");
     });
 
-    it("the description names the ecosystem retry", () => {
-        // The spec scenario of the same name: the `ecosystem` field exists for
-        // this second call, thus a description that calls every collision
-        // terminal contradicts the field the tool carries.
+    it("the description names the prefixed retry", () => {
+        // The spec scenario of the same name: the prefixed form is the remedy
+        // of a two-track collision, thus a description that calls every
+        // collision terminal contradicts the grammar the tool reads.
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
         const description = def.tools.find((tool) => tool.id === "link_packages")!.description;
 
-        expect(description).toContain("call this tool again for that package with `ecosystem` set");
+        expect(description).toContain("call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`");
         expect(description).toContain("terminal only after that second call also refuses");
     });
 
@@ -324,26 +324,26 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         );
         const tool = def.tools.find((t) => t.id === "link_packages")!;
 
-        const result = (await tool.execute({ packages: [{ name: "scanpy" }, { name: "Seurat" }] }, makeToolContext().ctx))._unsafeUnwrap();
+        const result = (await tool.execute({ packages: ["scanpy", "Seurat"] }, makeToolContext().ctx))._unsafeUnwrap();
 
         expect(result).toEqual({
             outcomes: [
-                { kind: "unavailable", name: "scanpy", reason: "the dependency graph is unreadable" },
-                { kind: "unavailable", name: "Seurat", reason: "the dependency graph is unreadable" },
+                { kind: "unavailable", spelling: "scanpy", reason: "the dependency graph is unreadable" },
+                { kind: "unavailable", spelling: "Seurat", reason: "the dependency graph is unreadable" },
             ],
         });
     });
 
     it("link_packages calls the seam with the analysis of the step and returns the outcomes verbatim", async () => {
-        const calls: Array<{ analysisId: string; names: string[] }> = [];
+        const calls: Array<{ analysisId: string; spellings: string[] }> = [];
         const def = createSandboxAgent(
             {
                 ...makeFakeSandboxAgentDeps({ analysisId: "an-42" }),
-                extendAnalysisFarm: async (analysisId, requests) => {
-                    calls.push({ analysisId, names: requests.map((r) => r.name) });
+                extendAnalysisFarm: async (analysisId, queries) => {
+                    calls.push({ analysisId, spellings: queries.map((q) => q.spelling) });
                     return [
-                        { kind: "linked", name: "scanpy", version: "1.10.0" },
-                        { kind: "absent", name: "nonesuch", acquisitionPossible: true },
+                        { kind: "linked", spelling: "scanpy", version: "1.10.0" },
+                        { kind: "absent", spelling: "nonesuch", acquisitionPossible: true },
                     ];
                 },
             },
@@ -352,13 +352,13 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         );
         const tool = def.tools.find((t) => t.id === "link_packages")!;
 
-        const result = (await tool.execute({ packages: [{ name: "scanpy" }, { name: "nonesuch" }] }, makeToolContext().ctx))._unsafeUnwrap();
+        const result = (await tool.execute({ packages: ["scanpy", "nonesuch"] }, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(calls).toEqual([{ analysisId: "an-42", names: ["scanpy", "nonesuch"] }]);
+        expect(calls).toEqual([{ analysisId: "an-42", spellings: ["scanpy", "nonesuch"] }]);
         expect(result).toEqual({
             outcomes: [
-                { kind: "linked", name: "scanpy", version: "1.10.0" },
-                { kind: "absent", name: "nonesuch", acquisitionPossible: true },
+                { kind: "linked", spelling: "scanpy", version: "1.10.0" },
+                { kind: "absent", spelling: "nonesuch", acquisitionPossible: true },
             ],
         });
     });

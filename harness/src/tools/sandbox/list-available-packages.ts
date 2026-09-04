@@ -25,6 +25,7 @@ import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "../../config/environment-stores.js";
+import { identityAddress, identityKey, identityOf, resolveQuery, type PackageIdentity, type PoolIndex, type Track } from "../../sandbox/package-identity.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
@@ -52,8 +53,9 @@ const DEFAULT_IMAGE_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/${IMAGE_PACKAGES_FIL
 /**
  * The two headings that a lock track and the image record can both carry.
  * Declared once, because {@link LANGUAGE_MATCHERS} keys the `language` filter
- * on the heading text, and {@link foldSections} merges two sources by it: a
- * second spelling of either would split one track into two headings.
+ * of these two on the heading text, and {@link foldSections} merges two
+ * sources by it: a second spelling of either would split one track into two
+ * headings.
  */
 const CLI_TITLE = "System tools (CLI)";
 const NODE_TITLE = "Node (npm)";
@@ -66,6 +68,20 @@ const TRACK_TITLES: Record<string, string> = {
     github: "R (GitHub)",
     node: NODE_TITLE,
 };
+
+/**
+ * The ecosystem of one lock subtree. `python` gives the Python track, and
+ * `cran`, `bioconductor`, and `github` give the R track — three subtrees of
+ * one ecosystem, because a repository is a source and not an identity rule.
+ *
+ * A subtree that names neither, such as `node`, carries no track: its packages
+ * are not in the pool of the two ecosystems, and a `names` lookup matches them
+ * by their rendered name.
+ */
+export function trackOfLockSubtree(subtree: string): Track | undefined {
+    if (subtree === "python") return "python";
+    return subtree === "cran" || subtree === "bioconductor" || subtree === "github" ? "r" : undefined;
+}
 
 /**
  * Group the lock packages into sections, one per track, in a stable order:
@@ -82,7 +98,12 @@ export function lockSections(lock: FarmLock): Section[] {
         if (open) open.push(entry);
         else byTrack.set(pkg.track, [entry]);
     }
-    return [...byTrack.entries()].filter(([, packages]) => packages.length > 0).map(([track, packages]) => ({ title: TRACK_TITLES[track] ?? track, packages }));
+    return [...byTrack.entries()]
+        .filter(([, packages]) => packages.length > 0)
+        .map(([subtree, packages]) => {
+            const track = trackOfLockSubtree(subtree);
+            return { title: TRACK_TITLES[subtree] ?? subtree, packages, ...(track === undefined ? {} : { track }) };
+        });
 }
 
 /**
@@ -119,21 +140,20 @@ export function imageSections(record: ImagePackages): Section[] {
  * and the presence check agree on which entry a colliding name resolves to.
  */
 function foldSections(sections: readonly Section[]): Section[] {
-    const byTitle = new Map<string, { title: string; packages: SectionPackage[]; seen: Set<string> }>();
+    const byTitle = new Map<string, { title: string; track?: Track; packages: SectionPackage[]; seen: Set<string> }>();
     for (const section of sections) {
         let open = byTitle.get(section.title);
         if (!open) {
-            open = { title: section.title, packages: [], seen: new Set() };
+            open = { title: section.title, track: section.track, packages: [], seen: new Set() };
             byTitle.set(section.title, open);
         }
         for (const pkg of section.packages) {
-            const key = pkg.name.toLowerCase();
-            if (open.seen.has(key)) continue;
-            open.seen.add(key);
+            if (open.seen.has(pkg.name)) continue;
+            open.seen.add(pkg.name);
             open.packages.push(pkg);
         }
     }
-    return [...byTitle.values()].map(({ title, packages }) => ({ title, packages }));
+    return [...byTitle.values()].map(({ title, track, packages }) => ({ title, packages, ...(track === undefined ? {} : { track }) }));
 }
 
 /**
@@ -190,7 +210,16 @@ export type CheckedPackage =
           readonly storeDir?: string;
           readonly hash?: string;
       }
-    | { readonly requested: string; readonly present: false };
+    | {
+          readonly requested: string;
+          readonly present: false;
+          /**
+           * The spelling that the pool does hold, when the resolution finds
+           * one. `seurat` misses and `Seurat` is present, thus the answer
+           * carries the spelling that a plan and a link both accept.
+           */
+          readonly suggestion?: string;
+      };
 
 /**
  * Three shapes, one per call path: the store is unmounted; a `names` presence
@@ -202,37 +231,40 @@ export type PackagesResult =
     | { readonly available: true; readonly checked: readonly CheckedPackage[] }
     | { readonly available: true; readonly total: number; readonly returned: number; readonly hasMore: boolean; readonly content: string };
 
-/** The R triple: `R (CRAN)`, `R (Bioconductor)`, `R (GitHub)`. */
-const isRSection = (title: string): boolean => /^r\b/i.test(title);
-
-/** The one Python heading: `Python (pip)`. */
-const isPythonSection = (title: string): boolean => /^python\b/i.test(title);
-
-/** The `language` filter values, mapped onto the concrete section headings. */
+/**
+ * The `language` filter of the two sections that carry no track, mapped onto
+ * their concrete headings. The `r` and `python` values read `section.track`
+ * instead, because a package track is data and a heading is display text.
+ */
 const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
-    r: isRSection,
-    python: isPythonSection,
     // `CLI_TITLE` — the conda-installed bioinformatics executables.
     cli: (t) => /system tools|\bcli\b/i.test(t),
     node: (t) => /^node\b/i.test(t),
 };
 
+/** Whether one section answers the `language` filter of a call. */
+function matchesLanguage(section: Section, language: PackagesQuery["language"]): boolean {
+    if (language === undefined) return true;
+    if (language === "r" || language === "python") return section.track === language;
+    return LANGUAGE_MATCHERS[language]!(section.title);
+}
+
 /**
- * The names that the Python section and an R section hold in ONE spelling.
+ * The identity names that the Python track and the R track both hold.
  *
  * A plan entry of such a name cannot say which package it means, thus the
  * link pass refuses it as a collision. The listing marks each of these rows
  * with the prefixed forms, and the planner writes one of them. A pair of two
  * spellings, such as `decoupler` and `decoupleR`, needs no mark, because the
- * spelling itself settles the track.
+ * two identities differ and the spelling settles the track.
  */
 function bothTrackNames(sections: readonly Section[]): ReadonlySet<string> {
     const python = new Set<string>();
     const r = new Set<string>();
     for (const section of sections) {
-        const holder = isPythonSection(section.title) ? python : isRSection(section.title) ? r : null;
-        if (holder === null) continue;
-        for (const pkg of section.packages) holder.add(pkg.name);
+        if (section.track === undefined) continue;
+        const holder = section.track === "python" ? python : r;
+        for (const pkg of section.packages) holder.add(identityOf(section.track, pkg.name).name);
     }
     return new Set([...python].filter((name) => r.has(name)));
 }
@@ -242,9 +274,11 @@ function bothTrackNames(sections: readonly Section[]): ReadonlySet<string> {
  * a version, the bare name otherwise. A name that both tracks hold carries
  * the two forms a plan writes, because a bare entry of it refuses the launch.
  */
-function renderPackage(entry: SectionPackage, bothTracks: ReadonlySet<string>): string {
+function renderPackage(entry: SectionPackage, track: Track | undefined, bothTracks: ReadonlySet<string>): string {
     const rendered = entry.version === undefined ? entry.name : `${entry.name}==${entry.version}`;
-    return bothTracks.has(entry.name) ? `${rendered} [both tracks — write python:${entry.name} or r:${entry.name}]` : rendered;
+    if (track === undefined) return rendered;
+    const identity = identityOf(track, entry.name).name;
+    return bothTracks.has(identity) ? `${rendered} [both tracks — write python:${identity} or r:${identity}]` : rendered;
 }
 
 /** Render sections to the agent-facing listing, bounded at `limit` packages. */
@@ -260,11 +294,50 @@ function renderListing(sections: readonly Section[], limit: number, bothTracks: 
         }
         const shown = section.packages.slice(0, room);
         returned += shown.length;
-        lines.push(`\n## ${section.title}`, `  ${shown.map((entry) => renderPackage(entry, bothTracks)).join(", ")}`);
+        lines.push(`\n## ${section.title}`, `  ${shown.map((entry) => renderPackage(entry, section.track, bothTracks)).join(", ")}`);
         const hidden = section.packages.length - shown.length;
         if (hidden > 0) lines.push(`  … and ${hidden} more in this section (raise \`limit\` or narrow with \`query\`).`);
     }
     return { content: lines.join("\n").trim(), returned };
+}
+
+/** One row of a tracked section, with the identity that its track mints. */
+type Held = { readonly entry: SectionPackage; readonly section: string; readonly identity: PackageIdentity };
+
+/**
+ * A {@link PoolIndex} over the rows of the tracked sections. The suggestion of
+ * the ladder reads `rIdentitiesFoldingTo`, and the fold of an identity is its
+ * store address — thus the census suggests exactly what the store holds.
+ */
+function poolIndexOf(held: readonly Held[]): PoolIndex {
+    const keys = new Set(held.map((row) => identityKey(row.identity)));
+    const rByAddress = new Map<string, PackageIdentity>();
+    for (const row of held) {
+        if (row.identity.track !== "r") continue;
+        rByAddress.set(identityKey(row.identity), row.identity);
+    }
+    return {
+        has: (identity) => keys.has(identityKey(identity)),
+        rIdentitiesFoldingTo: (fold) => [...rByAddress.values()].filter((identity) => identityAddress(identity) === fold),
+    };
+}
+
+/**
+ * One present answer of the `names` path. `name` echoes the spelling that the
+ * source records, because an R name is case-sensitive at `library()` and the
+ * caller imports that exact one. The store identity rides only where the
+ * source records it.
+ */
+function presentEntry(requested: string, row: { entry: SectionPackage; section: string }): CheckedPackage {
+    return {
+        requested,
+        present: true,
+        name: row.entry.name,
+        section: row.section,
+        ...(row.entry.version === undefined ? {} : { version: row.entry.version }),
+        ...(row.entry.storeDir === undefined ? {} : { storeDir: row.entry.storeDir }),
+        ...(row.entry.hash === undefined ? {} : { hash: row.entry.hash }),
+    };
 }
 
 /** The tool's input, as parsed from `inputSchema`. */
@@ -284,45 +357,57 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
     // Presence check — the cheap, targeted path. Answers "is X available, and in
     // which track" without returning the catalog.
     if (names && names.length > 0) {
-        // EVERY section that holds the name answers, in the section order. A
-        // name that two tracks hold has two exact spellings and two store
-        // identities, and a first-writer answer would hide one of them —
-        // exactly the pair the caller asked about.
-        const index = new Map<string, { entry: SectionPackage; section: string }[]>();
+        // A tracked section holds packages of the pool, thus its rows answer
+        // through `resolveQuery` — the same ladder the link of the embedder
+        // runs, so the census and the link never disagree. An untracked section
+        // (system tools, node packages) holds no package of an ecosystem, thus
+        // its rows match their rendered name exactly.
+        const held: Held[] = [];
+        const exact = new Map<string, { entry: SectionPackage; section: string }[]>();
         for (const section of sections) {
             for (const pkg of section.packages) {
-                const key = pkg.name.toLowerCase();
-                const held = index.get(key) ?? [];
-                held.push({ entry: pkg, section: section.title });
-                index.set(key, held);
+                if (section.track === undefined) {
+                    const rows = exact.get(pkg.name) ?? [];
+                    rows.push({ entry: pkg, section: section.title });
+                    exact.set(pkg.name, rows);
+                    continue;
+                }
+                held.push({ entry: pkg, section: section.title, identity: identityOf(section.track, pkg.name) });
             }
         }
+        const pool = poolIndexOf(held);
+        const bySection = new Map<string, Held>();
+        for (const row of held) if (!bySection.has(identityKey(row.identity))) bySection.set(identityKey(row.identity), row);
+
         const checked = names.flatMap((requested): CheckedPackage[] => {
-            const hits = index.get(requested.trim().toLowerCase()) ?? [];
-            if (hits.length === 0) return [{ requested, present: false }];
-            // `name` echoes the catalog's canonical spelling — R package names are
-            // case-sensitive at `library()`, so the exact one is what the caller needs.
-            // The store identity rides only where the source records it.
-            return hits.map((hit) => ({
-                requested,
-                present: true,
-                name: hit.entry.name,
-                section: hit.section,
-                ...(hit.entry.version === undefined ? {} : { version: hit.entry.version }),
-                ...(hit.entry.storeDir === undefined ? {} : { storeDir: hit.entry.storeDir }),
-                ...(hit.entry.hash === undefined ? {} : { hash: hit.entry.hash }),
-            }));
+            const spelling = requested.trim();
+            const hits: CheckedPackage[] = [];
+            const resolution = resolveQuery({ spelling }, pool);
+            // An ambiguous spelling answers once for each track, because the
+            // caller asked about exactly that pair.
+            const identities =
+                resolution.kind === "resolved" ? [resolution.identity] : resolution.kind === "ambiguous" ? [resolution.python, resolution.r] : [];
+            for (const identity of identities) {
+                const row = bySection.get(identityKey(identity));
+                if (row !== undefined) hits.push(presentEntry(requested, row));
+            }
+            for (const row of exact.get(spelling) ?? []) {
+                hits.push(presentEntry(requested, { entry: row.entry, section: row.section }));
+            }
+            if (hits.length > 0) return hits;
+            const suggestion = resolution.kind === "unknown" ? resolution.suggestion : undefined;
+            return [{ requested, present: false, ...(suggestion === undefined ? {} : { suggestion: suggestion.name }) }];
         });
         return { available: true, checked };
     }
 
-    const matchesLanguage = language ? LANGUAGE_MATCHERS[language]! : () => true;
     const needle = query?.trim().toLowerCase();
     const filtered: Section[] = sections
-        .filter((s) => matchesLanguage(s.title))
+        .filter((s) => matchesLanguage(s, language))
         .map((s) => ({
             title: s.title,
             packages: needle ? s.packages.filter((p) => p.name.toLowerCase().includes(needle)) : s.packages,
+            ...(s.track === undefined ? {} : { track: s.track }),
         }))
         .filter((s) => s.packages.length > 0);
 
@@ -379,7 +464,9 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
         description:
             scopeSentence +
             "A full listing is small (a few hundred packages) and is returned whole by default, so a listing you get back is the complete set unless `hasMore` says otherwise. " +
-            '`names`: check specific packages (e.g. ["Seurat", "scanpy"]) — returns present/absent plus the language track for each, case-insensitively; a name that the Python track and the R track both hold answers once for each track; this is the cheapest call and the right one for \'is X available?\'. ' +
+            '`names`: check specific packages (e.g. ["Seurat", "scanpy"]) — returns present/absent plus the language track for each; this is the cheapest call and the right one for \'is X available?\'. ' +
+            "A Python name matches under PEP 503, thus `scikit_learn` reaches `scikit-learn`. An R name matches its DESCRIPTION spelling exactly, thus `seurat` answers absent and carries `Seurat` as the suggestion. " +
+            "A name that the Python track and the R track both hold answers once for each track. " +
             "`query`: case-insensitive substring filter over package names. " +
             "`language`: restrict to one track (r | python | cli | node). " +
             "`limit`: cap the packages listed; the response always carries the true `total` and a `hasMore` flag, so truncation is never silent. " +
@@ -390,7 +477,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
                 .max(100)
                 .optional()
                 .describe(
-                    "Check these exact package names for presence (case-insensitive). Returns one entry for each track that holds the name: present/absent + the language track it lives in.",
+                    "Check these package names for presence. Returns one entry for each track that holds the name: present/absent + the language track it lives in. An absent name carries the spelling the pool holds, where there is one.",
                 ),
             query: z.string().optional().describe("Case-insensitive substring filter over package names."),
             language: z.enum(["r", "python", "cli", "node"]).optional().describe("Restrict results to one language track."),

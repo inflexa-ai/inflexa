@@ -585,15 +585,16 @@ export type {
     FarmLocation,
     FarmResolution,
     FarmSource,
-    PackageRequest,
     PackageRequestOutcome,
     ResolveAnalysisFarm,
     ToolchainSource,
 } from "./sandbox/types.js";
-// The shelf-key rule of the two tracks. An embedder reads `by_name` of the
-// dependency graph with it, thus the host lookup and the graph key never
-// disagree on the identity of a name.
-export { shelfKey } from "./sandbox/types.js";
+// The identity of a package, the query that asks for one, and the resolution
+// between the two. An embedder reads `by_name` of the dependency graph with
+// these, thus the host lookup, the census, and the graph key never disagree on
+// the identity of a name.
+export { formatQuery, identityAddress, identityKey, identityOf, parseQuery, pythonIdentity, resolveQuery, rIdentity } from "./sandbox/package-identity.js";
+export type { PackageIdentity, PackageQuery, ParseQueryError, PoolIndex, QueryResolution, Track } from "./sandbox/package-identity.js";
 // The farm contract: one `inflexa.lock` per farm. An embedder that composes
 // farms writes this shape, and the mount gate reads it — one schema, no copy.
 export { FARM_LOCK_FILE, FarmLockSchema, readFarmLock, readFarmLockFile } from "./sandbox/farm.js";

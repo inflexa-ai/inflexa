@@ -76,6 +76,8 @@ import uuid
 from pathlib import Path
 
 import emit_deps
+from package_identity import (PackageQuery, QueryError, address, identity_of, key,
+                              parse_query, python_identity, r_identity)
 
 LIBS = Path(os.environ.get("LIB_ROOT", "/mnt/libs"))
 STORE = LIBS / "store"
@@ -144,24 +146,8 @@ HASH_EXCLUDE_SUFFIX = (".pyc", ".nbi", ".nbc")
 # name of its own. Outside a run the token is empty.
 RUN_TOKEN = ""
 
-# The two ecosystems that an acquire spec can name, as the prefix format
-# `python:` / `r:`. The host encodes the ecosystem into it where one is known.
-# The same two words name the track of a package in the plan of an agent, thus
-# the prefix reaches an agent surface. It never reaches a human surface: a
-# person names the ecosystem with the `--lang` option of the host.
-ECOSYSTEMS = ("python", "r")
-
-# The internal spec format of one acquire request.
-SPEC_PREFIX = re.compile(r"^(python|r):(.+)$")
-
-
 def log(msg: str) -> None:
     print(f"[provision] {msg}", flush=True)
-
-
-def canon(name: str) -> str:
-    """PEP 503 normalized distribution name."""
-    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def arch() -> str:
@@ -280,10 +266,15 @@ class ResolveError(Exception):
     batch still lands. A build run lets it stop the run."""
 
 
-def find_stored(pin: str) -> Path | None:
-    """An existing store directory that holds exactly this pin."""
+def find_stored(pin: str, track: str) -> Path | None:
+    """An existing store directory that holds exactly this pin.
+
+    The directory carries the ADDRESS of the identity, not its name: `GO.db`
+    stores under `go-db-<version>-<hash16>`. The pin marker inside carries the
+    identity, thus two identities of one address stay apart.
+    """
     name, version = pin.split("==", 1)
-    for candidate in sorted(STORE.glob(f"{canon(name)}-{version}-*")):
+    for candidate in sorted(STORE.glob(f"{address(identity_of(track, name))}-{version}-*")):
         for marker in (candidate / PIN_MARKER, candidate / name / PIN_MARKER):
             if marker.is_file() and marker.read_text().strip() == pin:
                 return candidate
@@ -297,21 +288,22 @@ def ensure_stored(pin: str, hashes: list[str]) -> tuple[Path, bool]:
     download matches none of the recorded hashes. A pin that reaches here
     without a hash fails loudly rather than installing unverified.
     """
-    existing = find_stored(pin)
+    existing = find_stored(pin, "python")
     if existing is not None:
         return existing, False
 
     name, version = pin.split("==", 1)
+    identity = python_identity(name)
     if not hashes:
         raise SystemExit(f"[provision] refusing to install {pin} without a source hash")
     # Staged inside the store, not under /tmp: publishing is a rename, and a
     # rename is atomic within one filesystem only.
-    staging = staging_dir("python") / canon(name)
+    staging = staging_dir("python") / address(identity)
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    frag = run_temp(f"req-{canon(name)}.txt")
+    frag = run_temp(f"req-{address(identity)}.txt")
     frag.write_text(pin + "".join(f" --hash={h}" for h in hashes) + "\n")
 
     log(f"installing {pin}")
@@ -328,7 +320,7 @@ def ensure_stored(pin: str, hashes: list[str]) -> tuple[Path, bool]:
             f"{proc.stderr.strip() or '(uv wrote nothing to stderr)'}")
 
     digest = tree_hash(staging)
-    final = STORE / f"{canon(name)}-{version}-{digest[:16]}"
+    final = STORE / f"{address(identity)}-{version}-{digest[:16]}"
     if final.exists():
         shutil.rmtree(staging)
         return final, False
@@ -537,13 +529,15 @@ def read_r_linking(pkg_dir: Path) -> list[str]:
 def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
     """Content-address an installed R package directory into the store.
 
-    The store directory nests the package one level down, under its real
-    package name: R rebuilds its own path as libname/packagename, and the
-    nesting is what makes that resolve. renv's cache proves the layout.
+    The store DIRECTORY carries the address of the identity, and it nests the
+    package one level down under the identity NAME: R rebuilds its own path as
+    libname/packagename, and the nesting is what makes that resolve. renv's
+    cache proves the layout.
     """
     name, version = read_r_pkg(pkg_dir)
+    identity = r_identity(name)
     pin = f"{name}=={version}"
-    existing = find_stored(pin)
+    existing = find_stored(pin, "r")
     if existing is not None:
         return existing, False
     wrap = pkg_dir.parent / f".wrap-{pkg_dir.name}"
@@ -553,7 +547,7 @@ def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
     pkg_dir.rename(wrap / name)
     inner = wrap / name
     digest = tree_hash(wrap)
-    final = STORE / f"{canon(name)}-{version}-{digest[:16]}"
+    final = STORE / f"{address(identity)}-{version}-{digest[:16]}"
     if final.exists():
         shutil.rmtree(wrap)
         return final, False
@@ -1004,40 +998,47 @@ def cmd_remove_farm(args) -> int:
 # --- acquire ---------------------------------------------------------------------
 
 
-def parse_spec(raw: str) -> dict:
-    """One acquire spec: an optional internal ecosystem prefix, a name, one
-    optional exact version. The prefix format never reaches a user surface."""
-    ecosystem = None
-    body = raw
-    match = SPEC_PREFIX.match(raw)
-    if match:
-        ecosystem, body = match.group(1), match.group(2)
-    name, _, version = body.partition("==")
-    return {"raw": raw, "name": name.strip(), "version": version.strip() or None,
-            "ecosystem": ecosystem}
+def refusal_reason(error: QueryError) -> str:
+    """The refusal text of one spec that `parse_query` would not read.
 
-
-def reject_off_index(spec: dict) -> str | None:
-    """The refusal reason for a spec that names a location, or None.
-
-    A direct URL, a VCS ref, or a local path bypasses the index and its
-    hashes. Naming a package is permitted; naming a location is not. A
-    slash-carrying request is a github or git form, and those tracks are
-    catalog-only — the manifest carries them, and an acquisition refuses.
+    A location bypasses the index and its hashes, thus the reason names which
+    kind of location the spec wrote: a URL or a local path, an artifact file,
+    or a repository. A repository is the github or git form, and those tracks
+    are catalog-only — the manifest carries them, and an acquisition refuses.
     """
-    body = spec["name"]
-    if "://" in spec["raw"] or body.startswith((".", "~")):
+    entry = error.entry
+    if error.type == "location":
+        if entry.endswith((".whl", ".tar.gz", ".zip")):
+            return "an artifact file bypasses the pinned index and its hashes"
+        if "://" not in entry and not entry.startswith((".", "~")) and "/" in entry:
+            return ("the github and git tracks are catalog-only — an acquisition "
+                    "covers CRAN, Bioconductor, and the Python index")
         return "a location is not a package request — name the package as a requirement"
-    if body.endswith((".whl", ".tar.gz", ".zip")):
+    if error.type == "unknown_prefix":
+        return (f"the prefix {error.prefix!r} names no ecosystem — the permitted "
+                "prefixes are 'python:' and 'r:', and a bare name searches both")
+    if error.type == "unsupported_specifier":
+        return (f"the specifier {error.specifier!r} is not an exact pin — name the "
+                "package as a bare name, or as name==version")
+    return "an empty spec names no package"
+
+
+def reject_off_index(query: PackageQuery) -> str | None:
+    """The refusal reason for a query that names an artifact file, or None.
+
+    A wheel or a source archive is a legal distribution NAME by the grammar,
+    thus the parser reads it. It is not a legal ask of this provisioner: the
+    install runs against the pinned index under `--require-hashes`, and a file
+    name bypasses both.
+    """
+    if query.spelling.endswith((".whl", ".tar.gz", ".zip")):
         return "an artifact file bypasses the pinned index and its hashes"
-    if "/" in body:
-        return "the github and git tracks are catalog-only — an acquisition covers CRAN, Bioconductor, and the Python index"
     return None
 
 
 def python_index_holds(name: str) -> bool:
     """A presence probe of one name against the pinned Python index."""
-    url = f"{INDEX_URL.rstrip('/')}/{canon(name)}/"
+    url = f"{INDEX_URL.rstrip('/')}/{python_identity(name).name}/"
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
             return response.status == 200
@@ -1095,8 +1096,8 @@ def _pool_constraints() -> Path | None:
     return path
 
 
-def acquire_python_spec(spec: dict) -> dict:
-    """Acquire one Python spec: its own closure into the pool.
+def acquire_python_spec(query: PackageQuery, raw: str) -> dict:
+    """Acquire one Python query: its own closure into the pool.
 
     Per-spec resolution is correct for a pool: the pool holds many versions,
     and a farm resolves one at link time. Two specs whose closures share a
@@ -1104,7 +1105,7 @@ def acquire_python_spec(spec: dict) -> dict:
     shared dependency installs once. The resolve rides the pool pins as
     constraints, and a conflict drops them — refer to `_pool_constraints`.
     """
-    requirement = spec["name"] + (f"=={spec['version']}" if spec["version"] else "")
+    requirement = query.spelling + (f"=={query.version}" if query.version else "")
     try:
         constraints = _pool_constraints()
         if constraints is None:
@@ -1123,9 +1124,9 @@ def acquire_python_spec(spec: dict) -> dict:
             if is_new:
                 installed.append(pin)
     except ResolveError as exc:
-        return {"spec": spec["raw"], "outcome": "refused", "reason": str(exc)}
+        return {"spec": raw, "outcome": "refused", "reason": str(exc)}
     return {
-        "spec": spec["raw"],
+        "spec": raw,
         "outcome": "acquired",
         "ecosystem": "python",
         "installed": installed,
@@ -1134,22 +1135,23 @@ def acquire_python_spec(spec: dict) -> dict:
     }
 
 
-def acquire_r_spec(spec: dict) -> dict:
-    """Acquire one R spec through pak, against CRAN and Bioconductor only.
+def acquire_r_spec(query: PackageQuery, raw: str) -> dict:
+    """Acquire one R query through pak, against CRAN and Bioconductor only.
 
     The resolve names the closure. An entry that the pool already holds at the
     resolved version links from the pool and never installs again — the
     needed subset alone installs, into a private staging library. The pak lock
     of the acquisition rides in the outcome as provenance.
     """
-    ref = spec["name"] + (f"@{spec['version']}" if spec["version"] else "")
-    lock_out = run_temp(f"pak-lock-{canon(spec['name'])}.json")
+    ref = query.spelling + (f"@{query.version}" if query.version else "")
+    spec_address = address(r_identity(query.spelling))
+    lock_out = run_temp(f"pak-lock-{spec_address}.json")
     proc = subprocess.run(
         ["Rscript", "/usr/local/bin/acquire_r.R", "resolve", ref, str(lock_out)],
         capture_output=True, text=True,
     )
     if proc.returncode != 0:
-        return {"spec": spec["raw"], "outcome": "refused",
+        return {"spec": raw, "outcome": "refused",
                 "reason": (proc.stderr.strip() or "pak could not resolve the request")}
     pak_lock = json.loads(lock_out.read_text())
     entries = [
@@ -1162,8 +1164,8 @@ def acquire_r_spec(spec: dict) -> dict:
     # never installs again. The lock filters to the needed subset, and pak
     # installs exactly that subset — lockfile_install re-resolves nothing.
     needed_names = {e["name"] for e in entries
-                    if find_stored(f"{e['name']}=={e['version']}") is None}
-    staging = staging_dir("r") / canon(spec["name"])
+                    if find_stored(f"{e['name']}=={e['version']}", "r") is None}
+    staging = staging_dir("r") / spec_address
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
@@ -1171,7 +1173,7 @@ def acquire_r_spec(spec: dict) -> dict:
         filtered = dict(pak_lock)
         filtered["packages"] = [p for p in pak_lock.get("packages", [])
                                 if isinstance(p, dict) and p.get("package") in needed_names]
-        filtered_path = run_temp(f"pak-lock-needed-{canon(spec['name'])}.json")
+        filtered_path = run_temp(f"pak-lock-needed-{spec_address}.json")
         filtered_path.write_text(json.dumps(filtered) + "\n")
         proc = subprocess.run(
             ["Rscript", "/usr/local/bin/acquire_r.R", "install", str(filtered_path), str(staging)],
@@ -1179,7 +1181,7 @@ def acquire_r_spec(spec: dict) -> dict:
         )
         if proc.returncode != 0:
             shutil.rmtree(staging, ignore_errors=True)
-            return {"spec": spec["raw"], "outcome": "refused",
+            return {"spec": raw, "outcome": "refused",
                     "reason": (proc.stderr.strip() or "pak could not install the resolved set")}
 
     store_dirs: list[Path] = []
@@ -1191,13 +1193,13 @@ def acquire_r_spec(spec: dict) -> dict:
         if is_new:
             installed.append(f"{name}=={version}")
     for entry in entries:
-        hit = find_stored(f"{entry['name']}=={entry['version']}")
+        hit = find_stored(f"{entry['name']}=={entry['version']}", "r")
         if hit is not None and hit not in store_dirs:
             store_dirs.append(hit)
     shutil.rmtree(staging, ignore_errors=True)
 
     return {
-        "spec": spec["raw"],
+        "spec": raw,
         "outcome": "acquired",
         "ecosystem": "r",
         "installed": installed,
@@ -1222,56 +1224,64 @@ def cmd_acquire(args) -> int:
     global RUN_TOKEN
     RUN_TOKEN = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
-    specs = [parse_spec(raw) for raw in args.specs]
-    if not specs:
+    if not args.specs:
         log("acquire: no spec given")
         return 2
 
     with store_lock(shared=True):
         STORE.mkdir(parents=True, exist_ok=True)
         outcomes: list[dict] = []
-        pending: list[dict] = []
-        for spec in specs:
-            reason = reject_off_index(spec)
+        pending: list[tuple[str, PackageQuery]] = []
+        for raw in args.specs:
+            try:
+                query = parse_query(raw)
+            except QueryError as error:
+                outcomes.append({"spec": raw, "outcome": "refused",
+                                 "reason": refusal_reason(error)})
+                continue
+            reason = reject_off_index(query)
             if reason is not None:
-                outcomes.append({"spec": spec["raw"], "outcome": "refused", "reason": reason})
-            else:
-                pending.append(spec)
+                outcomes.append({"spec": raw, "outcome": "refused", "reason": reason})
+                continue
+            pending.append((raw, query))
 
         # The both-hit stop. An unqualified name searches both ecosystems.
-        # When both hold it, the run stops that spec with the two candidates,
+        # When both hold it, the run stops that spec with the two identities,
         # and the host asks the user. A silent Python-first win is a fault.
-        unqualified = [s for s in pending if s["ecosystem"] is None]
-        r_presence = r_repos_hold([s["name"] for s in unqualified])
-        ready: list[dict] = []
-        for spec in pending:
-            if spec["ecosystem"] is not None:
-                ready.append(spec)
+        unqualified = [query for _raw, query in pending if query.track is None]
+        r_presence = r_repos_hold([query.spelling for query in unqualified])
+        ready: list[tuple[str, PackageQuery]] = []
+        for raw, query in pending:
+            if query.track is not None:
+                ready.append((raw, query))
                 continue
-            in_python = python_index_holds(spec["name"])
-            in_r = bool(r_presence.get(spec["name"], False))
+            in_python = python_index_holds(query.spelling)
+            in_r = bool(r_presence.get(query.spelling, False))
             if in_python and in_r:
+                # The R probe matches a name exactly, thus an R hit means that
+                # the spelling IS the R identity.
                 outcomes.append({
-                    "spec": spec["raw"],
+                    "spec": raw,
                     "outcome": "both_hit",
                     "candidates": [
-                        {"ecosystem": "python", "name": canon(spec["name"])},
-                        {"ecosystem": "r", "name": spec["name"]},
+                        key(python_identity(query.spelling)),
+                        key(r_identity(query.spelling)),
                     ],
                 })
             elif in_python:
-                ready.append({**spec, "ecosystem": "python"})
+                ready.append((raw, PackageQuery(query.spelling, "python", query.version)))
             elif in_r:
-                ready.append({**spec, "ecosystem": "r"})
+                ready.append((raw, PackageQuery(query.spelling, "r", query.version)))
             else:
-                outcomes.append({"spec": spec["raw"], "outcome": "refused",
+                outcomes.append({"spec": raw, "outcome": "refused",
                                  "reason": "no ecosystem holds the name"})
 
         # One outcome per spec. A spec that cannot resolve drops out with its
         # own refusal, and the rest of the set still lands.
         acquired_dirs: list[Path] = []
-        for spec in ready:
-            outcome = acquire_python_spec(spec) if spec["ecosystem"] == "python" else acquire_r_spec(spec)
+        for raw, query in ready:
+            outcome = (acquire_python_spec(query, raw) if query.track == "python"
+                       else acquire_r_spec(query, raw))
             outcomes.append(outcome)
             if outcome["outcome"] == "acquired":
                 acquired_dirs.extend(STORE / name for name in outcome["store_dirs"])
@@ -1296,7 +1306,7 @@ def cmd_acquire(args) -> int:
         os.replace(temp, report_path)
 
     acquired = sum(1 for o in outcomes if o["outcome"] == "acquired")
-    log(f"acquire: {acquired}/{len(specs)} spec(s) acquired; report at {args.report}; "
+    log(f"acquire: {acquired}/{len(args.specs)} spec(s) acquired; report at {args.report}; "
         f"deps.json untouched — the host commits after the load check")
     return 0
 
@@ -1373,9 +1383,9 @@ def resolve_manifest_python(entries: list[dict], committed: dict) -> dict[str, l
     specs = [e["name"] + e["constraint"] for e in entries]
     unchanged_pins: list[str] = []
     for entry in entries:
-        recorded = committed.get("entries", {}).get(canon(entry["name"]))
+        recorded = committed.get("entries", {}).get(python_identity(entry["name"]).name)
         if recorded == entry["constraint"]:
-            root_pin = committed.get("roots", {}).get(canon(entry["name"]))
+            root_pin = committed.get("roots", {}).get(python_identity(entry["name"]).name)
             if root_pin:
                 unchanged_pins.append(root_pin)
     constraints: Path | None = None
@@ -1396,13 +1406,13 @@ def committed_lock_of(entries: list[dict], pins: dict[str, list[str]]) -> dict:
     roots: dict[str, str] = {}
     by_name = {pin.split("==", 1)[0]: pin for pin in pins}
     for entry in entries:
-        pin = by_name.get(canon(entry["name"]))
+        pin = by_name.get(python_identity(entry["name"]).name)
         if pin:
-            roots[canon(entry["name"])] = pin
+            roots[python_identity(entry["name"]).name] = pin
     return {
         "schema": 1,
         "arch": arch(),
-        "entries": {canon(e["name"]): e["constraint"] for e in entries},
+        "entries": {python_identity(e["name"]).name: e["constraint"] for e in entries},
         "roots": roots,
         "pins": pins,
     }
@@ -1447,7 +1457,7 @@ def cmd_build(args) -> int:
         pins: dict[str, list[str]] = {}
         if entries:
             pins = resolve_manifest_python(entries, committed)
-            requested_names = {canon(e["name"]) for e in entries}
+            requested_names = {python_identity(e["name"]).name for e in entries}
             store_dirs: list[Path] = []
             added = 0
             for pin in pins:
@@ -1460,7 +1470,7 @@ def cmd_build(args) -> int:
             for store_dir in store_dirs:
                 pin = (store_dir / PIN_MARKER).read_text().strip()
                 packages.append(lock_package_entry(
-                    store_dir, "python", canon(pin.split("==", 1)[0]) in requested_names))
+                    store_dir, "python", python_identity(pin.split("==", 1)[0]).name in requested_names))
 
         # The R tracks, through pak (gen-r-lock.R): CRAN + Bioconductor + the
         # catalog-only git track resolve as one lockfile, and GitHub installs

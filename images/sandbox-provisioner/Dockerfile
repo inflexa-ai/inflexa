@@ -72,12 +72,13 @@ RUN R -e "install.packages(c('pak', 'yaml', 'jsonlite'))" > /tmp/pak-bootstrap.l
 COPY images/sandbox-provisioner/gen-r-lock.R /usr/local/bin/gen-r-lock.R
 COPY images/sandbox-provisioner/acquire_r.R /usr/local/bin/acquire_r.R
 
-# The provisioner program: five subcommands, one mode each. emit_deps.py rides
-# beside it, because provision.py imports it and the directory of the running
-# script is on the module path. base-packages.json holds the image-owned names
-# that the emitter drops an edge into.
+# The provisioner program: five subcommands, one mode each. emit_deps.py and
+# package_identity.py ride beside it, because provision.py imports both and the
+# directory of the running script is on the module path. base-packages.json
+# holds the image-owned names that the emitter drops an edge into.
 COPY images/sandbox-provisioner/provision.py /usr/local/bin/provision
 COPY images/sandbox-provisioner/emit_deps.py /usr/local/bin/emit_deps.py
+COPY images/sandbox-provisioner/package_identity.py /usr/local/bin/package_identity.py
 COPY images/sandbox-provisioner/base-packages.json /usr/local/bin/base-packages.json
 COPY images/sandbox-provisioner/provisioner-entrypoint.sh /usr/local/bin/provisioner-entrypoint.sh
 COPY images/sandbox-provisioner/egress-allowlist.sh /usr/local/bin/egress-allowlist.sh

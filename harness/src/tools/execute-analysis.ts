@@ -18,7 +18,8 @@ import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { buildRunCardData } from "../memory/card-builders.js";
 import type { ChatProvider } from "../providers/types.js";
-import type { ExtendAnalysisFarm, PackageRequest } from "../sandbox/types.js";
+import { formatQuery, parseQuery, type PackageQuery } from "../sandbox/package-identity.js";
+import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import { AnalysisPlanSchema, type AnalysisPlan } from "../schemas/workflow-state.js";
 import { validatePlan } from "../schemas/validate-plan.js";
 import { RunDedupCollisionError, insertRun, loadPlan, queryActiveRun, reserveRunById, updateRunStatus, upsertPlan } from "../state/index.js";
@@ -116,73 +117,37 @@ export class PlanPackagesMissingError extends Error {
 }
 
 /**
- * One plan package entry, in requirement form: a bare name, or a name with
- * one exact version, either of them behind an optional ecosystem prefix.
- *
- * The prefix is `python:` or `r:` — the two names of the tracks of the pool.
- * A bare entry carries no ecosystem, thus the link pass searches both tracks
- * and a name that both tracks hold comes back as a collision. `validatePlan`
- * refuses any other `<word>:` prefix, thus an unknown prefix never reaches
- * this parser.
- */
-function parseRequirement(entry: string): PackageRequest {
-    const trimmed = entry.trim();
-    const ecosystem = trimmed.startsWith("python:") ? "python" : trimmed.startsWith("r:") ? "r" : undefined;
-    const rest = ecosystem === undefined ? trimmed : trimmed.slice(ecosystem.length + 1);
-    const split = rest.indexOf("==");
-    const name = (split < 0 ? rest : rest.slice(0, split)).trim();
-    return {
-        name,
-        ...(split < 0 ? {} : { version: rest.slice(split + 2).trim() }),
-        ...(ecosystem === undefined ? {} : { ecosystem }),
-    };
-}
-
-/**
  * Link the packages of the plan into the farm of the analysis, before the
- * run reserves anything. The linked set is the union of the packages of each
- * step. A pool miss and a collision refuse the launch with the names. Without
- * a bound seam, the pass returns at once.
+ * run reserves anything. The linked set is the union of the queries of each
+ * step. A pool miss and a collision refuse the launch with the spellings.
+ * Without a bound seam, the pass returns at once.
  */
 async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefined, analysisId: string, plan: AnalysisPlan): Promise<void> {
     if (!extendAnalysisFarm) return;
-    // The union keys each entry by its EXACT spelling, because two spellings
-    // are two identities: `decoupler` is a Python distribution and `decoupleR`
-    // is an R package, and a fold of the two would drop one of them.
-    //
-    // One slot list per spelling. A spelling that no entry qualifies holds one
-    // bare request. A spelling that one prefix qualifies holds that one
-    // request, because a prefixed entry ABSORBS the bare entry of its spelling:
-    // the plan names one package there. Two prefixes of one spelling hold two
-    // requests, because the plan names two packages.
-    const union = new Map<string, PackageRequest[]>();
+    // The union dedupes EQUAL queries only: two entries are one ask when their
+    // spelling, their track, and their version are equal. A bare entry beside a
+    // qualified entry of one spelling stays two asks, because the bare one
+    // carries its own refusal — an absorption would drop the pin of one entry
+    // and silence a wrong track.
+    const union = new Map<string, PackageQuery>();
     for (const step of plan.steps) {
         for (const entry of step.packages ?? []) {
-            const request = parseRequirement(entry);
-            const slots = union.get(request.name);
-            if (slots === undefined) {
-                union.set(request.name, [request]);
-                continue;
+            const parsed = parseQuery(entry);
+            if (parsed.isErr()) {
+                // `validatePlan` parsed every entry of this plan already, thus a
+                // refusal here means that the two readers disagree.
+                throw new Error(`Step "${step.id}" carries the package entry "${entry}", which the plan validation should have refused`);
             }
-            if (request.ecosystem === undefined) continue;
-            if (slots.some((held) => held.ecosystem === request.ecosystem)) continue;
-            const bareAt = slots.findIndex((held) => held.ecosystem === undefined);
-            const bare = bareAt < 0 ? undefined : slots[bareAt];
-            if (bare === undefined) {
-                slots.push(request);
-            } else {
-                // The bare entry keeps its version, and it gains the track that
-                // the prefixed entry names.
-                slots.splice(bareAt, 1);
-                slots.push({ ...bare, ecosystem: request.ecosystem });
-            }
+            const query = parsed.value;
+            const key = formatQuery(query);
+            if (!union.has(key)) union.set(key, query);
         }
     }
-    const requests = [...union.values()].flat();
-    if (requests.length === 0) return;
+    const queries = [...union.values()];
+    if (queries.length === 0) return;
     let outcomes: Awaited<ReturnType<ExtendAnalysisFarm>>;
     try {
-        outcomes = await extendAnalysisFarm(analysisId, requests);
+        outcomes = await extendAnalysisFarm(analysisId, queries);
     } catch (cause) {
         // A realization throw is an `unavailable` answer, not a driver error.
         // The sibling resolver seam maps a throw the same way (farm.ts), and
@@ -201,10 +166,11 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
     // so the agent replans from the true state instead of re-asking. A
     // collision's detail names the two pins and what needs each side — the
     // remedy is to drop or re-pin a DEPENDENT, so the refusal must name it.
-    const missing = outcomes.filter((o) => o.kind === "absent").map((o) => (o.detail === undefined ? o.name : `${o.name} — ${o.detail}`));
+    const missing = outcomes.filter((o) => o.kind === "absent").map((o) => (o.detail === undefined ? o.spelling : `${o.spelling} — ${o.detail}`));
     // A collision names the two store directories AND the two prefixed forms.
-    // One name that both tracks hold is the common cause, and the prefix is
-    // the remedy that a plan can write: `python:<name>` or `r:<name>`.
+    // One spelling that both tracks hold is the common cause, and the prefix is
+    // the remedy that a plan can write. `formatQuery` writes the two forms,
+    // thus the refusal quotes the grammar that the plan reads.
     //
     // The prefix carries its CONDITION, because the outcome shape cannot tell
     // the two collisions apart: two versions of one distribution collide too,
@@ -214,9 +180,10 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
         .filter((o) => o.kind === "collision")
         .map(
             (o) =>
-                `${o.name} — two store directories claim it, ${o.storeDirs[0]} and ${o.storeDirs[1]}` +
+                `${o.spelling} — two store directories claim it, ${o.storeDirs[0]} and ${o.storeDirs[1]}` +
                 `${o.detail === undefined ? "" : ` (${o.detail})`}` +
-                `; when the two directories are one name in two tracks, name the track in the plan, as python:${o.name} or r:${o.name}`,
+                `; when the two directories are one spelling in two tracks, name the track in the plan, as ` +
+                `${formatQuery({ spelling: o.spelling, track: "python" })} or ${formatQuery({ spelling: o.spelling, track: "r" })}`,
         );
     if (missing.length > 0 || collisions.length > 0) {
         throw new PlanPackagesMissingError(missing, collisions);
