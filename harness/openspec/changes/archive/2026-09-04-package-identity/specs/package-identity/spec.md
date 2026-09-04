@@ -64,11 +64,11 @@ The grammar of a query MUST be `[python:|r:]<spelling>[==<version>]`.
 `Result`. Its errors are typed: `empty`, `location` (a path, a URL, or a
 store directory), `unknown_prefix` (any other `<word>:`), and
 `unsupported_specifier` (any specifier that is not `==`). An
-`unknown_prefix` error MUST carry the offending prefix, and each reader of
-that error MUST name `python:` and `r:` in its own refusal. `formatQuery(query)`
-MUST write the prefix only when the query names a track, and `==<version>`
-only when it names a version. For every query, `parseQuery(formatQuery(query))`
-MUST equal the query.
+`unknown_prefix` error MUST carry the offending prefix. Each reader of that
+error in the harness MUST name `python:` and `r:` in its own refusal.
+`formatQuery(query)` MUST write the prefix only when the query names a track,
+and `==<version>` only when it names a version. For every query,
+`parseQuery(formatQuery(query))` MUST equal the query.
 
 Every reader of the grammar in the harness MUST call `parseQuery`: the
 plan validation, the link pass, and `link_packages`. No second parser of
