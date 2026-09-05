@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference exactly in scope: it stops at QC, computes per-sample library sizes with the cohort median annotated, applies a blind VST (correctly avoiding the design formula so the condition contrast is not baked in), runs PCA on the top 500 variable genes colored by condition, and builds a 12x12 Euclidean distance heatmap with clustering. The low-count pre-filter (>=10 counts in at least 6 samples) is minimal and justified by the smaller group size, and normalization is handled inside DESeq2 via size factors with an explicit note that sample_01's depth is down-weighted by the size factor rather than corrected beforehand. The sample_01 verdict is correctly grounded in PCA position, distance-heatmap clustering, and detected-gene count rather than library size alone, with an explicit keep/exclude recommendation and no silent removal. No differential test, no p-values, no fold changes, and no enrichment are proposed, which is right for this question; the only gap is that software versions are not stated for the report, and the design formula/contrast is necessarily absent (appropriately so) rather than deferred with an explicit downstream recommendation."
+}

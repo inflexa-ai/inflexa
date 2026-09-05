@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference workflow closely: QC (VST PCA, distance heatmap, library sizes) before testing, a minimal filter justified as counts>=10 in >=3 samples (smallest group size), median-of-ratios normalization internal to DESeq2, an explicit ~condition design with control releveled as reference and a named treated-vs-control Wald contrast, BH at alpha=0.05 passed to results() with apeglm shrinkage, and repeated, non-generic statements about limited power at n=3/group. The enrichment step correctly states that no curated zebrafish collection exists and takes the ortholog route, restricting to 1:1 human orthologs, reporting the mapped share, using the full ranked list on the Wald statistic with a stated universe, size window 15-500, and a named collection version. Deductions: the Ensembl release and the zebrafish identifier space are only gestured at via an 'annotation_release' field in the reproducibility record rather than named, and the plan assumes gene symbols when Salmon on Ensembl yields Ensembl gene IDs; the ortholog table version (babelgene build) is likewise not pinned. QC also flags library-size deviation and outliers but never states what action would follow an outlier, which is a weak policy rather than none."
+}

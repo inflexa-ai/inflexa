@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan selects limma-voom with eBayes on a fixed-effects ~condition design, which is exactly the right tool for an unpaired 60v60 single-batch cohort, and it justifies the choice by cohort size rather than by habit; the added Wilcoxon robustness check and the parallel DESeq2 fit used solely for apeglm shrinkage are defensible, though borrowing an effect size from a different model than the one making the significance call is a mild inconsistency (limma's own logFC CI or TREAT-based estimates would be cleaner). Filtering (filterByExpr, min.count=10, grouped, with retained-gene count reported), TMM inside voom, explicit control reference level and named contrast, BH at 0.05, a pre-specified TREAT fold-change threshold, and distinct counts for FDR-only vs FDR-plus-effect are all stated concretely. QC is strong (blind VST PCA, distance heatmap, library sizes, 121-vs-120 reconciliation, no silent sample removal) but omits the sex check against XIST/Y-linked genes and any explicit search for hidden structure with named candidate factors, which the reference calls for. Enrichment is properly ranked-list based with camera (inter-gene correlation), fgsea on the moderated t, named collections and versions, a 15–500 size window, and leading-edge reporting; the report step names versions, design, thresholds, counts, plots, and restates caveats plainly."
+}

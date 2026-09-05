@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 Wald with ~condition and control as reference is valid for an unpaired 60 vs 60 single-batch design, and the plan backs it with limma-voom/edgeR-QL concordance, though the reference notes voom is the more natural fit at this scale. The effect-size handling is exemplary: apeglm shrinkage, a formal lfcThreshold/treat test at log2(1.5) with sensitivity at other thresholds, BH at 0.05, and an explicit cross-tab of significant-but-trivial genes. QC covers PCA, correlations, library size, globin fraction and an outlier-reporting policy but omits the sex check against XIST/Y-linked genes; the filter (≥10 counts in ≥60 samples or filterByExpr) is reported but only loosely justified. Enrichment names hallmark and GO-BP and an explicit tested-gene universe, but ranks by shrunken LFC rather than the moderated statistic, and states no collection version or set-size window; software versions are also not required in the report."
+}

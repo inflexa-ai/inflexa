@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats this as an ORA on the existing DESeq2 table with no refit, defines the foreground with explicit padj < 0.05 and |log2FC| > 1 cutoffs, and uses the tested 12000-gene panel (non-NA padj) as the universe rather than the genome, with a hypergeometric/Fisher test, BH at 0.05, and a report giving term, gene ratio, FDR and overlapping genes. Weaknesses: the MSigDB C5 GO:BP collection is named but no version is given, no gene-set size window is stated, redundancy is handled by an ad hoc 80% overlap heuristic rather than semantic-similarity simplify/rrvgo, and up- and down-regulated genes are counted separately but the ORA is run on the pooled list without stating or justifying the pooling. Sample_01 and fold-change shrinkage are acknowledged only as inherited caveats, which is acceptable for a results-in-hand task but leaves the QC and shrinkage criteria only partially addressed; software versions are not specified."
+}

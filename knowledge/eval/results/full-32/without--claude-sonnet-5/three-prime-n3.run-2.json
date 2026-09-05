@@ -1,0 +1,253 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "three-prime-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T18:14:06.914Z",
+  "elapsedMs": 36145,
+  "outcome": "plan_submitted",
+  "planId": "pln-2b899aba",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, and filter raw counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is 3' tag-seq — do not apply gene-length-based normalization (TPM/FPKM/RPKM) at any point in this pipeline; STAR/featureCounts gene-level raw counts go directly into DESeq2's own normalization",
+          "Single batch, unpaired 3v3 design — no batch correction step is warranted here"
+        ],
+        "context": "Input files: /eval-full-32-without-three-prime-n3-2/data/inputs/counts/counts.csv (12000 x 7, first column gene symbol, one column per sample) and /eval-full-32-without-three-prime-n3-2/data/inputs/metadata/metadata.csv (6 samples x 2 columns, condition). Library is Lexogen QuantSeq FWD 3' tag-seq (one read per transcript molecule); this changes only normalization downstream, not this filtering step.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the counts.csv (12000 genes x 6 samples) and metadata.csv (6 samples, condition column) align correctly, and which genes pass a minimum-expression filter before differential testing between treated (n=3) and control (n=3)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample names in counts.csv columns match metadata.csv rows exactly (order-checked and reordered if needed)",
+          "Confirms 3 treated and 3 control samples per the metadata condition column",
+          "Reports library size (total counts) per sample and flags any sample with a size markedly divergent from the others",
+          "Applies a minimum-count filter (e.g., genes with count >=10 in at least 3 samples) and reports genes retained vs the original 12000",
+          "Outputs a filtered count matrix and cleaned metadata table for the DESeq2 step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is small; DESeq2's moderated dispersion estimation helps but power for subtle effects will be limited — state this in the results summary rather than overclaiming significance calls",
+          "Do not renormalize by gene length or re-derive TPM/FPKM before DESeq2 — the library type has no length dependence and doing so would distort size factors"
+        ],
+        "context": "Small unpaired two-group design (3 treated vs 3 control, single batch), 12000 genes after filtering, 3' tag-seq counts from STAR/featureCounts. This is the primary deliverable answering 'which genes differ between treated and control'.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Which genes are significantly differentially expressed between treated (n=3) and control (n=3) liver samples using DESeq2 on the filtered raw counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeqDataSet built from filtered counts and cleaned metadata with design ~ condition (treated vs control), control set as the reference level",
+          "Uses DESeq2 default median-of-ratios size factor estimation (no length-based normalization, consistent with 3' tag-seq)",
+          "Wald test for the treated vs control contrast, independent filtering enabled, Benjamini-Hochberg adjusted p-values reported",
+          "Log2 fold changes shrunk via apeglm (or ashr as fallback) for the treated-vs-control coefficient",
+          "Full results table (gene, baseMean, log2FoldChange, lfcSE, pvalue, padj) written out, ranked by padj",
+          "Reports number of genes at padj < 0.05 and separately at padj < 0.1, with the |log2FC| threshold used stated explicitly",
+          "Includes a PCA or sample-distance plot on variance-stabilized data as a sanity check of the 3-vs-3 grouping, and an MA plot of the shrunken results"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes against WikiPathways human",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only 3v3 samples the DE gene list may be short; if the significant gene set is too small for reliable ORA, GSEA on the full ranked list is the more robust choice and should be preferred",
+          "Gene symbols in counts.csv must match HGNC symbols used in the GMT file; report and drop any unmapped genes rather than silently ignoring the mismatch"
+        ],
+        "context": "Organism-matched reference: WikiPathways human pathway gene sets (HGNC symbols) at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, one pathway per line with a '%'-delimited descriptor field to recover the pathway name.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among the genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the significant DE gene list (padj < 0.05, or the padj<0.1 set if the stricter threshold yields too few genes to test, stated explicitly) from T1S2 as the query set",
+          "Background/universe set to the full filtered gene list from T1S1 (post-filtering, not the raw 12000), not a generic genome background",
+          "Runs over-representation analysis (or ranked GSEA using the full log2FC-ranked gene list as an alternative) against the WikiPathways human gene sets",
+          "Reports pathway name, WikiPathways ID, gene overlap, and BH-adjusted p-value for all pathways passing padj < 0.05, or explicitly reports 'no pathways significant' if none pass",
+          "If fewer than ~5 genes are significant at padj<0.05, falls back to GSEA on the full ranked list rather than forcing an underpowered ORA, and states this explicitly"
+        ]
+      }
+    ],
+    "title": "Liver 3' tag-seq DESeq2 treated vs control DE + pathways",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a small bulk RNA-seq experiment (12000 genes x 6 samples: 3 treated vs 3 control, unpaired, single batch) generated with Lexogen QuantSeq FWD 3' tag-seq. Because this is a 3'-tag library with one read per transcript molecule, no gene-length normalization is appropriate (unlike full-length RNA-seq) — DESeq2's median-of-ratios normalization on raw gene-level counts is the correct approach and length-based methods (TPM/FPKM, RPKM-style normalization) must be avoided. With n=3 per group, this is a standard two-group unpaired DESeq2 Wald test design. Steps: (1) QC and filtering of the raw counts.csv/metadata.csv to confirm sample-condition mapping and remove low-count genes, (2) DESeq2 differential expression between treated and control with independent filtering, shrunken log2FC (apeglm) and BH-adjusted p-values, producing an MA/volcano-ready results table, (3) functional enrichment of the significant DE gene set against WikiPathways human pathway gene sets to interpret biological pathways affected by treatment. This sequence follows the standard, defensible bulk RNA-seq DE workflow for a small unpaired design and adds pathway context using the one organism-matched reference gene-set collection available (WikiPathways human)."
+  },
+  "usage": {
+    "inputTokens": 132411,
+    "outputTokens": 3034,
+    "cacheCreationInputTokens": 70784,
+    "cacheReadInputTokens": 61591,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "EnhancedVolcano",
+          "apeglm",
+          "fgsea",
+          "clusterProfiler",
+          "gseapy"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver 3' tag-seq DESeq2 treated vs control DE + pathways",
+          "analytical_narrative": "The dataset is a small bulk RNA-seq experiment (12000 genes x 6 samples: 3 treated vs 3 control, unpaired, single batch) generated with Lexogen QuantSeq FWD 3' tag-seq. Because this is a 3'-tag library with one read per transcript molecule, no gene-length normalization is appropriate (unlike full-length RNA-seq) — DESeq2's median-of-ratios normalization on raw gene-level counts is the correct approach and length-based methods (TPM/FPKM, RPKM-style normalization) must be avoided. With n=3 per group, this is a standard two-group unpaired DESeq2 Wald test design. Steps: (1) QC and filtering of the raw counts.csv/metadata.csv to confirm sample-condition mapping and remove low-count genes, (2) DESeq2 differential expression between treated and control with independent filtering, shrunken log2FC (apeglm) and BH-adjusted p-values, producing an MA/volcano-ready results table, (3) functional enrichment of the significant DE gene set against WikiPathways human pathway gene sets to interpret biological pathways affected by treatment. This sequence follows the standard, defensible bulk RNA-seq DE workflow for a small unpaired design and adds pathway context using the one organism-matched reference gene-set collection available (WikiPathways human).",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, and filter raw counts",
+              "track": "T1",
+              "step_type": "qc_preprocessing",
+              "question": "Do the counts.csv (12000 genes x 6 samples) and metadata.csv (6 samples, condition column) align correctly, and which genes pass a minimum-expression filter before differential testing between treated (n=3) and control (n=3)?",
+              "acceptance_criteria": [
+                "Sample names in counts.csv columns match metadata.csv rows exactly (order-checked and reordered if needed)",
+                "Confirms 3 treated and 3 control samples per the metadata condition column",
+                "Reports library size (total counts) per sample and flags any sample with a size markedly divergent from the others",
+                "Applies a minimum-count filter (e.g., genes with count >=10 in at least 3 samples) and reports genes retained vs the original 12000",
+                "Outputs a filtered count matrix and cleaned metadata table for the DESeq2 step"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input files: /eval-full-32-without-three-prime-n3-2/data/inputs/counts/counts.csv (12000 x 7, first column gene symbol, one column per sample) and /eval-full-32-without-three-prime-n3-2/data/inputs/metadata/metadata.csv (6 samples x 2 columns, condition). Library is Lexogen QuantSeq FWD 3' tag-seq (one read per transcript molecule); this changes only normalization downstream, not this filtering step.",
+              "caveats": [
+                "This is 3' tag-seq — do not apply gene-length-based normalization (TPM/FPKM/RPKM) at any point in this pipeline; STAR/featureCounts gene-level raw counts go directly into DESeq2's own normalization",
+                "Single batch, unpaired 3v3 design — no batch correction step is warranted here"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are significantly differentially expressed between treated (n=3) and control (n=3) liver samples using DESeq2 on the filtered raw counts?",
+              "acceptance_criteria": [
+                "DESeqDataSet built from filtered counts and cleaned metadata with design ~ condition (treated vs control), control set as the reference level",
+                "Uses DESeq2 default median-of-ratios size factor estimation (no length-based normalization, consistent with 3' tag-seq)",
+                "Wald test for the treated vs control contrast, independent filtering enabled, Benjamini-Hochberg adjusted p-values reported",
+                "Log2 fold changes shrunk via apeglm (or ashr as fallback) for the treated-vs-control coefficient",
+                "Full results table (gene, baseMean, log2FoldChange, lfcSE, pvalue, padj) written out, ranked by padj",
+                "Reports number of genes at padj < 0.05 and separately at padj < 0.1, with the |log2FC| threshold used stated explicitly",
+                "Includes a PCA or sample-distance plot on variance-stabilized data as a sanity check of the 3-vs-3 grouping, and an MA plot of the shrunken results"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Small unpaired two-group design (3 treated vs 3 control, single batch), 12000 genes after filtering, 3' tag-seq counts from STAR/featureCounts. This is the primary deliverable answering 'which genes differ between treated and control'.",
+              "caveats": [
+                "n=3 per group is small; DESeq2's moderated dispersion estimation helps but power for subtle effects will be limited — state this in the results summary rather than overclaiming significance calls",
+                "Do not renormalize by gene length or re-derive TPM/FPKM before DESeq2 — the library type has no length dependence and doing so would distort size factors"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes against WikiPathways human",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among the genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Uses the significant DE gene list (padj < 0.05, or the padj<0.1 set if the stricter threshold yields too few genes to test, stated explicitly) from T1S2 as the query set",
+                "Background/universe set to the full filtered gene list from T1S1 (post-filtering, not the raw 12000), not a generic genome background",
+                "Runs over-representation analysis (or ranked GSEA using the full log2FC-ranked gene list as an alternative) against the WikiPathways human gene sets",
+                "Reports pathway name, WikiPathways ID, gene overlap, and BH-adjusted p-value for all pathways passing padj < 0.05, or explicitly reports 'no pathways significant' if none pass",
+                "If fewer than ~5 genes are significant at padj<0.05, falls back to GSEA on the full ranked list rather than forcing an underpowered ORA, and states this explicitly"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Organism-matched reference: WikiPathways human pathway gene sets (HGNC symbols) at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, one pathway per line with a '%'-delimited descriptor field to recover the pathway name.",
+              "caveats": [
+                "With only 3v3 samples the DE gene list may be short; if the significant gene set is too small for reliable ORA, GSEA on the full ranked list is the more robust choice and should be preferred",
+                "Gene symbols in counts.csv must match HGNC symbols used in the GMT file; report and drop any unmapped genes rather than silently ignoring the mismatch"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

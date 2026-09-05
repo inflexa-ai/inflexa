@@ -1,0 +1,237 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "rsem-counts-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T18:14:43.067Z",
+  "elapsedMs": 30292,
+  "outcome": "plan_submitted",
+  "planId": "pln-78c9432c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC profiling and outlier characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Counts are non-integer RSEM expected counts — do not treat fractional values as an error",
+          "Do not drop sample_01 in this step; only characterize and flag it for the downstream DE step to handle explicitly"
+        ],
+        "context": "Input is /eval-full-32-without-rsem-counts-n6-1/data/inputs/counts/counts.csv (12000 genes x 13 cols: gene symbol + 12 samples) and metadata.csv (12 samples x 2 cols: sample, condition). Counts are RSEM expected counts (non-integer). This step establishes the QC baseline the DE step's sensitivity analysis depends on.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "scikit-learn"
+        ],
+        "question": "What are the library-size, gene-detection, and correlation-structure characteristics of the 12 colon samples (6 treated vs 6 control), and how does sample_01's ~4x-below-median library size manifest in these metrics?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Library size (total counts) reported per sample with sample_01 explicitly quantified relative to the median",
+          "Number of detected genes (count>0) per sample reported",
+          "Sample-sample correlation or PCA computed on log-normalized counts to check whether sample_01 is an outlier in expression space, not just in depth",
+          "Output table/plot saved flagging sample_01 as a QC concern with a numeric severity (fold-below-median)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control (RSEM expected counts, rounded)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "RSEM expected counts are not raw integer counts; rounding is an approximation and must be stated as such, not silently applied",
+          "median-of-ratios size-factor normalization in DESeq2 can itself be distorted by a single very-low-depth sample — this is exactly why the exclusion sensitivity run is mandatory, not optional",
+          "Do not report only the full-cohort result — the sensitivity comparison is a required deliverable given the explicit QC caveat"
+        ],
+        "context": "12000 x 12 RSEM expected-counts matrix, 6 treated vs 6 control, unpaired, single batch. Per-sample genes.results with effective lengths were not delivered, so tximport-style length-offset correction is not possible; rounding is the standard fallback for RSEM expected counts. sample_01 flagged in T1S1 as ~4x below median library size.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 12000 genes are significantly differentially expressed between treated (n=6) and control (n=6) colon samples, using DESeq2 on RSEM expected counts rounded to integers, and how sensitive are the results to sample_01's low library size?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Counts matrix loaded, gene symbol column set as row names, non-integer RSEM expected counts rounded to nearest integer before DESeq2 (documented explicitly as a limitation since per-sample effective-length genes.results files were not delivered for tximport-based offset correction)",
+          "DESeq2 run with design ~condition (treated vs control), independent filtering and Benjamini-Hochberg FDR applied",
+          "Primary result: full gene table with log2FoldChange, p-value, padj for all 12 samples included",
+          "Sensitivity result: same DESeq2 model rerun excluding sample_01 (5 treated/control vs 5, or as balanced as remains), comparing the significant gene sets (overlap, rank correlation of log2FC) between the full-cohort and sample_01-excluded runs",
+          "Report explicitly states whether sample_01's inclusion materially changes the DE gene list (e.g., overlap fraction of top hits, number of genes gained/lost at padj<0.05)",
+          "Final gene ranking (by padj/log2FC) exported as a table for downstream enrichment"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Verify gene symbol formatting matches between the DE table and the GMT (case, aliases) before running enrichment",
+          "If very few genes pass padj<0.05 given the modest n=6 vs n=6 design, state that enrichment power is limited rather than overinterpreting a short gene list"
+        ],
+        "context": "Reference data available: /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, a human WikiPathways GMT keyed on HGNC gene symbols, matching the gene-symbol identifiers already used as row names in the counts matrix, so no ID mapping step is required.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control colon samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the significant DE gene list (padj<0.05, or top-ranked genes if none pass threshold, clearly stated which) from T1S2's primary (full-cohort) DESeq2 result as input",
+          "Confirms the human WikiPathways GMT reference is present before running; if absent, reports the gap rather than fabricating results",
+          "Over-representation or GSEA-style enrichment run against WikiPathways human gene sets with multiple-testing correction",
+          "Output table of enriched pathways with adjusted p-values, gene overlap counts, and member genes",
+          "Cross-references enrichment result against the T1S2 sensitivity analysis: flags any enriched pathway driven predominantly by genes whose significance depended on including sample_01"
+        ]
+      }
+    ],
+    "title": "RSEM colon treated vs control DE analysis",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 13 columns incl. gene symbol, 12 samples) produced by RSEM and summarized without per-sample effective-length files, so counts are non-integer 'expected counts' rather than raw integers. DESeq2 requires integer input; the standard, defensible approach for RSEM expected counts lacking effective-length matrices is to round to nearest integer before feeding DESeq2's negative-binomial model (the alternative, tximport with average transcript length offsets, is not possible here because the genes.results files were not delivered). Sample_01's library size is ~4x below the median, which is a real QC concern for a 6-vs-6 unpaired design: it must be flagged, and the DE step must be run both with and without it to check robustness rather than silently dropping or silently keeping it. The plan therefore: (1) QC-profiles the matrix and formally flags sample_01; (2) runs DESeq2 with rounded counts, standard normalization (median-of-ratios, which is itself sensitive to the outlier library so is reported alongside a sensitivity run excluding sample_01); (3) sends the resulting DE gene list to WikiPathways human pathway enrichment, since a human WikiPathways GMT is available in the reference store. No translational/clinical/immune data is present in this design (no drug, no outcome, no immune context specified), so no translational steps are added."
+  },
+  "usage": {
+    "inputTokens": 43313,
+    "outputTokens": 2669,
+    "cacheCreationInputTokens": 34159,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "RSEM colon treated vs control DE analysis",
+          "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 13 columns incl. gene symbol, 12 samples) produced by RSEM and summarized without per-sample effective-length files, so counts are non-integer 'expected counts' rather than raw integers. DESeq2 requires integer input; the standard, defensible approach for RSEM expected counts lacking effective-length matrices is to round to nearest integer before feeding DESeq2's negative-binomial model (the alternative, tximport with average transcript length offsets, is not possible here because the genes.results files were not delivered). Sample_01's library size is ~4x below the median, which is a real QC concern for a 6-vs-6 unpaired design: it must be flagged, and the DE step must be run both with and without it to check robustness rather than silently dropping or silently keeping it. The plan therefore: (1) QC-profiles the matrix and formally flags sample_01; (2) runs DESeq2 with rounded counts, standard normalization (median-of-ratios, which is itself sensitive to the outlier library so is reported alongside a sensitivity run excluding sample_01); (3) sends the resulting DE gene list to WikiPathways human pathway enrichment, since a human WikiPathways GMT is available in the reference store. No translational/clinical/immune data is present in this design (no drug, no outcome, no immune context specified), so no translational steps are added.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC profiling and outlier characterization",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What are the library-size, gene-detection, and correlation-structure characteristics of the 12 colon samples (6 treated vs 6 control), and how does sample_01's ~4x-below-median library size manifest in these metrics?",
+              "acceptance_criteria": [
+                "Library size (total counts) reported per sample with sample_01 explicitly quantified relative to the median",
+                "Number of detected genes (count>0) per sample reported",
+                "Sample-sample correlation or PCA computed on log-normalized counts to check whether sample_01 is an outlier in expression space, not just in depth",
+                "Output table/plot saved flagging sample_01 as a QC concern with a numeric severity (fold-below-median)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input is /eval-full-32-without-rsem-counts-n6-1/data/inputs/counts/counts.csv (12000 genes x 13 cols: gene symbol + 12 samples) and metadata.csv (12 samples x 2 cols: sample, condition). Counts are RSEM expected counts (non-integer). This step establishes the QC baseline the DE step's sensitivity analysis depends on.",
+              "caveats": [
+                "Counts are non-integer RSEM expected counts — do not treat fractional values as an error",
+                "Do not drop sample_01 in this step; only characterize and flag it for the downstream DE step to handle explicitly"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control (RSEM expected counts, rounded)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are significantly differentially expressed between treated (n=6) and control (n=6) colon samples, using DESeq2 on RSEM expected counts rounded to integers, and how sensitive are the results to sample_01's low library size?",
+              "acceptance_criteria": [
+                "Counts matrix loaded, gene symbol column set as row names, non-integer RSEM expected counts rounded to nearest integer before DESeq2 (documented explicitly as a limitation since per-sample effective-length genes.results files were not delivered for tximport-based offset correction)",
+                "DESeq2 run with design ~condition (treated vs control), independent filtering and Benjamini-Hochberg FDR applied",
+                "Primary result: full gene table with log2FoldChange, p-value, padj for all 12 samples included",
+                "Sensitivity result: same DESeq2 model rerun excluding sample_01 (5 treated/control vs 5, or as balanced as remains), comparing the significant gene sets (overlap, rank correlation of log2FC) between the full-cohort and sample_01-excluded runs",
+                "Report explicitly states whether sample_01's inclusion materially changes the DE gene list (e.g., overlap fraction of top hits, number of genes gained/lost at padj<0.05)",
+                "Final gene ranking (by padj/log2FC) exported as a table for downstream enrichment"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 RSEM expected-counts matrix, 6 treated vs 6 control, unpaired, single batch. Per-sample genes.results with effective lengths were not delivered, so tximport-style length-offset correction is not possible; rounding is the standard fallback for RSEM expected counts. sample_01 flagged in T1S1 as ~4x below median library size.",
+              "caveats": [
+                "RSEM expected counts are not raw integer counts; rounding is an approximation and must be stated as such, not silently applied",
+                "median-of-ratios size-factor normalization in DESeq2 can itself be distorted by a single very-low-depth sample — this is exactly why the exclusion sensitivity run is mandatory, not optional",
+                "Do not report only the full-cohort result — the sensitivity comparison is a required deliverable given the explicit QC caveat"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control colon samples?",
+              "acceptance_criteria": [
+                "Uses the significant DE gene list (padj<0.05, or top-ranked genes if none pass threshold, clearly stated which) from T1S2's primary (full-cohort) DESeq2 result as input",
+                "Confirms the human WikiPathways GMT reference is present before running; if absent, reports the gap rather than fabricating results",
+                "Over-representation or GSEA-style enrichment run against WikiPathways human gene sets with multiple-testing correction",
+                "Output table of enriched pathways with adjusted p-values, gene overlap counts, and member genes",
+                "Cross-references enrichment result against the T1S2 sensitivity analysis: flags any enriched pathway driven predominantly by genes whose significance depended on including sample_01"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Reference data available: /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, a human WikiPathways GMT keyed on HGNC gene symbols, matching the gene-symbol identifiers already used as row names in the counts matrix, so no ID mapping step is required.",
+              "caveats": [
+                "Verify gene symbol formatting matches between the DE table and the GMT (case, aliases) before running enrichment",
+                "If very few genes pass padj<0.05 given the modest n=6 vs n=6 design, state that enrichment power is limited rather than overinterpreting a short gene list"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

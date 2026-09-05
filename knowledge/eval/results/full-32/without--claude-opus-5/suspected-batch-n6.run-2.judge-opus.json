@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly diagnoses the unrecorded 6/6 structure, tests whether it is balanced or confounded with condition via a cross-tabulation and Fisher test, and estimates latent factors with svaseq using full ~condition / null ~1 with the number of SVs chosen by num.sv rather than fixed at two; it explicitly checks each SV for collinearity with condition and forbids producing a corrected expression matrix, so no ComBat-style error occurs and the covariates enter the design as ~SV1+...+SVn+condition. It does not, however, first ask the analyst for the unrecorded variable (extraction date, lane), which the reference expects, and its discrete cluster-label fallback is a slightly weaker second choice. QC is thorough (PCA with variance explained, dendrogram, correlation heatmap, library size, detection rate, MT/ribosomal fractions, explicit no-drop policy), normalization stays inside the model, and BH at 0.05/0.10 with lfcShrink applied before fold-change thresholding is fully specified. The main weakness is the low-count filter, stated only as \"a reasonable count in at least 6 samples\" with no threshold or justification; enrichment is well constructed (full ranked list, stated metric, human hallmark and GO:BP in symbol space, overlap reported) but omits collection version and a set-size window."
+}

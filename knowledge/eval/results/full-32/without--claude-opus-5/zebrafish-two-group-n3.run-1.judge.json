@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with ~condition, control as reference, a justified >=10-in->=3-samples filter, BH at 0.05 with apeglm shrinkage (ashr fallback), and an explicit statement that n=3 is underpowered. QC covers library sizes, VST PCA, distance heatmap and a stated no-drop outlier policy. Enrichment correctly notes the absence of zebrafish curated collections, uses native org.Dr.eg.db GO (version named) with the tested-gene universe, stated ranking metric, size windows and a thin-coverage caveat, and explicitly forbids symbol-case projection onto human sets; it loses points for not naming the Ensembl release, for not committing to one-to-one orthologs in the optional cross-species layer, and for a somewhat loose padj<0.10 fallback for ORA."
+}

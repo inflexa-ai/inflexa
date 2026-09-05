@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that log2(TPM+1) values are not counts, explicitly rules out DESeq2/edgeR/voom, and applies limma-trend with eBayes(trend=TRUE, robust=TRUE) on the delivered values, with an explicit statement that no re-normalization or second log transform is applied and a value-range sanity check (though the stated expected range 0-20 is looser than the ~10-16 one would expect for log2 TPM+1). QC precedes modeling with PCA/MDS, a sample-distance heatmap, and per-sample detected-gene counts on the log scale, with an explicit requirement to flag or declare absence of outliers, although the remedy if an outlier appears is not specified. The filter is on mean log2 expression, label-blind, requiring expression above the floor in at least the smaller group size, which is minimal and justified but the floor itself is only loosely defined ('empirical low-expression mode'). Design, reference level (control), contrast direction, BH at alpha 0.05 via topTable, and the reporting of tested and significant gene counts are all explicit, and the report section covers versions, thresholds, and n=6/6 caveats. The GSEA step is not requested by the task and is scope creep, but it is well specified (full ranked list on the moderated t-statistic, named collections, 15-500 size window, leading edge, BH), so it costs only modestly."
+}

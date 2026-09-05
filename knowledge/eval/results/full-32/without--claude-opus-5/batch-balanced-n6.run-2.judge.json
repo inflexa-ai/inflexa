@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: balanced known batch enters as a covariate in ~ batch + condition, no ComBat or removeBatchEffect touches the tested counts, the batch-removed VST is explicitly quarantined for visualisation, control is set as reference, and the contrast is treated vs control with Wald test, BH at 0.05 and apeglm/ashr shrinkage with no post-hoc LFC cutoff. QC covers library sizes, PCA coloured by condition and shaped by batch, distance heatmap, and a flag-and-carry outlier policy; filterByExpr is minimal and reported. Normalization is only implied via DESeq2/edgeR rather than named as size factors/TMM, and the enrichment section names collections, universe, size window and seed but not collection versions; the report requirements omit software versions. Minor deductions only for those unstated items."
+}

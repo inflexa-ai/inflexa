@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: a single DESeq2 ~condition fit on all twelve samples, an LRT against ~1 for the omnibus question, and named Wald contrasts against an explicitly releveled control for the pairwise question, with the LRT table kept separate from the contrast tables so the two are never conflated. The pre-filter (>=10 counts in >=4 samples, tied to the smallest group), in-model size factors/TMM with no pre-normalization, BH at 0.05 set in results(), and ashr shrinkage per contrast are all explicit. QC precedes the model with blind VST PCA, distance heatmap and library sizes, with a stated report-not-remove policy, though batch coloring is impossible given the metadata. Enrichment is well specified (full ranked list, Wald statistic, human Hallmark/Reactome, 15-500 window, tested-gene universe) but only promises to record versions rather than naming them, and the report section covers method, versions, design, thresholds, counts and design caveats."
+}

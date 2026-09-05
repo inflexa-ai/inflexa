@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly refuses to re-fit any count model and starts from the supplied DESeq2 table, ranking every tested gene by the Wald statistic with a named fallback, an explicit NA-drop policy and a duplicate-symbol resolution rule, then runs gseapy.prerank against a named, versioned human Hallmark GMT with a 15-500 size window, 10000 permutations, a fixed seed and BH adjustment - exactly the reference approach, with no pre-ranking padj cutoff and no enrichr/web-service or R detour. Universe, ranking metric, NES/FDR/leading-edge reporting and leading-edge collapsing of redundant inflammatory hallmarks are all specified, and the report block covers tool versions, thresholds, tested and significant gene counts, and design caveats. Upstream-only criteria are handled by deferral rather than by analysis: independent filtering and Cook's-outlier NAs are recognised, and the sample_01 shallow-library concern is carried forward as an inherited limitation, but there is no sample-level QC (PCA, distances, library sizes) and no discussion of size-factor normalization or the design formula beyond noting the contrast is the one supplied, which is defensible here but leaves those criteria only partially evidenced. Tie-handling in the ranking is the one small gap; the WikiPathways/GO BP second pass is correctly framed as supplementary with separate FDR families."
+}

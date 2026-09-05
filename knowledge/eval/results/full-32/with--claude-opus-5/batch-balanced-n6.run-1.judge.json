@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: the balanced batch enters as a fixed effect in ~ batch + condition on raw counts, with an explicit refusal to pre-adjust counts (no ComBat-seq before the model), and correct handling of the 6-per-group Cook's flagging and the 9 residual df. QC is blind VST PCA on top-500 genes plus distance heatmap and library sizes, coloured by both condition and batch, with an explicit keep-all-samples policy; the only gap is no stated action for a shallow library beyond reporting it. Filtering (>=10 in >=6, the smallest group), in-model size factors/TMM, explicit relevel to control and named contrast, BH at alpha 0.05 passed to results(), and apeglm shrinkage with unshrunken values retained are all stated. Enrichment, though not requested, is fully specified (Wald-stat ranking, full list, 15-500 window after intersection, MSigDB 2026.1 named, seed, NA handling), and the report step names versions, design, thresholds, tested/significant counts, and the design caveats."
+}

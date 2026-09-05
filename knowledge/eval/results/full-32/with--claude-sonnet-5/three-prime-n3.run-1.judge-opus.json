@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes the QuantSeq 3' tag library and states explicitly that gene counts are length-independent, so raw integer counts go straight into DESeq2 with no tximport length offset and no TPM/FPKM step; the Wald test on ~condition with control releveled as reference and a named treated-vs-control contrast fits the unpaired 3v3 single-batch design. QC (blind VST, PCA on top 500 variable genes, Euclidean distance heatmap, per-sample library sizes, explicit flagging rather than silent dropping) precedes testing, and the low-count floor is the tag-seq-appropriate >=5 counts in >=3 samples with the retained gene count reported. Normalization is median-of-ratios inside the model, FDR is BH at alpha=0.05 with independent filtering and apeglm shrinkage, and no post hoc fold-change filter is used as a discovery criterion. Enrichment is well specified (full ranked list on the Wald stat, named collections with versions, 15-500 size window, tested-gene universe, leading edge, no underpowered ORA on a short list), but it is docked slightly for a caveat asserting a transcript-length detection bias that does not apply to a 3' tag library and for assuming human without confirming species. The final report block covers method, versions, design, thresholds, tested/significant counts, diagnostics, the n=3 power caveat, and reproducibility record."
+}

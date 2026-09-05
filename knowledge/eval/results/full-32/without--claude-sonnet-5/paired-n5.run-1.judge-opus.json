@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the paired structure and specifies DESeq2 with ~subject + condition testing the condition coefficient, and it handles the ambiguous \"within each subject\" framing honestly by labeling single-pair fold changes as descriptive rather than inferential. QC is well specified (library sizes, detection, distributions, PCA/correlation checked for pairing structure, Cook's distance outlier check), though the outlier policy is only to \"flag\" rather than to act. Normalization is handled correctly inside the model with raw counts and size factors, and no pre-normalized values enter the count model. The main gaps are the complete absence of any low-count/independent filtering step (it explicitly promises results for all ~12000 genes) and no LFC shrinkage; multiple testing is only implied via padj < 0.05 without naming BH. Enrichment names a collection and an explicit 12000-gene universe, but omits version and gene-set size window and does not consider a ranked GSEA alternative; the report covers design, thresholds and caveats but never mentions software versions."
+}

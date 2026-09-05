@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats the balanced batch as a model covariate (~ batch + condition) on raw integer counts with DESeq2, explicitly forbids pre-normalization or count adjustment, sets control as the reference level, and checks for collinearity between batch and condition — this is exactly the reference approach and is specific to the stated design. QC is present and appropriately colored by both batch and condition, but library-size checks and an explicit outlier/shallow-sample policy are missing. The low-count filter (>=10 counts in >=6 samples) is minimal and tied to group size, and BH-adjusted p-values at alpha 0.05 are stated, but apeglm shrinkage appears only in the package list and is never invoked in the acceptance criteria, and 'top genes by effect size' risks unshrunken LFC ranking. Enrichment names a versioned WikiPathways collection and states the GSEA ranking metric, but omits an explicit ORA universe (all tested genes) and any gene-set size window; the report specifies design, thresholds, significant-gene count and design caveats but not software versions or the number of genes tested."
+}

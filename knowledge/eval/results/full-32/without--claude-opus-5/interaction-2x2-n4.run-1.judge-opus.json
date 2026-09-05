@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the question as an interaction, fits ~genotype + treatment + genotype:treatment once on all 16 samples, and extracts the interaction coefficient plus both simple treatment effects from the same fit, explicitly forbidding subset re-fits and the 'overlap of two DE lists' fallacy; the LRT against the additive reduced model and the n=4 power/detectable-effect discussion are appropriate additions for this design. QC is concrete and design-aware (library sizes, blind VST PCA colored by genotype and shaped by treatment, sample-distance heatmap, 4/4/4/4 balance check, outliers flagged and documented rather than silently dropped). The filter (>=10 counts in >=4 samples, justified by smallest group size), normalization inside the model with an explicit prohibition on pre-transformation, explicit releveling of WT and vehicle, and the composed contrast for the KO simple effect are all correct, as are BH at stated alphas with apeglm for the coefficient and ashr for the composed contrast. Enrichment is warranted and well specified (full ranked Wald statistic, human symbol-keyed hallmark and GO-BP, 15-500 size window, leading edge, NES comparison), losing a point only for not naming an MSigDB version; reporting is thorough on design, thresholds, gene counts, and caveats but does not explicitly commit to recording software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly selects the negative binomial GLM with DESeq2's Wald test for an unpaired 3v3 single-batch raw-count design, keeps alpha at 0.05 (reporting 0.1 as secondary), applies BH and apeglm/ashr shrinkage, and explicitly forbids pre-normalized input and pre-model count adjustment, so normalization and FDR/shrinkage are handled well. QC is present as a PCA or sample-distance plot with outlier flagging, but library sizes, coloring by condition, and an explicit outlier-handling policy are not stated; leave-one-out sensitivity partly compensates. The design formula is only described as 'condition as the sole factor' without setting control as the explicit reference level, which leaves the sign of the contrast underspecified. Enrichment is added although the question is a plain DE question, and it names a versioned human WikiPathways GMT but never specifies an ORA universe (the tested gene set) or a gene-set size window, and the preranked metric is left as 'stat/log2FC'; the permutation null over only 10 balanced splits is correctly flagged as coarse but adds little. The plan also fabricates a 7-column vs 6-row sample mismatch not present in the dataset description, which is handled sensibly but signals invented detail; reporting otherwise covers method, design, thresholds, gene counts, and small-n caveats though not software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on the decisive point: it explains the >60% duplication as an expression-level property of deep total-RNA libraries, explicitly refuses to de-duplicate without UMIs, reports mitochondrial, residual-rRNA and complexity shares per sample, and keeps sample_01 with depth handled by size factors. DESeq2 Wald with apeglm, explicit control reference and (condition, treated, control) contrast, minimal justified filter, in-model normalization, BH at 0.05 with padj-only selection, and an edgeR QL cross-check are all correctly specified. The QC loses a little for not stating the reference's conditional policy of dropping rRNA/MT genes from the matrix before normalization when their share is large and uneven, and for not addressing intronic share beyond the count-matrix limitation. Enrichment is well specified (full Wald-ranked list, tested-gene universe, 15-500 window, human-restricted collections, seed) though the collection versions are deferred to run time rather than named. The report section is complete with versions, counts and all design caveats."
+}

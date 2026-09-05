@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 1,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "PyDESeq2 on raw counts with condition as the sole factor fits the unpaired 6v6 single-batch design, and the QC step is strong: library sizes, zero-count profile, PCA/correlation, and an explicit retain-or-exclude decision for sample_01 with rationale. Normalization is correctly left to the model's size factors, which are reported. However, no low-count filter is specified anywhere, fold-change shrinkage is absent, BH is not named, and the |log2FC|>1 cutoff is applied post hoc rather than in the test; the design formula and reference level are only implied. Enrichment uses gseapy prerank on the full ranked list with a stated statistic and the named Hallmark collection, but lacks the MSigDB version, set-size window, seed, and an explicit ORA universe; the report omits software versions."
+}

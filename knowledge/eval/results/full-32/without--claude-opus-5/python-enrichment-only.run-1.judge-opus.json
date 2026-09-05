@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to refit any count model, consumes the supplied DESeq2 table, ranks the full tested gene list without a significance pre-filter, and runs gseapy.prerank against a locally resolved human Hallmark GMT with a fixed seed, >=1000 permutations and a size window, reporting NES, FDR and leading edge for all 50 sets — essentially the reference approach. Weaknesses: the primary ranking metric prefers the shrunken log2FC over the Wald statistic or signed log p (defensible but not the stated reference metric, and shrinkage compresses the ordering of low-information genes), the MSigDB release version is never named, and the minimum set size is 10 rather than 15. Upstream criteria are largely inherited rather than executed: no PCA, sample-distance or library-size QC is performed, and the sample_01 shallow-library concern is only carried as a narrative caveat with no diagnostic; likewise low-count filtering and normalization are handled only implicitly, though the explicit exclusion of NA-padj (independently filtered) genes from the ORA background is a good touch. The ORA arm is properly secondary, uses an explicit tested-gene background and a local GMT rather than the Enrichr web service, and the direction convention for NES plus the design caveats are stated clearly."
+}

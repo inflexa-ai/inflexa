@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: a DESeq2 LRT of ~ condition + time + condition:time against ~ condition + time, with time as a factor, explicit reference levels, no batch term because none is recorded, and per-time-point shrunken fold changes (apeglm for single coefficients, ashr for composite contrasts) to describe the significant genes. QC on blind VST with PCA, distance heatmap and library sizes coloured by condition and time precedes the model, with a flag-don't-drop policy; the filter is minimal and tied to the smallest cell size, normalization stays inside the model, and BH at a stated alpha with independent filtering and Cook's flagging is explicit. The report step names method, versions, design, thresholds, tested/significant counts, a power caveat and a reproducibility record. Enrichment was not asked for; it is nonetheless specified carefully (full ranked list, stated metric, named versioned collections, 15-500 window, seed), but signing a directionless interaction LRT statistic by the t3 fold change is an ad hoc construction, so that criterion is marked down slightly."
+}

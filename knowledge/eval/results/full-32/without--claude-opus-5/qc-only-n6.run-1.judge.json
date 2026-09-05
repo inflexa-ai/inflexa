@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan stays inside the QC question: library sizes, detected genes and count-shape per sample, blind VST, PCA on top-500 and all retained genes with variance explained, Euclidean distance heatmap and clustering, all colored by condition, and it explicitly declines DE, enrichment and batch correction for a single-batch 6 vs 6 design. The low-count filter (count >= 10 in at least 6 samples, the smaller group) is minimal and justified, normalization is median-of-ratios size factors inside DESeq2 with raw counts left unmodified, and the verdict policy on sample_01 rests on complexity, PC-depth correlation, size factor, a cohort-wide MAD screen and leave-one-out PCA rather than library size alone, with the 5 vs 6 power cost stated. The design formula ~condition is stated but a reference level is not, which is acceptable for a no-test QC pass. The report specifies methods, thresholds, gene counts surviving the filter and design caveats, but lists packages without versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly reads the question as pre-test QC and stops there: no model is fit, no contrast tested, no p-values, fold changes, gene lists, or enrichment are produced, and the report explicitly states the findings are descriptive. The QC content is exactly what the reference asks for and slightly more — per-sample library size, detected genes at >0 and >=10, median-of-ratios size factors, ratio to cohort median, blind VST, PCA on the top 500 variable genes coloured by condition, a Euclidean sample-distance heatmap with clustering, and the useful addition of PC1 versus log10 depth with a correlation to disentangle technical depth from biology. The sample_01 verdict is operationalised as a number (mean within- vs between-group VST distance) with a three-way keep / keep-with-caution / drop rule that explicitly forbids resting on depth alone, preserves the 12-sample matrix, and weighs the power cost of dropping one of six replicates. Normalization is handled inside DESeq2 with no pre-scaling, and the single-batch structure is honestly acknowledged rather than fabricated. The only soft spot is the low-count filter, which is stated as conditional ('only if needed for numerical stability') rather than as a firm, justified rule, though the threshold chosen and the requirement to report genes retained are both reasonable."
+}

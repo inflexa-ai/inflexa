@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 1,
+    "low_count_filter": 1,
+    "normalization": 1,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 3
+  },
+  "rationale": "The planner correctly recognised that the profile holds unquantified paired-end FASTQ and no count matrix, did not invent a table or run DESeq2 on nothing, and asked a well-targeted question naming plausible quantifiers (Salmon, kallisto, STAR/featureCounts) and the reference/annotation gap, which matches the reference's prescribed stop. It did not, however, sketch the downstream plan the reference expects once counts arrive (DESeq2 or edgeR, two-group three-replicate design, BH at 0.05, low-power caveat), so QC, filtering, in-model normalization, design formula and contrast, and FDR/shrinkage are all unstated. Enrichment is correctly absent since it is not warranted. The clarification itself communicates the data-state caveat but no methods, versions, or thresholds."
+}

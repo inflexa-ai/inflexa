@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 7,
+    "low_count_filter": 4,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 5
+  },
+  "rationale": "DESeq2 on raw Salmon counts with a single condition factor fits the unpaired 5v5 single-batch design, and the plan correctly runs both fits (with and without sample_03) and compares them. However, exclusion of sample_03 is fixed as the primary result before the Step 1 characterization is seen, with no pre-stated removal criterion (no MAD threshold, no technical-failure rule), which the reference explicitly flags as wrong; the down-weighting alternative (Cook's handling, arrayWeights, robust dispersion) is not considered. QC is reasonably complete (VST PCA, distance heatmap, library size, detection rate) but coloring by condition is not stated. Low-count filtering is only 'independent filtering' with no stated pre-filter or justification, the reference level and size-factor normalization are implicit rather than stated, and apeglm shrinkage appears only in the package list rather than as an acceptance item. Enrichment was not requested and is added without a universe, collection version, or size window; the report omits software versions."
+}

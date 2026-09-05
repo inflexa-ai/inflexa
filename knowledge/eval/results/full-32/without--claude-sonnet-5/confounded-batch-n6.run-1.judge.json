@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly recognizes the perfect batch-condition aliasing, fits ~condition only, refuses ComBat/SVA/removeBatchEffect, and labels every result as confounded, which matches the reference. QC includes vst PCA and sample distances but omits library-size checks and any outlier or shallow-sample policy; no low-count filter is stated at all. Normalization is correctly inside DESeq2 via size factors, but the reference level is not named, no fold-change shrinkage is planned, and thresholds are applied post hoc rather than in the test. Enrichment names a human WikiPathways collection with a 12000-gene universe and a GSEA fallback but lacks a version, size window, and uses raw LFC as the ranking metric; the report covers caveats and thresholds well but does not commit to versions or counts of tested/significant genes."
+}

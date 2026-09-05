@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject with ~subject+condition in DESeq2, testing the condition coefficient, which is exactly the reference approach for five matched pairs; it also correctly notes there are no residual degrees of freedom for further covariates. QC precedes testing with a blind VST, PCA colored by subject and condition, sample-distance heatmap, library sizes and a flag rule for shallow samples, though the action to take on a flagged outlier is only implied. The filter (>=10 counts in >=5 samples, justified as the smallest group size) is minimal and defensible, normalization is median-of-ratios inside the model on raw counts with no pre-adjustment, and multiple testing is BH at a stated alpha=0.05 with apeglm shrinkage and independent filtering, plus a sensible Cook's-distance flagging policy appropriate at n=5. Enrichment is preranked fgsea on the Wald statistic with a named, versioned collection, a 15-500 size window, and the tested-gene set as universe, correctly avoiding a fallback ORA on a short list. The report specifies design, contrast direction, reference level, thresholds, counts of tested and significant genes, diagnostics, NA accounting by cause, and a full reproducibility record with the n=5 caveat."
+}

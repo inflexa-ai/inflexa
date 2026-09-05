@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses that a length-normalized TPM matrix cannot feed a negative-binomial model, explicitly forbids DESeq2/edgeR/voom and pseudo-count rounding, and fits limma with eBayes(trend=TRUE, robust=TRUE) on log2(TPM+1) with an explicit ~0 + condition design and a lesional - control contrast, which matches the reference route. QC is concrete and dataset-specific (column sums to test the 1e6 assumption, duplicate-symbol collapsing, PCA, Spearman correlation heatmap, per-sample distributions) with a stated flag-but-do-not-drop outlier policy, and the filter (TPM > 1 in at least 6 samples, the smaller group size) is minimal and justified. Normalization is handled sensibly for the data state: no size factors, no count rescaling, and the added quantile normalization is caveated for the large coherent psoriasis signature and checked against the unnormalized matrix, though it is an extra assumption the reference does not require. The main weakness is on effect-size handling: BH at 0.05 is stated with sensitivity at other thresholds, but the |logFC| > 1 cut is applied post hoc rather than through treat(), and no software versions or MSigDB collection version are named for the report."
+}

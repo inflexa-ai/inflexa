@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly recognizes the 1-vs-1 design, refuses any dispersion-based test, p-value, or lfcShrink for the DE step, reports median-of-ratios normalized counts with descriptive pseudocounted log2FC, sets control as the explicit reference level, and names a >=3-per-group replicated design as what would support inference. QC, the minimal justified filter (>=10 in >=1 sample), in-model normalization, and the reproducibility record with versions, thresholds, gene counts, and design caveats are all stated. The main flaw is running ORA on an arbitrary top-200 |log2FC| list from unreplicated data: the reference treats enrichment as unwarranted here and a correct plan omits it, so despite a well-specified universe, size window, and named collections, this step introduces p-values into an analysis that the plan itself says cannot support them, and the fold-change cutoff functions as a de facto selection threshold."
+}

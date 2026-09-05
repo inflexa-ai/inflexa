@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 1,
+    "low_count_filter": 2,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames the question as a 2x2 factorial with time as a two-level factor, fits ~condition + time + condition:time in DESeq2 with explicit reference levels, tests the interaction coefficient, and extracts simple treatment effects at t0 and t1 — matching the reference. It omits any sample-structure QC (no PCA, distances, or library-size check, no outlier policy) and states no low-count filter beyond leaving DESeq2 independent filtering on; normalization is only implied by feeding raw counts to DESeq2 rather than stated. BH at 0.05 is explicit, but fold-change shrinkage is only hinted at via apeglm in the package list, never required in the acceptance criteria. Enrichment names WikiPathways and uses the tested-gene universe but gives no version or size window and leaves ORA-vs-GSEA unresolved; the report lacks package versions."
+}

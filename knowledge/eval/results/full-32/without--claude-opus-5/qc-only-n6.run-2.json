@@ -1,0 +1,319 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "qc-only-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T17:52:45.506Z",
+  "elapsedMs": 70657,
+  "outcome": "plan_submitted",
+  "planId": "pln-9ee5d912",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library size and detection depth per sample",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A low library size alone is not a failure criterion; genes detected and library complexity determine whether the sample is usable",
+          "Median-of-ratios size factors can themselves be distorted by a very shallow sample — report the size factor value for sample_01, do not just apply it silently"
+        ],
+        "context": "Bulk RNA-seq, Homo sapiens skin, atopic dermatitis lesional vs control, 6 vs 6, unpaired, single batch, gene-level counts from Salmon. The data profile flags that sample_01 has a library size roughly 4x below the median. This step's job is to measure that rather than repeat it, and to check whether the shallow sample is also compromised on gene detection and complexity, which is what distinguishes a usable low-depth library from a failed one. Salmon counts may be non-integer after summarization — round before constructing the DESeqDataSet if so, and say that you did.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "ggrepel",
+          "data.table",
+          "matrixStats"
+        ],
+        "question": "What is the sequencing depth, gene-detection count, and normalization size factor of each of the 12 skin samples, and by how much does sample_01 actually fall below the cohort median?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Use the exact input paths given in the description; do not search for other files",
+          "Do not drop, impute, or filter any sample in this step — all 12 must appear in every table and plot",
+          "Report the condition labels verbatim as they appear in metadata.csv rather than renaming them",
+          "If counts are non-integer, round to integer for DESeq2 and state that this was done"
+        ],
+        "description": "Load /eval-full-32-without-qc-only-n6-2/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon counts, first column gene symbol) and /eval-full-32-without-qc-only-n6-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify the sample columns of the count matrix and the metadata rows match one-to-one, and report the condition tally (expected 6 atopic dermatitis lesional, 6 control). Compute per sample: total counts (library size), number of genes with count > 0, number of genes with count >= 10, and the fraction of the library taken by the top 10 and top 50 genes (library complexity — a shallow library that is also dominated by a few genes is a different problem from one that is merely shallow). Build a DESeq2 DESeqDataSet with design ~condition and extract the median-of-ratios size factors. Report every quantity as a table with sample_01's ratio to the cohort median library size stated explicitly. Produce a barplot of library size coloured by condition with sample_01 annotated, and a boxplot of log2(count+1) distributions per sample. Save the DESeqDataSet and the per-sample QC table for downstream steps.",
+        "acceptance_criteria": [
+          "Count matrix columns and metadata rows are confirmed matched one-to-one; any mismatch is reported and halts rather than being silently reordered",
+          "Per-sample table reports library size, genes detected (>0 and >=10), top-10/top-50 fraction, and DESeq2 size factor for all 12 samples",
+          "sample_01's library size is reported as an explicit ratio to the cohort median and to the next-lowest sample",
+          "Library-size barplot and per-sample log2 count distribution boxplot are written to file",
+          "DESeqDataSet object with design ~condition is saved for reuse by T1S2"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "PCA and sample-to-sample distances on VST data",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group, PC1 need not correspond to condition; a leading PC that tracks library size is a technical warning, not a biological finding",
+          "Euclidean distance on VST data is still mildly depth-sensitive — read the own-group versus opposite-group distance split rather than the overall mean alone",
+          "Hierarchical clustering of 12 samples is unstable; report the dendrogram as descriptive, not as evidence of group structure"
+        ],
+        "context": "This is the multivariate half of the requested QC. The variance-stabilizing transformation is essential here specifically because of the ~4x depth spread: on log-CPM the low-count genes of a shallow library are wildly noisy and will drag that sample away from the others in both PCA and Euclidean distance for purely technical reasons. The PC-vs-library-size correlation is the diagnostic that separates the two explanations. The leave-sample_01-out PCA answers how much the picture depends on it. Both PCAs and the distance heatmap feed the verdict in T1S3.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "ggrepel",
+          "pheatmap",
+          "RColorBrewer",
+          "matrixStats"
+        ],
+        "question": "Do the 12 samples separate by condition (atopic dermatitis lesional vs control) in PCA and in Euclidean sample-to-sample distance, and does sample_01 sit apart from the rest?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Compute distances and PCA on the variance-stabilized matrix, never on raw counts or naive log-CPM",
+          "Keep all 12 samples in the primary PCA and in the distance heatmap; the sample_01-excluded PCA is an additional figure, not a replacement",
+          "Do not apply any batch correction — the design is a single batch with no covariate to model",
+          "Label points by sample ID so sample_01 is identifiable in every figure"
+        ],
+        "description": "Using the DESeqDataSet from T1S1, apply variance-stabilizing transformation (vst with blind=TRUE, so the transformation does not borrow the condition design; fall back to rlog if the dispersion fit fails at n=12). Filter to genes with at least 10 counts in at least 6 samples before transformation and report how many of the 12000 genes survive. Then produce: (1) PCA on the top 500 most variable genes — PC1/PC2 scatter coloured by condition, every point labelled with its sample ID, with the percentage variance explained on each axis; report the variance explained by PC1-PC4 as a scree table, and report the Spearman correlation of each of PC1-PC4 with log10 library size, which is the direct test of whether depth rather than biology is driving the leading component; (2) the same PCA recomputed with sample_01 excluded, to show how much of the embedding is that one sample's leverage; (3) the Euclidean sample-to-sample distance matrix on the VST matrix, drawn as a hierarchically clustered heatmap annotated by condition, plus a table of each sample's mean distance to all others and its mean distance to its own condition group versus the opposite group. Save the VST matrix, the PCA coordinates, the scree/correlation table, and the distance matrix.",
+        "acceptance_criteria": [
+          "VST (or rlog, with the fallback stated) matrix computed with blind=TRUE; number of genes retained after the >=10 counts in >=6 samples filter is reported",
+          "PC1/PC2 scatter with all 12 samples labelled and coloured by condition, with percent variance on both axes, written to file",
+          "Scree table for PC1-PC4 plus Spearman correlation of each PC with log10 library size is reported numerically",
+          "A second PCA with sample_01 excluded is produced and the shift in variance explained is stated",
+          "Clustered Euclidean distance heatmap annotated by condition, plus a per-sample table of mean distance to all samples, to own condition group, and to the opposite group"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Verdict on shallow sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 per group, one excluded sample is a large fractional loss; the bar for exclusion should be evidence of library failure, not depth alone",
+          "A sample that clusters with the opposite condition group is a labelling-error signal and must be reported as such rather than folded into the depth discussion"
+        ],
+        "context": "The user asked for a verdict, not a description. This step must commit to a recommendation and show the reasoning that produced it. The data profile pre-flagged sample_01 at ~4x below median depth, but 4x below median is common and frequently survivable in DESeq2 — the median-of-ratios estimator and the negative-binomial model handle depth differences by design. What would make it unusable is depth PLUS collapsed gene detection, PLUS outlier position beyond its group's spread. Those are three different measurements and the verdict must rest on them jointly rather than on the depth number alone.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "pheatmap",
+          "patchwork",
+          "cowplot"
+        ],
+        "question": "Should sample_01 be kept, kept-with-caveat, or excluded from the atopic dermatitis lesional vs control comparison, and on what evidence?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Do not perform any differential expression, gene ranking, or enrichment — this run is QC only",
+          "Base the verdict solely on the T1S1 and T1S2 outputs; do not introduce new thresholds without stating them",
+          "If the evidence is genuinely ambiguous, say so and issue KEEP WITH CAVEAT rather than manufacturing a decisive reading",
+          "Do not write out a filtered count matrix or otherwise remove sample_01 from the inputs — the verdict is a recommendation, not an action"
+        ],
+        "description": "Synthesize T1S1 and T1S2 into an explicit, criteria-first verdict on sample_01. State the decision criteria before the evidence: (a) depth — library size relative to cohort median and to the next-lowest sample; (b) detection — genes at >=10 counts relative to the cohort, since a shallow library that still detects a comparable gene set is largely recoverable by normalization; (c) complexity — top-10/top-50 library fraction versus the other 11; (d) embedding — whether sample_01 lies outside the spread of its own condition group in PC1/PC2, and whether PC1-PC4 correlate with library size; (e) distance profile — whether its mean distance is inflated against ALL samples (a depth signature) or selectively against its own condition group (a biological or labelling problem); (f) leverage — how much the PCA changes when it is removed. Return one of three verdicts with the criteria that produced it: KEEP (depth handled by median-of-ratios normalization plus DESeq2's independent filtering), KEEP WITH CAVEAT (retain but report reduced sensitivity and re-check any downstream result for sample_01 leverage), or EXCLUDE (evidence of a failed library, not merely a shallow one). Whichever verdict is reached, state the cost of the alternative explicitly: dropping sample_01 makes the design 5 lesional vs 6 control and loses roughly a sixth of one arm's power, which at n=6 is material. Produce a one-page QC summary combining the library-size plot, both PCAs, and the distance heatmap, with a short written assessment of overall cohort quality and of whether the cohort is fit to proceed to differential expression.",
+        "acceptance_criteria": [
+          "Decision criteria are stated before the evidence is applied to them",
+          "A single verdict is issued for sample_01 — KEEP, KEEP WITH CAVEAT, or EXCLUDE — each criterion's contribution stated",
+          "The verdict names the cost of the alternative, including that exclusion yields a 5 vs 6 unpaired design",
+          "An overall statement on whether the 12-sample cohort is fit to proceed to differential expression, with any other sample-level concerns surfaced by T1S1/T1S2 named",
+          "A combined multi-panel QC figure (library sizes, PCA, distance heatmap) is written to file"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control: 12-sample RNA-seq QC",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is purely pre-test QC on the 12-sample bulk RNA-seq skin cohort (counts.csv, 12000 genes x 12 samples from Salmon; metadata.csv with condition, 6 atopic dermatitis lesional vs 6 control, unpaired, single batch). No differential testing is requested, so the plan produces exactly the four requested deliverables and nothing more. T1S1 establishes the count-level foundations: per-sample library size (total mapped counts), detected-gene counts, and size factors — this is where the flagged caveat (sample_01 ~4x below median library size) is quantified rather than assumed. T1S2 builds the VST/rlog-stabilized expression matrix and derives the two multivariate views on it: PCA (with sample_01 labelled, and a repeat with sample_01 removed so its leverage on the embedding is visible) and the Euclidean sample-to-sample distance matrix as a clustered heatmap. Both must come from a variance-stabilized matrix, not raw or naive CPM, because at 4x depth difference the mean-variance relationship in log-CPM will manufacture apparent separation of the shallow sample. T1S3 turns the accumulated evidence into an explicit keep/flag/drop verdict on sample_01, on stated criteria — depth relative to median, genes detected, whether it is a PCA outlier beyond the within-group spread, whether its distance profile is systematically inflated against ALL other samples (a depth artefact) or only against its own condition group (a genuine biological or labelling problem), and whether it clusters with its stated condition. The verdict step is deliberately separate so the criteria are recorded before the recommendation, and it must state the power cost of dropping (6v6 becomes 5v6) alongside the risk of keeping. Sequential, single track: each step consumes the previous step's objects."
+  },
+  "usage": {
+    "inputTokens": 87902,
+    "outputTokens": 4986,
+    "cacheCreationInputTokens": 69730,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pheatmap",
+          "ComplexHeatmap",
+          "ggplot2",
+          "matrixStats",
+          "ggrepel",
+          "RColorBrewer"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq quality control library size outlier sample detection PCA sample distance recommendations",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control: 12-sample RNA-seq QC",
+          "analytical_narrative": "The question is purely pre-test QC on the 12-sample bulk RNA-seq skin cohort (counts.csv, 12000 genes x 12 samples from Salmon; metadata.csv with condition, 6 atopic dermatitis lesional vs 6 control, unpaired, single batch). No differential testing is requested, so the plan produces exactly the four requested deliverables and nothing more. T1S1 establishes the count-level foundations: per-sample library size (total mapped counts), detected-gene counts, and size factors — this is where the flagged caveat (sample_01 ~4x below median library size) is quantified rather than assumed. T1S2 builds the VST/rlog-stabilized expression matrix and derives the two multivariate views on it: PCA (with sample_01 labelled, and a repeat with sample_01 removed so its leverage on the embedding is visible) and the Euclidean sample-to-sample distance matrix as a clustered heatmap. Both must come from a variance-stabilized matrix, not raw or naive CPM, because at 4x depth difference the mean-variance relationship in log-CPM will manufacture apparent separation of the shallow sample. T1S3 turns the accumulated evidence into an explicit keep/flag/drop verdict on sample_01, on stated criteria — depth relative to median, genes detected, whether it is a PCA outlier beyond the within-group spread, whether its distance profile is systematically inflated against ALL other samples (a depth artefact) or only against its own condition group (a genuine biological or labelling problem), and whether it clusters with its stated condition. The verdict step is deliberately separate so the criteria are recorded before the recommendation, and it must state the power cost of dropping (6v6 becomes 5v6) alongside the risk of keeping. Sequential, single track: each step consumes the previous step's objects.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library size and detection depth per sample",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "What is the sequencing depth, gene-detection count, and normalization size factor of each of the 12 skin samples, and by how much does sample_01 actually fall below the cohort median?",
+              "description": "Load /eval-full-32-without-qc-only-n6-2/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon counts, first column gene symbol) and /eval-full-32-without-qc-only-n6-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify the sample columns of the count matrix and the metadata rows match one-to-one, and report the condition tally (expected 6 atopic dermatitis lesional, 6 control). Compute per sample: total counts (library size), number of genes with count > 0, number of genes with count >= 10, and the fraction of the library taken by the top 10 and top 50 genes (library complexity — a shallow library that is also dominated by a few genes is a different problem from one that is merely shallow). Build a DESeq2 DESeqDataSet with design ~condition and extract the median-of-ratios size factors. Report every quantity as a table with sample_01's ratio to the cohort median library size stated explicitly. Produce a barplot of library size coloured by condition with sample_01 annotated, and a boxplot of log2(count+1) distributions per sample. Save the DESeqDataSet and the per-sample QC table for downstream steps.",
+              "context": "Bulk RNA-seq, Homo sapiens skin, atopic dermatitis lesional vs control, 6 vs 6, unpaired, single batch, gene-level counts from Salmon. The data profile flags that sample_01 has a library size roughly 4x below the median. This step's job is to measure that rather than repeat it, and to check whether the shallow sample is also compromised on gene detection and complexity, which is what distinguishes a usable low-depth library from a failed one. Salmon counts may be non-integer after summarization — round before constructing the DESeqDataSet if so, and say that you did.",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "ggrepel",
+                "data.table",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "acceptance_criteria": [
+                "Count matrix columns and metadata rows are confirmed matched one-to-one; any mismatch is reported and halts rather than being silently reordered",
+                "Per-sample table reports library size, genes detected (>0 and >=10), top-10/top-50 fraction, and DESeq2 size factor for all 12 samples",
+                "sample_01's library size is reported as an explicit ratio to the cohort median and to the next-lowest sample",
+                "Library-size barplot and per-sample log2 count distribution boxplot are written to file",
+                "DESeqDataSet object with design ~condition is saved for reuse by T1S2"
+              ],
+              "constraints": [
+                "Use the exact input paths given in the description; do not search for other files",
+                "Do not drop, impute, or filter any sample in this step — all 12 must appear in every table and plot",
+                "Report the condition labels verbatim as they appear in metadata.csv rather than renaming them",
+                "If counts are non-integer, round to integer for DESeq2 and state that this was done"
+              ],
+              "caveats": [
+                "A low library size alone is not a failure criterion; genes detected and library complexity determine whether the sample is usable",
+                "Median-of-ratios size factors can themselves be distorted by a very shallow sample — report the size factor value for sample_01, do not just apply it silently"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "PCA and sample-to-sample distances on VST data",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Do the 12 samples separate by condition (atopic dermatitis lesional vs control) in PCA and in Euclidean sample-to-sample distance, and does sample_01 sit apart from the rest?",
+              "description": "Using the DESeqDataSet from T1S1, apply variance-stabilizing transformation (vst with blind=TRUE, so the transformation does not borrow the condition design; fall back to rlog if the dispersion fit fails at n=12). Filter to genes with at least 10 counts in at least 6 samples before transformation and report how many of the 12000 genes survive. Then produce: (1) PCA on the top 500 most variable genes — PC1/PC2 scatter coloured by condition, every point labelled with its sample ID, with the percentage variance explained on each axis; report the variance explained by PC1-PC4 as a scree table, and report the Spearman correlation of each of PC1-PC4 with log10 library size, which is the direct test of whether depth rather than biology is driving the leading component; (2) the same PCA recomputed with sample_01 excluded, to show how much of the embedding is that one sample's leverage; (3) the Euclidean sample-to-sample distance matrix on the VST matrix, drawn as a hierarchically clustered heatmap annotated by condition, plus a table of each sample's mean distance to all others and its mean distance to its own condition group versus the opposite group. Save the VST matrix, the PCA coordinates, the scree/correlation table, and the distance matrix.",
+              "context": "This is the multivariate half of the requested QC. The variance-stabilizing transformation is essential here specifically because of the ~4x depth spread: on log-CPM the low-count genes of a shallow library are wildly noisy and will drag that sample away from the others in both PCA and Euclidean distance for purely technical reasons. The PC-vs-library-size correlation is the diagnostic that separates the two explanations. The leave-sample_01-out PCA answers how much the picture depends on it. Both PCAs and the distance heatmap feed the verdict in T1S3.",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "ggrepel",
+                "pheatmap",
+                "RColorBrewer",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "acceptance_criteria": [
+                "VST (or rlog, with the fallback stated) matrix computed with blind=TRUE; number of genes retained after the >=10 counts in >=6 samples filter is reported",
+                "PC1/PC2 scatter with all 12 samples labelled and coloured by condition, with percent variance on both axes, written to file",
+                "Scree table for PC1-PC4 plus Spearman correlation of each PC with log10 library size is reported numerically",
+                "A second PCA with sample_01 excluded is produced and the shift in variance explained is stated",
+                "Clustered Euclidean distance heatmap annotated by condition, plus a per-sample table of mean distance to all samples, to own condition group, and to the opposite group"
+              ],
+              "constraints": [
+                "Compute distances and PCA on the variance-stabilized matrix, never on raw counts or naive log-CPM",
+                "Keep all 12 samples in the primary PCA and in the distance heatmap; the sample_01-excluded PCA is an additional figure, not a replacement",
+                "Do not apply any batch correction — the design is a single batch with no covariate to model",
+                "Label points by sample ID so sample_01 is identifiable in every figure"
+              ],
+              "caveats": [
+                "With n=6 per group, PC1 need not correspond to condition; a leading PC that tracks library size is a technical warning, not a biological finding",
+                "Euclidean distance on VST data is still mildly depth-sensitive — read the own-group versus opposite-group distance split rather than the overall mean alone",
+                "Hierarchical clustering of 12 samples is unstable; report the dendrogram as descriptive, not as evidence of group structure"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Verdict on shallow sample_01",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Should sample_01 be kept, kept-with-caveat, or excluded from the atopic dermatitis lesional vs control comparison, and on what evidence?",
+              "description": "Synthesize T1S1 and T1S2 into an explicit, criteria-first verdict on sample_01. State the decision criteria before the evidence: (a) depth — library size relative to cohort median and to the next-lowest sample; (b) detection — genes at >=10 counts relative to the cohort, since a shallow library that still detects a comparable gene set is largely recoverable by normalization; (c) complexity — top-10/top-50 library fraction versus the other 11; (d) embedding — whether sample_01 lies outside the spread of its own condition group in PC1/PC2, and whether PC1-PC4 correlate with library size; (e) distance profile — whether its mean distance is inflated against ALL samples (a depth signature) or selectively against its own condition group (a biological or labelling problem); (f) leverage — how much the PCA changes when it is removed. Return one of three verdicts with the criteria that produced it: KEEP (depth handled by median-of-ratios normalization plus DESeq2's independent filtering), KEEP WITH CAVEAT (retain but report reduced sensitivity and re-check any downstream result for sample_01 leverage), or EXCLUDE (evidence of a failed library, not merely a shallow one). Whichever verdict is reached, state the cost of the alternative explicitly: dropping sample_01 makes the design 5 lesional vs 6 control and loses roughly a sixth of one arm's power, which at n=6 is material. Produce a one-page QC summary combining the library-size plot, both PCAs, and the distance heatmap, with a short written assessment of overall cohort quality and of whether the cohort is fit to proceed to differential expression.",
+              "context": "The user asked for a verdict, not a description. This step must commit to a recommendation and show the reasoning that produced it. The data profile pre-flagged sample_01 at ~4x below median depth, but 4x below median is common and frequently survivable in DESeq2 — the median-of-ratios estimator and the negative-binomial model handle depth differences by design. What would make it unusable is depth PLUS collapsed gene detection, PLUS outlier position beyond its group's spread. Those are three different measurements and the verdict must rest on them jointly rather than on the depth number alone.",
+              "packages": [
+                "ggplot2",
+                "pheatmap",
+                "patchwork",
+                "cowplot"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "acceptance_criteria": [
+                "Decision criteria are stated before the evidence is applied to them",
+                "A single verdict is issued for sample_01 — KEEP, KEEP WITH CAVEAT, or EXCLUDE — each criterion's contribution stated",
+                "The verdict names the cost of the alternative, including that exclusion yields a 5 vs 6 unpaired design",
+                "An overall statement on whether the 12-sample cohort is fit to proceed to differential expression, with any other sample-level concerns surfaced by T1S1/T1S2 named",
+                "A combined multi-panel QC figure (library sizes, PCA, distance heatmap) is written to file"
+              ],
+              "constraints": [
+                "Do not perform any differential expression, gene ranking, or enrichment — this run is QC only",
+                "Base the verdict solely on the T1S1 and T1S2 outputs; do not introduce new thresholds without stating them",
+                "If the evidence is genuinely ambiguous, say so and issue KEEP WITH CAVEAT rather than manufacturing a decisive reading",
+                "Do not write out a filtered count matrix or otherwise remove sample_01 from the inputs — the verdict is a recommendation, not an action"
+              ],
+              "caveats": [
+                "With 6 per group, one excluded sample is a large fractional loss; the bar for exclusion should be evidence of library failure, not depth alone",
+                "A sample that clusters with the opposite condition group is a labelling-error signal and must be reported as such rather than folded into the depth discussion"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

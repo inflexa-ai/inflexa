@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses count models on TPM and fits limma with eBayes(trend=TRUE, robust=TRUE) on log2(TPM+1), with an explicit ~condition design, control as reference, a named lesional-vs-control contrast, and BH at 0.05 via topTable, matching the reference; it does not, however, explicitly request the raw counts or quant directories from the core. QC on log2 values (PCA/MDS, distance heatmap, detected genes, colored by condition) is present but the outlier policy stops at flagging. The filter (TPM>=1 in >=6 samples) is minimal and justified, and no size factors, TMM, or count-rounding are applied. Enrichment is not asked in the task but is done defensibly with a full ranked list, stated metric, named collections and a 15-500 window, though collection versions are deferred to the report and no ORA universe is specified should ORA be triggered; the limma logFC is unshrunken and the plan does not note that."
+}

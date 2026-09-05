@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 2,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly reads the question as QC-only and stops before any hypothesis test, covering library sizes, size factors, detected-gene counts, blind VST, PCA on the top 500 variable genes colored by condition, and a Euclidean sample-distance heatmap, with the sample_01 verdict explicitly tied to PCA position, distance to group centroid, detected genes, and depth rather than to library size alone. Normalization is handled correctly inside DESeq2 (median-of-ratios size factors, no pre-scaling), and enrichment is rightly omitted. The clear gap is the absence of any low-count gene filter before the variance-stabilizing transform and variable-gene selection, which the reference requires and which can distort the top-500 selection in a shallow sample. Design specification is thin (DESeqDataSetFromMatrix with condition but no stated formula or reference level), and the reporting plan, while rich in acceptance artifacts and caveats, never commits to naming software versions or a summary QC report structure."
+}

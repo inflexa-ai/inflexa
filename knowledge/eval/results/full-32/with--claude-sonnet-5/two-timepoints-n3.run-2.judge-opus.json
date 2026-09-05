@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 6,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes the 2x2 factorial structure, treats time as a two-level factor rather than a continuous trend, fits ~condition*time, and makes the interaction Wald test the primary answer with simple effects at each time point as support — exactly the reference approach, with explicit reference levels and per-contrast BH at 0.05 plus ashr shrinkage. QC is design-aware (blind VST, PCA on top 500, distance heatmap, library sizes, colored by condition and time, with an explicit no-silent-drop and low-depth-flag policy), and the low-count filter (>=10 counts in >=3 samples, justified as the smallest cell size) is minimal and reasoned. Normalization is the weak point: raw Salmon counts go into DESeq2 and nothing pre-normalized is introduced, but the plan never states that size factors are estimated inside the model, so it earns credit only by implication. Enrichment is well-specified (Wald stat ranking, full tested-gene universe, named collections with versions, 15-500 size window, per-contrast BH) but is scope the question did not request, and four collections is more than warranted for a 12-sample interaction analysis. Reporting is thorough on versions, thresholds, gene counts per contrast, and the n=3 interaction power caveat with an appropriate refusal to loosen alpha."
+}

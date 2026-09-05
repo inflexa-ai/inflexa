@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 1,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly matches the unpaired 6v6 single-batch design to a PyDESeq2 Wald test on raw counts with ~condition, honors the Python-only constraint, and lets the tool compute size factors rather than feeding pre-normalized values. QC is a genuine strength: per-sample library sizes, PCA on VST/log-CPM, correlation/hierarchical clustering, zero-count profiling, and an explicit keep-with-caution versus exclude policy for sample_01 backed by a sensitivity model and concordance metrics. The main gaps are a complete absence of any low-count pre-filter before the fit, no log2FC shrinkage and an ad hoc post hoc |log2FC|>1 cut rather than an lfcThreshold in the test (BH is only implied by 'padj'), and no explicit reference level for the condition factor. Enrichment is well framed (prerank on the full ranked list with a stated ranking statistic, named Hallmark collection) but omits the MSigDB version, the 15-500 set size window, and a fixed random seed; the report also never commits to recording package versions or the number of genes tested."
+}

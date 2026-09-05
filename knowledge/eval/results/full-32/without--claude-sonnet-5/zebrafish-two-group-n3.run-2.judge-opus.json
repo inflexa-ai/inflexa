@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The core DE design is correctly matched to the data: raw Salmon counts into DESeq2 with ~condition, Wald test, no batch term because the profile states a single batch, and an explicit statement that n=3/group is the power floor. QC (library sizes, size factors, VST PCA, sample-distance heatmap) precedes/accompanies the test, though the outlier response is only 'flag', with no stated policy; the low-count filter is appropriately minimal but justified only loosely ('rowSums>0 or a low threshold'). Normalization is median-of-ratios inside the model and apeglm shrinkage with padj<0.05 is specified, but BH is never named explicitly and the reference level (control) is never set with relevel, leaving the contrast direction implicit. Enrichment is handled thoughtfully — it states that no zebrafish-native curated collection is staged, uses org.Dr.eg.db GO with the tested-gene universe and a Wald-stat ranking, and adds a babelgene ortholog route with coverage reporting and deterministic collision rules — but it does not restrict to one-to-one orthologs, gives no gene-set size window, no collection/annotation versions, and does not mention thin zebrafish GO coverage. Reporting covers method, design, thresholds, tested/significant counts and design caveats, but omits the Ensembl release, the gene identifier space (Ensembl IDs vs symbols is used loosely), and software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 1,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies that log2(TPM+1) values are not counts, explicitly bars DESeq2/edgeR/pydeseq2, and forbids re-normalization or a second log transform, which is the central issue in this dataset; however it never specifies limma-trend (eBayes with trend=TRUE), which is the appropriate variance model for log-scale intensity-like data, and it omits the sanity check on the value range (non-negative, max ~10-16, no hidden integers or double log). QC is partial: MDS/PCA colored by condition and a p-value histogram are specified, but there is no sample distance heatmap and no stated policy for handling an outlier. There is no low-expression filter at all: all 12000 genes go into the fit, which is a clear gap. The design formula ~condition is stated and sample-to-metadata alignment is verified, but the reference level for condition is never set explicitly; BH at 0.05 is stated, though the added |logFC| > 1 cut is an arbitrary post hoc filter rather than a treat-style test. Enrichment names a versioned WikiPathways collection with a GSEA fallback, but gives no ORA universe, no gene-set size window, and no explicit ranking metric; the report describes method, design, thresholds and caveats but not software versions."
+}

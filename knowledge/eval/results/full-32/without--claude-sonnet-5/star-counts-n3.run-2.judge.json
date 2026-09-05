@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly puts raw STAR/featureCounts integer counts straight into DESeq2 with ~condition, control as reference, size-factor normalization inside the model, BH with apeglm shrinkage, and explicitly rejects TPM/tximport and flags low power at 3 vs 3. QC covers alignment, library size and PCA with a flag-don't-drop policy, but omits sample distances and a concrete policy for a shallow sample. The low-count filter is left to DESeq2 independent filtering with no stated minimal pre-filter or justification. Enrichment was not asked for and is added anyway with an ambiguous ranking metric, no explicit ORA universe, no collection versions and no size window; the report also names no package versions."
+}

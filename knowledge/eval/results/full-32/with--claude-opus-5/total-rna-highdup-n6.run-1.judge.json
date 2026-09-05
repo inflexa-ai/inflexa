@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with edgeR QL as a cross-check on 6 vs 6 unpaired single-batch counts, no read deduplication with the correct no-UMI justification, duplication and depth reported as per-sample QC covariates, and sample_01 kept with a stated keep-inspect-report policy. Filtering (>=10 counts in >=6 samples), in-model normalization, explicit reference level and named contrast, BH at 0.05 with apeglm and in-test lfcThreshold, and a fully specified fgsea run (full list, Wald stat, hallmark/GO BP with versions, 15-500 window, seed) are all stated. The one gap relative to the reference is that the plan computes MT and residual rRNA shares but does not state a conditional policy for removing those genes from the matrix before normalization if their share is large and uneven; intronic share is honestly declared uncomputable from gene-level counts. The report step names method, versions, design, thresholds, counts and the design caveats."
+}

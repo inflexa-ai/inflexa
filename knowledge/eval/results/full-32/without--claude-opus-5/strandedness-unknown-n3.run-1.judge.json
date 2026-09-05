@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The core model is right for the design: DESeq2 Wald on ~condition with control as the explicit reference, median-of-ratios inside the model, a group-size-justified filter, BH at 0.05 with apeglm shrinkage, and thorough sample QC with a stated outlier policy; the low-power caveat is stated without lowering alpha. The weakness is the strandedness handling: instead of inferring the protocol per sample on the alignments (RSeQC infer_experiment.py or salmon libType A) and re-counting with the correct -s when it disagrees, the plan declares reads and BAMs unavailable and substitutes an indirect count-matrix diagnostic (library size, liver marker CPM, GTEx correlation) that can only flag, not fix, a mis-set strand, then fits the model on the counts as delivered. The edgeR/filter sensitivity step is a reasonable robustness check but does not address the upstream counting error. Enrichment is well specified (ranked list, stated metric, size window, universe matched reported) but no collection version is named, and software versions are not requested in the report."
+}

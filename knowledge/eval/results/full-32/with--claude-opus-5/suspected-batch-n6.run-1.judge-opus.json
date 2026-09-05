@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan diagnoses the unrecorded structure before modelling, cross-tabulates the empirical k=2 split against condition to establish estimability, and then estimates surrogate variables with svaseq (condition as the model of interest, intercept-only null) entered as covariates in ~SV1+...+SVn+condition, explicitly refusing ComBat-style count adjustment and checking each SV's correlation with condition and the cluster label — exactly the reference behaviour. QC (blind VST PCA on top 500 genes, distance heatmap, library sizes, PC-association tests) precedes the test; filtering is minimal and tied to the smallest group size; normalization is median-of-ratios/TMM inside the model; the contrast and reference level are explicit; BH at alpha 0.05 with apeglm shrinkage and independent filtering are specified, with naive-vs-adjusted counts reported side by side. The only real gap against the reference is that it never asks the analyst for the unrecorded processing variable (extraction date, lane) before falling back to sva, and the cap of 3 SVs is asserted rather than derived, though the estimator still chooses n. Enrichment is well specified (full ranked list, Wald stat with justification, named human collections, size window, collapse, ORA suppressed under 50 genes) and the report section covers design, versions, diagnostics, thresholds, tested/significant counts, and the caveat that the batch is estimated rather than recorded."
+}

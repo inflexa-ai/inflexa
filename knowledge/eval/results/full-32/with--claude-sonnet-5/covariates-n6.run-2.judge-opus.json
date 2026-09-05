@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits the design well: DESeq2 Wald on ~ sex + age + condition with control explicitly releveled as reference, the named condition_treated_vs_control contrast, apeglm shrinkage, independent filtering at alpha 0.05, and an edgeR QL cross-check on the identical filter and design; it correctly forbids regressing sex/age out of counts and forbids pre-normalization, keeping size factors and TMM inside the models. QC precedes the test with vst PCA colored by condition, sex, and age, a distance heatmap, library sizes, and a stated flag-not-drop outlier policy, but it omits the sex sanity check against XIST/Y-linked genes that the reference calls for. The low-count filter (>=10 counts in at least 6 samples, tied to the smaller group size) is minimal and justified. Two gaps against the reference: age is not centered, so the intercept is uninterpretable and the fit is less stable, and the balance of sex/age by group is only checked as a correlation caveat inside the DE step rather than tabulated up front as a confounding go/no-go. Enrichment was not requested and is only marginally warranted here; it is specified competently (tested-gene universe, Hallmark and Reactome with versions, 15-500 size window, small-list power caveat), but the justification leans on an invented 'procedure permits ORA, forbids GSEA' rule, so it earns partial rather than full credit. Reporting is thorough on design, versions, thresholds, tested/significant counts, plots, and confounding caveats."
+}

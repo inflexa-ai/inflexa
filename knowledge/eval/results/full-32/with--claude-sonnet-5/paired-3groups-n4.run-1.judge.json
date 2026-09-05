@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on design: subject as a blocking term in both full (~subject + condition) and reduced (~subject) models, a DESeq2 LRT as the omnibus test, and three named pairwise contrasts from the same fit with ashr shrinkage and per-contrast BH at 0.05, with control set as the explicit reference. QC is dataset-specific (blind VST PCA colored by both subject and condition, distance heatmap, library sizes, flag-not-drop outlier policy), though the library-size flag only names the >2x-median direction and not shallow samples. The low-count filter is minimal and tied to the smallest group size, normalization is median-of-ratios inside the model, and the report enumerates design, thresholds, tested/significant counts, versions, and the n=4 and Cook's-NA caveats. Enrichment was not asked for and the reference omits it; the plan adds it anyway, but does so correctly (full ranked list, Wald stat as metric, named Hallmark and Reactome collections with versions recorded, 15-500 size window), so it loses only a little for being unrequested."
+}

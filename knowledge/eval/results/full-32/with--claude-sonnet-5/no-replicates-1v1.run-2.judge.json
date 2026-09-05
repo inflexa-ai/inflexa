@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly recognizes the n=1-per-group design, refuses any DESeq2/edgeR test, reports size-factor-normalized counts and descriptive log2FC with an explicit control reference, states the caveat prominently, and names the replicated design needed for inference. The QC step is appropriately scoped for two samples (library sizes, VST, no PCA interpretation), the filter (>=10 counts in 1 sample) is minimal and justified, and the report specification is thorough. The main weakness is Step 4: the reference expects no p-values at all, yet the plan runs ORA with BH-adjusted p-values on a post hoc |log2FC| cutoff list derived from an unvalidated ranking; although the universe, collections, versions, and size window are well specified and the caveats are honest, enrichment is not warranted here and its inclusion reintroduces inferential claims the design cannot support."
+}

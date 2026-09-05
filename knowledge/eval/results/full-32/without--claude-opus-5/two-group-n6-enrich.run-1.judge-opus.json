@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design precisely: DESeq2 Wald on raw integer counts with ~condition, control set as reference, no batch term because the design is single-batch and metadata carries no covariates, and it explicitly refuses batch correction. QC is exemplary and dataset-specific — library sizes as absolute counts, detected genes, size factors, VST PCA and correlation/distance heatmap, plus a stated KEEP-by-default policy for sample_01 with numeric criteria and a sensitivity re-run that quantifies its influence on the gene list. Filtering (count >= 10 in at least 6, the smaller group size, with the removed-gene count reported) plus independent filtering is minimal and justified, and normalization is median-of-ratios inside the model with an explicit prohibition on pre-normalized input. FDR is BH at 0.05 with apeglm shrinkage for ranking, though the |log2FC|>1 cut is applied post hoc rather than via lfcThreshold; enrichment is correctly preranked fgsea on the full list with the Wald statistic named, a named hallmark collection and version, seed, and a size window (minSize 10 rather than 15, a trivial deviation). Reporting covers design, thresholds, tested/significant counts, match-rate diagnostics and confounding caveats, but names packages without stating software versions."
+}

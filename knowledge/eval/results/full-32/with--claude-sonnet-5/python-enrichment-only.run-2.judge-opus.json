@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 4,
+    "normalization": 5,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats this as a downstream enrichment task: it consumes the existing DESeq2 table, refits no count model, and reflects the actual design (6v6 unpaired, single batch, treated vs control contrast named). The enrichment core is essentially the reference answer — full ranked list with no significance cutoff, Wald statistic as the stated metric with a documented substitute if absent, missing-stat drop and symbol deduplication rules, a locally staged versioned Hallmark GMT, size window 15-500, 1000 permutations, seed 42, and NES/BH-q/leading edge reported; a tie-handling rule is the only missing detail, and the Reactome 'current' snapshot is unpinned though the plan acknowledges it. Upstream criteria are inherited rather than addressed: no PCA or library-size QC is performed (sample_01 is only carried forward as a narrative caveat), and low-count filtering, size-factor normalization, design formula and reference level, and LFC shrinkage are never stated, only implied by the inherited ~12000-gene universe. Reporting is otherwise strong on versions, metric, universe, size window, seed, and method-dependence caveats, but it does not state the counts of tested and significant genes from the DE step or the alpha used there."
+}

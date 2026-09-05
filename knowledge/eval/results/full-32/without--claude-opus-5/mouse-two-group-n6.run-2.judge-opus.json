@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design precisely: unpaired 6v6, single batch with an explicit statement that no batch term is estimable, DESeq2 Wald on ~condition with chow set as reference and the direction convention stated, apeglm shrinkage for ranking alongside unshrunken effects, BH at 0.05 with NA/independent-filtering counts reported. QC is exemplary and targeted at the stated concern: per-sample library sizes, detected genes, size factors, top-50 fraction, VST PCA and correlation heatmap, an explicit keep-unless-aberrant policy, plus an auditable sensitivity DE with and without sample_01 and a stated primacy rule. The filter (>=10 counts in >=6 samples, tied to the smallest group size, with survivor count reported) is minimal and justified, and normalization stays inside the model on raw integer counts. Enrichment correctly avoids the human-Hallmark-on-mouse-symbols trap by requiring the mouse-symbol hallmark GMT with species verification and an explicit refusal to substitute, ranks the full tested list, reports per-set coverage, and uses a size window (10-500, slightly looser than the 15-500 reference, a trivial deviation); collection version is not pinned. Reporting covers design, thresholds, tested/significant counts and caveats, but never asks for software/reference versions, which is the only real gap."
+}

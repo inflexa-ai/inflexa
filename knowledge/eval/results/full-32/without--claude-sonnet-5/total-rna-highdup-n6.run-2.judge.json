@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly refuses to deduplicate non-UMI total-RNA counts, uses DESeq2 with ~condition on raw counts with median-of-ratios normalization, applies a justified filterByExpr-style filter, and handles sample_01 by retention plus a sensitivity re-run rather than silent removal. It falls short of the reference on QC by never proposing to explain the duplication via per-sample rRNA, mitochondrial, or intronic fractions, nor considering removal of rRNA/mito genes if uneven. Fold-change shrinkage is only implied by listing apeglm/ashr in packages, BH is not named, and the reference level is not stated. Enrichment was not asked for and is added with an ambiguous ranking metric, no explicit ORA universe, no collection versions, and no size window; versions and tested-gene counts are also missing from the reporting."
+}

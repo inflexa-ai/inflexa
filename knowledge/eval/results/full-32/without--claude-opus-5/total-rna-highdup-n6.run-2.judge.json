@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the total-RNA/no-UMI context, explains duplication via rRNA, mitochondrial and top-gene fractions, refuses to deduplicate, and fits DESeq2 Wald with ~condition, explicit control reference, median-of-ratios inside the model, apeglm and BH at 0.05. QC covers PCA, correlation clustering, library size and a pre-specified sample_01 rule; the intronic share is reasonably omitted since it cannot be computed from counts. Minor gaps: the |log2FC|>1 cut is applied post hoc rather than via lfcThreshold, the plan reports rRNA/MT fractions but does not state a rule for removing those genes before normalization when their share is large and uneven, and gene-set collection versions are not pinned. Enrichment was not requested but is done properly (full ranked Wald statistic, named collections, 15-500 window, tested-gene universe for ORA) and marked optional."
+}

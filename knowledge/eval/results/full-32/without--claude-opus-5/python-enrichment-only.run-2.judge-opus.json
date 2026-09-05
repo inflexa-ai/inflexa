@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to re-fit any count model and works from the supplied DESeq2 table, ranking the full tested gene list by sign(log2FC) * -log10(p) with explicit rules for NAs, duplicate symbols, p-value flooring and tie reporting, then runs gseapy.prerank locally against a staged human Hallmark GMT with >=1000 permutations, a fixed seed and a size window (min 10 rather than the reference's 15) — no premature padj cutoff before ranking, and NES/FDR/leading edge are reported with an explicit direction convention. Weaknesses: the MSigDB release version is never named (only 'resolve by what it IS'), and Step 3 devotes a full step to a hypergeometric ORA on the padj<0.05 lists, which the reference regards as the wrong test here; it is at least framed as a cross-check with an explicit filtered universe and BH per direction, so it is not fatal. Upstream criteria are largely moot given the entry point, and the plan handles them sensibly by inheriting DESeq2's independent filtering and shrinkage rather than re-normalizing, though it never states the size-factor/shrinkage provenance or the design formula and reference level of the original fit. QC is limited to ranked-list sanity checks (universe size, tie count, symbol overlap with counts.csv) plus a flag that sample_01's shallow library propagates into the consumed statistics without correction — appropriate but thinner than a sample-structure QC. Reporting is otherwise complete on methods, tool versions, thresholds, gene counts and design caveats."
+}

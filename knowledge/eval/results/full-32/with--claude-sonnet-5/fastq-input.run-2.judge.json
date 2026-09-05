@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 3,
+    "low_count_filter": 3,
+    "normalization": 3,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 5
+  },
+  "rationale": "The planner correctly recognized that raw paired-end FASTQ files cannot be tested for differential expression, refused to invent a count matrix, and stopped with a precise question naming the quantification options (Salmon/kallisto, STAR/HISAT2 + featureCounts, tximport import) and asking whether counts exist elsewhere and which reference to use; this matches the reference outcome and earns a high method_fits_design score. The question does not explicitly ask for the annotation version and does not sketch the downstream plan (DESeq2/edgeR, BH at 0.05, low-power caveat for n=3 per group) that the reference expects once counts arrive, so the QC, filtering, normalization, contrast, and FDR criteria are not stated and score low despite the stop being appropriate. Enrichment is correctly omitted. The clarification itself is a thorough account of what was checked in the environment, which partly credits report completeness."
+}

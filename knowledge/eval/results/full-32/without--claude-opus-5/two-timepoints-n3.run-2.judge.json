@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats the 2x2 as a factorial with time as a two-level factor, explicitly rejecting a continuous time trend, fits ~condition + time + condition:time in DESeq2 with stated reference levels, tests the interaction by Wald and by LRT against the reduced ~condition + time, and reads it out through simple effects from the same fit with apeglm/ashr shrinkage and BH at stated alphas. QC is complete for a single-batch design with a stated keep-and-flag outlier policy, the filter (>=10 counts in >=3 samples) is minimal and justified by group size, and raw counts go to the model with size factors reported. Enrichment was not asked for and the reference omits it; the plan adds three GSEA runs that are well specified (universe, size window, seed, named collections) but unwarranted and with shrunken LFC as a debatable ranking metric. The report specifies design, thresholds, gene counts and power caveats but never commits to reporting software versions."
+}

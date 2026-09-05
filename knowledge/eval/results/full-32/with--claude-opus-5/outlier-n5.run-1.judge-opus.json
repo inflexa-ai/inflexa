@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: it characterizes sample_03 with library size, detected genes, count concentration and within-group correlation before any decision, states that a technical criterion is required for removal, keeps the 10-sample fit primary absent such a criterion, and reports both with- and without-sample_03 fits plus voomWithQualityWeights (with the sample_03 weight named) and edgeR QL robust as down-weighting routes. Filtering is minimal and justified (>=10 counts in >=5 samples, the smallest group size) and re-applied within the 9-sample subset; normalization is median-of-ratios/TMM inside the model with explicit prohibition of pre-scaling. The design ~condition, explicit relevel of control, named contrast and sign convention, BH at alpha 0.05 with independent filtering, apeglm shrinkage kept separate from the test, and the Cook's-distance NA breakdown are all correct and design-specific. Enrichment is fgsea preranked on the full tested list ranked by the Wald statistic with a stated size window, seed, collection version and match rate, and ORA is correctly withheld below ~50 genes, though the GO BP substitution for Reactome is a minor environmental compromise. The report step is thorough: versions, thresholds, tested and significant counts, the sample_03 decision section, unstable genes excluded from headline claims, and plain statement of n=5 power limits and missing length offsets."
+}

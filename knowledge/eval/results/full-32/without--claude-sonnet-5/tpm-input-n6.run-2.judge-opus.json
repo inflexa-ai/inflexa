@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly recognizes that TPM is not a count and routes to limma-trend on log2(TPM+1) with eBayes(trend=TRUE) for the unpaired 6v6 design, explicitly forbidding DESeq2/edgeR/voom and any reverse-engineering of counts, which matches the reference exactly; the only omission is that it does not request the raw counts or Salmon quantification directories from the core. QC is present and appropriate (expression distributions, PCA/clustering on log values colored by condition, outlier check) though no sample-distance heatmap and no stated policy for what to do if an outlier appears. The low-expression filter (TPM >= 1 in at least 6 samples, i.e. the smallest group size) is minimal and documented, and normalization is handled correctly by keeping the pre-normalized values out of any count model with no size factors invented. The design matrix is described as unpaired two-group with no batch term justified by the single batch, but the reference level/contrast direction is only implied by the up/down-in-lesional language rather than set explicitly; BH at 0.05 is stated with a separate logFC-filtered list rather than a threshold inside the test, and ORA uses the filtered universe as background against a named, versioned WikiPathways collection but omits a gene-set size window."
+}

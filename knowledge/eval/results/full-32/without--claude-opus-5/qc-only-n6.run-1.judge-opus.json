@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly reads the question as diagnostic and stops at the QC verdict, explicitly declining differential expression, enrichment, and batch correction with reasons tied to the single-batch, unpaired 6v6 design. QC coverage is exemplary: per-sample library sizes verified against the file rather than restated, detected genes and top-N fraction to distinguish uniform shallowness from complexity collapse, blind VST PCA with variance explained and PC-versus-depth correlation, Euclidean distance heatmap with clustering, plus a uniform MAD screen and leave-one-out comparison so the sample_01 verdict is evidence-based rather than library-size-based. The filter (count >=10 in at least 6 samples, smallest group size) is minimal and justified, and normalization is handled inside DESeq2 via median-of-ratios size factors with raw counts kept unmodified upstream. Minor gaps: the reference level for condition is never named (though no contrast is tested), software versions are not promised in the report, and the QC diagnostics emit several nominal p-values (Wilcoxon, Spearman) without noting they are exploratory and unadjusted."
+}

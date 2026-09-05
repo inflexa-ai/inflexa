@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly recognizes that a DESeq2 results table is already in hand and does not refit any count model, instead running a hypergeometric ORA with clusterProfiler::enrichGO on GO BP with the tested-gene set as the explicit universe, BH at 0.05, simplify() for redundancy reduction, and per-term gene membership reported — all core requirements of the reference. It handles the low-count/independent-filtering issue sensibly by excluding NA-padj genes from both foreground and universe and justifies this, and it correctly declines to re-normalize, noting size factors were applied upstream. Weaknesses: up- and down-regulated genes are counted separately but then pooled into a single enrichGO call without any statement or justification of the pooling; no gene-set size window (minGSSize/maxGSSize) is specified; annotation and package versions are not pinned; and the |log2FC| > 1 cutoff is applied to unshrunken LFCs with no mention of shrinkage. Sample-level QC is necessarily limited given only a results table, and the plan flags sample_01 as an uncheckable caveat rather than proposing any concrete diagnostic (e.g., inspecting baseMean/dispersion or requesting counts), so design-level QC and contrast specification (reference level, formula) remain thin."
+}

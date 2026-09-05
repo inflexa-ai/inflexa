@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference structure closely: it characterizes sample_03 first (library size, detected genes, top-gene dominance, Spearman correlation, VST PCA with variance explained, distance heatmap, dendrogram, Cook's distance) without deciding removal, then runs both the 10-sample primary fit and the 9-sample sensitivity fit and reconciles them with explicit robust / outlier-dependent / outlier-masked labels, so no silent removal occurs. Modelling is appropriate for an unpaired single-batch 5v5: DESeq2 Wald on raw counts with ~condition, control explicitly set as reference, internal size-factor normalization with no pre-normalized input, a minimal counts>=10 in >=3 samples filter re-applied to the reduced set, independent filtering, apeglm shrinkage, and alpha stated at 0.05 and 0.10. Weaknesses are modest: the criterion for choosing the headline fit is qualitative (tied to the T1S1 verdict) rather than a pre-fixed numeric threshold such as MAD-based distance, the down-weighting route (arrayWeights or robust dispersion) is never offered, BH is implied by DESeq2 rather than named, and software/MSigDB versions are not stated in the reporting requirements. Enrichment is well specified with a preranked metric over all commonly tested genes, size 15-500, tested-gene universe as ORA background, human symbol collections, leading edges, and a rule to skip ORA if the robust list is tiny."
+}

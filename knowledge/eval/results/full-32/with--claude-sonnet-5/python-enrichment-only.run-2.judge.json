@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 5,
+    "normalization": 5,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses to refit the count model and runs gseapy.prerank on the full 12000-gene list ranked by the DESeq2 Wald statistic (with a documented fallback), against a locally staged, version-named Hallmark GMT (2026.1), size window 15-500, 1000 permutations, seed 42, and reports NES, BH q-value and leading edge per set, matching the reference closely; the only gaps are no explicit tie rule and an unpinned Reactome 'current' snapshot. The DE-stage criteria (QC, low-count filter, normalization, design formula) are largely inapplicable to an enrichment-only plan, and the plan states little about them beyond naming the 6v6 unpaired single-batch contrast, carrying the sample_01 library-size caveat forward without a stated policy, and defining the universe as tested genes only, so those criteria score in the middle. FDR handling for the enrichment step is stated (BH, q<0.05) and fold-change shrinkage is correctly not used for ranking, though this is not made explicit. The report specification is thorough on versions, metric, universe, identifier-matching losses, and method-dependence caveats."
+}

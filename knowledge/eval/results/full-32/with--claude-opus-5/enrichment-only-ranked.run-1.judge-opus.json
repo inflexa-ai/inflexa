@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes that DE is already done and does not redo it, instead validating the supplied table (gene overlap, NA p-values from independent filtering and Cook's flagging, p-value histogram, empirical verification of the contrast's sign convention) before consuming it, which is the right analog of a design/contrast check here. QC is concrete and dataset-specific: per-sample library sizes with sample_01's ratio to the median, blind VST PCA and distance heatmap by condition, and an explicit no-drop policy justified by size factors. Normalization is handled correctly (size factors only, blind VST for QC, no pre-scaling), and no additional low-count filter is imposed on the ranked list — the full tested list is used with only NA statistics dropped and counted. The enrichment step is essentially the reference: fgseaMultilevel on the full ranked list by the Wald statistic with the alternatives named and rejected, universe = tested genes, 15-500 after intersection, fixed seed, BH, collapsePathways, leading edge with gene-level stats, identifier-space and version recorded. Reporting is complete (tool and collection versions, thresholds, significant-gene counts, caveats, null-result handling); the only soft spots are the unrequested WikiPathways/GO BP secondary pass and that shrinkage is moot but only implicitly so.\"}"
+}

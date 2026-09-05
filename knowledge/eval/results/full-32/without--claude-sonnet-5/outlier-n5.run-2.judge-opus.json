@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 3,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the unpaired, single-batch 5v5 design, uses DESeq2 with ~condition on raw counts, and — importantly — commits to reporting both the full-cohort and sample_03-excluded fits with an explicit overlap/gained/lost comparison, which avoids the silent-removal failure mode. However, it never states a pre-specified quantitative criterion for calling sample_03 an outlier (no MAD threshold, no technical-failure rule), and it never considers the down-weighting route (arrayWeights, robust dispersion, Cook's distance), so the exclusion decision remains discretionary after seeing the QC. QC is the plan's strength: VST PCA with variance explained, distance heatmap, library size and detection metrics, and an explicit no-decision-here policy. Weaknesses are the missing low-count pre-filter (only DESeq2 independent filtering is named), no lfcShrink for the reported effect sizes, no stated reference level, no software versions, and an enrichment step that names WikiPathways but omits the background universe, gene-set size window, and collection version while wavering between ORA and GSEA."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses count models for TPM and fits limma lmFit on log2(TPM+1) with eBayes(trend=TRUE), a two-group design with control as the explicit reference, and BH at 0.05 through topTable, matching the reference; it does not, however, explicitly request the raw counts or quantification directories from the core, only caveats their absence. QC (PCA/MDS, distance heatmap, detected genes, colored by condition, outliers flagged) and the filter (TPM>=1 in at least 6 samples, the smaller group) are on the log/TPM scale as required, with no TMM or size factors. Enrichment was not asked for; the added ORA is reasonably specified (tested-gene universe, Hallmark 2026.1, 15-500 window, BH) but the stated rationale that preranked GSEA is 'not permitted' is unfounded, so this criterion is neither the clean omission nor fully justified. The report step covers method, versions, thresholds, counts tested/significant, and delivery caveats."
+}

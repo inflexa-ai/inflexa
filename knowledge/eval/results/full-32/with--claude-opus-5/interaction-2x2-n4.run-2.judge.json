@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan is built around the genotype:treatment interaction coefficient with the two simple effects extracted alongside it (list contrast for the KO effect), explicit WT/vehicle relevelling, and an edgeR QL refit of the identical design as an independent check, which matches the reference exactly. Filtering is minimal and justified by the smallest cell size, normalization stays inside the model (median-of-ratios / TMM) with the tximport offset limitation noted, and BH at 0.05 within contrast with ashr shrinkage and lfcThreshold-in-results rather than post-hoc cuts is stated explicitly. QC is complete (blind VST, PCA, distances, library sizes, coloured by both factors and the combined cell) but the outlier/shallow-sample policy is deferred to the modelling step without that step actually stating a rule. Enrichment is unasked but reasonably scoped, with full ranked list, stated Wald-stat metric, tested-gene universe, named collections, 15-500 window and seed, though the collection version is promised rather than stated. The report enumerates method, versions, design, contrasts, thresholds, n tested and n DE, and carries the correct underpowered-interaction caveat."
+}

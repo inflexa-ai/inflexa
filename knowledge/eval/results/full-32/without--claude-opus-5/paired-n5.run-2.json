@@ -1,0 +1,349 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "paired-n5",
+  "run": 2,
+  "startedAt": "2026-09-05T17:22:18.478Z",
+  "elapsedMs": 78276,
+  "outcome": "plan_submitted",
+  "planId": "pln-54a52e24",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Paired DESeq2 DE: treated vs control blocking on subject",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 4 residual df, dispersion estimation is shaky and a null-looking p-value histogram is a plausible, honest outcome — report it as such rather than lowering thresholds to manufacture hits.",
+          "If the VST PCA shows subject NOT dominating, say so; it changes how much the pairing is buying and should be reported, not suppressed.",
+          "Gene symbols as row identifiers may contain duplicates or empty strings; deduplicate (sum or keep highest-expressed) and report how many rows were affected.",
+          "Do not switch to an LRT or an unpaired test to obtain more hits."
+        ],
+        "context": "Human whole-blood bulk RNA-seq, 5 subjects each sampled under control and treated conditions. The pairing is the entire statistical leverage of this design: between-subject transcriptome variation in blood (driven by cell composition, genotype, and background inflammation) typically exceeds a treatment effect, so an unpaired comparison would be both underpowered and confounded with subject. DESeq2 with a subject blocking factor is the standard fixed-effect solution for a complete balanced pairing at this sample size.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "data.table"
+        ],
+        "question": "Which genes change between the treated and control sample within subjects, when subject is blocked as a paired factor across the 5 subjects in metadata.csv?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Design must be ~ subject + condition with subject as a factor — never a condition-only design.",
+          "Read the actual condition and subject level strings from metadata.csv; set the control/baseline level explicitly via relevel and record which level was used as reference in the output.",
+          "Match count matrix columns to metadata sample IDs by name and reorder; fail loudly on any mismatch rather than assuming column order.",
+          "Confirm the 5x2 balance (each subject exactly one control and one treated) before fitting and report the verification.",
+          "Report both unshrunken log2FC (for the test statistic) and apeglm-shrunken log2FC (for ranking) in the same table.",
+          "Report the low-count filter used and the number of genes retained from the 12,000 input genes.",
+          "State the residual degrees of freedom (4) and characterise the power limitation explicitly in the summary text.",
+          "Write the full results table for all tested genes, not just significant ones — downstream steps need the complete ranking."
+        ],
+        "description": "Load /eval-full-32-without-paired-n5-2/data/inputs/counts/counts.csv (12,000 gene symbols x 10 sample columns, raw integer counts from STAR/featureCounts) and /eval-full-32-without-paired-n5-2/data/inputs/metadata/metadata.csv (10 rows; columns for sample, subject, condition). Verify that the count column names match the metadata sample IDs exactly and reorder rather than assume; verify the design really is balanced — each of the 5 subjects must appear exactly twice, once per condition level — and halt with a clear message if it is not. Build a DESeqDataSet with design ~ subject + condition, setting the control level of `condition` as the reference explicitly from the actual level names found in metadata.csv (do not hard-code 'control'/'treated' spellings; read them). Filter low-count genes before fitting (edgeR::filterByExpr with the model matrix, or the explicit rule: keep genes with count >= 10 in at least 5 samples) and report how many of the 12,000 genes survive. Run DESeq() with the default Wald test, extract results for the treated-vs-control contrast with independent filtering on, and additionally compute apeglm-shrunken log2 fold changes for ranking. Emit: a full results table (gene symbol, baseMean, log2FC unshrunken, lfcSE, stat, pvalue, padj, log2FC shrunken) sorted by padj; the counts of genes at padj<0.05 and padj<0.1 split by direction; QC figures — library size barplot, VST-transformed PCA coloured by subject and shaped by condition, sample-sample Euclidean/correlation heatmap, dispersion plot, p-value histogram; and a volcano plot. In the written summary state plainly the residual degrees of freedom (10 samples - 5 subject coefficients - 1 condition = 4) and that this is a small, underpowered design.",
+        "acceptance_criteria": [
+          "A results table covering every gene that passed the expression filter, with baseMean, unshrunken log2FC, lfcSE, pvalue, padj and apeglm-shrunken log2FC, keyed by gene symbol.",
+          "Explicit record of which condition level was the reference and confirmation that the 5-subject x 2-condition design is balanced.",
+          "Counts of genes at padj<0.05 and padj<0.1, split into up- and down-regulated, reported even if zero.",
+          "QC outputs present: library sizes, VST PCA coloured by subject and by condition, sample-distance heatmap, dispersion plot, p-value histogram, volcano plot.",
+          "Summary text states the residual df and the underpowered nature of n=5 pairs without overclaiming."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Cross-method concordance and per-subject response consistency",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "High cross-method concordance is expected simply because all three share the same counts and design — it is a sanity check, not independent replication. Say so.",
+          "Per-subject ratios on a single replicate per cell carry no within-cell error estimate; they describe consistency, they do not test it.",
+          "A gene whose pooled significance vanishes when one subject is dropped should be reported as fragile, not as a finding."
+        ],
+        "context": "At 5 pairs, a single discordant subject can create or destroy a hit. Method concordance guards against distributional-assumption artefacts, and the per-subject ratio / leave-one-subject-out view is the most direct answer to 'which genes respond within each subject' — it distinguishes a consistent treatment response from a one-subject outlier that survived pooling.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "pheatmap",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Do limma-voom and edgeR paired models agree with DESeq2 on the treated-vs-control genes, and is each candidate gene's response consistent across all 5 subjects rather than driven by one pair?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "All three models must use the identical gene filter and the identical paired design matrix as T1S1 — no re-filtering with different rules.",
+          "Per-subject log2 ratios must be computed on DESeq2 normalized counts (or edgeR CPM) with an explicit pseudocount, and the pseudocount stated.",
+          "Leave-one-subject-out must be reported for every gene in the reported candidate set, with the range of the effect estimate across the 5 leave-out fits.",
+          "If no gene reaches padj<0.1 in any method, do not lower the FDR bar as if it were significance — report the top-ranked genes explicitly labelled as non-significant candidates.",
+          "Direction consistency must be counted out of 5 subjects and reported per gene."
+        ],
+        "description": "Using the same filtered count matrix and the same paired design (~ subject + condition) from T1S1, refit the contrast two further ways: (1) limma-voom with the explicit subject-blocked design matrix and eBayes, and (2) edgeR with TMM normalization, estimateDisp on the paired design, glmQLFit/glmQLFTest. Produce a merged table joining DESeq2, voom and edgeR statistics per gene, plus a concordance summary (overlap of padj<0.05 and padj<0.1 sets, rank correlation of the log2FC estimates, an agreement flag per gene). Separately, answer the within-subject part of the question directly: compute per-subject log2 ratios of treated over control from DESeq2 median-of-ratios normalized counts (log2((treated+1)/(control+1)) per subject) for the top-ranked genes (union of the three methods' padj<0.1 sets, or the top 50 by DESeq2 shrunken |log2FC| among padj<0.25 genes if that union is empty), and report for each such gene: the 5 per-subject ratios, how many subjects move in the same direction as the pooled estimate, and a flag when the pooled effect is driven by a single subject (leave-one-subject-out — refit or recompute the mean ratio dropping each subject in turn and report the range). Output a heatmap of per-subject log2 ratios for these genes with subjects as columns.",
+        "acceptance_criteria": [
+          "A merged per-gene table with DESeq2, limma-voom and edgeR log2FC and adjusted p-values, plus overlap counts and rank correlation between methods.",
+          "A per-subject log2 ratio matrix (candidate genes x 5 subjects) with a direction-consistency count and a single-subject-driven flag per gene.",
+          "Leave-one-subject-out effect ranges reported for every candidate gene.",
+          "A heatmap of per-subject log2 ratios for the candidate gene set.",
+          "Explicit labelling of whether the candidate set is FDR-significant or merely top-ranked."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Preranked pathway enrichment of the paired treatment contrast",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "GSEA on a ranking derived from a 4-residual-df model inherits that instability; treat enriched sets as hypotheses, not established mechanism.",
+          "Blood expression is strongly driven by cell-composition shifts — an enriched immune-cell-associated set may reflect a change in leukocyte proportions rather than transcriptional regulation within a cell type. Say this in the interpretation.",
+          "Hallmark and GO sets overlap heavily with one another; do not present concordance between the two collections as independent corroboration."
+        ],
+        "context": "Whole blood treatment response is typically expressed as coordinated shifts in interferon, inflammatory, and cell-cycle programmes rather than a handful of large single-gene effects, so a set-level readout can be informative when gene-level FDR is not. The environment's reference store carries human MSigDB hallmark, human GO BP/CC/MF, and human WikiPathways gene sets, all keyed on HGNC symbols, which matches the gene-symbol row identifiers of counts.csv.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which biological processes and hallmark states are coordinately shifted by treatment in whole blood, based on the ranking of the full paired treated-vs-control contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the HUMAN gene set collections — the store also holds mouse and rat versions and using them on this Homo sapiens data would produce meaningless results.",
+          "Rank on the full filtered gene list from T1S1, not on a thresholded significant subset.",
+          "State which ranking statistic was used and set a fixed random seed for fgsea permutations.",
+          "Restrict to gene sets with between 15 and 500 members present in the tested gene universe, and report the universe size.",
+          "Collapse redundant GO terms (parent/child sharing most members) before quoting a count of significant processes.",
+          "Annotate each significant set's leading-edge genes with the per-subject consistency flags from T1S2.",
+          "If the gene set files are absent at run time, report the absence explicitly and emit the ranked list only — do not substitute a different organism's sets or an internet download."
+        ],
+        "description": "Take the complete gene-level result table from T1S1 (all filtered genes, human HGNC symbols) and run preranked gene set enrichment (fgsea) on a ranking built from the DESeq2 statistic — use the Wald stat, or sign(log2FC) * -log10(pvalue), and state which was used. Preranked GSEA is the right choice here because at 4 residual df the FDR-significant gene list may be tiny or empty, and an over-representation test on an empty list yields nothing. Required reference data: human gene-set collections keyed on HGNC symbols — the MSigDB hallmark collection (50 sets) as the primary readout and the GO biological process collection as the mechanism-level complement; resolve them from the environment's reference store at run time rather than assuming a path, and confirm the human (not mouse) versions are used. Optionally also test the human WikiPathways collection if present. Report the leading-edge genes for each significant set and cross-reference them against the per-subject consistency flags from T1S2, so a pathway driven by genes that were single-subject artefacts is marked as such. Collapse redundant parent/child GO terms before reporting a count. If neither hallmark nor GO gene sets are available in the environment, report that plainly and fall back to reporting the ranked gene list alone — the DE result from T1S1/T1S2 remains the answer to the research question without this step.",
+        "acceptance_criteria": [
+          "A preranked GSEA result table per collection with NES, p-value, FDR, set size and leading-edge genes.",
+          "Explicit statement of the ranking statistic, the gene universe size, the set-size bounds, and the seed.",
+          "Leading-edge genes cross-referenced to the T1S2 per-subject consistency flags.",
+          "GO redundancy collapsed before any count of significant terms is reported.",
+          "If reference gene sets are unavailable, an explicit statement of that fact rather than a silent organism substitution."
+        ]
+      }
+    ],
+    "title": "Paired treated-vs-control blood RNA-seq DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are raw integer gene-level counts (12,000 gene symbols x 10 sample columns, star_featurecounts) from human whole blood, with a metadata table of 10 samples carrying subject and condition. The design is explicitly paired: 5 subjects, each contributing one control and one treated sample. The research question — which genes respond to treatment within each subject — is exactly a paired two-condition differential expression problem, and the paired structure must be modelled (~ subject + condition) rather than ignored, because between-subject expression variance in blood is large relative to a treatment effect and an unpaired test on n=5+5 would be badly underpowered and confounded by subject identity.\n\nT1S1 runs the primary DE with DESeq2 using the design ~ subject + condition, on genes passing a low-count filter (edgeR::filterByExpr with the paired design, or a manual >=10 counts in >=5 samples rule). Blocking on subject consumes 4 residual degrees of freedom, leaving 4 for the condition effect, so the analysis is honestly underpowered — that must be reported alongside the results, not buried. LFC shrinkage (apeglm) is applied for ranking, but unshrunken values are reported for the statistics. QC diagnostics (library sizes, VST PCA coloured by subject and by condition, sample-sample correlation) come out of the same step to confirm that subject dominates the first principal component, which is the empirical justification for the paired model.\n\nT1S2 is a robustness check rather than a new claim: the same paired contrast run with limma-voom with duplicateCorrelation-free explicit subject blocking, plus edgeR paired glmQLFit. Concordance of the three methods on the significant set is the evidence that a hit is real, not a modelling artefact at n=5. It also computes per-subject log2 ratios (treated vs control per subject, on normalized counts) so the question 'within each subject' is answered directly and consistency across subjects can be inspected gene by gene — a gene driven by one subject is flagged.\n\nT1S3 places the resulting ranked gene list into biological context using the staged human hallmark and GO gene sets against the shrunken-LFC ranking (fgsea preranked, which is appropriate when few genes clear FDR). It is annotation, not a claim of mechanism, and will report explicitly if the ranked list is too weak to support enrichment."
+  },
+  "usage": {
+    "inputTokens": 92255,
+    "outputTokens": 5733,
+    "cacheCreationInputTokens": 74083,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pydeseq2",
+          "apeglm",
+          "ashr",
+          "clusterProfiler",
+          "fgsea",
+          "msigdbr",
+          "org.Hs.eg.db",
+          "EnhancedVolcano",
+          "pheatmap",
+          "sva"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired treated-vs-control blood RNA-seq DE",
+          "analytical_narrative": "The data are raw integer gene-level counts (12,000 gene symbols x 10 sample columns, star_featurecounts) from human whole blood, with a metadata table of 10 samples carrying subject and condition. The design is explicitly paired: 5 subjects, each contributing one control and one treated sample. The research question — which genes respond to treatment within each subject — is exactly a paired two-condition differential expression problem, and the paired structure must be modelled (~ subject + condition) rather than ignored, because between-subject expression variance in blood is large relative to a treatment effect and an unpaired test on n=5+5 would be badly underpowered and confounded by subject identity.\n\nT1S1 runs the primary DE with DESeq2 using the design ~ subject + condition, on genes passing a low-count filter (edgeR::filterByExpr with the paired design, or a manual >=10 counts in >=5 samples rule). Blocking on subject consumes 4 residual degrees of freedom, leaving 4 for the condition effect, so the analysis is honestly underpowered — that must be reported alongside the results, not buried. LFC shrinkage (apeglm) is applied for ranking, but unshrunken values are reported for the statistics. QC diagnostics (library sizes, VST PCA coloured by subject and by condition, sample-sample correlation) come out of the same step to confirm that subject dominates the first principal component, which is the empirical justification for the paired model.\n\nT1S2 is a robustness check rather than a new claim: the same paired contrast run with limma-voom with duplicateCorrelation-free explicit subject blocking, plus edgeR paired glmQLFit. Concordance of the three methods on the significant set is the evidence that a hit is real, not a modelling artefact at n=5. It also computes per-subject log2 ratios (treated vs control per subject, on normalized counts) so the question 'within each subject' is answered directly and consistency across subjects can be inspected gene by gene — a gene driven by one subject is flagged.\n\nT1S3 places the resulting ranked gene list into biological context using the staged human hallmark and GO gene sets against the shrunken-LFC ranking (fgsea preranked, which is appropriate when few genes clear FDR). It is annotation, not a claim of mechanism, and will report explicitly if the ranked list is too weak to support enrichment.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Paired DESeq2 DE: treated vs control blocking on subject",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes change between the treated and control sample within subjects, when subject is blocked as a paired factor across the 5 subjects in metadata.csv?",
+              "description": "Load /eval-full-32-without-paired-n5-2/data/inputs/counts/counts.csv (12,000 gene symbols x 10 sample columns, raw integer counts from STAR/featureCounts) and /eval-full-32-without-paired-n5-2/data/inputs/metadata/metadata.csv (10 rows; columns for sample, subject, condition). Verify that the count column names match the metadata sample IDs exactly and reorder rather than assume; verify the design really is balanced — each of the 5 subjects must appear exactly twice, once per condition level — and halt with a clear message if it is not. Build a DESeqDataSet with design ~ subject + condition, setting the control level of `condition` as the reference explicitly from the actual level names found in metadata.csv (do not hard-code 'control'/'treated' spellings; read them). Filter low-count genes before fitting (edgeR::filterByExpr with the model matrix, or the explicit rule: keep genes with count >= 10 in at least 5 samples) and report how many of the 12,000 genes survive. Run DESeq() with the default Wald test, extract results for the treated-vs-control contrast with independent filtering on, and additionally compute apeglm-shrunken log2 fold changes for ranking. Emit: a full results table (gene symbol, baseMean, log2FC unshrunken, lfcSE, stat, pvalue, padj, log2FC shrunken) sorted by padj; the counts of genes at padj<0.05 and padj<0.1 split by direction; QC figures — library size barplot, VST-transformed PCA coloured by subject and shaped by condition, sample-sample Euclidean/correlation heatmap, dispersion plot, p-value histogram; and a volcano plot. In the written summary state plainly the residual degrees of freedom (10 samples - 5 subject coefficients - 1 condition = 4) and that this is a small, underpowered design.",
+              "context": "Human whole-blood bulk RNA-seq, 5 subjects each sampled under control and treated conditions. The pairing is the entire statistical leverage of this design: between-subject transcriptome variation in blood (driven by cell composition, genotype, and background inflammation) typically exceeds a treatment effect, so an unpaired comparison would be both underpowered and confounded with subject. DESeq2 with a subject blocking factor is the standard fixed-effect solution for a complete balanced pairing at this sample size.",
+              "constraints": [
+                "Design must be ~ subject + condition with subject as a factor — never a condition-only design.",
+                "Read the actual condition and subject level strings from metadata.csv; set the control/baseline level explicitly via relevel and record which level was used as reference in the output.",
+                "Match count matrix columns to metadata sample IDs by name and reorder; fail loudly on any mismatch rather than assuming column order.",
+                "Confirm the 5x2 balance (each subject exactly one control and one treated) before fitting and report the verification.",
+                "Report both unshrunken log2FC (for the test statistic) and apeglm-shrunken log2FC (for ranking) in the same table.",
+                "Report the low-count filter used and the number of genes retained from the 12,000 input genes.",
+                "State the residual degrees of freedom (4) and characterise the power limitation explicitly in the summary text.",
+                "Write the full results table for all tested genes, not just significant ones — downstream steps need the complete ranking."
+              ],
+              "acceptance_criteria": [
+                "A results table covering every gene that passed the expression filter, with baseMean, unshrunken log2FC, lfcSE, pvalue, padj and apeglm-shrunken log2FC, keyed by gene symbol.",
+                "Explicit record of which condition level was the reference and confirmation that the 5-subject x 2-condition design is balanced.",
+                "Counts of genes at padj<0.05 and padj<0.1, split into up- and down-regulated, reported even if zero.",
+                "QC outputs present: library sizes, VST PCA coloured by subject and by condition, sample-distance heatmap, dispersion plot, p-value histogram, volcano plot.",
+                "Summary text states the residual df and the underpowered nature of n=5 pairs without overclaiming."
+              ],
+              "caveats": [
+                "With 4 residual df, dispersion estimation is shaky and a null-looking p-value histogram is a plausible, honest outcome — report it as such rather than lowering thresholds to manufacture hits.",
+                "If the VST PCA shows subject NOT dominating, say so; it changes how much the pairing is buying and should be reported, not suppressed.",
+                "Gene symbols as row identifiers may contain duplicates or empty strings; deduplicate (sum or keep highest-expressed) and report how many rows were affected.",
+                "Do not switch to an LRT or an unpaired test to obtain more hits."
+              ],
+              "depends_on": [],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "data.table"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Cross-method concordance and per-subject response consistency",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do limma-voom and edgeR paired models agree with DESeq2 on the treated-vs-control genes, and is each candidate gene's response consistent across all 5 subjects rather than driven by one pair?",
+              "description": "Using the same filtered count matrix and the same paired design (~ subject + condition) from T1S1, refit the contrast two further ways: (1) limma-voom with the explicit subject-blocked design matrix and eBayes, and (2) edgeR with TMM normalization, estimateDisp on the paired design, glmQLFit/glmQLFTest. Produce a merged table joining DESeq2, voom and edgeR statistics per gene, plus a concordance summary (overlap of padj<0.05 and padj<0.1 sets, rank correlation of the log2FC estimates, an agreement flag per gene). Separately, answer the within-subject part of the question directly: compute per-subject log2 ratios of treated over control from DESeq2 median-of-ratios normalized counts (log2((treated+1)/(control+1)) per subject) for the top-ranked genes (union of the three methods' padj<0.1 sets, or the top 50 by DESeq2 shrunken |log2FC| among padj<0.25 genes if that union is empty), and report for each such gene: the 5 per-subject ratios, how many subjects move in the same direction as the pooled estimate, and a flag when the pooled effect is driven by a single subject (leave-one-subject-out — refit or recompute the mean ratio dropping each subject in turn and report the range). Output a heatmap of per-subject log2 ratios for these genes with subjects as columns.",
+              "context": "At 5 pairs, a single discordant subject can create or destroy a hit. Method concordance guards against distributional-assumption artefacts, and the per-subject ratio / leave-one-subject-out view is the most direct answer to 'which genes respond within each subject' — it distinguishes a consistent treatment response from a one-subject outlier that survived pooling.",
+              "constraints": [
+                "All three models must use the identical gene filter and the identical paired design matrix as T1S1 — no re-filtering with different rules.",
+                "Per-subject log2 ratios must be computed on DESeq2 normalized counts (or edgeR CPM) with an explicit pseudocount, and the pseudocount stated.",
+                "Leave-one-subject-out must be reported for every gene in the reported candidate set, with the range of the effect estimate across the 5 leave-out fits.",
+                "If no gene reaches padj<0.1 in any method, do not lower the FDR bar as if it were significance — report the top-ranked genes explicitly labelled as non-significant candidates.",
+                "Direction consistency must be counted out of 5 subjects and reported per gene."
+              ],
+              "acceptance_criteria": [
+                "A merged per-gene table with DESeq2, limma-voom and edgeR log2FC and adjusted p-values, plus overlap counts and rank correlation between methods.",
+                "A per-subject log2 ratio matrix (candidate genes x 5 subjects) with a direction-consistency count and a single-subject-driven flag per gene.",
+                "Leave-one-subject-out effect ranges reported for every candidate gene.",
+                "A heatmap of per-subject log2 ratios for the candidate gene set.",
+                "Explicit labelling of whether the candidate set is FDR-significant or merely top-ranked."
+              ],
+              "caveats": [
+                "High cross-method concordance is expected simply because all three share the same counts and design — it is a sanity check, not independent replication. Say so.",
+                "Per-subject ratios on a single replicate per cell carry no within-cell error estimate; they describe consistency, they do not test it.",
+                "A gene whose pooled significance vanishes when one subject is dropped should be reported as fragile, not as a finding."
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "DESeq2",
+                "limma",
+                "edgeR",
+                "pheatmap",
+                "ggplot2",
+                "data.table"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Preranked pathway enrichment of the paired treatment contrast",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological processes and hallmark states are coordinately shifted by treatment in whole blood, based on the ranking of the full paired treated-vs-control contrast?",
+              "description": "Take the complete gene-level result table from T1S1 (all filtered genes, human HGNC symbols) and run preranked gene set enrichment (fgsea) on a ranking built from the DESeq2 statistic — use the Wald stat, or sign(log2FC) * -log10(pvalue), and state which was used. Preranked GSEA is the right choice here because at 4 residual df the FDR-significant gene list may be tiny or empty, and an over-representation test on an empty list yields nothing. Required reference data: human gene-set collections keyed on HGNC symbols — the MSigDB hallmark collection (50 sets) as the primary readout and the GO biological process collection as the mechanism-level complement; resolve them from the environment's reference store at run time rather than assuming a path, and confirm the human (not mouse) versions are used. Optionally also test the human WikiPathways collection if present. Report the leading-edge genes for each significant set and cross-reference them against the per-subject consistency flags from T1S2, so a pathway driven by genes that were single-subject artefacts is marked as such. Collapse redundant parent/child GO terms before reporting a count. If neither hallmark nor GO gene sets are available in the environment, report that plainly and fall back to reporting the ranked gene list alone — the DE result from T1S1/T1S2 remains the answer to the research question without this step.",
+              "context": "Whole blood treatment response is typically expressed as coordinated shifts in interferon, inflammatory, and cell-cycle programmes rather than a handful of large single-gene effects, so a set-level readout can be informative when gene-level FDR is not. The environment's reference store carries human MSigDB hallmark, human GO BP/CC/MF, and human WikiPathways gene sets, all keyed on HGNC symbols, which matches the gene-symbol row identifiers of counts.csv.",
+              "constraints": [
+                "Use the HUMAN gene set collections — the store also holds mouse and rat versions and using them on this Homo sapiens data would produce meaningless results.",
+                "Rank on the full filtered gene list from T1S1, not on a thresholded significant subset.",
+                "State which ranking statistic was used and set a fixed random seed for fgsea permutations.",
+                "Restrict to gene sets with between 15 and 500 members present in the tested gene universe, and report the universe size.",
+                "Collapse redundant GO terms (parent/child sharing most members) before quoting a count of significant processes.",
+                "Annotate each significant set's leading-edge genes with the per-subject consistency flags from T1S2.",
+                "If the gene set files are absent at run time, report the absence explicitly and emit the ranked list only — do not substitute a different organism's sets or an internet download."
+              ],
+              "acceptance_criteria": [
+                "A preranked GSEA result table per collection with NES, p-value, FDR, set size and leading-edge genes.",
+                "Explicit statement of the ranking statistic, the gene universe size, the set-size bounds, and the seed.",
+                "Leading-edge genes cross-referenced to the T1S2 per-subject consistency flags.",
+                "GO redundancy collapsed before any count of significant terms is reported.",
+                "If reference gene sets are unavailable, an explicit statement of that fact rather than a silent organism substitution."
+              ],
+              "caveats": [
+                "GSEA on a ranking derived from a 4-residual-df model inherits that instability; treat enriched sets as hypotheses, not established mechanism.",
+                "Blood expression is strongly driven by cell-composition shifts — an enriched immune-cell-associated set may reflect a change in leukocyte proportions rather than transcriptional regulation within a cell type. Say this in the interpretation.",
+                "Hallmark and GO sets overlap heavily with one another; do not present concordance between the two collections as independent corroboration."
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "ggplot2",
+                "data.table"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

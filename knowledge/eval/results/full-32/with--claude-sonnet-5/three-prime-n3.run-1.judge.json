@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the 3' QuantSeq library as length-independent and routes raw counts into DESeq2 Wald with no tximport length offset or TPM/FPKM step, uses median-of-ratios inside the model, an explicit ~condition design with control releveled as reference and a named contrast, apeglm shrinkage, BH at alpha 0.05 with independent filtering, and a tag-seq-appropriate floor of >=5 counts in >=3 samples with the kept-gene count reported. QC (blind VST, PCA, distance heatmap, library sizes, flag-not-drop policy) precedes the test, and the n=3 power caveat is stated repeatedly. Enrichment was not requested and the reference treats it as unwarranted; the plan runs it anyway, and while it is well specified (full ranked list, Wald stat as metric, tested genes as universe, 15-500 window, Hallmark 2026.1), the Reactome 'current' version is unpinned and the caveat about long-gene detection bias is inconsistent with a 3' tag library where counts do not depend on length. The report section is complete, naming method, versions, design, thresholds, counts, and design caveats."
+}

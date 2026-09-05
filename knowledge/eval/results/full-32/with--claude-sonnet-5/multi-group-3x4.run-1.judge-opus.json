@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan fits one DESeq2 model to all twelve samples with ~condition and control explicitly releveled, answers the any-difference question with an LRT against ~1, and takes both treatment-vs-control contrasts from the same fit — exactly the reference design, with no subsetting and no conflation of LRT p-values with pairwise fold changes. QC (blind VST, PCA, distance heatmap, library sizes, condition-colored, batch correctly noted as absent), the minimal >=10-in->=4-samples filter tied to the smallest group, and internal median-of-ratios normalization are all explicit and justified; BH at alpha 0.05 is applied per contrast with alpha passed to results(), and ashr shrinkage is applied to each pairwise effect (the stated justification for ashr over apeglm is technically wrong, since treated_a vs control is a model coefficient, but the choice itself is acceptable). Enrichment was not asked for and is only weakly warranted; more importantly the spec is internally inconsistent (symbol-based Hallmark/Reactome GMTs but a mapping step to Entrez) and ranking a GSEA by the LRT statistic is not a valid signed metric, which undercuts an otherwise well-specified collection/version/size-window setup. Reporting is thorough: design, contrasts, alpha, n tested, diagnostics, NA accounting from Cook's flagging versus independent filtering, and a full reproducibility record."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on method: limma-voom with a fixed-effects ~condition design and eBayes for a 60 vs 60 single-batch unpaired cohort, with TREAT at a stated lfc placing the effect-size threshold inside the test, CIs beside every log2FC, BH at 0.05, and a labelled post-hoc filter for comparison only; the explicit reference level and contrast direction are correct. Filtering (filterByExpr before TMM, count reported) and normalization (TMM inside the model, no pre-scaling, VST used only for QC) are correct. Enrichment is fully specified: camera with inter-gene correlation and fgsea preranked on the moderated t, universe = tested genes, MSigDB Hallmark 2026.1 named, 15-500 size window, seed recorded. QC is solid (PCA, distances, library sizes, flag-not-drop policy) but omits the reference's sex check against XIST/Y-linked genes and any search for hidden structure with candidate factors reported, which matters in an unannotated whole-blood cohort. The report step names method, versions, design, thresholds, counts tested/significant, and states the cell-composition and FDR caveats prominently."
+}

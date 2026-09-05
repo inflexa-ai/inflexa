@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly reads the design as a 2x2 factorial rather than a time course, treats time as a two-level factor with t0 as the explicit reference, fits ~ condition + time + condition:time, and makes the Wald test on the interaction coefficient the primary result with simple effects at each time point reported alongside; the edgeR QL refit is a legitimate concordance check rather than a substitute question. QC (blind VST PCA on top 500 variable genes, distance heatmap, library sizes, coloured by condition and time, with a flag-not-drop policy) precedes the model, the low-count filter is minimal and justified by the smallest cell size, and normalization is median-of-ratios/TMM estimated inside each model with no pre-scaling. BH at alpha 0.05 within contrast, ashr shrinkage for reporting (with the correct note that apeglm cannot serve the t1 contrast), lfcThreshold inside results() rather than post hoc filtering, and separate accounting of Cook's-flagged versus independently filtered NAs are all specified. The report step names design, reference levels, thresholds, genes tested and significant per contrast, power limits at n=3, the missing tximport length offsets, and full session/version records. The only weak point is enrichment: it was neither asked for nor clearly warranted at this replication, so running fgsea on three contrasts including the noisy interaction ranking adds exploratory surface, though the specification itself (full ranked list, Wald statistic stated, tested-gene universe, 15-500 window, named collections with versions, seed, redundancy collapse, documented Reactome substitution) is otherwise exemplary."
+}

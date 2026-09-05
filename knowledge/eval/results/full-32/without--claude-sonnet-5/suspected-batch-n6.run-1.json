@@ -1,0 +1,427 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T17:56:03.973Z",
+  "elapsedMs": 57331,
+  "outcome": "plan_submitted",
+  "planId": "pln-5a710032",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, PCA characterization, and cluster-covariate association",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12000 x 13 counts.csv includes a gene-symbol column plus 12 sample columns per the profile (13 total) — verify column parsing before building the count matrix",
+          "Do not assume the two clusters are sex or batch; report only what the data supports",
+          "Six vs six is a small, unpaired design; PCA cluster estimates from so few samples should be treated as descriptive, not a formal test"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "matplotlib",
+          "numpy"
+        ],
+        "question": "In the 12-sample (6 treated vs 6 control) kidney RNA-seq count matrix, do the two PCA-defined clusters of six samples correspond to condition, or to some other structure inferable from the count data (e.g., library size, total counts, sex-linked gene expression, or sample ordering), given that metadata.csv records no batch?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "PCA on variance-stabilized/log-CPM counts reproduces the two six-sample clusters described in the data context",
+          "A cluster assignment (cluster A/B) is derived and saved as a per-sample covariate table alongside condition",
+          "Cross-tabulation of cluster assignment vs condition is reported, confirming or refuting non-alignment with treatment",
+          "Candidate explanations are checked where inferable from data alone: library size distribution, XIST/RPS4Y1 or other Y-linked gene expression as a sex proxy, and sample-to-column-order correspondence",
+          "Output includes a PCA plot colored by condition and a second colored by inferred cluster"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Estimate latent surrogate variable(s) via SVA",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=12 and a 6/6 unpaired design, SVA has limited power to separate multiple latent factors — expect at most 1 usable surrogate variable",
+          "SVA estimates a proxy for unknown structure, not a confirmed batch identity; do not label it as 'batch' in outputs, call it 'estimated surrogate variable'"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "sva",
+          "DESeq2"
+        ],
+        "question": "Can a surrogate variable analysis (SVA) on the raw kidney counts recover a latent factor that explains the two six-sample PCA clusters found in T1S1, providing a data-driven stand-in for the unrecorded batch?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "SVA is run on normalized counts with the condition (treated/control) as the model of interest, estimating the number of significant surrogate variables (num.sv) rather than assuming exactly one",
+          "The estimated surrogate variable(s) are correlated against the T1S1 cluster assignment and reported (e.g., correlation or ANOVA of SV1 by cluster)",
+          "If SVA yields zero significant surrogate variables, this is reported explicitly and the downstream DE step falls back to including the T1S1 empirical cluster label as a covariate instead",
+          "Surrogate variable table (sample x SV) is saved for use in the DE model"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 treated vs control adjusted for latent structure (primary) and unadjusted (diagnostic)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is a small, unpaired 6v6 design — DESeq2 dispersion estimates and adjustment for an estimated covariate both have limited power; treat results as hypothesis-generating",
+          "If cluster assignment is collinear with condition, the surrogate-adjusted model may not be fully identifiable — report this rather than silently trusting the coefficient",
+          "Do not overclaim biological meaning for the unadjusted diagnostic model; it exists only to quantify sensitivity to the confound"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "ggplot2",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are differentially expressed between treated (n=6) and control (n=6) kidney samples when the model accounts for the latent surrogate variable/cluster structure from T1S2, and how much does that gene list differ from a naive model that ignores the confound?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Primary DESeq2 model: ~ SV1 (or empirical cluster covariate if SVA found none) + condition, Wald test on condition treated vs control, independent filtering and BH FDR applied",
+          "Diagnostic DESeq2 model: ~ condition only, run on the same counts for comparison",
+          "Report gene counts at FDR < 0.05 and |log2FC| > 1 for both models, plus the overlap (Jaccard or simple intersection/union counts) between the adjusted and unadjusted DE gene sets",
+          "MA plot and volcano plot produced for the primary (adjusted) model",
+          "Full adjusted-model results table (gene, log2FC, lfcSE, stat, pvalue, padj) exported as CSV",
+          "If the confound is strongly collinear with condition (e.g., cluster and condition align in >=10/12 samples), this is flagged explicitly as design confounding that limits interpretability, since adjustment cannot fully separate an aliased effect"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway enrichment of the confound-adjusted DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Use the WikiPathways human GMT specifically (organism is Homo sapiens) — do not substitute the mouse or rat pathway files present in the reference store",
+          "Kidney tissue context should be used to sanity-check whether enriched pathways are biologically plausible for renal treatment response, not to filter results"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples after adjusting for the latent structure identified in T1S2/T1S3?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Enrichment run separately for up- and down-regulated adjusted-model DE genes (FDR<0.05) using the WikiPathways human gene sets available in the reference store",
+          "Report includes pathway name, WikiPathways ID, gene overlap, p-value and BH-adjusted p-value",
+          "If fewer than 10 genes pass the DE threshold, this is stated explicitly and enrichment is run on a ranked full gene list (e.g., GSEA-style) instead of a hard cutoff, to avoid an underpowered overrepresentation test",
+          "Output ties each enriched pathway back to which member genes drove it from this dataset"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with hidden-subgroup adjustment",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The data profile flags a critical confound: PCA shows two clusters of six samples each that do NOT align with the treated/control label, and no processing batch was recorded. This is the classic signature of an unmodeled latent factor (technical batch, sex, or biological subtype) that, if ignored, will bias or inflate the treated-vs-control differential expression call — either masking the true treatment effect or manufacturing spurious hits driven by the hidden grouping. The plan first characterizes the two PCA clusters against the 12x2 metadata and any inferable covariates, then uses surrogate variable analysis (SVA) to estimate the latent factor directly from the count data without needing a recorded batch label, cross-checks that the SVA-estimated factor recovers the observed PCA clustering, and only then runs DESeq2 for treated vs control with the surrogate variable(s) included as covariates. A model without adjustment is run in parallel purely as a diagnostic contrast to quantify how much the confound changes the gene list and to make the caveat concrete and quantitative rather than asserted. Results feed into WikiPathways human enrichment for functional interpretation. Every step operates on the actual 12000 x 13 raw Salmon gene-level counts and 12x2 metadata files."
+  },
+  "usage": {
+    "inputTokens": 89587,
+    "outputTokens": 5918,
+    "cacheCreationInputTokens": 71279,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with hidden-subgroup adjustment",
+          "analytical_narrative": "The data profile flags a critical confound: PCA shows two clusters of six samples each that do NOT align with the treated/control label, and no processing batch was recorded. This is the classic signature of an unmodeled latent factor (technical batch, sex, or biological subtype) that, if ignored, will bias or inflate the treated-vs-control differential expression call — either masking the true treatment effect or manufacturing spurious hits driven by the hidden grouping. The plan first characterizes the two PCA clusters against the 12x2 metadata and any inferable covariates, then uses surrogate variable analysis (SVA) to estimate the latent factor directly from the count data without needing a recorded batch label, cross-checks that the SVA-estimated factor recovers the observed PCA clustering, and only then runs DESeq2 for treated vs control with the surrogate variable(s) included as covariates. A model without adjustment is run in parallel purely as a diagnostic contrast to quantify how much the confound changes the gene list and to make the caveat concrete and quantitative rather than asserted. Results feed into WikiPathways human enrichment for functional interpretation. Every step operates on the actual 12000 x 13 raw Salmon gene-level counts and 12x2 metadata files.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, PCA characterization, and cluster-covariate association",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "In the 12-sample (6 treated vs 6 control) kidney RNA-seq count matrix, do the two PCA-defined clusters of six samples correspond to condition, or to some other structure inferable from the count data (e.g., library size, total counts, sex-linked gene expression, or sample ordering), given that metadata.csv records no batch?",
+              "acceptance_criteria": [
+                "PCA on variance-stabilized/log-CPM counts reproduces the two six-sample clusters described in the data context",
+                "A cluster assignment (cluster A/B) is derived and saved as a per-sample covariate table alongside condition",
+                "Cross-tabulation of cluster assignment vs condition is reported, confirming or refuting non-alignment with treatment",
+                "Candidate explanations are checked where inferable from data alone: library size distribution, XIST/RPS4Y1 or other Y-linked gene expression as a sex proxy, and sample-to-column-order correspondence",
+                "Output includes a PCA plot colored by condition and a second colored by inferred cluster"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "matplotlib",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "12000 x 13 counts.csv includes a gene-symbol column plus 12 sample columns per the profile (13 total) — verify column parsing before building the count matrix",
+                "Do not assume the two clusters are sex or batch; report only what the data supports",
+                "Six vs six is a small, unpaired design; PCA cluster estimates from so few samples should be treated as descriptive, not a formal test"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Estimate latent surrogate variable(s) via SVA",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Can a surrogate variable analysis (SVA) on the raw kidney counts recover a latent factor that explains the two six-sample PCA clusters found in T1S1, providing a data-driven stand-in for the unrecorded batch?",
+              "acceptance_criteria": [
+                "SVA is run on normalized counts with the condition (treated/control) as the model of interest, estimating the number of significant surrogate variables (num.sv) rather than assuming exactly one",
+                "The estimated surrogate variable(s) are correlated against the T1S1 cluster assignment and reported (e.g., correlation or ANOVA of SV1 by cluster)",
+                "If SVA yields zero significant surrogate variables, this is reported explicitly and the downstream DE step falls back to including the T1S1 empirical cluster label as a covariate instead",
+                "Surrogate variable table (sample x SV) is saved for use in the DE model"
+              ],
+              "packages": [
+                "sva",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=12 and a 6/6 unpaired design, SVA has limited power to separate multiple latent factors — expect at most 1 usable surrogate variable",
+                "SVA estimates a proxy for unknown structure, not a confirmed batch identity; do not label it as 'batch' in outputs, call it 'estimated surrogate variable'"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 treated vs control adjusted for latent structure (primary) and unadjusted (diagnostic)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated (n=6) and control (n=6) kidney samples when the model accounts for the latent surrogate variable/cluster structure from T1S2, and how much does that gene list differ from a naive model that ignores the confound?",
+              "acceptance_criteria": [
+                "Primary DESeq2 model: ~ SV1 (or empirical cluster covariate if SVA found none) + condition, Wald test on condition treated vs control, independent filtering and BH FDR applied",
+                "Diagnostic DESeq2 model: ~ condition only, run on the same counts for comparison",
+                "Report gene counts at FDR < 0.05 and |log2FC| > 1 for both models, plus the overlap (Jaccard or simple intersection/union counts) between the adjusted and unadjusted DE gene sets",
+                "MA plot and volcano plot produced for the primary (adjusted) model",
+                "Full adjusted-model results table (gene, log2FC, lfcSE, stat, pvalue, padj) exported as CSV",
+                "If the confound is strongly collinear with condition (e.g., cluster and condition align in >=10/12 samples), this is flagged explicitly as design confounding that limits interpretability, since adjustment cannot fully separate an aliased effect"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "ggplot2",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This is a small, unpaired 6v6 design — DESeq2 dispersion estimates and adjustment for an estimated covariate both have limited power; treat results as hypothesis-generating",
+                "If cluster assignment is collinear with condition, the surrogate-adjusted model may not be fully identifiable — report this rather than silently trusting the coefficient",
+                "Do not overclaim biological meaning for the unadjusted diagnostic model; it exists only to quantify sensitivity to the confound"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Pathway enrichment of the confound-adjusted DE gene list",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples after adjusting for the latent structure identified in T1S2/T1S3?",
+              "acceptance_criteria": [
+                "Enrichment run separately for up- and down-regulated adjusted-model DE genes (FDR<0.05) using the WikiPathways human gene sets available in the reference store",
+                "Report includes pathway name, WikiPathways ID, gene overlap, p-value and BH-adjusted p-value",
+                "If fewer than 10 genes pass the DE threshold, this is stated explicitly and enrichment is run on a ranked full gene list (e.g., GSEA-style) instead of a hard cutoff, to avoid an underpowered overrepresentation test",
+                "Output ties each enriched pathway back to which member genes drove it from this dataset"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Use the WikiPathways human GMT specifically (organism is Homo sapiens) — do not substitute the mouse or rat pathway files present in the reference store",
+                "Kidney tissue context should be used to sanity-check whether enriched pathways are biologically plausible for renal treatment response, not to filter results"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with hidden-subgroup adjustment",
+          "created_at": "2026-09-06T00:00:00Z",
+          "analytical_narrative": "The data profile flags a critical confound: PCA shows two clusters of six samples each that do NOT align with the treated/control label, and no processing batch was recorded. This is the classic signature of an unmodeled latent factor (technical batch, sex, or biological subtype) that, if ignored, will bias or inflate the treated-vs-control differential expression call — either masking the true treatment effect or manufacturing spurious hits driven by the hidden grouping. The plan first characterizes the two PCA clusters against the 12x2 metadata and any inferable covariates, then uses surrogate variable analysis (SVA) to estimate the latent factor directly from the count data without needing a recorded batch label, cross-checks that the SVA-estimated factor recovers the observed PCA clustering, and only then runs DESeq2 for treated vs control with the surrogate variable(s) included as covariates. A model without adjustment is run in parallel purely as a diagnostic contrast to quantify how much the confound changes the gene list and to make the caveat concrete and quantitative rather than asserted. Results feed into WikiPathways human enrichment for functional interpretation. Every step operates on the actual 12000 x 13 raw Salmon gene-level counts and 12x2 metadata files.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, PCA characterization, and cluster-covariate association",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "In the 12-sample (6 treated vs 6 control) kidney RNA-seq count matrix, do the two PCA-defined clusters of six samples correspond to condition, or to some other structure inferable from the count data (e.g., library size, total counts, sex-linked gene expression, or sample ordering), given that metadata.csv records no batch?",
+              "acceptance_criteria": [
+                "PCA on variance-stabilized/log-CPM counts reproduces the two six-sample clusters described in the data context",
+                "A cluster assignment (cluster A/B) is derived and saved as a per-sample covariate table alongside condition",
+                "Cross-tabulation of cluster assignment vs condition is reported, confirming or refuting non-alignment with treatment",
+                "Candidate explanations are checked where inferable from data alone: library size distribution, XIST/RPS4Y1 or other Y-linked gene expression as a sex proxy, and sample-to-column-order correspondence",
+                "Output includes a PCA plot colored by condition and a second colored by inferred cluster"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "matplotlib",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "12000 x 13 counts.csv includes a gene-symbol column plus 12 sample columns per the profile (13 total) — verify column parsing before building the count matrix",
+                "Do not assume the two clusters are sex or batch; report only what the data supports",
+                "Six vs six is a small, unpaired design; PCA cluster estimates from so few samples should be treated as descriptive, not a formal test"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Estimate latent surrogate variable(s) via SVA",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Can a surrogate variable analysis (SVA) on the raw kidney counts recover a latent factor that explains the two six-sample PCA clusters found in T1S1, providing a data-driven stand-in for the unrecorded batch?",
+              "acceptance_criteria": [
+                "SVA is run on normalized counts with the condition (treated/control) as the model of interest, estimating the number of significant surrogate variables (num.sv) rather than assuming exactly one",
+                "The estimated surrogate variable(s) are correlated against the T1S1 cluster assignment and reported (e.g., correlation or ANOVA of SV1 by cluster)",
+                "If SVA yields zero significant surrogate variables, this is reported explicitly and the downstream DE step falls back to including the T1S1 empirical cluster label as a covariate instead",
+                "Surrogate variable table (sample x SV) is saved for use in the DE model"
+              ],
+              "packages": [
+                "sva",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=12 and a 6/6 unpaired design, SVA has limited power to separate multiple latent factors — expect at most 1 usable surrogate variable",
+                "SVA estimates a proxy for unknown structure, not a confirmed batch identity; do not label it as 'batch' in outputs, call it 'estimated surrogate variable'"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 treated vs control adjusted for latent structure (primary) and unadjusted (diagnostic)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated (n=6) and control (n=6) kidney samples when the model accounts for the latent surrogate variable/cluster structure from T1S2, and how much does that gene list differ from a naive model that ignores the confound?",
+              "acceptance_criteria": [
+                "Primary DESeq2 model: ~ SV1 (or empirical cluster covariate if SVA found none) + condition, Wald test on condition treated vs control, independent filtering and BH FDR applied",
+                "Diagnostic DESeq2 model: ~ condition only, run on the same counts for comparison",
+                "Report gene counts at FDR < 0.05 and |log2FC| > 1 for both models, plus the overlap (Jaccard or simple intersection/union counts) between the adjusted and unadjusted DE gene sets",
+                "MA plot and volcano plot produced for the primary (adjusted) model",
+                "Full adjusted-model results table (gene, log2FC, lfcSE, stat, pvalue, padj) exported as CSV",
+                "If the confound is strongly collinear with condition (e.g., cluster and condition align in >=10/12 samples), this is flagged explicitly as design confounding that limits interpretability, since adjustment cannot fully separate an aliased effect"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "ggplot2",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This is a small, unpaired 6v6 design — DESeq2 dispersion estimates and adjustment for an estimated covariate both have limited power; treat results as hypothesis-generating",
+                "If cluster assignment is collinear with condition, the surrogate-adjusted model may not be fully identifiable — report this rather than silently trusting the coefficient",
+                "Do not overclaim biological meaning for the unadjusted diagnostic model; it exists only to quantify sensitivity to the confound"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Pathway enrichment of the confound-adjusted DE gene list",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples after adjusting for the latent structure identified in T1S2/T1S3?",
+              "acceptance_criteria": [
+                "Enrichment run separately for up- and down-regulated adjusted-model DE genes (FDR<0.05) using the WikiPathways human gene sets available in the reference store",
+                "Report includes pathway name, WikiPathways ID, gene overlap, p-value and BH-adjusted p-value",
+                "If fewer than 10 genes pass the DE threshold, this is stated explicitly and enrichment is run on a ranked full gene list (e.g., GSEA-style) instead of a hard cutoff, to avoid an underpowered overrepresentation test",
+                "Output ties each enriched pathway back to which member genes drove it from this dataset"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Use the WikiPathways human GMT specifically (organism is Homo sapiens) — do not substitute the mouse or rat pathway files present in the reference store",
+                "Kidney tissue context should be used to sanity-check whether enriched pathways are biologically plausible for renal treatment response, not to filter results"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

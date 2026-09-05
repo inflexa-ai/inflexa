@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly recognises raw integer STAR/featureCounts gene counts, explicitly rules out tximport and length offsets, and feeds the matrix to DESeq2 with ~condition, control as reference, an explicit treated-over-control contrast, median-of-ratios normalization inside the model, a justified count>=10-in->=3-samples filter, BH at 0.05 and apeglm shrinkage, with edgeR/TMM as a cross-check; the n=3 power caveat is stated repeatedly. QC covers library sizes, size factors, VST PCA, distance heatmap and a stated outlier policy, appropriate for a single-batch design. Deductions: the |log2FC|>1 subset is a post hoc filter rather than an lfcThreshold in the test; enrichment was not asked for and, though well specified (ranking metric, universe, size window), it omits collection versions; the report does not explicitly commit to recording package versions."
+}

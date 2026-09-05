@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the design precisely: two-group unpaired single-batch raw counts, DESeq2 Wald with ~condition and an explicitly releveled control reference, a minimal justified pre-filter (>=10 in >=3, smallest group), median-of-ratios/TMM inside the models, BH at 0.05 with apeglm shrinkage and an explicit ban on post-hoc fold-change filtering, an edgeR QL cross-check, and a power statement at n=3 placed before the gene tables. QC is blind-VST PCA, distance heatmap and library sizes with a stated no-drop policy, though the shallow-sample policy beyond 'report it' is thin. Enrichment correctly notes the absence of a zebrafish collection, uses a one-to-one babelgene ortholog map to named MSigDB 2026.1 human sets with the mapped share reported, runs fgsea on the full Wald-ranked list with a 15–500 window and the tested-gene universe, and adds the native org.Dr.eg.db GO path with its thinness stated; the ortholog resource version is left to sessionInfo rather than named up front. The report instructs that the Ensembl release and identifier space be named but does not itself state the release number."
+}

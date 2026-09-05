@@ -1,0 +1,444 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T18:21:18.839Z",
+  "elapsedMs": 103268,
+  "outcome": "plan_submitted",
+  "planId": "pln-d1f7665f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Characterize the latent two-cluster structure",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=12 the PCA is unstable to gene-filtering choices; report the top-variable-gene count used and confirm the cluster split is stable at 500 and 1000 genes",
+          "A two-cluster split with equal sizes is exactly what an unrecorded batch looks like, but it is equally consistent with a biological subgroup — the data cannot distinguish these",
+          "Sex-linked genes (XIST, RPS4Y1, DDX3Y, UTY, KDM5D) can produce a clean 6/6 split; check whether these genes drive the PC that separates the clusters, since that would name the latent factor outright"
+        ],
+        "context": "The data profile states: 'The PCA shows two clusters of six samples that do not follow the condition, and the sample table records no batch.' This step turns that observation into a hard, reusable variable and, crucially, determines whether the treated-vs-control contrast is even identifiable. Everything downstream is conditional on the cross-tab this step produces.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "What is the hidden 2x6 sample structure in the kidney counts, and how does it cross-tabulate against the treated/control condition labels — orthogonal, partially confounded, or fully confounded?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do NOT drop, relabel, or reassign any sample to make the design look balanced",
+          "Derive latent_group purely from the expression data — never from condition",
+          "Use variance-stabilized (VST/rlog) counts for PCA and clustering, never raw or naively log-transformed counts",
+          "If the cross-tab shows complete confounding (all six treated in one cluster and all six controls in the other), report the design as unidentifiable and say that no statistical adjustment can separate treatment from the latent factor — do not proceed to produce a gene list as if it were interpretable",
+          "State explicitly that the identity of the latent factor is unknown and cannot be determined from this data alone (candidates include processing batch, sex, RNA quality, or subject heterogeneity)"
+        ],
+        "description": "Load /eval-full-32-without-suspected-batch-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in the first column, raw integer Salmon counts) and /eval-full-32-without-suspected-batch-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample-name concordance between the two files and fail loudly on mismatch. Build a DESeq2 DESeqDataSet with design ~1, apply VST (or rlog given n=12), and recompute PCA on the top 500 most variable genes. Assign each sample to one of the two observed six-sample clusters using k-means (k=2) on the first two PCs AND, independently, cutree(hclust) on the sample correlation distance; require the two assignments to agree, and record the assignment as a new sample-level variable `latent_group`. Report the percent variance on PC1 and PC2, the loading of condition on each of the first four PCs (e.g. by ANOVA of PC score ~ condition and PC score ~ latent_group), and — the central output — the 2x2 cross-tabulation of `latent_group` against `condition`. Also compute per-sample library size, detected-gene count, and median count, and test whether these differ between latent_group levels, since a depth/complexity difference points to a technical rather than biological origin for the split. Write the augmented sample table (sample, condition, latent_group) to disk for downstream steps.",
+        "acceptance_criteria": [
+          "Sample identifiers in counts.csv columns and metadata.csv rows are confirmed to match one-to-one; any mismatch is reported explicitly rather than silently reordered",
+          "A `latent_group` variable with exactly two levels of six samples each is derived, and k-means and hierarchical assignments are reported as agreeing (or the disagreement is reported and the step stops)",
+          "The 2x2 cross-tabulation of latent_group vs condition is reported as literal counts",
+          "The step states in words which of three regimes holds: orthogonal (3/3 split, adjustable with full power), partial confounding (e.g. 4/2 or 5/1, adjustable with reduced power), or complete confounding (6/0, contrast not identifiable)",
+          "PC1/PC2 percent variance explained is reported, along with which PCs associate with condition and which with latent_group",
+          "Library size, detected-gene count and median count are compared between latent_group levels and reported",
+          "An augmented sample table with columns sample, condition, latent_group is written to disk"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 DE: latent-group-adjusted vs naive",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If latent_group is partially confounded with condition, the adjusted contrast is estimated from within-cluster comparisons only and the effective sample size is smaller than 6v6 — say so with the actual numbers",
+          "A large drop in significant genes from Model B to Model A is the expected and correct outcome, not a failure; the Model B list was inflated",
+          "12,000 genes is a pre-filtered matrix rather than a full transcriptome, so absolute DE counts are not comparable to typical whole-transcriptome studies"
+        ],
+        "context": "This is the core answer to the user's question, but it is only interpretable through the lens of T1S1's cross-tab. Running the naive model alongside is not redundancy — it is the evidence that tells the user how much of what they would have reported without this step was attributable to the unrecorded factor.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "limma",
+          "ggplot2",
+          "EnhancedVolcano",
+          "dplyr"
+        ],
+        "question": "Which genes differ between treated and control kidney samples once the latent two-cluster factor is included as a blocking term, and how does that gene list compare to the naive ~condition model?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "If T1S1 reported complete confounding between latent_group and condition, do NOT fit Model A — report that the contrast is unidentifiable and that Model B's results cannot be attributed to treatment",
+          "Fit the models on raw integer counts; do not pass normalized, batch-corrected, or transformed values into DESeq2",
+          "Use removeBatchEffect ONLY for visualization, never as input to a statistical test",
+          "With 6 vs 6 and one blocking factor consuming a degree of freedom, state the effective residual df and do not describe the study as well powered",
+          "Report the fold-change direction convention explicitly (treated relative to control)"
+        ],
+        "description": "Using the augmented sample table from T1S1, run DESeq2 on the raw Salmon counts twice. Model A (primary): design ~ latent_group + condition, extracting the treated-vs-control contrast with latent_group absorbed as a blocking factor. Model B (comparator): design ~ condition alone. Pre-filter to genes with at least 10 counts in at least 6 samples. Use apeglm or ashr LFC shrinkage for the condition contrast in both models. Report for each model: the number of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 1, the full results table sorted by padj, and the top 30 genes. Then directly compare the two: overlap of the significant sets, a scatter of Model A vs Model B log2 fold changes with the Pearson/Spearman correlation, and the count of genes significant in B but not A (candidate false positives driven by the latent factor) and significant in A but not B (signal recovered by removing latent variance). Also report the dispersion estimates and, from Model A, the number of genes significant for the latent_group main effect itself — a large number confirms the latent factor is a major expression driver and quantifies how much variance the adjustment removed. Produce an MA plot and a volcano plot for Model A, and a PCA of Model-A-adjusted expression (VST with the latent_group effect removed via limma::removeBatchEffect) to confirm the two clusters collapse and condition separation, if any, becomes visible.",
+        "acceptance_criteria": [
+          "Both Model A (~latent_group + condition) and Model B (~condition) are fitted and their treated-vs-control results reported side by side",
+          "Significant gene counts at padj<0.05 are reported for both models, with the overlap and the two set differences",
+          "Shrunken log2 fold changes are used for effect-size reporting and the shrinkage method is named",
+          "The number of genes significant for the latent_group main effect is reported",
+          "A post-adjustment PCA (latent_group effect removed) is produced and it is stated whether the two six-sample clusters collapse",
+          "Full DESeq2 results tables for both models are written to disk with gene symbol, baseMean, log2FC, lfcSE, pvalue, padj"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Independent svaseq confounder check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "svaseq with n=12 is at the low end of where surrogate variable estimation is reliable; treat a single SV as the realistic ceiling",
+          "If SV1 correlates strongly with condition itself, SVA is removing the biological signal and the adjusted contrast will be anti-conservative in the direction of null — report that rather than the gene list",
+          "Convergence between the two adjustment routes does not identify what the latent factor is; it only shows both methods found the same axis"
+        ],
+        "context": "No recorded batch exists, so there is no external variable to validate the adjustment against. The only available check is methodological convergence: a data-driven latent-variable method that was never shown the cluster labels either recovers the same structure or it does not. Agreement raises confidence that the adjustment removes a coherent technical axis; disagreement is itself an important negative result.",
+        "maxSteps": 200,
+        "packages": [
+          "sva",
+          "DESeq2",
+          "limma",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Do surrogate variables estimated blind from the counts recover the same two-cluster structure, and does an SVA-adjusted treated-vs-control gene list agree with the latent-group-adjusted list from T1S2?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Cap surrogate variables at 2 — with n=12 and a condition term, more SVs leaves too few residual degrees of freedom",
+          "Estimate SVs blind to latent_group; the comparison is only meaningful if the two routes are independent",
+          "If svaseq returns zero surrogate variables, report that plainly as evidence that the cluster structure is not separable from condition in the residual space, and do not force a fixed number",
+          "Do not present the SVA-adjusted list as more correct than the latent_group-adjusted list — they are two estimates of the same nuisance, and the consensus is what carries weight"
+        ],
+        "description": "Estimate surrogate variables from the 12-sample kidney count matrix using sva::svaseq on normalized counts, with the full model ~condition and the null model ~1, letting num.sv choose the number of SVs (report it; expect 1-2 given n=12). Do NOT supply latent_group to the estimation — it must run blind. Then: (i) correlate each estimated SV against the T1S1 latent_group indicator and against library size and detected-gene count, reporting the correlations and whether SV1 essentially reproduces the observed cluster split; (ii) refit DESeq2 with design ~ SV1 (+ SV2 if selected) + condition and extract the treated-vs-control contrast; (iii) compare that gene list to T1S2 Model A — overlap of significant sets, rank correlation of log2 fold changes, and the genes unique to each. Report a three-way summary table (naive / latent_group-adjusted / SVA-adjusted) of significant gene counts and the intersection across all three, defining that intersection as the high-confidence treated-vs-control set. Cap the number of SVs at 2 to preserve residual degrees of freedom.",
+        "acceptance_criteria": [
+          "The number of surrogate variables selected by svaseq is reported, and estimation is confirmed to have been run without latent_group as input",
+          "Correlation of each SV with latent_group, library size, and detected-gene count is reported numerically",
+          "A DESeq2 model with SVs plus condition is fitted and its treated-vs-control results reported",
+          "A three-way comparison table (naive, latent_group-adjusted, SVA-adjusted) of significant gene counts plus the three-way intersection is produced",
+          "The high-confidence gene set (significant under both adjustment strategies) is written to disk with fold changes and adjusted p-values"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the confounder-adjusted signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Gene symbols in the counts matrix may include deprecated or non-HGNC aliases; report the fraction of the 12,000 symbols that map into the GMT collections",
+          "GO BP sets are nested and produce blocks of correlated hits — collapse redundant parent/child terms before reporting a count of enriched processes",
+          "With a small adjusted DE list, hallmark GSEA is the more stable readout than ORA and should be given more weight"
+        ],
+        "context": "Gene-level results from a 6v6 design with one nuisance factor absorbed are sparse and noisy; pathway-level aggregation is the more robust readout. But enrichment inherits every confound of the gene list feeding it, so the naive comparator must be carried through to this level too. Human hallmark and GO BP GMT collections are confirmed present in the reference store.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "dplyr",
+          "ggplot2",
+          "enrichplot"
+        ],
+        "question": "Which hallmark and GO biological processes are enriched among the genes that differ between treated and control kidney samples after latent-factor adjustment, and do those pathways survive relative to the naive model's enrichment?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use human gene sets — the data is Homo sapiens kidney; a mouse or rat collection here would produce confident nonsense",
+          "Do not use a whole-genome background; the universe is the pre-filtered 12,000-gene matrix",
+          "Report FDR-adjusted values, never raw enrichment p-values, as the headline",
+          "Do not claim a treatment mechanism from enrichment alone — enrichment names a program that shifted, not a cause",
+          "If either gene set collection is absent at run time, report which one was used and note the reduced coverage rather than substituting a different organism's sets"
+        ],
+        "description": "Take the treated-vs-control results from T1S2 Model A (latent_group-adjusted) and the high-confidence consensus set from T1S3. Run (a) over-representation analysis on the padj<0.05 genes, split into up- and down-regulated in treated, and (b) rank-based GSEA on the full gene list ranked by the shrunken Wald statistic. Use human gene set collections resolved from the environment's reference store: MSigDB hallmark (human) as the primary collection and GO Biological Process (human) as the mechanism-level complement. Restrict the enrichment universe strictly to the ~12,000 gene symbols present in counts.csv — the matrix is pre-filtered, and using a whole-genome background inflates significance. Report enriched sets with FDR, set size, leading-edge genes, and direction. Then repeat the hallmark GSEA on the naive Model B ranking and present the two enrichment results side by side, flagging any pathway that appears only in the naive analysis as likely attributable to the latent factor. Given the tissue is kidney, note explicitly whether enriched sets are kidney-relevant (transport, metabolism, injury/fibrosis, immune infiltration) or generic stress/proliferation programs, without asserting a mechanism the data does not support.",
+        "acceptance_criteria": [
+          "Enrichment is run against human hallmark and human GO Biological Process gene sets resolved from the environment reference store, with the collection and version reported",
+          "The gene universe is restricted to the gene symbols present in counts.csv and the universe size is reported",
+          "Both over-representation (up and down separately) and rank-based GSEA results are reported with FDR, set size, and leading-edge genes",
+          "Hallmark GSEA on the naive Model B ranking is reported alongside the adjusted result, with pathways unique to the naive analysis flagged",
+          "If the adjusted DE list is too small for meaningful over-representation (fewer than ~15 significant genes), the step says so and relies on the rank-based GSEA instead of forcing an ORA result"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with latent-factor confounder control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000-gene x 12-sample Salmon raw count matrix (counts.csv, gene symbols in column 1) with a 12-row metadata.csv carrying only `condition` (6 treated vs 6 control, unpaired, human kidney). The profile flags the critical problem: PCA splits the samples into two clusters of six that do NOT track condition, and no batch column was recorded. So the dominant axis of variation in this dataset is an unmeasured factor, and any naive treated-vs-control test is at risk in both directions — inflated false positives if the hidden factor is partially imbalanced across condition, and lost power if it is orthogonal to condition and left in the residual variance.\n\nThe plan therefore does three things in order. T1S1 characterizes the hidden structure explicitly and non-negotiably first: recompute the PCA on VST counts, hard-code the two 6-sample clusters as a derived variable `latent_group`, and cross-tabulate it against `condition`. This cross-tab decides everything downstream. If latent_group is exactly orthogonal to condition (3 treated + 3 control per cluster), it is a nuisance factor that can be adjusted for as a blocking term with full retention of the condition contrast. If it is partially confounded (e.g. 5/1), adjustment is possible but the contrast loses power and must be reported with that caveat. If it is perfectly confounded (6/0 — identical to condition), the design is unidentifiable and no method can separate treatment from the hidden factor; the step must say so plainly rather than produce a gene list.\n\nT1S2 runs the primary DESeq2 differential expression under the design that T1S1's cross-tab licenses, plus the naive ~condition model as an explicit comparator, so the reader sees how much of the apparent signal is attributable to the latent factor. T1S3 runs an independent, assumption-different confounder estimate — svaseq surrogate variables estimated from the counts without being told the cluster labels — and checks whether the recovered SVs reproduce the observed two-cluster split and whether the SV-adjusted gene list agrees with the cluster-adjusted one. Two routes converging is the only evidence available here that the adjustment is capturing real technical structure rather than carving up biology, since no recorded batch exists to validate against.\n\nT2S1 takes the consensus DE result to hallmark and GO Biological Process enrichment against the staged human MSigDB collections, and is deliberately made to report the naive-model enrichment alongside it so pathway-level conclusions inherit the same confounding caveat as the gene-level ones. Only 12,000 genes are present (a pre-filtered matrix, not a full transcriptome), so the enrichment universe must be restricted to genes actually in the matrix.\n\nThroughout, the honest framing is that the latent factor's identity is unknown. It could be processing batch, sex, RNA quality, tissue sampling region, or genuine subject heterogeneity. Adjusting for it removes its variance whatever it is, but if it is biological rather than technical, the adjusted contrast answers a narrower question than the user posed. The plan requires that this be stated, not buried."
+  },
+  "usage": {
+    "inputTokens": 136510,
+    "outputTokens": 7250,
+    "cacheCreationInputTokens": 75127,
+    "cacheReadInputTokens": 61347,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "sva",
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "RUVSeq",
+          "ruv",
+          "pydeseq2",
+          "variancePartition"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "surrogate variable analysis RUV hidden batch RNA-seq differential expression unknown batch",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "surrogate variable analysis unknown batch effects RNA-seq differential expression svaseq",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 20
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with latent-factor confounder control",
+          "analytical_narrative": "The input is a 12,000-gene x 12-sample Salmon raw count matrix (counts.csv, gene symbols in column 1) with a 12-row metadata.csv carrying only `condition` (6 treated vs 6 control, unpaired, human kidney). The profile flags the critical problem: PCA splits the samples into two clusters of six that do NOT track condition, and no batch column was recorded. So the dominant axis of variation in this dataset is an unmeasured factor, and any naive treated-vs-control test is at risk in both directions — inflated false positives if the hidden factor is partially imbalanced across condition, and lost power if it is orthogonal to condition and left in the residual variance.\n\nThe plan therefore does three things in order. T1S1 characterizes the hidden structure explicitly and non-negotiably first: recompute the PCA on VST counts, hard-code the two 6-sample clusters as a derived variable `latent_group`, and cross-tabulate it against `condition`. This cross-tab decides everything downstream. If latent_group is exactly orthogonal to condition (3 treated + 3 control per cluster), it is a nuisance factor that can be adjusted for as a blocking term with full retention of the condition contrast. If it is partially confounded (e.g. 5/1), adjustment is possible but the contrast loses power and must be reported with that caveat. If it is perfectly confounded (6/0 — identical to condition), the design is unidentifiable and no method can separate treatment from the hidden factor; the step must say so plainly rather than produce a gene list.\n\nT1S2 runs the primary DESeq2 differential expression under the design that T1S1's cross-tab licenses, plus the naive ~condition model as an explicit comparator, so the reader sees how much of the apparent signal is attributable to the latent factor. T1S3 runs an independent, assumption-different confounder estimate — svaseq surrogate variables estimated from the counts without being told the cluster labels — and checks whether the recovered SVs reproduce the observed two-cluster split and whether the SV-adjusted gene list agrees with the cluster-adjusted one. Two routes converging is the only evidence available here that the adjustment is capturing real technical structure rather than carving up biology, since no recorded batch exists to validate against.\n\nT2S1 takes the consensus DE result to hallmark and GO Biological Process enrichment against the staged human MSigDB collections, and is deliberately made to report the naive-model enrichment alongside it so pathway-level conclusions inherit the same confounding caveat as the gene-level ones. Only 12,000 genes are present (a pre-filtered matrix, not a full transcriptome), so the enrichment universe must be restricted to genes actually in the matrix.\n\nThroughout, the honest framing is that the latent factor's identity is unknown. It could be processing batch, sex, RNA quality, tissue sampling region, or genuine subject heterogeneity. Adjusting for it removes its variance whatever it is, but if it is biological rather than technical, the adjusted contrast answers a narrower question than the user posed. The plan requires that this be stated, not buried.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Characterize the latent two-cluster structure",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What is the hidden 2x6 sample structure in the kidney counts, and how does it cross-tabulate against the treated/control condition labels — orthogonal, partially confounded, or fully confounded?",
+              "description": "Load /eval-full-32-without-suspected-batch-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in the first column, raw integer Salmon counts) and /eval-full-32-without-suspected-batch-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample-name concordance between the two files and fail loudly on mismatch. Build a DESeq2 DESeqDataSet with design ~1, apply VST (or rlog given n=12), and recompute PCA on the top 500 most variable genes. Assign each sample to one of the two observed six-sample clusters using k-means (k=2) on the first two PCs AND, independently, cutree(hclust) on the sample correlation distance; require the two assignments to agree, and record the assignment as a new sample-level variable `latent_group`. Report the percent variance on PC1 and PC2, the loading of condition on each of the first four PCs (e.g. by ANOVA of PC score ~ condition and PC score ~ latent_group), and — the central output — the 2x2 cross-tabulation of `latent_group` against `condition`. Also compute per-sample library size, detected-gene count, and median count, and test whether these differ between latent_group levels, since a depth/complexity difference points to a technical rather than biological origin for the split. Write the augmented sample table (sample, condition, latent_group) to disk for downstream steps.",
+              "context": "The data profile states: 'The PCA shows two clusters of six samples that do not follow the condition, and the sample table records no batch.' This step turns that observation into a hard, reusable variable and, crucially, determines whether the treated-vs-control contrast is even identifiable. Everything downstream is conditional on the cross-tab this step produces.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "Sample identifiers in counts.csv columns and metadata.csv rows are confirmed to match one-to-one; any mismatch is reported explicitly rather than silently reordered",
+                "A `latent_group` variable with exactly two levels of six samples each is derived, and k-means and hierarchical assignments are reported as agreeing (or the disagreement is reported and the step stops)",
+                "The 2x2 cross-tabulation of latent_group vs condition is reported as literal counts",
+                "The step states in words which of three regimes holds: orthogonal (3/3 split, adjustable with full power), partial confounding (e.g. 4/2 or 5/1, adjustable with reduced power), or complete confounding (6/0, contrast not identifiable)",
+                "PC1/PC2 percent variance explained is reported, along with which PCs associate with condition and which with latent_group",
+                "Library size, detected-gene count and median count are compared between latent_group levels and reported",
+                "An augmented sample table with columns sample, condition, latent_group is written to disk"
+              ],
+              "constraints": [
+                "Do NOT drop, relabel, or reassign any sample to make the design look balanced",
+                "Derive latent_group purely from the expression data — never from condition",
+                "Use variance-stabilized (VST/rlog) counts for PCA and clustering, never raw or naively log-transformed counts",
+                "If the cross-tab shows complete confounding (all six treated in one cluster and all six controls in the other), report the design as unidentifiable and say that no statistical adjustment can separate treatment from the latent factor — do not proceed to produce a gene list as if it were interpretable",
+                "State explicitly that the identity of the latent factor is unknown and cannot be determined from this data alone (candidates include processing batch, sex, RNA quality, or subject heterogeneity)"
+              ],
+              "caveats": [
+                "With n=12 the PCA is unstable to gene-filtering choices; report the top-variable-gene count used and confirm the cluster split is stable at 500 and 1000 genes",
+                "A two-cluster split with equal sizes is exactly what an unrecorded batch looks like, but it is equally consistent with a biological subgroup — the data cannot distinguish these",
+                "Sex-linked genes (XIST, RPS4Y1, DDX3Y, UTY, KDM5D) can produce a clean 6/6 split; check whether these genes drive the PC that separates the clusters, since that would name the latent factor outright"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 DE: latent-group-adjusted vs naive",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ between treated and control kidney samples once the latent two-cluster factor is included as a blocking term, and how does that gene list compare to the naive ~condition model?",
+              "description": "Using the augmented sample table from T1S1, run DESeq2 on the raw Salmon counts twice. Model A (primary): design ~ latent_group + condition, extracting the treated-vs-control contrast with latent_group absorbed as a blocking factor. Model B (comparator): design ~ condition alone. Pre-filter to genes with at least 10 counts in at least 6 samples. Use apeglm or ashr LFC shrinkage for the condition contrast in both models. Report for each model: the number of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 1, the full results table sorted by padj, and the top 30 genes. Then directly compare the two: overlap of the significant sets, a scatter of Model A vs Model B log2 fold changes with the Pearson/Spearman correlation, and the count of genes significant in B but not A (candidate false positives driven by the latent factor) and significant in A but not B (signal recovered by removing latent variance). Also report the dispersion estimates and, from Model A, the number of genes significant for the latent_group main effect itself — a large number confirms the latent factor is a major expression driver and quantifies how much variance the adjustment removed. Produce an MA plot and a volcano plot for Model A, and a PCA of Model-A-adjusted expression (VST with the latent_group effect removed via limma::removeBatchEffect) to confirm the two clusters collapse and condition separation, if any, becomes visible.",
+              "context": "This is the core answer to the user's question, but it is only interpretable through the lens of T1S1's cross-tab. Running the naive model alongside is not redundancy — it is the evidence that tells the user how much of what they would have reported without this step was attributable to the unrecorded factor.",
+              "acceptance_criteria": [
+                "Both Model A (~latent_group + condition) and Model B (~condition) are fitted and their treated-vs-control results reported side by side",
+                "Significant gene counts at padj<0.05 are reported for both models, with the overlap and the two set differences",
+                "Shrunken log2 fold changes are used for effect-size reporting and the shrinkage method is named",
+                "The number of genes significant for the latent_group main effect is reported",
+                "A post-adjustment PCA (latent_group effect removed) is produced and it is stated whether the two six-sample clusters collapse",
+                "Full DESeq2 results tables for both models are written to disk with gene symbol, baseMean, log2FC, lfcSE, pvalue, padj"
+              ],
+              "constraints": [
+                "If T1S1 reported complete confounding between latent_group and condition, do NOT fit Model A — report that the contrast is unidentifiable and that Model B's results cannot be attributed to treatment",
+                "Fit the models on raw integer counts; do not pass normalized, batch-corrected, or transformed values into DESeq2",
+                "Use removeBatchEffect ONLY for visualization, never as input to a statistical test",
+                "With 6 vs 6 and one blocking factor consuming a degree of freedom, state the effective residual df and do not describe the study as well powered",
+                "Report the fold-change direction convention explicitly (treated relative to control)"
+              ],
+              "caveats": [
+                "If latent_group is partially confounded with condition, the adjusted contrast is estimated from within-cluster comparisons only and the effective sample size is smaller than 6v6 — say so with the actual numbers",
+                "A large drop in significant genes from Model B to Model A is the expected and correct outcome, not a failure; the Model B list was inflated",
+                "12,000 genes is a pre-filtered matrix rather than a full transcriptome, so absolute DE counts are not comparable to typical whole-transcriptome studies"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "limma",
+                "ggplot2",
+                "EnhancedVolcano",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Independent svaseq confounder check",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do surrogate variables estimated blind from the counts recover the same two-cluster structure, and does an SVA-adjusted treated-vs-control gene list agree with the latent-group-adjusted list from T1S2?",
+              "description": "Estimate surrogate variables from the 12-sample kidney count matrix using sva::svaseq on normalized counts, with the full model ~condition and the null model ~1, letting num.sv choose the number of SVs (report it; expect 1-2 given n=12). Do NOT supply latent_group to the estimation — it must run blind. Then: (i) correlate each estimated SV against the T1S1 latent_group indicator and against library size and detected-gene count, reporting the correlations and whether SV1 essentially reproduces the observed cluster split; (ii) refit DESeq2 with design ~ SV1 (+ SV2 if selected) + condition and extract the treated-vs-control contrast; (iii) compare that gene list to T1S2 Model A — overlap of significant sets, rank correlation of log2 fold changes, and the genes unique to each. Report a three-way summary table (naive / latent_group-adjusted / SVA-adjusted) of significant gene counts and the intersection across all three, defining that intersection as the high-confidence treated-vs-control set. Cap the number of SVs at 2 to preserve residual degrees of freedom.",
+              "context": "No recorded batch exists, so there is no external variable to validate the adjustment against. The only available check is methodological convergence: a data-driven latent-variable method that was never shown the cluster labels either recovers the same structure or it does not. Agreement raises confidence that the adjustment removes a coherent technical axis; disagreement is itself an important negative result.",
+              "acceptance_criteria": [
+                "The number of surrogate variables selected by svaseq is reported, and estimation is confirmed to have been run without latent_group as input",
+                "Correlation of each SV with latent_group, library size, and detected-gene count is reported numerically",
+                "A DESeq2 model with SVs plus condition is fitted and its treated-vs-control results reported",
+                "A three-way comparison table (naive, latent_group-adjusted, SVA-adjusted) of significant gene counts plus the three-way intersection is produced",
+                "The high-confidence gene set (significant under both adjustment strategies) is written to disk with fold changes and adjusted p-values"
+              ],
+              "constraints": [
+                "Cap surrogate variables at 2 — with n=12 and a condition term, more SVs leaves too few residual degrees of freedom",
+                "Estimate SVs blind to latent_group; the comparison is only meaningful if the two routes are independent",
+                "If svaseq returns zero surrogate variables, report that plainly as evidence that the cluster structure is not separable from condition in the residual space, and do not force a fixed number",
+                "Do not present the SVA-adjusted list as more correct than the latent_group-adjusted list — they are two estimates of the same nuisance, and the consensus is what carries weight"
+              ],
+              "caveats": [
+                "svaseq with n=12 is at the low end of where surrogate variable estimation is reliable; treat a single SV as the realistic ceiling",
+                "If SV1 correlates strongly with condition itself, SVA is removing the biological signal and the adjusted contrast will be anti-conservative in the direction of null — report that rather than the gene list",
+                "Convergence between the two adjustment routes does not identify what the latent factor is; it only shows both methods found the same axis"
+              ],
+              "packages": [
+                "sva",
+                "DESeq2",
+                "limma",
+                "dplyr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the confounder-adjusted signature",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which hallmark and GO biological processes are enriched among the genes that differ between treated and control kidney samples after latent-factor adjustment, and do those pathways survive relative to the naive model's enrichment?",
+              "description": "Take the treated-vs-control results from T1S2 Model A (latent_group-adjusted) and the high-confidence consensus set from T1S3. Run (a) over-representation analysis on the padj<0.05 genes, split into up- and down-regulated in treated, and (b) rank-based GSEA on the full gene list ranked by the shrunken Wald statistic. Use human gene set collections resolved from the environment's reference store: MSigDB hallmark (human) as the primary collection and GO Biological Process (human) as the mechanism-level complement. Restrict the enrichment universe strictly to the ~12,000 gene symbols present in counts.csv — the matrix is pre-filtered, and using a whole-genome background inflates significance. Report enriched sets with FDR, set size, leading-edge genes, and direction. Then repeat the hallmark GSEA on the naive Model B ranking and present the two enrichment results side by side, flagging any pathway that appears only in the naive analysis as likely attributable to the latent factor. Given the tissue is kidney, note explicitly whether enriched sets are kidney-relevant (transport, metabolism, injury/fibrosis, immune infiltration) or generic stress/proliferation programs, without asserting a mechanism the data does not support.",
+              "context": "Gene-level results from a 6v6 design with one nuisance factor absorbed are sparse and noisy; pathway-level aggregation is the more robust readout. But enrichment inherits every confound of the gene list feeding it, so the naive comparator must be carried through to this level too. Human hallmark and GO BP GMT collections are confirmed present in the reference store.",
+              "acceptance_criteria": [
+                "Enrichment is run against human hallmark and human GO Biological Process gene sets resolved from the environment reference store, with the collection and version reported",
+                "The gene universe is restricted to the gene symbols present in counts.csv and the universe size is reported",
+                "Both over-representation (up and down separately) and rank-based GSEA results are reported with FDR, set size, and leading-edge genes",
+                "Hallmark GSEA on the naive Model B ranking is reported alongside the adjusted result, with pathways unique to the naive analysis flagged",
+                "If the adjusted DE list is too small for meaningful over-representation (fewer than ~15 significant genes), the step says so and relies on the rank-based GSEA instead of forcing an ORA result"
+              ],
+              "constraints": [
+                "Use human gene sets — the data is Homo sapiens kidney; a mouse or rat collection here would produce confident nonsense",
+                "Do not use a whole-genome background; the universe is the pre-filtered 12,000-gene matrix",
+                "Report FDR-adjusted values, never raw enrichment p-values, as the headline",
+                "Do not claim a treatment mechanism from enrichment alone — enrichment names a program that shifted, not a cause",
+                "If either gene set collection is absent at run time, report which one was used and note the reduced coverage rather than substituting a different organism's sets"
+              ],
+              "caveats": [
+                "Gene symbols in the counts matrix may include deprecated or non-HGNC aliases; report the fraction of the 12,000 symbols that map into the GMT collections",
+                "GO BP sets are nested and produce blocks of correlated hits — collapse redundant parent/child terms before reporting a count of enriched processes",
+                "With a small adjusted DE list, hallmark GSEA is the more stable readout than ORA and should be given more weight"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "msigdbr",
+                "dplyr",
+                "ggplot2",
+                "enrichplot"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies that log2(TPM+1) is not count data, explicitly forbids DESeq2/edgeR/voom and any re-normalization or second log transform, and fits limma-trend (eBayes trend=TRUE, robust=TRUE) on the delivered values with a numeric sanity check of the value distribution — exactly the reference route. QC is thorough and design-aware (distributions, PCA with variance explained, Pearson/Spearman correlation heatmaps, zero counts, a stated no-removal-only-flag outlier policy), though it is framed as running in parallel with rather than strictly before the test. The weakest point is the low-expression filter: it is required to be stated and its effect reported, but no actual rule or justification is given, leaving it arbitrary. Contrast direction (treated minus control) is explicit and BH thresholds are pre-specified at 0.05 and 0.1 with a p-value histogram check; enrichment is well-constructed (signed moderated-t ranking, tested-gene universe for ORA, human-only symbol collections, identifier-overlap acceptance check) but omits a set-size window and any collection version. Reporting names the method, design, thresholds, tested/significant counts and honest power caveats, but not software versions."
+}

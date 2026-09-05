@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 1,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 5
+  },
+  "rationale": "The planner correctly recognized that the six samples are raw paired-end FASTQ files with no count matrix, and that DE testing cannot proceed without a quantification step; it named plausible quantifiers (STAR/HISAT2+featureCounts, Salmon/kallisto), checked the environment, noted the GENCODE v50 GTF but missing FASTA/index, and asked whether a count matrix exists or a tool will be provisioned — exactly the reference outcome, so it avoided inventing a matrix. However, no plan was submitted, so nothing is stated about sample-structure QC (PCA, distances, library sizes), the low-count filter, size-factor/TMM normalization inside the model, the design formula and reference level for the 3v3 unpaired single-batch comparison, or BH alpha and LFC shrinkage; these score near zero because they are absent, not merely implied. Enrichment is correctly omitted since no DE results exist to enrich. The clarification message is specific and well-documented about the blocker and the missing reference/annotation inputs, which earns partial credit on reporting, but it does not state the eventual method, thresholds, or the low-power caveat of a three-versus-three design."
+}

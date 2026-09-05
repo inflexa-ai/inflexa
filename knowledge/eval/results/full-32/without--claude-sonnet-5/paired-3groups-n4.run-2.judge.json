@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly specifies the paired repeated-measures design (~subject + condition), an omnibus LRT against ~subject, and three pairwise contrasts pulled from a single shared fit rather than subset refits, which matches the reference. QC includes PCA/correlation colored by subject and condition and a reasonable minimal filter (>=10 in >=4 samples), but no explicit policy for outliers or shallow samples is stated. BH at 0.05 is stated but no fold-change shrinkage (ashr/apeglm) is specified for the reported effects. The enrichment step names WikiPathways but gives no version, no explicit universe for ORA, no ranking metric for GSEA, and no set-size window, and it is arguably not warranted; reporting omits software versions and design caveats such as n=4 subjects."
+}

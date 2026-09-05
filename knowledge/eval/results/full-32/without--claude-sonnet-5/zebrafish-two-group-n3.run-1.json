@@ -1,0 +1,532 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "zebrafish-two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T18:07:30.794Z",
+  "elapsedMs": 178307,
+  "outcome": "plan_submitted",
+  "planId": "pln-835982de",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is low power — flag that only large, consistent effects will reach significance",
+          "Confirm which condition level is the reference before interpreting fold-change direction",
+          "Whole-larvae pooling averages signal across many cell types/tissues — a null gene-level result does not rule out cell-type-specific effects"
+        ],
+        "context": "Whole-larvae zebrafish, drug exposure vs control, 3 replicates per group, unpaired single-batch design, raw Salmon counts on Ensembl annotation.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which genes differ in expression between drug-treated and control zebrafish larvae (3 vs 3, unpaired, single batch)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [],
+        "constraints": [
+          "Use design ~condition only — no batch covariate, the profile states single batch",
+          "Use raw integer counts as DESeq2 input, not pre-normalized values",
+          "Apply independent low-count filtering before running DESeq2",
+          "Report both the shrunken and unshrunken log2FoldChange in the output table"
+        ],
+        "description": "Load the raw integer gene-level count matrix (12000 genes x 6 samples, salmon quantification on Ensembl Danio rerio annotation) from counts.csv and the sample table from metadata.csv (6 rows, condition column encoding 3 treated vs 3 control). Filter out genes with counts below 10 in fewer than 3 samples. Fit DESeq2 with design ~condition (no batch term needed — single batch, unpaired). Extract the treated-vs-control contrast, apply log2FC shrinkage (apeglm; fall back to ashr if the coefficient is incompatible with apeglm), and output the full DE results table (gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) for all tested genes. Report counts of DEGs at padj<0.05 and additionally at padj<0.05 & |log2FC|>1. Produce diagnostic plots: PCA of vst-transformed counts colored by condition, sample-distance heatmap, dispersion plot, MA plot, and a volcano plot (EnhancedVolcano). Save the full DE table and vst-normalized count matrix as CSV artifacts for downstream enrichment steps.",
+        "acceptance_criteria": [
+          "Full DE table with padj for all filtered genes is produced",
+          "Number of significant DEGs at padj<0.05 is reported",
+          "PCA and volcano plots are generated",
+          "vst-normalized counts and DE table saved as reusable artifacts"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Zebrafish-native GO enrichment (ORA + GSEA)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO term redundancy can inflate apparent breadth of enrichment — note when many significant terms share genes",
+          "Small n (3 vs 3) limits ranked-list stability for GSEA; treat borderline NES as provisional"
+        ],
+        "context": "org.Dr.eg.db is confirmed installed (Bioconductor, v3.22.0) and provides zebrafish GO gene-annotation mappings directly, requiring no external GMT reference or ortholog conversion.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Dr.eg.db",
+          "fgsea",
+          "ggplot2",
+          "AnnotationDbi"
+        ],
+        "question": "Which Gene Ontology biological processes, molecular functions, and cellular components are enriched among genes altered by drug exposure, using zebrafish's own annotation?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use all genes tested in T1S1 (post-filtering) as the ORA background, not the whole genome",
+          "Report BP, MF, and CC results separately",
+          "Rank GSEA input by DESeq2 test statistic, not raw log2FC, to account for variance"
+        ],
+        "description": "Using the DE results table from T1S1, run organism-native functional enrichment for Danio rerio with no cross-species mapping. Use org.Dr.eg.db (zebrafish gene annotation) with clusterProfiler::enrichGO for over-representation analysis of DEGs (padj<0.05) against GO Biological Process, Molecular Function, and Cellular Component terms, using all tested genes from T1S1 as the statistical background. Also run pre-ranked GSEA (clusterProfiler::gseGO or fgsea) on the full gene list ranked by the DESeq2 test statistic against the same GO ontologies. Report enriched terms at adjusted p<0.05, dot plots of top terms per ontology, and the full GSEA ranked table. This is the primary pathway-level result since it uses the organism's own annotation.",
+        "acceptance_criteria": [
+          "ORA results table produced for each GO ontology with adjusted p-values",
+          "GSEA ranked table produced against GO gene sets",
+          "Top enriched terms visualized"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Ortholog-mapped human pathway enrichment (WikiPathways, MSigDB Hallmark)",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Ortholog mapping is inherently lossy — genes without a clear 1:1 human ortholog are dropped from this analysis and will not appear in these results",
+          "Pathway membership gene sets are annotated for human biology and may not reflect zebrafish-specific gene function or paralog specialization",
+          "If babelgene lacks zebrafish support, this step must degrade gracefully and report that outcome rather than fabricate a mapping"
+        ],
+        "context": "Reference census shows WikiPathways GMTs staged for human/mouse/rat (not zebrafish) and MSigDB Hallmark GMTs staged for human/mouse. Since the dataset is zebrafish, human orthology mapping via babelgene (offline, bundled ortholog tables) is required to use these gene sets; no internet-dependent ortholog service (e.g. live biomaRt/Ensembl queries) is assumed available.",
+        "maxSteps": 200,
+        "packages": [
+          "babelgene",
+          "fgsea",
+          "dplyr",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which curated human pathways (WikiPathways, MSigDB Hallmark) do the zebrafish DE genes point to, once mapped to human orthologs?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Verify babelgene supports Danio rerio before proceeding; do not silently substitute a different species",
+          "Explicitly report the 1:1 ortholog mapping rate out of all tested zebrafish genes",
+          "Label all output as human-ortholog-proxy results, distinct from the native GO enrichment in T2S1"
+        ],
+        "description": "Extend interpretation of the zebrafish DE result using curated human pathway databases, since no zebrafish-specific curated pathway collection (WikiPathways/Hallmark) is staged in this environment. Map the zebrafish gene symbols in the T1S1 DE table to human ortholog symbols offline using the babelgene package. Before mapping, confirm Danio rerio is present in babelgene::species(); if it is not, report that this step could not be run and that the native GO results from T2S1 remain the primary pathway output. Collapse many-to-one ortholog mappings by retaining, per human symbol, the zebrafish gene with the smallest DE p-value. Report the fraction of tested zebrafish genes that map to a 1:1 human ortholog (mapping-rate caveat). Run ORA (on DEGs at padj<0.05) and pre-ranked GSEA (on the full ortholog-mapped ranked list, ranked by DESeq2 statistic) using fgsea against the staged WikiPathways human gene sets and MSigDB Hallmark human gene sets. Report enriched pathways at adjusted p<0.05 with leading-edge genes, explicitly flagged as a cross-species proxy result contingent on ortholog-mapping quality, secondary to the zebrafish-native GO output.",
+        "acceptance_criteria": [
+          "Ortholog mapping rate (1:1 human orthologs / total tested genes) is reported",
+          "ORA and GSEA tables produced against WikiPathways human and MSigDB Hallmark human gene sets, or an explicit no-run report if babelgene lacks zebrafish support",
+          "Results are clearly labeled as cross-species-proxy, not zebrafish-native"
+        ]
+      }
+    ],
+    "title": "Zebrafish drug-exposure DE + pathway enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data is a bulk RNA-seq count matrix (12000 genes x 6 samples) from whole zebrafish (Danio rerio) larvae, 3 treated vs 3 control pools, unpaired, single batch, raw Salmon counts on Ensembl annotation. The design supports a standard DESeq2 Wald test (~condition) without batch correction. For pathway interpretation, the environment has no zebrafish-specific curated pathway GMT (WikiPathways is staged only for human/mouse/rat, and no zebrafish KEGG/Reactome GMT was found in the managed reference census), but org.Dr.eg.db (zebrafish GO annotation) is installed and lets clusterProfiler run organism-native GO enrichment without any cross-species proxy — this is the primary, authoritative pathway-level result. To also surface curated pathway context (WikiPathways, MSigDB Hallmark), zebrafish genes are mapped to human orthologs offline via the babelgene package (bundled ortholog tables, no internet dependency) before running fgsea against the staged human WikiPathways and MSigDB Hallmark gene sets; this is explicitly flagged as a cross-species proxy result, secondary to the native GO output. The plan therefore has three steps: (1) DESeq2 differential expression producing the DE table and diagnostics, (2) organism-native GO enrichment (ORA + GSEA) via org.Dr.eg.db, and (3) ortholog-mapped enrichment against human WikiPathways/Hallmark gene sets as supplementary context."
+  },
+  "usage": {
+    "inputTokens": 1308874,
+    "outputTokens": 14783,
+    "cacheCreationInputTokens": 211335,
+    "cacheReadInputTokens": 1097261,
+    "reasoningTokens": 8387
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways zebrafish"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Danio rerio org.Dr"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Dr.eg.db",
+          "biomaRt",
+          "clusterProfiler",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "category groups",
+        "limit": 1
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO.db KEGG zebrafish reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "reactome-mappings"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "reactome-pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "ncbi-gene2ensembl"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-mappings"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/ncbi-gene2ensembl"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-mappings/current"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "reactome.db",
+          "GO.db",
+          "AnnotationDbi",
+          "KEGGREST"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways zebrafish danio"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "zebrafish larvae drug exposure transcriptome ortholog mapping pathway enrichment human GO KEGG",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "zebrafish larvae RNA-seq DESeq2 drug exposure pathway enrichment human ortholog",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "41898791"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "homologene",
+          "org.Hs.eg.db",
+          "biomaRt"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "biomaRt",
+          "EnsDb.Drerio.v79",
+          "GO.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "biomaRt"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/bioc/org.Dr.eg.db",
+        "query": "map zebrafish gene symbols to human orthologs Entrez"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "org.Dr.eg.db",
+        "query": "map zebrafish gene symbols to human orthologs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-mappings/current"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "msigdbr",
+          "gprofiler2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "org.Dr.eg.db",
+          "org.Hs.eg.db",
+          "gseapy",
+          "decoupleR",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler.dplyr",
+          "AnnotationHub",
+          "ncbi-gene2ensembl"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ncbi-gene2ensembl",
+        "limit": 1
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Zebrafish drug-exposure DE + pathway enrichment",
+          "analytical_narrative": "The data is a bulk RNA-seq count matrix (12000 genes x 6 samples) from whole zebrafish (Danio rerio) larvae, 3 treated vs 3 control pools, unpaired, single batch, raw Salmon counts on Ensembl annotation. The design supports a standard DESeq2 Wald test (~condition) without batch correction. For pathway interpretation, the environment has no zebrafish-specific curated pathway GMT (WikiPathways is staged only for human/mouse/rat, and no zebrafish KEGG/Reactome GMT was found in the managed reference census), but org.Dr.eg.db (zebrafish GO annotation) is installed and lets clusterProfiler run organism-native GO enrichment without any cross-species proxy — this is the primary, authoritative pathway-level result. To also surface curated pathway context (WikiPathways, MSigDB Hallmark), zebrafish genes are mapped to human orthologs offline via the babelgene package (bundled ortholog tables, no internet dependency) before running fgsea against the staged human WikiPathways and MSigDB Hallmark gene sets; this is explicitly flagged as a cross-species proxy result, secondary to the native GO output. The plan therefore has three steps: (1) DESeq2 differential expression producing the DE table and diagnostics, (2) organism-native GO enrichment (ORA + GSEA) via org.Dr.eg.db, and (3) ortholog-mapped enrichment against human WikiPathways/Hallmark gene sets as supplementary context.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes differ in expression between drug-treated and control zebrafish larvae (3 vs 3, unpaired, single batch)?",
+              "description": "Load the raw integer gene-level count matrix (12000 genes x 6 samples, salmon quantification on Ensembl Danio rerio annotation) from counts.csv and the sample table from metadata.csv (6 rows, condition column encoding 3 treated vs 3 control). Filter out genes with counts below 10 in fewer than 3 samples. Fit DESeq2 with design ~condition (no batch term needed — single batch, unpaired). Extract the treated-vs-control contrast, apply log2FC shrinkage (apeglm; fall back to ashr if the coefficient is incompatible with apeglm), and output the full DE results table (gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) for all tested genes. Report counts of DEGs at padj<0.05 and additionally at padj<0.05 & |log2FC|>1. Produce diagnostic plots: PCA of vst-transformed counts colored by condition, sample-distance heatmap, dispersion plot, MA plot, and a volcano plot (EnhancedVolcano). Save the full DE table and vst-normalized count matrix as CSV artifacts for downstream enrichment steps.",
+              "context": "Whole-larvae zebrafish, drug exposure vs control, 3 replicates per group, unpaired single-batch design, raw Salmon counts on Ensembl annotation.",
+              "constraints": [
+                "Use design ~condition only — no batch covariate, the profile states single batch",
+                "Use raw integer counts as DESeq2 input, not pre-normalized values",
+                "Apply independent low-count filtering before running DESeq2",
+                "Report both the shrunken and unshrunken log2FoldChange in the output table"
+              ],
+              "caveats": [
+                "n=3 per group is low power — flag that only large, consistent effects will reach significance",
+                "Confirm which condition level is the reference before interpreting fold-change direction",
+                "Whole-larvae pooling averages signal across many cell types/tissues — a null gene-level result does not rule out cell-type-specific effects"
+              ],
+              "acceptance_criteria": [
+                "Full DE table with padj for all filtered genes is produced",
+                "Number of significant DEGs at padj<0.05 is reported",
+                "PCA and volcano plots are generated",
+                "vst-normalized counts and DE table saved as reusable artifacts"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Zebrafish-native GO enrichment (ORA + GSEA)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which Gene Ontology biological processes, molecular functions, and cellular components are enriched among genes altered by drug exposure, using zebrafish's own annotation?",
+              "description": "Using the DE results table from T1S1, run organism-native functional enrichment for Danio rerio with no cross-species mapping. Use org.Dr.eg.db (zebrafish gene annotation) with clusterProfiler::enrichGO for over-representation analysis of DEGs (padj<0.05) against GO Biological Process, Molecular Function, and Cellular Component terms, using all tested genes from T1S1 as the statistical background. Also run pre-ranked GSEA (clusterProfiler::gseGO or fgsea) on the full gene list ranked by the DESeq2 test statistic against the same GO ontologies. Report enriched terms at adjusted p<0.05, dot plots of top terms per ontology, and the full GSEA ranked table. This is the primary pathway-level result since it uses the organism's own annotation.",
+              "context": "org.Dr.eg.db is confirmed installed (Bioconductor, v3.22.0) and provides zebrafish GO gene-annotation mappings directly, requiring no external GMT reference or ortholog conversion.",
+              "constraints": [
+                "Use all genes tested in T1S1 (post-filtering) as the ORA background, not the whole genome",
+                "Report BP, MF, and CC results separately",
+                "Rank GSEA input by DESeq2 test statistic, not raw log2FC, to account for variance"
+              ],
+              "caveats": [
+                "GO term redundancy can inflate apparent breadth of enrichment — note when many significant terms share genes",
+                "Small n (3 vs 3) limits ranked-list stability for GSEA; treat borderline NES as provisional"
+              ],
+              "acceptance_criteria": [
+                "ORA results table produced for each GO ontology with adjusted p-values",
+                "GSEA ranked table produced against GO gene sets",
+                "Top enriched terms visualized"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Dr.eg.db",
+                "fgsea",
+                "ggplot2",
+                "AnnotationDbi"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Ortholog-mapped human pathway enrichment (WikiPathways, MSigDB Hallmark)",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which curated human pathways (WikiPathways, MSigDB Hallmark) do the zebrafish DE genes point to, once mapped to human orthologs?",
+              "description": "Extend interpretation of the zebrafish DE result using curated human pathway databases, since no zebrafish-specific curated pathway collection (WikiPathways/Hallmark) is staged in this environment. Map the zebrafish gene symbols in the T1S1 DE table to human ortholog symbols offline using the babelgene package. Before mapping, confirm Danio rerio is present in babelgene::species(); if it is not, report that this step could not be run and that the native GO results from T2S1 remain the primary pathway output. Collapse many-to-one ortholog mappings by retaining, per human symbol, the zebrafish gene with the smallest DE p-value. Report the fraction of tested zebrafish genes that map to a 1:1 human ortholog (mapping-rate caveat). Run ORA (on DEGs at padj<0.05) and pre-ranked GSEA (on the full ortholog-mapped ranked list, ranked by DESeq2 statistic) using fgsea against the staged WikiPathways human gene sets and MSigDB Hallmark human gene sets. Report enriched pathways at adjusted p<0.05 with leading-edge genes, explicitly flagged as a cross-species proxy result contingent on ortholog-mapping quality, secondary to the zebrafish-native GO output.",
+              "context": "Reference census shows WikiPathways GMTs staged for human/mouse/rat (not zebrafish) and MSigDB Hallmark GMTs staged for human/mouse. Since the dataset is zebrafish, human orthology mapping via babelgene (offline, bundled ortholog tables) is required to use these gene sets; no internet-dependent ortholog service (e.g. live biomaRt/Ensembl queries) is assumed available.",
+              "constraints": [
+                "Verify babelgene supports Danio rerio before proceeding; do not silently substitute a different species",
+                "Explicitly report the 1:1 ortholog mapping rate out of all tested zebrafish genes",
+                "Label all output as human-ortholog-proxy results, distinct from the native GO enrichment in T2S1"
+              ],
+              "caveats": [
+                "Ortholog mapping is inherently lossy — genes without a clear 1:1 human ortholog are dropped from this analysis and will not appear in these results",
+                "Pathway membership gene sets are annotated for human biology and may not reflect zebrafish-specific gene function or paralog specialization",
+                "If babelgene lacks zebrafish support, this step must degrade gracefully and report that outcome rather than fabricate a mapping"
+              ],
+              "acceptance_criteria": [
+                "Ortholog mapping rate (1:1 human orthologs / total tested genes) is reported",
+                "ORA and GSEA tables produced against WikiPathways human and MSigDB Hallmark human gene sets, or an explicit no-run report if babelgene lacks zebrafish support",
+                "Results are clearly labeled as cross-species-proxy, not zebrafish-native"
+              ],
+              "packages": [
+                "babelgene",
+                "fgsea",
+                "dplyr",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

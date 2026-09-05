@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan fits the design as the reference requires: one DESeq2 model on all twelve samples with ~condition, an LRT against ~1 for the omnibus question, and two Wald contrasts against control from the same fit, with an explicit caveat that LRT p-values are not contrast-specific and that LRT and Wald padj are not interchangeable. QC (PCA, dispersion plot, sample-distance heatmap, outlier policy) precedes the model, though library-size/depth inspection is not named; the filter (count >= 10 in at least 4 samples, justified by smallest group size) and in-model size-factor normalization are correct. Contrasts, reference releveling, and reduced model are all explicit; BH at 0.05 is stated per contrast, but shrinkage is described as 'optional' rather than as the reported effect size, which weakens the effect-size reporting. Enrichment was not warranted by the question and is added anyway; it is decently specified (named collection, filtered-gene background, per-set output) but lacks a collection version, gene-set size window, and a firm choice between ORA and GSEA with a fixed ranking metric. Reporting covers design, thresholds, significant-gene counts, and design caveats but never commits to naming software versions."
+}

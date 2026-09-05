@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses an unrecorded confounder that cross-cuts condition, verifies identifiability via a cluster-by-condition contingency table, avoids ComBat and any pre-adjusted matrix, and estimates the nuisance structure inside the DESeq2 design (~cluster + condition, and ~SV + condition), which is the right shape; it loses points for not first asking the analyst for the unrecorded variable and for elevating a data-derived k-means cluster label to the primary covariate (anti-conservative, since the labels are fit on the same expression data) with SVA demoted to a cross-check. QC is limited to PCA/clustering with no library-size check, sample-distance heatmap, or outlier policy, and the low-count filter is hand-waved ('count >0 in a minimum number of samples') and only clearly applied before PCA, not before the DE fit. Normalization is handled inside DESeq2 with VST/rlog only for visualization, which is correct, though size-factor estimation is never named. BH at 0.05 is stated but LFC shrinkage is entirely absent, and reporting the naive condition-only list alongside the adjusted one invites cherry-picking. Enrichment names WikiPathways and human symbols but omits collection version, gene-set size window, an explicit universe, and the ranking metric for the GSEA option; the report plan covers design, thresholds, residual df, and caveats but not software versions or the number of genes tested."
+}

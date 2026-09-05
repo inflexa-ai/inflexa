@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 6,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the STAR/featureCounts matrix as raw integer gene counts fed directly to DESeqDataSetFromMatrix (explicitly no tximport, no length offset), with a minimal justified filter (>=10 in >=3, the smallest group), explicit reference level and contrast, Wald test, apeglm shrinkage, BH at 0.05 with independent filtering, and a clearly stated n=3/group power caveat. QC is complete and design-specific (blind VST PCA, distance heatmap, library sizes, colored by condition, single batch noted, outlier flag-don't-drop policy). Normalization is only implied: the plan never names size factors or median-of-ratios for DESeq2, and the edgeR arm lists estimateDisp/glmQLFit without calcNormFactors, so TMM is not stated. Enrichment was not requested; it is added but done properly (full ranked list on Wald stat, tested-gene universe, 15-500 window, named Hallmark 2026.1), though the Reactome version is only 'current'. The report specification covers method, versions, design, thresholds, tested/significant counts, and caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the question as a genotype:treatment interaction, fits a full factorial PyDESeq2 model with the interaction term, checks the fitted design matrix, offers an LRT fallback if formula-based extraction fails, and follows with within-genotype simple effects — all in Python, matching the design and the language constraint. QC covers library sizes and PCA colored by genotype and shaped by treatment, but omits a sample-distance matrix and states no explicit policy for what happens if an outlier is flagged. The low-count filter is left as a vague 'e.g., total count below a stated threshold' with no justification tied to the 4-per-cell group size, and normalization is only implicitly handled by feeding raw filtered counts to PyDESeq2. BH at alpha 0.05 is stated throughout, but no LFC shrinkage is mentioned anywhere despite fold changes being the headline reported effect, and reference levels for genotype and treatment are never declared; enrichment is well specified with a stated ranking metric, a filtered-gene background, and named human collections, though without versions or a gene-set size window."
+}

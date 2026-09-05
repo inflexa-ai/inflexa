@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly declines to refit any count model and starts from the supplied DESeq2 table, ranking every tested gene by the Wald statistic with an explicit justification tied to the small 6v6 cohort and the shallow sample_01, and it handles duplicates and NA statistics rather than dropping them silently. The enrichment step is exactly right: gseapy prerank against a locally resolved human hallmark GMT whose filename/version is recorded, 15-500 size window after intersection with the tested genes, >=1000 permutations with seed 42, BH across the 50 sets, full table retained, and leading edges reported and collapsed by overlap; it explicitly rejects ORA on the significant subset and forbids the mouse GMT. Weaknesses are minor and mostly consequences of the scope: no inspection of counts/metadata means no PCA, library-size plot or sample-distance check even as a sanity pass on the shallow sample, normalization and low-count filtering are only acknowledged as upstream DESeq2 behaviour (Cook's outliers, independent filtering) rather than verified, and no explicit tie-breaking rule for equal Wald statistics is given. The report step is thorough on method, versions, thresholds, gene counts, direction of the contrast, and design caveats."
+}

@@ -25,3 +25,4 @@ templates:
   - tpl-deseq2-blocked
   - tpl-deseq2-interaction
   - tpl-pydeseq2-two-group
+  - tpl-pydeseq2-interaction

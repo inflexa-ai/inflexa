@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 2,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 5
+  },
+  "rationale": "The planner correctly diagnosed the data state: paired-end FASTQ with no count matrix, no quantifier or aligner available, and no genome/transcriptome FASTA or index staged, and it halted with a precise question rather than fabricating a matrix or running DESeq2 on nothing — this is exactly the reference outcome and earns full marks on design fit, with the annotation resource (GENCODE v50) and build (GRCh38) named explicitly. Enrichment is correctly absent, since no testable expression data exists yet. However, the planner offered no forward-looking analysis skeleton: nothing is stated about sample-structure QC (PCA, library sizes, distances), low-count filtering, model-internal normalization via size factors or TMM, the ~condition design with an explicit reference level and contrast, or BH at a stated alpha with LFC shrinkage — all of which the reference expects to apply once counts arrive with 3v3 and a low-power caveat. The clarification message documents the missing tooling, references, and sample count clearly, which supports partial credit on reporting, but it names no method, thresholds, or design caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw Salmon counts with a pre-specified ~ sex + age_centred + condition design, control as reference, age kept continuous and mean-centred, and an explicit balance/confounding diagnostic (sex x condition cross-tab, per-arm age summary with effect size, VIFs) that is declared diagnostic-only and does not reshape the primary model. QC is thorough and design-specific: PCA colored by condition, sex and age with PC-covariate association statistics, distance/correlation heatmaps, library sizes, and an XIST/Y-gene sex check, with an explicit flag-not-drop outlier policy backed by a leave-one-out fragility audit. The filter (>=10 counts in >=6 samples) is minimal and tied to group size; normalization is left inside DESeq2 with VST used only for visualization and non-parametric checks, though the plan never states size-factor estimation explicitly. BH at 0.05/0.10 with apeglm shrinkage on the condition coefficient and no post hoc LFC cutoff is correct. Enrichment was not requested and is arguably unwarranted here, but it is specified competently (Wald-statistic ranking, human collections, 15-500 size window, tested-gene universe for ORA, seed, collapse of redundant GO terms); reporting names methods, thresholds and design caveats but not software versions."
+}

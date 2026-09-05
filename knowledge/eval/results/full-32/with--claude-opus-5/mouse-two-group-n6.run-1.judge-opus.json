@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the stated design precisely: unpaired two-group, single batch, n=6 per arm, raw gene-level counts, with DESeq2 Wald on ~condition plus an edgeR quasi-likelihood cross-check and an honest note that the pre-summarized matrix precludes tximport length offsets. QC is concrete and dataset-specific — library sizes, detected genes, size factors, blind VST PCA and distance heatmap with sample_01 labelled, and a keep-by-default policy where removal requires clustering or identity evidence rather than depth. Filtering (>=10 counts in >=6 samples, the smallest group size, with the rule adjusted if a sample is dropped), normalization inside the model (median-of-ratios and TMM), explicit relevel to chow with the contrast direction stated, BH at 0.05 with apeglm shrinkage and no post-hoc fold-change cut are all correct. Enrichment is the strongest part relative to the reference: fgsea preranked on the full tested list ranked by the Wald statistic, the mouse hallmark collection with name and version recorded, 15-500 size window applied after intersection, a fixed seed, mapping shares reported, and an explicit babelgene ortholog fallback that forbids silently running human sets on mouse symbols. The final report covers method, versions, design, thresholds, tested and significant counts, leading-edge genes, the sample_01 verdict, and power caveats; only minor nitpicks remain (the 10-count/6-sample filter is conventional rather than independently justified)."
+}

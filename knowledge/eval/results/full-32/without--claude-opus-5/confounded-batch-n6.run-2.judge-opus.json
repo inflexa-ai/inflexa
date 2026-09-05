@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan diagnoses the perfect confound from the files themselves (cross-tab plus an explicit rank-vs-columns check on ~batch+condition), refuses ComBat-seq/SVA/RUV/removeBatchEffect with a stated reason, fits the only estimable model ~condition with control as reference, and mandates that every table, figure, and sentence label the contrast as treated_B2 vs control_B1 with the confound named — exactly the reference behavior, plus a concrete list of designs that would resolve it. QC is unsupervised and label-blind (library sizes, detected genes, VST, PCA with percent variance, correlation clustering, log-CPM boxplots) with an outlier policy noted, and the filter (>=10 counts in >=6 samples) is minimal and tied to group size, though only lightly justified. Normalization stays inside DESeq2/edgeR on raw integer counts with an explicit prohibition on feeding transformed values to the count model; BH with alpha 0.05, apeglm-with-ashr-fallback shrinkage, and direction-split significance counts are all pre-specified. Enrichment is arguably optional for a contrast that cannot be attributed, but it is specified well — shrunk-LFC ranking stated, named MSigDB collections with versions, 15-500 size window, filtered gene list as ORA universe, symbol-overlap reporting — and framed as diagnostic rather than causal. Reporting covers design, thresholds, tested/significant counts, sensitivity concordance with edgeR, and caveats; only software version capture is left implicit."
+}

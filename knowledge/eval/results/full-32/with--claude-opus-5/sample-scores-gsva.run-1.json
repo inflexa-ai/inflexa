@@ -1,0 +1,875 @@
+{
+  "campaign": "full-32",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "sample-scores-gsva",
+  "run": 1,
+  "startedAt": "2026-09-05T17:52:36.223Z",
+  "elapsedMs": 127456,
+  "outcome": "plan_submitted",
+  "planId": "pln-563955db",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A sample with a library size several times below the median must not be deleted silently. Keep it through the QC, show it on the PCA and the distance heatmap, report its library size and detected genes beside the others, and remove it only with a stated reason — the count model down-weights it through its size factor, so removal is a judgment, not a default.",
+          "With 12 samples the PCA is easily dominated by one outlier; read the second and third components too before concluding the groups do not separate."
+        ],
+        "context": "Inputs: /eval-full-32-with-sample-scores-gsva-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon counts, first column gene symbol) and /eval-full-32-with-sample-scores-gsva-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Single batch, unpaired, 6 UC-inflamed vs 6 control. The data profile flags sample_01 with a library size about 4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 12 colon samples separate by condition (UC inflamed vs control), and how does the low-depth sample sample_01 behave relative to the other 11?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Raw counts, 6v6 unpaired, one low-depth sample: blind VST + PCA on top 500 + sample distance heatmap per R-0033@40bf, with sample_01 kept and reported per R-0008@440d.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)",
+          "Do not remove any sample in this step without writing the reason into the output",
+          "Read the condition labels from metadata.csv as they are; do not invent group names"
+        ],
+        "description": "Build a DESeqDataSet from the counts and metadata, apply the variance stabilizing transformation blind to the design, and produce: PCA on the 500 most variable genes coloured by condition with sample labels; a Euclidean sample-distance heatmap; a per-sample table of library size, size factor and number of detected genes. Save the blind VST matrix for the GSVA step. State explicitly whether sample_01 clusters with its condition group and give a stated recommendation on retention.",
+        "acceptance_criteria": [
+          "PCA plot on the top 500 variable genes of the blind VST matrix, points coloured by condition and labelled by sample id, with percent variance on both axes",
+          "Euclidean sample-distance heatmap over all 12 samples",
+          "Per-sample table of library size, DESeq2 size factor and detected-gene count, with sample_01's values named beside the cohort median",
+          "Blind VST matrix persisted for downstream GSVA",
+          "An explicit written statement on whether sample_01 is retained and why — retention is the default and removal requires a stated reason beyond depth"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Gene-level DESeq2 Wald test, UC inflamed vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "At 6 per group DESeq2 flags count outliers by Cook's distance and sets those p-values to NA rather than replacing the counts; report how many genes that affects.",
+          "The counts are already gene-level, so the length offset that tximport would carry is unavailable; say so rather than implying transcript-level provenance."
+        ],
+        "context": "Same 12000 x 12 Salmon count matrix. This step is not the end product — the question asks for pathway scores — but it defines the tested-gene universe for GSVA and supplies the Wald statistic used as the fgsea ranking metric. The counts arrive as a gene-level CSV, so tximport is not applicable here; note in the output that no average-transcript-length offset was available and that a call driven purely by differential isoform usage cannot be distinguished.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Which genes differ between UC-inflamed and control colon, and what is the Wald statistic for every tested gene that the ranked pathway test will use?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Raw counts, fixed-effects 6v6: DESeq2 Wald with apeglm shrinkage and BH+independent filtering per R-0001@9a17, R-0009@f54e, R-0010@91a5.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_count = 10, min_samples = smallest_group_size = 6 (doi:10.12688/f1000research.7035.1; vignette:DESeq2/1.52.0#pre-filtering)",
+          "normalize: median-of-ratios size factors inside the model; never pre-scale or pre-normalize the counts (doi:10.1186/s13059-014-0550-8)",
+          "model_design: reference_level = explicit control; contrast_form = factor, numerator, denominator (vignette:DESeq2/1.52.0#contrasts)",
+          "differential_expression: test = Wald; count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+          "shrink_lfc: apeglm (doi:10.1093/bioinformatics/bty895)",
+          "multiple_testing: BH, alpha = 0.05, independent_filtering = true, select by adjusted p-value only (doi:10.1111/j.2517-6161.1995.tb02031.x; doi:10.1073/pnas.0914005107)",
+          "Persist the full tested-gene table — the enrichment steps need every tested gene, not the significant subset"
+        ],
+        "description": "Pre-filter minimally: keep genes with at least 10 counts in at least 6 samples (the smallest group size). Set control as the explicit reference level of the condition factor. Fit ~condition, run the DESeq2 Wald test for the contrast condition, numerator UC-inflamed, denominator control. Inspect the raw p-value histogram before adjustment and report its shape. Apply BH with independent filtering at alpha 0.05. Shrink the fold changes with apeglm and emit a table carrying unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue and padj per gene. Report the number of genes with NA p-values from the Cook's-distance outlier flag separately from those removed by independent filtering. Produce the MA plot and the dispersion plot.",
+        "acceptance_criteria": [
+          "Number of genes passing the pre-filter reported out of 12000",
+          "Reference level stated as control and the contrast written as condition / UC-inflamed / control",
+          "Raw p-value histogram with a one-line reading of its shape (flat, right-skewed, or irregular)",
+          "Results table with unshrunken and apeglm-shrunken log2 fold change, lfcSE, Wald stat, pvalue and padj for every tested gene, persisted for the enrichment steps",
+          "Counts of significant genes at padj < 0.05, and separate counts of NA p-values from outlier flagging versus independent filtering",
+          "MA plot and dispersion plot"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GSVA hallmark scores per sample, heatmap and limma test",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GSVA scores are relative within this cohort: they depend on the sample set and are not comparable to scores computed on another dataset. Say so in the output.",
+          "A hallmark that separates the groups on the heatmap is evidence of coordinated expression, not of pathway flux or activation.",
+          "Hallmark sets overlap — the inflammatory sets (TNFA_SIGNALING_VIA_NFKB, INFLAMMATORY_RESPONSE, INTERFERON_GAMMA_RESPONSE, IL6_JAK_STAT3_SIGNALING) share many genes, so several significant hits driven by the same genes are one finding, not four. Note the overlap before listing counts.",
+          "sample_01's ~4x lower depth adds noise to its per-gene ranks and therefore to its GSVA scores; check whether it is an outlier column in the heatmap before interpreting."
+        ],
+        "context": "This is the step the research question asks for. Inputs: the blind VST matrix from T1S1 (log-scale, so the Gaussian kernel applies) restricted to the genes tested in T1S2, and the condition labels. Reference data needed: human hallmark gene sets as a symbol-keyed GMT. The count matrix's first column is a gene symbol (HGNC), the same identifier space as the hallmark collection, so no Entrez mapping is needed — report the fraction of hallmark member genes present in the matrix instead.",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "limma",
+          "GSEABase",
+          "pheatmap",
+          "ComplexHeatmap"
+        ],
+        "question": "What is each sample's activity score for each of the 50 MSigDB hallmark sets, which hallmarks separate UC-inflamed from control on the heatmap, and which differ significantly by limma?",
+        "grounding": {
+          "claims": [
+            "R-0102@c84c",
+            "R-0048@500d",
+            "R-0047@fd9d",
+            "R-0046@a0ac",
+            "R-0052@620a",
+            "R-0101@06c8"
+          ],
+          "reason": "Question needs a score per sample at 6 per group: GSVA then limma on the scores per R-0102@c84c, human hallmark first per R-0048@500d, 15-500 size window per R-0047@fd9d.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-gsva-hallmark@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "enrichment: pathway_scores = gsva_then_limma (doi:10.1186/1471-2105-14-7)",
+          "enrichment: gene_set_collection = msigdb_hallmark_human (doi:10.1016/j.cels.2015.12.004)",
+          "enrichment: min_size = 15, max_size = 500, applied after intersecting each set with the tested genes (doi:10.1073/pnas.0506580102)",
+          "enrichment: universe = tested_genes (doi:10.1371/journal.pcbi.1009935)",
+          "Use the Gaussian kernel because the input is log-scale VST, not integer counts (R-0102@c84c)",
+          "Use the same design as the gene-level model: ~condition with control as reference",
+          "Resolve the hallmark gene sets by what the data IS — human hallmark sets keyed on gene symbols — against whatever the environment provides; do not hard-code a path",
+          "Report the collection version alongside the results"
+        ],
+        "description": "Load the human hallmark gene sets, intersect each set with the tested genes, and keep sets with 15 to 500 remaining members. Run GSVA on the blind VST matrix with the Gaussian kernel (log-scale input), producing a pathway-by-sample score matrix of the retained hallmark sets across all 12 samples. Write that matrix out as a CSV — one score per pathway per sample is a deliverable in its own right. Draw a clustered heatmap of the scores with samples in columns annotated by condition, rows z-scored for display, and a second version with rows ordered by the limma t-statistic so the separating pathways sit at the top. Then fit limma on the score matrix with the same design (~condition, control as reference), moderated t-test for UC-inflamed vs control, BH adjustment, and report a table of hallmark, mean score per group, difference, t, p and adjusted p. Report the per-sample scores for sample_01 alongside the others so any low-depth distortion is visible.",
+        "acceptance_criteria": [
+          "Pathway-by-sample GSVA score matrix (retained hallmark sets x 12 samples) written to CSV",
+          "Clustered heatmap of hallmark scores across all 12 samples with a condition annotation bar, plus a version ordered by the limma statistic",
+          "limma results table for every retained hallmark: group means, difference, moderated t, raw p and BH-adjusted p, sorted by adjusted p",
+          "Explicit named list of the hallmark sets that separate UC-inflamed from control at BH < 0.05, or an explicit statement that none reach it",
+          "Number of hallmark sets retained after the 15-500 size window and the fraction of hallmark member genes found in the tested matrix",
+          "Kernel choice (Gaussian, log-scale input) and the hallmark collection version stated in the output",
+          "If the human hallmark gene sets cannot be resolved in the environment, stop and report that rather than substituting another collection — the question names hallmark activity specifically"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "fgsea preranked hallmark test on the Wald statistic",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Do not run an over-representation test on the significant gene list here; if fewer than about 50 genes pass padj < 0.05 an ORA has no power, and the ranked test on the full list is the method regardless.",
+          "GSVA/limma and fgsea ask different questions — one tests a per-sample score, the other tests rank concentration in a group contrast — so partial disagreement is expected and is information, not an error to be resolved by picking the friendlier result."
+        ],
+        "context": "The per-sample GSVA/limma result is the primary answer, but enrichment results are method-dependent, so a second, differently-constructed test on the same contrast is the check on it. Input: the full tested-gene table from T1S2 ranked by the DESeq2 Wald statistic, and the same human hallmark collection T2S1 used.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Do the hallmark pathways that separate the groups in the per-sample GSVA scores also come out of a ranked group-comparison test on the same data?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0108@409f",
+            "R-0099@0a77",
+            "R-0045@f652",
+            "R-0103@93aa",
+            "R-0052@620a",
+            "R-0047@fd9d"
+          ],
+          "reason": "Ranked test on the full tested list is the default enrichment method per R-0107@976c; the disputed ranking statistic of R-0108@409f is settled in favour of the Wald statistic, stated here per R-0099@0a77.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-gsva-hallmark@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "enrichment: rank_metric = stat, the DESeq2 Wald statistic (doi:10.1101/060012; R-0099@0a77)",
+          "enrichment: rank_metric_not = unshrunken log2 fold change alone, signed p-value with ties (doi:10.1186/s12859-017-1674-0)",
+          "enrichment: gsea_input = full_ranked_list — never a thresholded gene list (doi:10.1073/pnas.0506580102)",
+          "enrichment: min_size = 15, max_size = 500 after intersection with the tested genes",
+          "enrichment: collapse_redundant = true before reporting a count of findings",
+          "Use the same human hallmark collection and version as T2S1",
+          "Set and record a random seed — permutation p-values do not reproduce without it"
+        ],
+        "description": "Rank every tested gene by the DESeq2 Wald statistic (the stat column) — the ranking-metric dispute is settled here in favour of the Wald statistic, because it scales the effect by its standard error and does not saturate into ties the way a signed p-value does. Run fgsea against the human hallmark sets with the same 15-500 size window and a fixed random seed, BH adjustment. Report NES, p, padj and the leading-edge genes of each significant set with each member's gene-level statistic, and mark leading-edge overlap between reported sets. Then compare directly against T2S1: a table of hallmarks called by GSVA/limma only, by fgsea only, and by both, treating the intersection as the confident set.",
+        "acceptance_criteria": [
+          "fgsea results table over the hallmark sets: NES, p, BH-adjusted p, set size after intersection with the tested genes",
+          "Leading-edge gene list for every set significant at BH < 0.05, each gene with its Wald statistic, and an explicit note of leading-edge overlap between reported sets",
+          "A concordance table naming hallmarks significant in GSVA/limma only, fgsea only, and both",
+          "The ranking metric (DESeq2 Wald statistic) and the random seed stated in the output"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The gene-level DE result is supporting material here, not the answer — do not let it displace the per-sample score deliverable the user asked for.",
+          "Reporting a count of significant hallmark sets without collapsing the overlapping inflammatory sets overstates the number of independent findings."
+        ],
+        "context": "Assembles T1S1 (QC and sample_01 disposition), T1S2 (gene-level fit) and T2S1/T2S2 (per-sample hallmark scores, heatmap, limma test and the ranked cross-check) into one document. The deliverables the user asked for are the per-sample pathway score table and the hallmark heatmap; those lead.",
+        "maxSteps": 200,
+        "packages": [
+          "rmarkdown",
+          "knitr",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which hallmark pathways separate UC-inflamed from control colon in these 12 samples, on what evidence, and with what limits?",
+        "grounding": {
+          "claims": [
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report content follows the procedure's report step: shrunken and unshrunken effects (R-0085@c24d), fit diagnostics (R-0087@c53d), enrichment provenance (R-0051@01ca), leading edge (R-0105@c4a8) and the reproducibility record (R-0086@becf). R-0042 (two-method DE overlap) is not planned — only DESeq2 is run at the gene level, since the gene-level fit is supporting material rather than the deliverable.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE; rank_genes_by = shrunken_log2FoldChange (doi:10.1093/bioinformatics/bty895)",
+          "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+          "report: leading_edge = per_significant_set (doi:10.1073/pnas.0506580102)",
+          "report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)",
+          "report: enrichment_caveat = method_dependence (doi:10.1093/bib/bbz158)",
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version (doi:10.1371/journal.pcbi.1003285)",
+          "Do not present a hallmark hit as a mechanistic conclusion; present it as a hypothesis for follow-up",
+          "If no hallmark reaches BH < 0.05, say so plainly and report the ranking rather than lowering the threshold to produce a list"
+        ],
+        "description": "Write the report with the per-sample hallmark score matrix and the annotated heatmap first, then the list of hallmarks separating UC-inflamed from control with their limma statistics and the fgsea concordance. Follow with the gene-level fit: design formula, reference level, contrast, thresholds, number of genes tested after filtering, number significant at padj < 0.05, MA and dispersion plots, and a gene table carrying unshrunken and shrunken log2 fold change with lfcSE, ranked by the shrunken value. State the sample_01 decision and its stated reason. Close with the limits and the reproducibility record.",
+        "acceptance_criteria": [
+          "Per-sample hallmark score table and the condition-annotated heatmap presented first, with the separating pathways named",
+          "Gene set collection name, version, ranking metric, universe (tested genes) and the 15-500 size window all stated",
+          "Design formula, reference level (control), contrast direction, alpha, n tested and n significant all stated",
+          "Gene table with log2FoldChange, apeglm-shrunken log2FoldChange and lfcSE, ranked by the shrunken value",
+          "Leading-edge genes per significant set carried through from T2S2",
+          "An explicit limits paragraph: 6 vs 6 is adequate for hallmark-level signal but not for confident ranking among correlated inflammatory sets; GSVA scores are cohort-relative; coordinated expression is not pathway flux; enrichment results are method-dependent and the two methods' disagreement is reported rather than reconciled",
+          "Reproducibility record: sessionInfo, package versions, random seed, hallmark collection version"
+        ]
+      }
+    ],
+    "title": "UC inflamed vs control: hallmark GSVA sample scores",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is a per-sample pathway activity readout: a score per sample for every hallmark set, a heatmap across the 12 colon samples, and an explicit statement of which hallmark pathways separate ulcerative-colitis-inflamed from control. The inputs are a 12000 x 13 raw integer count matrix from Salmon (gene symbol in column 1, one column per sample) and a 12 x 2 sample table with a condition column, 6 inflamed vs 6 control, unpaired, single batch.\n\nThe knowledge service (snapshot sha256:ad61b0ba...) returns GSVA-then-limma as the applicable procedure for a per-sample score question at 6 per group (R-0102@c84c), with MSigDB Hallmark as the first collection for human (R-0048@500d). The staged hallmark GMT is human, 50 sets, HGNC symbols — the same identifier space as the count matrix's first column, so no ID mapping is required for the GSVA step and none is planned.\n\nOrder: T1S1 does the sample-structure QC that the procedure puts before any model — blind VST, PCA on the 500 most variable genes, sample-distance heatmap, library sizes and detected genes per sample. sample_01 sits about 4x below the median library size; per R-0008@440d it is kept, inspected and reported, not dropped by default, and the VST/size factors down-weight it. T1S2 runs the gene-level DESeq2 Wald fit (minimal pre-filter, median-of-ratios, apeglm shrinkage, BH at alpha 0.05) — this is not the answer to the question but it supplies the two things the pathway steps need: the tested-gene universe and the Wald statistic used as the fgsea ranking metric. T2S1 is the step the question asks for: GSVA on the blind-VST matrix with the Gaussian kernel (log-scale input, per R-0102), restricted to the tested genes, sets kept at 15-500 members after intersection, giving a 50 x 12 score matrix, a clustered heatmap annotated by condition, and a limma moderated t-test of each hallmark score between UC_inflamed and control with BH adjustment. T2S2 is the confirmatory ranked test — fgsea on the full tested list ranked by the DESeq2 Wald statistic (the disputed ranking choice of R-0108 is settled here in favour of the Wald statistic, because it scales the effect by its uncertainty and does not saturate) — so that the per-sample scores are not the only evidence for a pathway call. T1S3 assembles both with the reproducibility record.\n\nThe honest limits, to be stated in the report rather than discovered later: 6 vs 6 is adequate for hallmark-level signal but not for confident ranking among correlated inflammatory sets; GSVA scores are relative within this cohort and are not comparable to another dataset; a hallmark that separates the groups on the heatmap is a hypothesis about coordinated expression, not evidence of pathway flux; and enrichment results are method-dependent, so the GSVA/limma and fgsea calls are compared and their disagreement reported."
+  },
+  "usage": {
+    "inputTokens": 207582,
+    "outputTokens": 10772,
+    "cacheCreationInputTokens": 131264,
+    "cacheReadInputTokens": 76282,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "sample_scores",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "sample_scores",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with >=10 counts in at least 6 samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~condition with control as explicit reference level; contrast condition UC_inflamed vs control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "GSVA per-sample hallmark scores on vst values (Gaussian kernel) then limma on the score matrix; heatmap of hallmark scores across samples",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "pathway_scores",
+                "value": "gsva_then_limma"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the DESeq2 Wald statistic against MSigDB Hallmark",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility and results report",
+            "package": "rmarkdown",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "UC inflamed vs control: hallmark GSVA sample scores",
+          "analytical_narrative": "The question is a per-sample pathway activity readout: a score per sample for every hallmark set, a heatmap across the 12 colon samples, and an explicit statement of which hallmark pathways separate ulcerative-colitis-inflamed from control. The inputs are a 12000 x 13 raw integer count matrix from Salmon (gene symbol in column 1, one column per sample) and a 12 x 2 sample table with a condition column, 6 inflamed vs 6 control, unpaired, single batch.\n\nThe knowledge service (snapshot sha256:ad61b0ba...) returns GSVA-then-limma as the applicable procedure for a per-sample score question at 6 per group (R-0102@c84c), with MSigDB Hallmark as the first collection for human (R-0048@500d). The staged hallmark GMT is human, 50 sets, HGNC symbols — the same identifier space as the count matrix's first column, so no ID mapping is required for the GSVA step and none is planned.\n\nOrder: T1S1 does the sample-structure QC that the procedure puts before any model — blind VST, PCA on the 500 most variable genes, sample-distance heatmap, library sizes and detected genes per sample. sample_01 sits about 4x below the median library size; per R-0008@440d it is kept, inspected and reported, not dropped by default, and the VST/size factors down-weight it. T1S2 runs the gene-level DESeq2 Wald fit (minimal pre-filter, median-of-ratios, apeglm shrinkage, BH at alpha 0.05) — this is not the answer to the question but it supplies the two things the pathway steps need: the tested-gene universe and the Wald statistic used as the fgsea ranking metric. T2S1 is the step the question asks for: GSVA on the blind-VST matrix with the Gaussian kernel (log-scale input, per R-0102), restricted to the tested genes, sets kept at 15-500 members after intersection, giving a 50 x 12 score matrix, a clustered heatmap annotated by condition, and a limma moderated t-test of each hallmark score between UC_inflamed and control with BH adjustment. T2S2 is the confirmatory ranked test — fgsea on the full tested list ranked by the DESeq2 Wald statistic (the disputed ranking choice of R-0108 is settled here in favour of the Wald statistic, because it scales the effect by its uncertainty and does not saturate) — so that the per-sample scores are not the only evidence for a pathway call. T1S3 assembles both with the reproducibility record.\n\nThe honest limits, to be stated in the report rather than discovered later: 6 vs 6 is adequate for hallmark-level signal but not for confident ranking among correlated inflammatory sets; GSVA scores are relative within this cohort and are not comparable to another dataset; a hallmark that separates the groups on the heatmap is a hypothesis about coordinated expression, not evidence of pathway flux; and enrichment results are method-dependent, so the GSVA/limma and fgsea calls are compared and their disagreement reported.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Do the 12 colon samples separate by condition (UC inflamed vs control), and how does the low-depth sample sample_01 behave relative to the other 11?",
+              "context": "Inputs: /eval-full-32-with-sample-scores-gsva-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon counts, first column gene symbol) and /eval-full-32-with-sample-scores-gsva-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Single batch, unpaired, 6 UC-inflamed vs 6 control. The data profile flags sample_01 with a library size about 4x below the median.",
+              "description": "Build a DESeqDataSet from the counts and metadata, apply the variance stabilizing transformation blind to the design, and produce: PCA on the 500 most variable genes coloured by condition with sample labels; a Euclidean sample-distance heatmap; a per-sample table of library size, size factor and number of detected genes. Save the blind VST matrix for the GSVA step. State explicitly whether sample_01 clusters with its condition group and give a stated recommendation on retention.",
+              "acceptance_criteria": [
+                "PCA plot on the top 500 variable genes of the blind VST matrix, points coloured by condition and labelled by sample id, with percent variance on both axes",
+                "Euclidean sample-distance heatmap over all 12 samples",
+                "Per-sample table of library size, DESeq2 size factor and detected-gene count, with sample_01's values named beside the cohort median",
+                "Blind VST matrix persisted for downstream GSVA",
+                "An explicit written statement on whether sample_01 is retained and why — retention is the default and removal requires a stated reason beyond depth"
+              ],
+              "constraints": [
+                "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+                "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)",
+                "Do not remove any sample in this step without writing the reason into the output",
+                "Read the condition labels from metadata.csv as they are; do not invent group names"
+              ],
+              "caveats": [
+                "A sample with a library size several times below the median must not be deleted silently. Keep it through the QC, show it on the PCA and the distance heatmap, report its library size and detected genes beside the others, and remove it only with a stated reason — the count model down-weights it through its size factor, so removal is a judgment, not a default.",
+                "With 12 samples the PCA is easily dominated by one outlier; read the second and third components too before concluding the groups do not separate."
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw counts, 6v6 unpaired, one low-depth sample: blind VST + PCA on top 500 + sample distance heatmap per R-0033@40bf, with sample_01 kept and reported per R-0008@440d."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Gene-level DESeq2 Wald test, UC inflamed vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Which genes differ between UC-inflamed and control colon, and what is the Wald statistic for every tested gene that the ranked pathway test will use?",
+              "context": "Same 12000 x 12 Salmon count matrix. This step is not the end product — the question asks for pathway scores — but it defines the tested-gene universe for GSVA and supplies the Wald statistic used as the fgsea ranking metric. The counts arrive as a gene-level CSV, so tximport is not applicable here; note in the output that no average-transcript-length offset was available and that a call driven purely by differential isoform usage cannot be distinguished.",
+              "description": "Pre-filter minimally: keep genes with at least 10 counts in at least 6 samples (the smallest group size). Set control as the explicit reference level of the condition factor. Fit ~condition, run the DESeq2 Wald test for the contrast condition, numerator UC-inflamed, denominator control. Inspect the raw p-value histogram before adjustment and report its shape. Apply BH with independent filtering at alpha 0.05. Shrink the fold changes with apeglm and emit a table carrying unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue and padj per gene. Report the number of genes with NA p-values from the Cook's-distance outlier flag separately from those removed by independent filtering. Produce the MA plot and the dispersion plot.",
+              "acceptance_criteria": [
+                "Number of genes passing the pre-filter reported out of 12000",
+                "Reference level stated as control and the contrast written as condition / UC-inflamed / control",
+                "Raw p-value histogram with a one-line reading of its shape (flat, right-skewed, or irregular)",
+                "Results table with unshrunken and apeglm-shrunken log2 fold change, lfcSE, Wald stat, pvalue and padj for every tested gene, persisted for the enrichment steps",
+                "Counts of significant genes at padj < 0.05, and separate counts of NA p-values from outlier flagging versus independent filtering",
+                "MA plot and dispersion plot"
+              ],
+              "constraints": [
+                "filter_low_counts: min_count = 10, min_samples = smallest_group_size = 6 (doi:10.12688/f1000research.7035.1; vignette:DESeq2/1.52.0#pre-filtering)",
+                "normalize: median-of-ratios size factors inside the model; never pre-scale or pre-normalize the counts (doi:10.1186/s13059-014-0550-8)",
+                "model_design: reference_level = explicit control; contrast_form = factor, numerator, denominator (vignette:DESeq2/1.52.0#contrasts)",
+                "differential_expression: test = Wald; count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+                "shrink_lfc: apeglm (doi:10.1093/bioinformatics/bty895)",
+                "multiple_testing: BH, alpha = 0.05, independent_filtering = true, select by adjusted p-value only (doi:10.1111/j.2517-6161.1995.tb02031.x; doi:10.1073/pnas.0914005107)",
+                "Persist the full tested-gene table — the enrichment steps need every tested gene, not the significant subset"
+              ],
+              "caveats": [
+                "At 6 per group DESeq2 flags count outliers by Cook's distance and sets those p-values to NA rather than replacing the counts; report how many genes that affects.",
+                "The counts are already gene-level, so the length offset that tximport would carry is unavailable; say so rather than implying transcript-level provenance."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Raw counts, fixed-effects 6v6: DESeq2 Wald with apeglm shrinkage and BH+independent filtering per R-0001@9a17, R-0009@f54e, R-0010@91a5."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "GSVA hallmark scores per sample, heatmap and limma test",
+              "track": "T2",
+              "step_type": "enrichment",
+              "agent": "enrichment-agent",
+              "question": "What is each sample's activity score for each of the 50 MSigDB hallmark sets, which hallmarks separate UC-inflamed from control on the heatmap, and which differ significantly by limma?",
+              "context": "This is the step the research question asks for. Inputs: the blind VST matrix from T1S1 (log-scale, so the Gaussian kernel applies) restricted to the genes tested in T1S2, and the condition labels. Reference data needed: human hallmark gene sets as a symbol-keyed GMT. The count matrix's first column is a gene symbol (HGNC), the same identifier space as the hallmark collection, so no Entrez mapping is needed — report the fraction of hallmark member genes present in the matrix instead.",
+              "description": "Load the human hallmark gene sets, intersect each set with the tested genes, and keep sets with 15 to 500 remaining members. Run GSVA on the blind VST matrix with the Gaussian kernel (log-scale input), producing a pathway-by-sample score matrix of the retained hallmark sets across all 12 samples. Write that matrix out as a CSV — one score per pathway per sample is a deliverable in its own right. Draw a clustered heatmap of the scores with samples in columns annotated by condition, rows z-scored for display, and a second version with rows ordered by the limma t-statistic so the separating pathways sit at the top. Then fit limma on the score matrix with the same design (~condition, control as reference), moderated t-test for UC-inflamed vs control, BH adjustment, and report a table of hallmark, mean score per group, difference, t, p and adjusted p. Report the per-sample scores for sample_01 alongside the others so any low-depth distortion is visible.",
+              "acceptance_criteria": [
+                "Pathway-by-sample GSVA score matrix (retained hallmark sets x 12 samples) written to CSV",
+                "Clustered heatmap of hallmark scores across all 12 samples with a condition annotation bar, plus a version ordered by the limma statistic",
+                "limma results table for every retained hallmark: group means, difference, moderated t, raw p and BH-adjusted p, sorted by adjusted p",
+                "Explicit named list of the hallmark sets that separate UC-inflamed from control at BH < 0.05, or an explicit statement that none reach it",
+                "Number of hallmark sets retained after the 15-500 size window and the fraction of hallmark member genes found in the tested matrix",
+                "Kernel choice (Gaussian, log-scale input) and the hallmark collection version stated in the output",
+                "If the human hallmark gene sets cannot be resolved in the environment, stop and report that rather than substituting another collection — the question names hallmark activity specifically"
+              ],
+              "constraints": [
+                "enrichment: pathway_scores = gsva_then_limma (doi:10.1186/1471-2105-14-7)",
+                "enrichment: gene_set_collection = msigdb_hallmark_human (doi:10.1016/j.cels.2015.12.004)",
+                "enrichment: min_size = 15, max_size = 500, applied after intersecting each set with the tested genes (doi:10.1073/pnas.0506580102)",
+                "enrichment: universe = tested_genes (doi:10.1371/journal.pcbi.1009935)",
+                "Use the Gaussian kernel because the input is log-scale VST, not integer counts (R-0102@c84c)",
+                "Use the same design as the gene-level model: ~condition with control as reference",
+                "Resolve the hallmark gene sets by what the data IS — human hallmark sets keyed on gene symbols — against whatever the environment provides; do not hard-code a path",
+                "Report the collection version alongside the results"
+              ],
+              "caveats": [
+                "GSVA scores are relative within this cohort: they depend on the sample set and are not comparable to scores computed on another dataset. Say so in the output.",
+                "A hallmark that separates the groups on the heatmap is evidence of coordinated expression, not of pathway flux or activation.",
+                "Hallmark sets overlap — the inflammatory sets (TNFA_SIGNALING_VIA_NFKB, INFLAMMATORY_RESPONSE, INTERFERON_GAMMA_RESPONSE, IL6_JAK_STAT3_SIGNALING) share many genes, so several significant hits driven by the same genes are one finding, not four. Note the overlap before listing counts.",
+                "sample_01's ~4x lower depth adds noise to its per-gene ranks and therefore to its GSVA scores; check whether it is an outlier column in the heatmap before interpreting."
+              ],
+              "packages": [
+                "GSVA",
+                "limma",
+                "GSEABase",
+                "pheatmap",
+                "ComplexHeatmap"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0102@c84c",
+                  "R-0048@500d",
+                  "R-0047@fd9d",
+                  "R-0046@a0ac",
+                  "R-0052@620a",
+                  "R-0101@06c8"
+                ],
+                "template": "tpl-gsva-hallmark@1.0.0",
+                "reason": "Question needs a score per sample at 6 per group: GSVA then limma on the scores per R-0102@c84c, human hallmark first per R-0048@500d, 15-500 size window per R-0047@fd9d."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "fgsea preranked hallmark test on the Wald statistic",
+              "track": "T2",
+              "step_type": "enrichment",
+              "agent": "enrichment-agent",
+              "question": "Do the hallmark pathways that separate the groups in the per-sample GSVA scores also come out of a ranked group-comparison test on the same data?",
+              "context": "The per-sample GSVA/limma result is the primary answer, but enrichment results are method-dependent, so a second, differently-constructed test on the same contrast is the check on it. Input: the full tested-gene table from T1S2 ranked by the DESeq2 Wald statistic, and the same human hallmark collection T2S1 used.",
+              "description": "Rank every tested gene by the DESeq2 Wald statistic (the stat column) — the ranking-metric dispute is settled here in favour of the Wald statistic, because it scales the effect by its standard error and does not saturate into ties the way a signed p-value does. Run fgsea against the human hallmark sets with the same 15-500 size window and a fixed random seed, BH adjustment. Report NES, p, padj and the leading-edge genes of each significant set with each member's gene-level statistic, and mark leading-edge overlap between reported sets. Then compare directly against T2S1: a table of hallmarks called by GSVA/limma only, by fgsea only, and by both, treating the intersection as the confident set.",
+              "acceptance_criteria": [
+                "fgsea results table over the hallmark sets: NES, p, BH-adjusted p, set size after intersection with the tested genes",
+                "Leading-edge gene list for every set significant at BH < 0.05, each gene with its Wald statistic, and an explicit note of leading-edge overlap between reported sets",
+                "A concordance table naming hallmarks significant in GSVA/limma only, fgsea only, and both",
+                "The ranking metric (DESeq2 Wald statistic) and the random seed stated in the output"
+              ],
+              "constraints": [
+                "enrichment: rank_metric = stat, the DESeq2 Wald statistic (doi:10.1101/060012; R-0099@0a77)",
+                "enrichment: rank_metric_not = unshrunken log2 fold change alone, signed p-value with ties (doi:10.1186/s12859-017-1674-0)",
+                "enrichment: gsea_input = full_ranked_list — never a thresholded gene list (doi:10.1073/pnas.0506580102)",
+                "enrichment: min_size = 15, max_size = 500 after intersection with the tested genes",
+                "enrichment: collapse_redundant = true before reporting a count of findings",
+                "Use the same human hallmark collection and version as T2S1",
+                "Set and record a random seed — permutation p-values do not reproduce without it"
+              ],
+              "caveats": [
+                "Do not run an over-representation test on the significant gene list here; if fewer than about 50 genes pass padj < 0.05 an ORA has no power, and the ranked test on the full list is the method regardless.",
+                "GSVA/limma and fgsea ask different questions — one tests a per-sample score, the other tests rank concentration in a group contrast — so partial disagreement is expected and is information, not an error to be resolved by picking the friendlier result."
+              ],
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0108@409f",
+                  "R-0099@0a77",
+                  "R-0045@f652",
+                  "R-0103@93aa",
+                  "R-0052@620a",
+                  "R-0047@fd9d"
+                ],
+                "template": "tpl-gsva-hallmark@1.0.0",
+                "reason": "Ranked test on the full tested list is the default enrichment method per R-0107@976c; the disputed ranking statistic of R-0108@409f is settled in favour of the Wald statistic, stated here per R-0099@0a77."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Which hallmark pathways separate UC-inflamed from control colon in these 12 samples, on what evidence, and with what limits?",
+              "context": "Assembles T1S1 (QC and sample_01 disposition), T1S2 (gene-level fit) and T2S1/T2S2 (per-sample hallmark scores, heatmap, limma test and the ranked cross-check) into one document. The deliverables the user asked for are the per-sample pathway score table and the hallmark heatmap; those lead.",
+              "description": "Write the report with the per-sample hallmark score matrix and the annotated heatmap first, then the list of hallmarks separating UC-inflamed from control with their limma statistics and the fgsea concordance. Follow with the gene-level fit: design formula, reference level, contrast, thresholds, number of genes tested after filtering, number significant at padj < 0.05, MA and dispersion plots, and a gene table carrying unshrunken and shrunken log2 fold change with lfcSE, ranked by the shrunken value. State the sample_01 decision and its stated reason. Close with the limits and the reproducibility record.",
+              "acceptance_criteria": [
+                "Per-sample hallmark score table and the condition-annotated heatmap presented first, with the separating pathways named",
+                "Gene set collection name, version, ranking metric, universe (tested genes) and the 15-500 size window all stated",
+                "Design formula, reference level (control), contrast direction, alpha, n tested and n significant all stated",
+                "Gene table with log2FoldChange, apeglm-shrunken log2FoldChange and lfcSE, ranked by the shrunken value",
+                "Leading-edge genes per significant set carried through from T2S2",
+                "An explicit limits paragraph: 6 vs 6 is adequate for hallmark-level signal but not for confident ranking among correlated inflammatory sets; GSVA scores are cohort-relative; coordinated expression is not pathway flux; enrichment results are method-dependent and the two methods' disagreement is reported rather than reconciled",
+                "Reproducibility record: sessionInfo, package versions, random seed, hallmark collection version"
+              ],
+              "constraints": [
+                "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+                "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE; rank_genes_by = shrunken_log2FoldChange (doi:10.1093/bioinformatics/bty895)",
+                "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+                "report: leading_edge = per_significant_set (doi:10.1073/pnas.0506580102)",
+                "report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)",
+                "report: enrichment_caveat = method_dependence (doi:10.1093/bib/bbz158)",
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version (doi:10.1371/journal.pcbi.1003285)",
+                "Do not present a hallmark hit as a mechanistic conclusion; present it as a hypothesis for follow-up",
+                "If no hallmark reaches BH < 0.05, say so plainly and report the ranking rather than lowering the threshold to produce a list"
+              ],
+              "caveats": [
+                "The gene-level DE result is supporting material here, not the answer — do not let it displace the per-sample score deliverable the user asked for.",
+                "Reporting a count of significant hallmark sets without collapsing the overlapping inflammatory sets overstates the number of independent findings."
+              ],
+              "packages": [
+                "rmarkdown",
+                "knitr",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report content follows the procedure's report step: shrunken and unshrunken effects (R-0085@c24d), fit diagnostics (R-0087@c53d), enrichment provenance (R-0051@01ca), leading edge (R-0105@c4a8) and the reproducibility record (R-0086@becf). R-0042 (two-method DE overlap) is not planned — only DESeq2 is run at the gene level, since the gene-level fit is supporting material rather than the deliverable."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+  }
+}

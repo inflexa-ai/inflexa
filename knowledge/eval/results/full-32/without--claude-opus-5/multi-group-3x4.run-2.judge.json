@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference: one DESeq2 fit on all twelve samples with ~condition and control releveled as reference, an LRT against ~1 for the omnibus question, and treated_a/treated_b vs control Wald contrasts drawn from the shared dispersion with apeglm/ashr shrinkage and per-contrast BH at 0.05, explicitly forbidding per-pair subsetting and keeping LRT and contrast results as distinct objects. QC (PCA, distances, size factors, dispersion, p-value histogram) and a justified low-count filter (>=10 in at least 4 samples) precede the model, with a stated outlier policy though no explicit library-depth check. Deductions: the |log2FC|>1 cut is applied post hoc rather than via lfcThreshold, the GSEA ranking metric is left as an either/or, and MSigDB collection versions, gene-set size windows, and package versions for the report are not stated."
+}

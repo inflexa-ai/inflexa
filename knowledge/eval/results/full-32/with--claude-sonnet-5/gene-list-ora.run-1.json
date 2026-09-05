@@ -1,0 +1,441 @@
+{
+  "campaign": "full-32",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "gene-list-ora",
+  "run": 1,
+  "startedAt": "2026-09-05T17:36:09.186Z",
+  "elapsedMs": 77337,
+  "outcome": "plan_submitted",
+  "planId": "pln-28d17086",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Characterize DE results and prepare gene lists for enrichment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "How many genes in the treated (AD lesional) vs control DESeq2 contrast reach padj<0.05, what is their directionality, and what is the full ranked list of tested genes by the Wald statistic?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load de_results.csv (12000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change columns, stat, pvalue, padj) and metadata.csv. Report: (a) total tested genes (non-NA padj), (b) count of genes at padj<0.05 split up/down by sign of log2 fold change, (c) note that sample_01 has ~4x below-median library size per the caveat but was not excluded from this pre-computed DESeq2 result (do not re-run DE; use the supplied table as-is), (d) export two artifacts: a full ranked gene list (gene symbol, Wald statistic, from the 'stat' column) for GSEA, and the significant gene list (padj<0.05) plus the full tested-gene universe (all genes with non-NA padj) for ORA. State explicitly in output whether the significant list clears 50 genes, since that gates whether the ORA step's result should be treated as reliable per the knowledge-service ORA-power rule.",
+        "acceptance_criteria": [
+          "Reports total tested gene count, significant gene count at padj<0.05, and up/down split",
+          "Produces a ranked-list file (gene, stat) covering all tested genes with no missing stat values dropped silently (report any drops)",
+          "Produces a significant-gene list and a universe list as separate outputs",
+          "States numerically whether the significant list is >= 50 genes"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GO Biological Process over-representation analysis (ORA) of significant genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "rrvgo",
+          "GO.db"
+        ],
+        "question": "Which GO biological process terms are over-represented among the padj<0.05 genes in the AD lesional vs control contrast, using the full tested-gene set as background?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Using the significant gene list and the tested-gene universe from T1S1, run clusterProfiler::enrichGO (ont='BP') against a local GO Biological Process gene-set / annotation source for human. Map gene symbols to Entrez IDs with org.Hs.eg.db (report the % unmapped and drop many-to-one/one-to-many ambiguities with a stated count). Set universe explicitly to the tested genes (not the whole genome). Apply a gene-set size window of 15-500 genes-in-universe. Adjust p-values with Benjamini-Hochberg (q<0.05). Reduce the redundant/nested significant GO terms to representative terms using rrvgo semantic similarity clustering (Wang method against the GO BP ontology), keeping the full un-collapsed table as a supplementary output. If the significant-gene list from T1S1 is below ~50 genes, still run the test but flag the result in the output as underpowered/threshold-sensitive per the knowledge-service ORA rule, and give the ranked GSEA result (T2S2) precedence in the final report.",
+        "acceptance_criteria": [
+          "Uses tested genes (not whole genome) as the ORA universe",
+          "Reports % of input genes that failed Entrez mapping",
+          "Applies min_size=15, max_size=500 gene-set filters",
+          "Reports BH-adjusted q-values and a representative (rrvgo-collapsed) term list alongside the full term table",
+          "Explicitly states the size of the input significant-gene list and flags low-power interpretation if <50 genes"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Preranked GSEA on GO Biological Process gene sets (full ranked gene list)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Which GO biological process gene sets show coordinated enrichment across the full ranked list of tested genes (ranked by DESeq2 Wald statistic) between AD lesional and control skin?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Using the full ranked gene list (gene, Wald 'stat') from T1S1 and a local GO Biological Process MSigDB gene-set collection for human, run fgsea (preranked GSEA) with the Wald statistic as the ranking metric (a stated choice among the disputed alternatives: Wald stat, signed -log10 p, or shrunken LFC). Do not threshold the ranked list beforehand. Apply the same 15-500 gene-set size window used in the ORA step. Adjust p-values with Benjamini-Hochberg. Report normalized enrichment scores, adjusted p-values, and the leading-edge genes for each significant set. This step runs regardless of ORA list size and serves as the primary result if the significant-gene list from T1S1 is small.",
+        "acceptance_criteria": [
+          "Ranking metric is the DESeq2 Wald statistic on the full tested-gene list, not a thresholded subset",
+          "Gene-set size window of 15-500 applied",
+          "Reports NES, BH-adjusted p-value, and leading-edge genes per significant GO BP term",
+          "Sets a fixed random seed for fgsea and reports it for reproducibility"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Consolidated GO biological process enrichment report",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final, caveated answer to which GO biological processes are over-represented in AD lesional vs control skin, combining the ORA and GSEA results?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "description": "Combine the T2S1 (ORA) and T2S2 (GSEA) GO Biological Process results into one report. State: the GO gene-set collection and its version/source, the organism annotation package version used for ID mapping, the ORA universe definition, the ranking metric used for GSEA and why it was chosen (Wald statistic), the gene-set size window (15-500), the number of genes significant at padj<0.05 in the underlying DE table, and whether that count met the ~50-gene threshold needed for a reliable ORA. Report the overlap and disagreement between the ORA representative terms and the top GSEA-significant terms explicitly — do not present either list as a single ground truth (methods disagree, per the knowledge-service caveat). List leading-edge genes for top GSEA hits and core enriched genes for top ORA hits. Note the sample_01 low-library-size caveat as inherited context (not addressed by this enrichment step) and the fact that the DE table was supplied pre-computed, not re-derived. Include a reproducibility record: package versions, gene-set collection version, and any random seed used.",
+        "acceptance_criteria": [
+          "States gene-set database name and version for both ORA and GSEA",
+          "States the ORA universe and the GSEA ranking metric explicitly",
+          "Reports the significant-DE-gene count and flags ORA reliability accordingly",
+          "Reports overlap/disagreement between ORA and GSEA top terms rather than merging them into one uncaveated list",
+          "Includes a reproducibility record (package versions, gene set version, seed)"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control: GO BP enrichment of DE genes",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset already carries a DESeq2 results table for the atopic-dermatitis lesional vs control contrast (12 samples: 6 treated/6 control, unpaired, single batch, salmon-derived gene counts). The question asks specifically which GO biological processes are over-represented among the genes that came out significant. Because the significance-list size is unknown until we look, the plan first characterizes the DE results (padj<0.05 count, direction, library-size caveat for sample_01) and only then commits to an enrichment strategy: if the significant gene list clears roughly 50 genes, run a GO Biological Process over-representation analysis (clusterProfiler::enrichGO) with the tested-genes universe, HGNC-to-Entrez mapping via org.Hs.eg.db, GO term redundancy collapsed with rrvgo, and a 15-500 gene-set size window. Because a hypergeometric ORA on a short list has no power and its result changes with the threshold (a flagged rule in the knowledge base), the plan also runs, unconditionally and in parallel, a preranked GSEA (fgsea) against the same GO Biological Process collection using the DESeq2 Wald statistic as the ranking metric, so the report is not solely dependent on the ORA list-size gamble. A short reference-availability check step confirms the local MSigDB GO BP gene set file and org.Hs.eg.db before the enrichment step commits to them. The final report step states database versions, the universe, the ranking metric, the significant-list size, gene-length/expression bias caveats inherent to ORA, and the known disagreement between ORA and GSEA rankings, per the knowledge-service rules."
+  },
+  "usage": {
+    "inputTokens": 981078,
+    "outputTokens": 5263,
+    "cacheCreationInputTokens": 137338,
+    "cacheReadInputTokens": 843584,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene sets human"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "enrichment_input": "gene_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "rrvgo",
+          "GO.db",
+          "enrichplot"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-go-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-go-human/2026.1"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "enrichment_input": "gene_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "differential_expression",
+            "method": "Existing DESeq2 results table (already computed treated vs control)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "padj_cutoff",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "clusterProfiler enrichGO (GO Biological Process) with rrvgo term reduction, conditional on significant gene list size",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "ora_min_significant_genes",
+                "value": 50
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on GO Biological Process sets using DESeq2 Wald statistic (fallback / complement to ORA)",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_go_bp_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Enrichment report with reproducibility record and method-dependence caveat",
+            "package": "clusterProfiler"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "atopic dermatitis lesional skin transcriptome GO biological process enrichment",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "atopic dermatitis lesional skin RNA-seq differential expression",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-pathways/current"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "apeglm",
+          "DESeq2",
+          "AnnotationDbi"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control: GO BP enrichment of DE genes",
+          "analytical_narrative": "The dataset already carries a DESeq2 results table for the atopic-dermatitis lesional vs control contrast (12 samples: 6 treated/6 control, unpaired, single batch, salmon-derived gene counts). The question asks specifically which GO biological processes are over-represented among the genes that came out significant. Because the significance-list size is unknown until we look, the plan first characterizes the DE results (padj<0.05 count, direction, library-size caveat for sample_01) and only then commits to an enrichment strategy: if the significant gene list clears roughly 50 genes, run a GO Biological Process over-representation analysis (clusterProfiler::enrichGO) with the tested-genes universe, HGNC-to-Entrez mapping via org.Hs.eg.db, GO term redundancy collapsed with rrvgo, and a 15-500 gene-set size window. Because a hypergeometric ORA on a short list has no power and its result changes with the threshold (a flagged rule in the knowledge base), the plan also runs, unconditionally and in parallel, a preranked GSEA (fgsea) against the same GO Biological Process collection using the DESeq2 Wald statistic as the ranking metric, so the report is not solely dependent on the ORA list-size gamble. A short reference-availability check step confirms the local MSigDB GO BP gene set file and org.Hs.eg.db before the enrichment step commits to them. The final report step states database versions, the universe, the ranking metric, the significant-list size, gene-length/expression bias caveats inherent to ORA, and the known disagreement between ORA and GSEA rankings, per the knowledge-service rules.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Characterize DE results and prepare gene lists for enrichment",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "How many genes in the treated (AD lesional) vs control DESeq2 contrast reach padj<0.05, what is their directionality, and what is the full ranked list of tested genes by the Wald statistic?",
+              "description": "Load de_results.csv (12000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change columns, stat, pvalue, padj) and metadata.csv. Report: (a) total tested genes (non-NA padj), (b) count of genes at padj<0.05 split up/down by sign of log2 fold change, (c) note that sample_01 has ~4x below-median library size per the caveat but was not excluded from this pre-computed DESeq2 result (do not re-run DE; use the supplied table as-is), (d) export two artifacts: a full ranked gene list (gene symbol, Wald statistic, from the 'stat' column) for GSEA, and the significant gene list (padj<0.05) plus the full tested-gene universe (all genes with non-NA padj) for ORA. State explicitly in output whether the significant list clears 50 genes, since that gates whether the ORA step's result should be treated as reliable per the knowledge-service ORA-power rule.",
+              "acceptance_criteria": [
+                "Reports total tested gene count, significant gene count at padj<0.05, and up/down split",
+                "Produces a ranked-list file (gene, stat) covering all tested genes with no missing stat values dropped silently (report any drops)",
+                "Produces a significant-gene list and a universe list as separate outputs",
+                "States numerically whether the significant list is >= 50 genes"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "GO Biological Process over-representation analysis (ORA) of significant genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which GO biological process terms are over-represented among the padj<0.05 genes in the AD lesional vs control contrast, using the full tested-gene set as background?",
+              "description": "Using the significant gene list and the tested-gene universe from T1S1, run clusterProfiler::enrichGO (ont='BP') against a local GO Biological Process gene-set / annotation source for human. Map gene symbols to Entrez IDs with org.Hs.eg.db (report the % unmapped and drop many-to-one/one-to-many ambiguities with a stated count). Set universe explicitly to the tested genes (not the whole genome). Apply a gene-set size window of 15-500 genes-in-universe. Adjust p-values with Benjamini-Hochberg (q<0.05). Reduce the redundant/nested significant GO terms to representative terms using rrvgo semantic similarity clustering (Wang method against the GO BP ontology), keeping the full un-collapsed table as a supplementary output. If the significant-gene list from T1S1 is below ~50 genes, still run the test but flag the result in the output as underpowered/threshold-sensitive per the knowledge-service ORA rule, and give the ranked GSEA result (T2S2) precedence in the final report.",
+              "acceptance_criteria": [
+                "Uses tested genes (not whole genome) as the ORA universe",
+                "Reports % of input genes that failed Entrez mapping",
+                "Applies min_size=15, max_size=500 gene-set filters",
+                "Reports BH-adjusted q-values and a representative (rrvgo-collapsed) term list alongside the full term table",
+                "Explicitly states the size of the input significant-gene list and flags low-power interpretation if <50 genes"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "rrvgo",
+                "GO.db"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Preranked GSEA on GO Biological Process gene sets (full ranked gene list)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which GO biological process gene sets show coordinated enrichment across the full ranked list of tested genes (ranked by DESeq2 Wald statistic) between AD lesional and control skin?",
+              "description": "Using the full ranked gene list (gene, Wald 'stat') from T1S1 and a local GO Biological Process MSigDB gene-set collection for human, run fgsea (preranked GSEA) with the Wald statistic as the ranking metric (a stated choice among the disputed alternatives: Wald stat, signed -log10 p, or shrunken LFC). Do not threshold the ranked list beforehand. Apply the same 15-500 gene-set size window used in the ORA step. Adjust p-values with Benjamini-Hochberg. Report normalized enrichment scores, adjusted p-values, and the leading-edge genes for each significant set. This step runs regardless of ORA list size and serves as the primary result if the significant-gene list from T1S1 is small.",
+              "acceptance_criteria": [
+                "Ranking metric is the DESeq2 Wald statistic on the full tested-gene list, not a thresholded subset",
+                "Gene-set size window of 15-500 applied",
+                "Reports NES, BH-adjusted p-value, and leading-edge genes per significant GO BP term",
+                "Sets a fixed random seed for fgsea and reports it for reproducibility"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Consolidated GO biological process enrichment report",
+              "track": "T3",
+              "step_type": "report",
+              "question": "What is the final, caveated answer to which GO biological processes are over-represented in AD lesional vs control skin, combining the ORA and GSEA results?",
+              "description": "Combine the T2S1 (ORA) and T2S2 (GSEA) GO Biological Process results into one report. State: the GO gene-set collection and its version/source, the organism annotation package version used for ID mapping, the ORA universe definition, the ranking metric used for GSEA and why it was chosen (Wald statistic), the gene-set size window (15-500), the number of genes significant at padj<0.05 in the underlying DE table, and whether that count met the ~50-gene threshold needed for a reliable ORA. Report the overlap and disagreement between the ORA representative terms and the top GSEA-significant terms explicitly — do not present either list as a single ground truth (methods disagree, per the knowledge-service caveat). List leading-edge genes for top GSEA hits and core enriched genes for top ORA hits. Note the sample_01 low-library-size caveat as inherited context (not addressed by this enrichment step) and the fact that the DE table was supplied pre-computed, not re-derived. Include a reproducibility record: package versions, gene-set collection version, and any random seed used.",
+              "acceptance_criteria": [
+                "States gene-set database name and version for both ORA and GSEA",
+                "States the ORA universe and the GSEA ranking metric explicitly",
+                "Reports the significant-DE-gene count and flags ORA reliability accordingly",
+                "Reports overlap/disagreement between ORA and GSEA top terms rather than merging them into one uncaveated list",
+                "Includes a reproducibility record (package versions, gene set version, seed)"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+  }
+}

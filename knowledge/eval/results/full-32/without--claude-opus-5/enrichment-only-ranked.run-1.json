@@ -1,0 +1,330 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "enrichment-only-ranked",
+  "run": 1,
+  "startedAt": "2026-09-05T18:12:39.657Z",
+  "elapsedMs": 68083,
+  "outcome": "plan_submitted",
+  "planId": "pln-b86db0be",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DE table QC and ranking construction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A large unmatched-symbol fraction (>20%) against the hallmark universe would mean the counts use a non-HGNC symbol space and would invalidate downstream enrichment — report it loudly rather than proceeding silently.",
+          "A 12,000-gene table is already filtered relative to a full transcriptome; the GSEA universe is therefore the supplied 12,000 genes, not all human genes. Say so.",
+          "n=6 per group is modest; a single aberrant library can move gene-level statistics."
+        ],
+        "context": "Human psoriasis skin, bulk RNA-seq from Salmon, 6 treated (lesional) vs 6 control, unpaired, single batch. DE was already run externally with DESeq2; this step does not redo it. The profile flags sample_01 at roughly 4x below the median library size.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "scipy"
+        ],
+        "question": "Is the supplied DESeq2 treated-vs-control table (12,000 genes) fit to drive hallmark GSEA, and does the ~4x-low-library-size sample_01 distort the lesional-vs-control contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do NOT re-run differential expression — use the supplied de_results.csv as the source of the contrast statistics.",
+          "Build the ranking statistic as sign(log2_fold_change) * -log10(p-value), falling back to log2_fold_change alone for genes where the p-value is 0 or NA; report exactly which rule was used for how many genes. If the table's log2FC appears shrunken (SE column present and small-base_mean genes compressed toward zero), state that and prefer the shrunken log2FC for tie-breaking.",
+          "Drop genes with NA log2_fold_change or NA padj from the ranking and report the count dropped; do not impute.",
+          "Collapse duplicated gene symbols by keeping the row with the largest base_mean; report how many symbols were collapsed.",
+          "Verify the 12 metadata sample IDs match the 12 count-matrix column names exactly; halt and report if they do not.",
+          "Do not remove sample_01 — characterize it and report. Removal is a separate decision the user has not made.",
+          "Emit the ranking as a two-column CSV and the VST matrix as a genes-by-samples CSV for downstream steps."
+        ],
+        "description": "Validate /eval-full-32-without-enrichment-only-ranked-1/data/inputs/results/de_results.csv and emit the gene-level ranking vector used downstream. Report: number of genes with non-NA log2_fold_change and non-NA padj; duplicated gene symbols and how they were resolved (keep the entry with the largest base_mean); count of DE-table symbols that match the human hallmark gene-set symbol space (reference needed: the human MSigDB hallmark gene sets, HGNC symbols) and the unmatched fraction; p-value histogram shape; counts of genes at padj<0.05 with |log2FC|>1 split by direction. Separately, load counts.csv (12,000 x 13; first column is the gene symbol, 12 sample columns) and metadata.csv (12 x 2, condition) with DESeq2, compute size factors and a VST matrix, and report per-sample library sizes, the size factor for sample_01, and sample positions on PC1/PC2 with condition labels — state explicitly whether sample_01 separates from its condition group. Write the ranking (gene, ranking statistic) and the VST matrix to disk for the two downstream steps.",
+        "acceptance_criteria": [
+          "A ranking file exists with one row per retained gene, no NA values, no duplicated symbols.",
+          "Reported: genes in, genes dropped (with reason), symbols collapsed, and the fraction of ranking genes present in the hallmark symbol universe.",
+          "Reported: per-sample library size and DESeq2 size factor for all 12 samples, with sample_01 identified.",
+          "A PCA plot/table of the 12 VST-transformed samples coloured by condition, with an explicit written statement about whether sample_01 is an outlier.",
+          "A p-value histogram from de_results.csv with a one-line interpretation (uniform-with-spike vs anticonservative vs flat)."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Hallmark preranked GSEA",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Hallmark sets overlap in membership (notably the interferon-alpha/interferon-gamma and inflammatory/TNF-NFkB families); correlated hits are not independent findings and should be reported as a block with their shared leading-edge genes noted.",
+          "With a 12,000-gene pre-filtered universe, some hallmark sets lose members; a small post-intersection set size makes its NES unstable.",
+          "Leading-edge genes are the drivers of the signal, not a validated gene list — do not present them as biomarkers."
+        ],
+        "context": "The ranking comes from the supplied DESeq2 treated-vs-control contrast on 6 lesional vs 6 control human psoriasis skin samples. Preranked rather than over-representation testing is used because the question is about coordinated pathway shifts, not about an arbitrarily thresholded gene list.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2",
+          "BiocParallel"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are significantly enriched in psoriasis lesional skin versus control, and in which direction?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the human (not mouse) hallmark gene sets — the data is Homo sapiens, taxon 9606.",
+          "Use the T1S1 ranking file verbatim; do not re-derive the statistic.",
+          "Report all 50 hallmark sets, including non-significant ones, so absence of a hallmark is distinguishable from it never having been tested.",
+          "Use BH adjustment across the 50 sets and report both nominal and adjusted p; call significance at padj<0.05.",
+          "Set a fixed random seed and report it, plus the fgsea eps/nPermSimple settings used, so the result is reproducible.",
+          "If the hallmark gene set resource is absent from the environment, halt and report that clearly — do not substitute GO or WikiPathways, since the question asks specifically for hallmark pathways."
+        ],
+        "description": "Run preranked GSEA of the full ranking vector from T1S1 against the human MSigDB hallmark collection (reference needed: the 50 human hallmark gene sets in HGNC symbols; resolve it from the environment's reference store rather than a hardcoded path). Use fgsea multilevel (R) or an equivalent permutation-based preranked GSEA if fgsea is unavailable. Restrict sets to those with at least 10 and at most 500 members present in the 12,000-gene ranking universe. Report a table of ALL 50 hallmark sets — set name, size after intersection with the universe, ES, NES, nominal p, BH-adjusted p, and leading-edge gene symbols — sorted by adjusted p. Produce a barplot of NES for sets at padj<0.05 and GSEA enrichment-score curves for the top 5 up and top 5 down sets. State the direction convention explicitly (positive NES = higher in treated/lesional).",
+        "acceptance_criteria": [
+          "A results table with exactly 50 rows (or fewer, with the excluded sets and the size-filter reason listed explicitly), each with NES, p, padj, size, and leading edge.",
+          "Significant sets (padj<0.05) named with their direction stated in words, e.g. 'HALLMARK_X higher in lesional'.",
+          "NES barplot and enrichment curves for the top up- and down-regulated sets saved as figures.",
+          "The gene-set universe size (genes in the ranking) and the seed are stated in the output."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Per-sample hallmark scoring and group test",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "ssGSEA scores are relative within the sample set and are not comparable to scores computed on a different cohort.",
+          "Scores from overlapping hallmark sets are correlated across samples; the heatmap will show blocks that reflect shared genes, not independent biology.",
+          "Twelve samples is too few for the score-level test to be well powered; treat non-significant score-level results as inconclusive rather than negative."
+        ],
+        "context": "Orthogonal confirmation of the preranked result. Preranked GSEA operates on a single summary statistic per gene and cannot show sample-level dispersion; per-sample scoring can, which is what makes it the right check given n=6 per group and one library at ~4x below median depth.",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "decoupler",
+          "pandas",
+          "numpy",
+          "scipy",
+          "ComplexHeatmap",
+          "ggplot2"
+        ],
+        "question": "Do per-sample hallmark activity scores reproduce the preranked GSEA calls, and is any hallmark hit driven by a small number of samples (including the low-depth sample_01)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Score on the VST matrix from T1S1, not on raw counts and not on log2FC.",
+          "Use the same human hallmark gene set collection as T1S2 so the two result tables are joinable by set name.",
+          "Report the sample_01 leave-one-out sensitivity as a supplementary column, not as the primary result — the primary test uses all 12 samples.",
+          "With n=6 per group the Wilcoxon test has a minimum attainable p of ~0.002; state this floor and do not over-interpret rank-test p-values.",
+          "Do not claim a pathway 'changed' on the basis of T1S3 alone where T1S2 disagrees — report the disagreement."
+        ],
+        "description": "Compute per-sample hallmark pathway scores on the 12-sample VST matrix from T1S1 using ssGSEA/GSVA (GSVA package) or a decoupler consensus score, against the same human hallmark gene sets used in T1S2. Test each hallmark score for a difference between the treated (lesional) and control groups with a two-sided Wilcoxon rank-sum test plus a t-test on the scores, BH-adjust across the 50 sets, and report effect size (difference in group medians, and Cliff's delta or Hedges' g). Produce a samples-by-hallmark heatmap with condition annotation, and per-sample dot/box plots for the hallmarks that were significant in T1S2. Finally, emit a concordance table joining T1S2 NES/padj to T1S3 effect size/padj per hallmark, and state in words which hallmark calls are supported by both methods, which by only one, and — for the hallmarks significant in T1S2 — whether excluding sample_01 changes the sign or significance of the score-level test.",
+        "acceptance_criteria": [
+          "A 50 x 12 hallmark score matrix and an annotated heatmap.",
+          "A per-hallmark test table with Wilcoxon p, t-test p, BH-adjusted p, and an effect size.",
+          "A concordance table joining T1S2 and T1S3 per hallmark, with an explicit written list of concordant, T1S2-only, and T1S3-only calls.",
+          "A stated leave-one-out (sample_01) result for each hallmark significant in T1S2."
+        ]
+      }
+    ],
+    "title": "Hallmark GSEA of psoriasis lesional vs control skin",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question asks only which MSigDB hallmark pathways differ between the 6 treated (psoriasis lesional) and 6 control skin samples. Differential expression is already done and supplied as /data/inputs/results/de_results.csv (12,000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change_SE-type fields, p-value, padj), so no DE step is re-planned.\n\nThe plan is three short steps in one track. T1S1 validates the supplied DE table before anything is built on it: gene-symbol uniqueness and mappability against the hallmark GMT symbol space, NA handling in log2FC/padj, shrinkage status, and the shape of the p-value distribution. It also produces the single ranking vector that drives GSEA. This matters here because the profile flags sample_01 at ~4x below median library size — a sample that DESeq2 size-factor normalization handles in principle but that can inflate dispersion for low-count genes; the step therefore recomputes a VST/CPM-level sanity check from counts.csv (12,000 x 13, first column gene symbol) plus metadata.csv (12 x 2, condition) and reports whether sample_01 is an outlier in PCA space, so the pathway result can be qualified rather than silently trusted.\n\nT1S2 is the answer to the question: preranked GSEA of the full 12,000-gene ranking against the 50 human MSigDB hallmark sets, using fgsea (multilevel) — rank-based and threshold-free, which is the right choice when the goal is 'which pathways change' rather than 'which pathways are over-represented among an arbitrarily thresholded gene list'. It reports NES, p, BH-adjusted p, set size, leading-edge genes, and direction (up in lesional vs up in control) for all 50 sets, not only the significant ones, so an absent hallmark is distinguishable from an untested one.\n\nT1S3 is an orthogonal, per-sample confirmation: hallmark scores computed on the normalized expression matrix (ssGSEA/GSVA-style via decoupler or GSVA) and tested treated vs control. Preranked GSEA on a summary statistic and per-sample scoring can disagree — where they agree the pathway call is robust; where they do not, the discrepancy is reported rather than hidden. This step is also what exposes whether a hallmark hit is driven by one or two samples (relevant given sample_01), which the preranked test cannot show."
+  },
+  "usage": {
+    "inputTokens": 91724,
+    "outputTokens": 4961,
+    "cacheCreationInputTokens": 73552,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "fgsea",
+          "decoupler",
+          "msigdbr",
+          "clusterProfiler",
+          "blitzgsea",
+          "pydeseq2"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Hallmark GSEA of psoriasis lesional vs control skin",
+          "analytical_narrative": "The research question asks only which MSigDB hallmark pathways differ between the 6 treated (psoriasis lesional) and 6 control skin samples. Differential expression is already done and supplied as /data/inputs/results/de_results.csv (12,000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change_SE-type fields, p-value, padj), so no DE step is re-planned.\n\nThe plan is three short steps in one track. T1S1 validates the supplied DE table before anything is built on it: gene-symbol uniqueness and mappability against the hallmark GMT symbol space, NA handling in log2FC/padj, shrinkage status, and the shape of the p-value distribution. It also produces the single ranking vector that drives GSEA. This matters here because the profile flags sample_01 at ~4x below median library size — a sample that DESeq2 size-factor normalization handles in principle but that can inflate dispersion for low-count genes; the step therefore recomputes a VST/CPM-level sanity check from counts.csv (12,000 x 13, first column gene symbol) plus metadata.csv (12 x 2, condition) and reports whether sample_01 is an outlier in PCA space, so the pathway result can be qualified rather than silently trusted.\n\nT1S2 is the answer to the question: preranked GSEA of the full 12,000-gene ranking against the 50 human MSigDB hallmark sets, using fgsea (multilevel) — rank-based and threshold-free, which is the right choice when the goal is 'which pathways change' rather than 'which pathways are over-represented among an arbitrarily thresholded gene list'. It reports NES, p, BH-adjusted p, set size, leading-edge genes, and direction (up in lesional vs up in control) for all 50 sets, not only the significant ones, so an absent hallmark is distinguishable from an untested one.\n\nT1S3 is an orthogonal, per-sample confirmation: hallmark scores computed on the normalized expression matrix (ssGSEA/GSVA-style via decoupler or GSVA) and tested treated vs control. Preranked GSEA on a summary statistic and per-sample scoring can disagree — where they agree the pathway call is robust; where they do not, the discrepancy is reported rather than hidden. This step is also what exposes whether a hallmark hit is driven by one or two samples (relevant given sample_01), which the preranked test cannot show.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DE table QC and ranking construction",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Is the supplied DESeq2 treated-vs-control table (12,000 genes) fit to drive hallmark GSEA, and does the ~4x-low-library-size sample_01 distort the lesional-vs-control contrast?",
+              "description": "Validate /eval-full-32-without-enrichment-only-ranked-1/data/inputs/results/de_results.csv and emit the gene-level ranking vector used downstream. Report: number of genes with non-NA log2_fold_change and non-NA padj; duplicated gene symbols and how they were resolved (keep the entry with the largest base_mean); count of DE-table symbols that match the human hallmark gene-set symbol space (reference needed: the human MSigDB hallmark gene sets, HGNC symbols) and the unmatched fraction; p-value histogram shape; counts of genes at padj<0.05 with |log2FC|>1 split by direction. Separately, load counts.csv (12,000 x 13; first column is the gene symbol, 12 sample columns) and metadata.csv (12 x 2, condition) with DESeq2, compute size factors and a VST matrix, and report per-sample library sizes, the size factor for sample_01, and sample positions on PC1/PC2 with condition labels — state explicitly whether sample_01 separates from its condition group. Write the ranking (gene, ranking statistic) and the VST matrix to disk for the two downstream steps.",
+              "question_context": "",
+              "context": "Human psoriasis skin, bulk RNA-seq from Salmon, 6 treated (lesional) vs 6 control, unpaired, single batch. DE was already run externally with DESeq2; this step does not redo it. The profile flags sample_01 at roughly 4x below the median library size.",
+              "constraints": [
+                "Do NOT re-run differential expression — use the supplied de_results.csv as the source of the contrast statistics.",
+                "Build the ranking statistic as sign(log2_fold_change) * -log10(p-value), falling back to log2_fold_change alone for genes where the p-value is 0 or NA; report exactly which rule was used for how many genes. If the table's log2FC appears shrunken (SE column present and small-base_mean genes compressed toward zero), state that and prefer the shrunken log2FC for tie-breaking.",
+                "Drop genes with NA log2_fold_change or NA padj from the ranking and report the count dropped; do not impute.",
+                "Collapse duplicated gene symbols by keeping the row with the largest base_mean; report how many symbols were collapsed.",
+                "Verify the 12 metadata sample IDs match the 12 count-matrix column names exactly; halt and report if they do not.",
+                "Do not remove sample_01 — characterize it and report. Removal is a separate decision the user has not made.",
+                "Emit the ranking as a two-column CSV and the VST matrix as a genes-by-samples CSV for downstream steps."
+              ],
+              "acceptance_criteria": [
+                "A ranking file exists with one row per retained gene, no NA values, no duplicated symbols.",
+                "Reported: genes in, genes dropped (with reason), symbols collapsed, and the fraction of ranking genes present in the hallmark symbol universe.",
+                "Reported: per-sample library size and DESeq2 size factor for all 12 samples, with sample_01 identified.",
+                "A PCA plot/table of the 12 VST-transformed samples coloured by condition, with an explicit written statement about whether sample_01 is an outlier.",
+                "A p-value histogram from de_results.csv with a one-line interpretation (uniform-with-spike vs anticonservative vs flat)."
+              ],
+              "caveats": [
+                "A large unmatched-symbol fraction (>20%) against the hallmark universe would mean the counts use a non-HGNC symbol space and would invalidate downstream enrichment — report it loudly rather than proceeding silently.",
+                "A 12,000-gene table is already filtered relative to a full transcriptome; the GSEA universe is therefore the supplied 12,000 genes, not all human genes. Say so.",
+                "n=6 per group is modest; a single aberrant library can move gene-level statistics."
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "scipy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Hallmark preranked GSEA",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 50 MSigDB hallmark pathways are significantly enriched in psoriasis lesional skin versus control, and in which direction?",
+              "description": "Run preranked GSEA of the full ranking vector from T1S1 against the human MSigDB hallmark collection (reference needed: the 50 human hallmark gene sets in HGNC symbols; resolve it from the environment's reference store rather than a hardcoded path). Use fgsea multilevel (R) or an equivalent permutation-based preranked GSEA if fgsea is unavailable. Restrict sets to those with at least 10 and at most 500 members present in the 12,000-gene ranking universe. Report a table of ALL 50 hallmark sets — set name, size after intersection with the universe, ES, NES, nominal p, BH-adjusted p, and leading-edge gene symbols — sorted by adjusted p. Produce a barplot of NES for sets at padj<0.05 and GSEA enrichment-score curves for the top 5 up and top 5 down sets. State the direction convention explicitly (positive NES = higher in treated/lesional).",
+              "question_context": "",
+              "context": "The ranking comes from the supplied DESeq2 treated-vs-control contrast on 6 lesional vs 6 control human psoriasis skin samples. Preranked rather than over-representation testing is used because the question is about coordinated pathway shifts, not about an arbitrarily thresholded gene list.",
+              "constraints": [
+                "Use the human (not mouse) hallmark gene sets — the data is Homo sapiens, taxon 9606.",
+                "Use the T1S1 ranking file verbatim; do not re-derive the statistic.",
+                "Report all 50 hallmark sets, including non-significant ones, so absence of a hallmark is distinguishable from it never having been tested.",
+                "Use BH adjustment across the 50 sets and report both nominal and adjusted p; call significance at padj<0.05.",
+                "Set a fixed random seed and report it, plus the fgsea eps/nPermSimple settings used, so the result is reproducible.",
+                "If the hallmark gene set resource is absent from the environment, halt and report that clearly — do not substitute GO or WikiPathways, since the question asks specifically for hallmark pathways."
+              ],
+              "acceptance_criteria": [
+                "A results table with exactly 50 rows (or fewer, with the excluded sets and the size-filter reason listed explicitly), each with NES, p, padj, size, and leading edge.",
+                "Significant sets (padj<0.05) named with their direction stated in words, e.g. 'HALLMARK_X higher in lesional'.",
+                "NES barplot and enrichment curves for the top up- and down-regulated sets saved as figures.",
+                "The gene-set universe size (genes in the ranking) and the seed are stated in the output."
+              ],
+              "caveats": [
+                "Hallmark sets overlap in membership (notably the interferon-alpha/interferon-gamma and inflammatory/TNF-NFkB families); correlated hits are not independent findings and should be reported as a block with their shared leading-edge genes noted.",
+                "With a 12,000-gene pre-filtered universe, some hallmark sets lose members; a small post-intersection set size makes its NES unstable.",
+                "Leading-edge genes are the drivers of the signal, not a validated gene list — do not present them as biomarkers."
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2",
+                "BiocParallel"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Per-sample hallmark scoring and group test",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do per-sample hallmark activity scores reproduce the preranked GSEA calls, and is any hallmark hit driven by a small number of samples (including the low-depth sample_01)?",
+              "description": "Compute per-sample hallmark pathway scores on the 12-sample VST matrix from T1S1 using ssGSEA/GSVA (GSVA package) or a decoupler consensus score, against the same human hallmark gene sets used in T1S2. Test each hallmark score for a difference between the treated (lesional) and control groups with a two-sided Wilcoxon rank-sum test plus a t-test on the scores, BH-adjust across the 50 sets, and report effect size (difference in group medians, and Cliff's delta or Hedges' g). Produce a samples-by-hallmark heatmap with condition annotation, and per-sample dot/box plots for the hallmarks that were significant in T1S2. Finally, emit a concordance table joining T1S2 NES/padj to T1S3 effect size/padj per hallmark, and state in words which hallmark calls are supported by both methods, which by only one, and — for the hallmarks significant in T1S2 — whether excluding sample_01 changes the sign or significance of the score-level test.",
+              "question_context": "",
+              "context": "Orthogonal confirmation of the preranked result. Preranked GSEA operates on a single summary statistic per gene and cannot show sample-level dispersion; per-sample scoring can, which is what makes it the right check given n=6 per group and one library at ~4x below median depth.",
+              "constraints": [
+                "Score on the VST matrix from T1S1, not on raw counts and not on log2FC.",
+                "Use the same human hallmark gene set collection as T1S2 so the two result tables are joinable by set name.",
+                "Report the sample_01 leave-one-out sensitivity as a supplementary column, not as the primary result — the primary test uses all 12 samples.",
+                "With n=6 per group the Wilcoxon test has a minimum attainable p of ~0.002; state this floor and do not over-interpret rank-test p-values.",
+                "Do not claim a pathway 'changed' on the basis of T1S3 alone where T1S2 disagrees — report the disagreement."
+              ],
+              "acceptance_criteria": [
+                "A 50 x 12 hallmark score matrix and an annotated heatmap.",
+                "A per-hallmark test table with Wilcoxon p, t-test p, BH-adjusted p, and an effect size.",
+                "A concordance table joining T1S2 and T1S3 per hallmark, with an explicit written list of concordant, T1S2-only, and T1S3-only calls.",
+                "A stated leave-one-out (sample_01) result for each hallmark significant in T1S2."
+              ],
+              "caveats": [
+                "ssGSEA scores are relative within the sample set and are not comparable to scores computed on a different cohort.",
+                "Scores from overlapping hallmark sets are correlated across samples; the heatmap will show blocks that reflect shared genes, not independent biology.",
+                "Twelve samples is too few for the score-level test to be well powered; treat non-significant score-level results as inconclusive rather than negative."
+              ],
+              "packages": [
+                "GSVA",
+                "decoupler",
+                "pandas",
+                "numpy",
+                "scipy",
+                "ComplexHeatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

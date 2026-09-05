@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as a genotype-by-treatment interaction, fits PyDESeq2 with an explicit ~ genotype + treatment + genotype:treatment formula, stated reference levels (WT, vehicle), Wald test on the interaction coefficient, and recovers both simple effects via a documented relevel refit, all in Python. QC (library sizes, blind VST PCA, sample distances, flag-don't-drop outlier policy, explicit absence of batch) precedes the model, the filter (>=10 counts in >=4 samples, the smallest cell) is minimal and justified, normalization stays inside the model, and BH at alpha 0.05 with lfc_shrink on each coefficient is explicit. Minor gaps: no stated fallback (combined group factor or stop) should the installed PyDESeq2 not support the interaction formula or shrinkage on that term, and no explicit policy for a shallow-library sample. Enrichment is well specified (full ranked list by Wald statistic, named collections with version to be recorded, 15-500 size window, per-contrast runs) and the report captures method, versions, thresholds, counts, and the low-power interaction caveat."
+}

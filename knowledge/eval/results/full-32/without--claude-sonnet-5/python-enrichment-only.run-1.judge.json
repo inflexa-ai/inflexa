@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 3,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly refuses to refit a count model, ranks the full 12000-gene table by a signed -log10(p) metric (or Wald statistic), states an NA/duplicate-drop rule, uses a local Hallmark GMT with a fixed seed, and reports NES with FDR at stated thresholds without any padj pre-cutoff. It omits the Hallmark version, the 15-500 set-size window, the permutation count, a tie rule, and the leading-edge genes themselves (only a count). No QC of the inherited results and no acknowledgement of the shallow sample_01 as a caveat on the upstream DE, and versions are not reported. The DE-stage criteria are largely moot since the contrast is inherited, and the plan neither misapplies nor explicitly documents them."
+}

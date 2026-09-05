@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: it gates on the cluster-by-condition cross-tabulation, estimates surrogate variables with sva (full model ~ condition, null ~ 1), enters them as covariates in ~ SV1..SVk + condition on raw counts, checks each SV against condition, cluster and library size, and explicitly forbids ComBat/removeBatchEffect adjustment before the model. QC, minimal filter tied to the smallest group, in-model normalization, explicit reference level and contrast, BH at 0.05 with apeglm shrinkage, and a full report with sessionInfo and caveats are all stated. Small deductions: it does not explicitly ask the analyst for the unrecorded variable (only scans extra metadata columns), it names sva rather than svaseq on counts, and the conditional fdrtool null re-estimation is an unusual add-on to BH; enrichment was not requested but is specified correctly (full ranked list, Wald stat, tested-gene universe, versioned collections, size window, seed)."
+}

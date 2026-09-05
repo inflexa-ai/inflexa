@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly reads the question as a per-sample scoring task: it variance-stabilizes the raw Salmon counts, runs GSVA with the Gaussian kernel on the continuous VST matrix against a named and versioned Hallmark collection with a 15-500 size window restricted to expressed genes, then applies limma with the same ~condition design (control releveled as reference) and BH at 0.05 to identify separating pathways, and renders a z-scored, clustered, condition-annotated heatmap of the score matrix. QC is design-specific and adequate: blind VST PCA on top-500 variable genes, sample-distance heatmap, library size and detected-gene table, with an explicit retain-by-default policy for the shallow sample_01 and a low-depth annotation carried onto the heatmap. Filtering (>=10 counts in >=6 samples, the smallest group size) is minimal and justified, normalization stays inside the model via median-of-ratios size factors with no pre-normalized input, and apeglm shrinkage plus BH thresholds are stated in the test rather than post hoc. Reporting is thorough (versions, design, contrast, thresholds, gene counts, kernel, collection version, sessionInfo, caveats). The only soft points are the extra full DESeq2 gene-level DE pass, which is not what was asked and is only partly justified as a route to the VST matrix, and a mild ambiguity between 'do not threshold genes before GSVA' and feeding it the filtered DESeq2 object."
+}

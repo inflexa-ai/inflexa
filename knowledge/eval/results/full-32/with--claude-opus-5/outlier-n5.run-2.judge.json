@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: it characterizes sample_03 (library size, detected genes, PCA/heatmap position) before any decision, keeps it in a primary DESeq2 Wald fit with Cook's flagging, and runs the excluded fit, voomWithQualityWeights, and edgeR QL robust as sensitivity analyses, reporting both fits and the genes that change status, with the exclusion criterion required to be stated. The design formula, relevel to control, contrast triple, minimal >=10-in->=5 filter recomputed on the 9-sample matrix, in-model size factors, BH at 0.05 and apeglm shrinkage are all explicit. Minor deductions: the technical exclusion criterion is left qualitative ('far below the median') rather than fixed numerically in advance as the reference suggests, and the enrichment section, though well specified (full ranked list, Wald stat, 15-500 window, seed, tested-gene universe), was not asked for and leaves the Hallmark collection version to be resolved at run time."
+}

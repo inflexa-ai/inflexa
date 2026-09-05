@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core choice: limma-voom with ~condition and eBayes on TMM-normalized, filterByExpr-filtered counts, control as explicit reference, BH at 0.05, and a pre-specified TREAT fold-change test so 'matters' is tested rather than filtered post hoc. Enrichment is correctly ranked (camera with inter-gene correlation, fgsea on moderated t) on Hallmark and Reactome with a size window and leading edges, though Reactome is only versioned as 'current'. QC covers PCA, distances, library sizes, and an outlier policy, but omits the sex check against XIST/Y-linked genes and any explicit search for hidden structure with candidate factors reported. The parallel DESeq2 fit purely to borrow apeglm-shrunk LFCs beside limma p-values is a methodological hybrid rather than reporting limma's own logFC with a confidence interval, and the extra Wilcoxon control adds bulk without changing the inference; the report step is otherwise complete with versions, counts, thresholds, and caveats."
+}

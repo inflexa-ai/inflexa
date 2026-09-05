@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan places the known balanced batch in the design formula (~ batch + condition) with an explicit relevel to control and a named contrast, and it explicitly refuses to batch-correct counts before the model, which is exactly the reference behaviour. QC precedes the fit with blind VST PCA on the top 500 genes, a sample-distance heatmap and library sizes coloured by both condition and batch, with a stated policy of reporting candidate outliers rather than dropping samples. The pre-filter (>=10 counts in >=6 samples, justified as the smallest group size) is minimal and defended, normalization stays inside DESeq2 size factors and edgeR TMM, and inference is Wald with BH at a stated alpha 0.05 plus apeglm shrinkage retained alongside unshrunken estimates, with Cook's-flag NAs separated from independent-filtering NAs. Enrichment is not strictly required by the question but is fully specified (full ranked list on the Wald statistic, named collections and version, 15-500 window applied after intersection, seed, unmapped share, collapsed redundancy), losing only a point because it extends beyond what the question asked. The final report names methods, versions, design, thresholds, tested and significant counts, the edgeR intersection as high-confidence, and honest caveats about n=6, batch adjustment and the missing length offset."
+}

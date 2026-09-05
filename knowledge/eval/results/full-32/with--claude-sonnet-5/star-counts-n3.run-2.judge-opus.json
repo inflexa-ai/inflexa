@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes that STAR+featureCounts gene-level integer counts go straight into DESeqDataSetFromMatrix with no tximport and no length offset, and it says so explicitly, with an edgeR QL cross-check on the same filtered matrix and a stated n=3/group power caveat. QC is concrete and design-specific (blind VST PCA on top-500 genes, Euclidean distance heatmap, library sizes, colored by condition, noting there is no batch variable) with a sensible no-silent-dropping outlier policy. The filter (>=10 counts in >=3 samples, justified as the smallest group size, explicitly not to be tightened), the ~condition design with control set as reference and the named (condition, treated, control) contrast, and BH at alpha=0.05 with independent filtering, p-value histogram inspection, apeglm shrinkage, and selection on padj only are all correct and explicit. Normalization is the one soft spot: raw counts are correctly kept out of any pre-normalization and DESeq() implies median-of-ratios size factors, but neither size factor estimation nor edgeR TMM normalization is named anywhere. Enrichment, though not requested, is specified properly (full ranked list on the Wald stat, named collections with versions and paths, 15-500 size window intersected with the tested universe, no ORA on a short list, leading edges reported), and the final report covers versions, design, thresholds, n tested vs n DE, diagnostics, and reproducibility."
+}

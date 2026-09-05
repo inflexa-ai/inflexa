@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on the core inference: a negative binomial count model (DESeq2 Wald) on raw Salmon gene-level counts with a minimal, justified filter (>=10 counts in >=3 samples, tied to the smallest group), median-of-ratios size factors estimated inside the model with an explicit prohibition on pre-normalized or transformed input, ~condition with the control level set explicitly and the contrast direction stated, BH at alpha 0.05 with independent filtering and apeglm shrinkage of the reported effect while retaining the unshrunken estimate and lfcSE. QC precedes modelling with library sizes, blind VST, PCA on the top 500 variable genes and a distance heatmap, plus a sensible no-removal-at-n=3 outlier policy carried forward as a caveat. The power question is answered honestly — alpha is never loosened or tightened, edgeR QL is used as a second method with the intersection (not the union) as the high-confidence set, and leave-one-out refits are correctly labelled descriptive rather than inferential. Enrichment is well specified (full ranked list, Wald statistic with the choice defended, named human collections with versions, 15-500 window post-intersection, tested-gene universe, recorded seed, redundancy collapsing) and only slightly over-elaborate for a question that did not ask for pathways; the report section is complete down to sessionInfo, the missing tximport length offset, and the design caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The DESeq2 Wald model with control as reference, median-of-ratios normalization, a justified >=10-in-3 prefilter, BH at 0.05 with apeglm shrinkage, and an explicit low-power caveat all match the reference. The central failure is the strandedness question: the plan never runs infer_experiment or salmon libType A and never re-counts with the correct -s, instead substituting an admittedly indirect count-matrix heuristic and then fitting the model on the counts as delivered, which the reference says is wrong; it is partly credited for flagging the uncertainty rather than ignoring it. QC (blinded VST PCA, distances, library sizes, outlier policy) and the report contents are thorough. Enrichment was not asked for, but the GSEA is specified correctly (full ranked list, Wald stat metric, named collections with version, 15-500 window, tested-gene universe)."
+}

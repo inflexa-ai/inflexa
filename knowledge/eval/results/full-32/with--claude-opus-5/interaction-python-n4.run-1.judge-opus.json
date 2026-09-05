@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits a single negative-binomial model with ~ genotype + treatment + genotype:treatment in PyDESeq2, sets WT and vehicle as explicit reference levels, reads the interaction coefficient as the primary answer, and reports both within-genotype simple effects alongside it with an honest power caveat for n=4 per cell — exactly the reference structure, and entirely in Python as constrained. QC (blind transform, PCA on top 500 variable genes colored by genotype/treatment/cell, distance heatmap, library sizes, flag-don't-drop policy) precedes the model; the filter (>=10 counts in >=4 samples, the smallest group size) is minimal and justified; size factors stay inside the model with an explicit prohibition on pre-normalization. FDR is BH at alpha 0.05 within contrast with independent filtering, shrunken and unshrunken LFCs both reported and the estimator named, and any fold-change threshold tested inside the model. Enrichment is preranked GSEA per contrast on the Wald statistic with the tested-gene universe, a 15-500 size window, named collection and version, and a seed; the report block is complete on versions, design, thresholds, counts tested and significant, and design caveats. The one gap relative to the reference is that the plan never states what to do if the installed PyDESeq2 cannot express the interaction formula or the within-genotype contrasts — no combined-group-factor fallback or explicit stop is given, and the statsmodels LRT step is framed as a robustness check rather than a fallback."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the TPM-only data state and fits limma with eBayes(trend=TRUE, robust=TRUE) on log2(TPM+1), explicitly forbidding DESeq2/edgeR/voom, pseudo-count reconstruction, TMM and size factors, matching the reference; the one gap is that it never actually asks the core for the raw counts or Salmon quant directories, only notes their absence. QC (PCA/MDS, distance heatmap, detected genes, column sums, outlier flag policy), the filter (TPM>=1 in >=6 samples), the design (~condition with control as explicit reference, no blocking needed for unpaired single batch), and BH at 0.05 with TREAT for an in-model fold-change threshold are all stated concretely and fit this dataset. Enrichment was not requested but is defensibly warranted for a strong psoriasis contrast and is specified well (full ranked list, moderated t stated, tested-gene universe, 15-500 window, named collections), though the collection versions are deferred to run time rather than named. The report step covers method, versions, design, thresholds, tested/significant counts, seed, and an explicit limitations paragraph."
+}

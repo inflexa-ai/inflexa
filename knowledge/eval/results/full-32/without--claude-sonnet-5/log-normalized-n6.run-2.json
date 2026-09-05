@@ -1,0 +1,731 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "log-normalized-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T18:30:23.200Z",
+  "elapsedMs": 272749,
+  "outcome": "plan_submitted",
+  "planId": "pln-0f8bbff8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, sample-metadata alignment, and gene ID scheme check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12 samples is a small n for PCA; do not over-interpret minor separation as robust structure",
+          "The single batch, unpaired design means no batch-correction step is warranted here"
+        ],
+        "context": "Input is log_expr.csv (12000 genes x 13 columns: gene ID + 12 sample columns) and metadata.csv (12 rows x 2 columns: sample, condition). Values are log2(TPM+1) as delivered by the core facility -- already normalized, single batch, unpaired 6 vs 6 design. No counts were delivered.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 12 samples in log_expr.csv align correctly with the 6 treated vs 6 control labels in metadata.csv, are the log2(TPM+1) values comparable in distribution across samples, and what gene identifier scheme (HGNC symbol, Ensembl, Entrez) does the 12000-gene matrix use?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not re-normalize or re-transform the log2 values further beyond what is needed for PCA (e.g. centering is fine, do not re-log or quantile-normalize)",
+          "Treat the log2 values as the analysis-ready expression matrix, not as raw counts"
+        ],
+        "acceptance_criteria": [
+          "Confirms all 12 sample columns in log_expr.csv match the 12 rows in metadata.csv and reports the group sizes (6 treated / 6 control)",
+          "Reports per-sample distribution summaries (median, IQR) of log2 values to check comparability across samples",
+          "Produces a PCA plot and a sample-sample correlation heatmap colored/annotated by condition, flagging any outlier samples",
+          "Explicitly identifies the gene identifier type used (symbol vs Ensembl vs Entrez) by inspecting a sample of row identifiers, and records this for downstream steps"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Differential expression: treated vs control via limma-trend",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "limma-trend assumes a roughly monotonic mean-variance relationship on the log scale; if T1S1 flags irregular per-sample distributions, note this as a caveat on the DE results",
+          "Use the gene identifier scheme confirmed in T1S1 consistently when reporting the result table"
+        ],
+        "context": "log_expr.csv holds log2(TPM+1) values per the core facility; metadata.csv defines the 6 treated vs 6 control unpaired grouping confirmed in T1S1. This is the primary analysis answering the research question of which genes differ between treated and control.",
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between treated (n=6) and control (n=6) muscle samples, given the data is delivered as pre-normalized log2(TPM+1) values rather than counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Fit the model on the log2 values as given -- do not attempt to back-transform to pseudo-counts",
+          "Use trend=TRUE in eBayes (limma-trend) since no per-gene precision weights from voom are available without counts/library sizes",
+          "Report results for the full gene set, not only the pre-filtered significant subset"
+        ],
+        "acceptance_criteria": [
+          "Uses limma's lmFit + eBayes(trend=TRUE, robust=TRUE) directly on the log2(TPM+1) matrix with a design matrix encoding treated vs control (unpaired, no batch term, single batch)",
+          "Does NOT use count-based negative-binomial tools (DESeq2, edgeR with count-based dispersion, pyDESeq2) since no counts were delivered",
+          "Produces a full topTable for all 12000 genes with logFC (log2 fold-change treated vs control), moderated t-statistic, raw p-value, and BH-adjusted p-value (FDR)",
+          "Reports a filtered significant gene list at adj.P.Val < 0.05 and separately notes genes additionally passing |logFC| >= 1 as a stricter effect-size filter",
+          "States explicitly that n=6 vs 6 limits power and that limma's variance moderation partially compensates but borderline genes should be read cautiously"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Volcano plot, heatmap, and MA-plot of DE results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "With n=6/group, heatmap clustering of top genes may partly reflect the same genes used to select them (circularity) -- state this when describing the heatmap"
+        ],
+        "context": "Consumes the full topTable and significant gene list from T2S1 plus the log2(TPM+1) matrix and condition labels validated in T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap"
+        ],
+        "question": "What do the effect sizes and significance of the treated vs control comparison look like across all genes, and how do the top differentially expressed genes separate the samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "visualization",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Do not recompute differential expression in this step -- purely visualize T2S1 outputs"
+        ],
+        "acceptance_criteria": [
+          "Produces a volcano plot (log2FC vs -log10 adjusted p-value) from the T2S1 topTable, labeling the top significant genes",
+          "Produces an MA-plot (log2FC vs average log2 expression)",
+          "Produces a heatmap of the top N (up to 50) differentially expressed genes' log2 expression values (z-scored per gene) across all 12 samples, annotated by treated/control",
+          "All plots are generated strictly from the T2S1 result table and the T1S1-validated expression matrix, not re-derived statistics"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Pathway enrichment of treated vs control DE genes",
+        "agent": "enrichment-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "GO-style or hierarchical collections produce correlated blocks of significant hits; Hallmark and WikiPathways are less nested so this is a minor concern here but should still be watched",
+          "ORA on a small significant gene list can be underpowered; GSEA on the full ranked list is the more sensitive complement and should be weighted accordingly in interpretation"
+        ],
+        "context": "Uses the T2S1 differential expression results (full ranked table and significant gene subset) for a human (Homo sapiens, taxon 9606) muscle dataset. This environment stages a WikiPathways human pathway gene set collection (2026.07.10 snapshot, HGNC symbols) and an MSigDB human hallmark gene set collection (2026.1, 50 sets, HGNC symbols) suitable for this organism.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "AnnotationDbi"
+        ],
+        "question": "Which biological pathways are over-represented among the genes significantly differentially expressed between treated and control muscle, and which pathways show coordinated sub-threshold shifts across the full ranked gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1",
+          "T1S1"
+        ],
+        "constraints": [
+          "Restrict enrichment testing to human (Homo sapiens) gene set collections only -- do not use the mouse or rat WikiPathways collections staged in this environment",
+          "Do not merge _UP/_DN halves of any directional gene set collection if one is substituted in place of WikiPathways/Hallmark"
+        ],
+        "acceptance_criteria": [
+          "Confirms the gene identifier type recorded in T1S1; if the expression matrix identifiers are not HGNC gene symbols, maps them to HGNC symbols (e.g. via the org.Hs.eg.db annotation package) before testing, since the staged pathway gene sets use HGNC symbols",
+          "Runs over-representation analysis (ORA) on the adj.P.Val < 0.05 significant gene list from T2S1 against a human WikiPathways gene set collection and against the MSigDB human hallmark gene set collection, both staged for this organism",
+          "Runs pre-ranked GSEA (e.g. via fgsea) on the full ranked gene list (all genes ranked by moderated t-statistic from T2S1) against the same two gene set collections",
+          "Applies BH correction across tested gene sets within each collection and reports top pathways by adjusted p-value with their leading-edge/overlapping genes",
+          "If a referenced gene set collection is absent at runtime, reports results from whichever collection is available and explicitly states the gap rather than failing silently"
+        ]
+      }
+    ],
+    "title": "Muscle treated vs control DE via limma-trend + pathway enrichment",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The expression matrix (12000 genes x 12 samples) was delivered as core-facility-normalized log2(TPM+1) values, not raw counts — the caveat is explicit in the data profile. Count-based negative-binomial tools (DESeq2/edgeR/pyDESeq2) assume raw integer counts and cannot be validly applied to already-log2-transformed, normalized data; feeding this matrix into them would misspecify the variance model. The correct approach for pre-summarized log-scale intensity data is limma's linear-model + empirical-Bayes framework applied directly to the log2 values (limma-trend, trend=TRUE), which fits the mean-variance relationship empirically rather than assuming a count distribution (Ritchie et al. 2015, Nucleic Acids Research; robust moderation per Phipson et al. 2016 to guard against hypervariable genes at n=6/group). The plan starts with a QC/exploratory step to confirm sample-metadata alignment (6 treated vs 6 control, unpaired, single batch), check per-sample distributions for latent normalization artifacts, run PCA/clustering to detect outliers or unexpected structure, and determine the gene identifier scheme used in the matrix (symbol/Ensembl/Entrez) since downstream enrichment tools require HGNC symbols. The DE step fits ~condition in limma and extracts moderated-t/logFC/BH-adjusted-p results for all genes. A visualization step renders the standard volcano/heatmap views of that result. Finally, an enrichment step interprets the gene list functionally against the WikiPathways human and MSigDB Hallmark human gene set collections staged in this environment, using both over-representation (significant genes) and pre-ranked GSEA (full ranked list) to capture both threshold and sub-threshold signal. No translational/PK/safety/immune elements are added since the research question is a plain DE contrast with no drug, clinical-outcome, or immune-composition angle stated."
+  },
+  "usage": {
+    "inputTokens": 3474941,
+    "outputTokens": 12890,
+    "cacheCreationInputTokens": 282591,
+    "cacheReadInputTokens": 3191724,
+    "reasoningTokens": 4375
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "limma",
+          "pydeseq2",
+          "statsmodels"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma differential expression pre-normalized log2 data no counts moderated t-test",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma trend voom RNA-seq log2 normalized without counts",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma-trend precision weights RNA-seq analysis",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Law voom precision weights differential expression RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma powers differential expression analyses RNA-sequencing microarray data",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25605792"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers",
+        "query": "human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string ppi human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human mapping symbol"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db annotation gene symbol human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal-expression",
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "clusterProfiler org.Hs.eg.db gene set enrichment analysis WikiPathways",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "clusterProfiler universal enrichment analysis gene ontology",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Yu Wang clusterProfiler package enriching gene clusters",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "clusterProfiler package for comparing biological themes among gene clusters",
+        "limit": 3
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "AnnotationDbi"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/limma/limma",
+        "query": "lmFit eBayes analysis of already log2-normalized expression data without counts, no voom"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "limma",
+        "query": "lmFit eBayes differential expression on log2 normalized data"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "skeletal muscle transcriptome treatment exercise RNA-seq differential expression",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome pathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR",
+          "gseapy",
+          "blitzgsea",
+          "GSVA",
+          "singscore"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "enrichplot",
+          "GO.db",
+          "fgsea",
+          "limma"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "STRINGdb",
+          "igraph",
+          "network"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "networkx"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "R.igraph"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "language": "r",
+        "query": "igraph"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "variancePartition",
+          "sva"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggplot2",
+          "pandas",
+          "numpy",
+          "scipy"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "matplotlib",
+          "seaborn"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Ritchie limma trend eBayes trend=TRUE microarray-like log2 expression small sample",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Phipson robust hyperparameter estimation Bayes RNA-seq gene expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "28367255"
+        ],
+        "maxAuthors": 2,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend eBayes robust log2 normalized expression differential expression small sample",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend eBayes robust log2 expression differential expression",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "limma trend moderated t-test log2 normalized differential expression",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "limma trend log2 normalized bulk RNA-seq differential expression pipeline",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "limma trend differential expression pipeline",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "limma RNA-seq differential expression",
+        "language": "r",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "matplotlib",
+          "seaborn",
+          "STRINGdb"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Muscle treated vs control DE via limma-trend + pathway enrichment",
+          "analytical_narrative": "The expression matrix (12000 genes x 12 samples) was delivered as core-facility-normalized log2(TPM+1) values, not raw counts — the caveat is explicit in the data profile. Count-based negative-binomial tools (DESeq2/edgeR/pyDESeq2) assume raw integer counts and cannot be validly applied to already-log2-transformed, normalized data; feeding this matrix into them would misspecify the variance model. The correct approach for pre-summarized log-scale intensity data is limma's linear-model + empirical-Bayes framework applied directly to the log2 values (limma-trend, trend=TRUE), which fits the mean-variance relationship empirically rather than assuming a count distribution (Ritchie et al. 2015, Nucleic Acids Research; robust moderation per Phipson et al. 2016 to guard against hypervariable genes at n=6/group). The plan starts with a QC/exploratory step to confirm sample-metadata alignment (6 treated vs 6 control, unpaired, single batch), check per-sample distributions for latent normalization artifacts, run PCA/clustering to detect outliers or unexpected structure, and determine the gene identifier scheme used in the matrix (symbol/Ensembl/Entrez) since downstream enrichment tools require HGNC symbols. The DE step fits ~condition in limma and extracts moderated-t/logFC/BH-adjusted-p results for all genes. A visualization step renders the standard volcano/heatmap views of that result. Finally, an enrichment step interprets the gene list functionally against the WikiPathways human and MSigDB Hallmark human gene set collections staged in this environment, using both over-representation (significant genes) and pre-ranked GSEA (full ranked list) to capture both threshold and sub-threshold signal. No translational/PK/safety/immune elements are added since the research question is a plain DE contrast with no drug, clinical-outcome, or immune-composition angle stated.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, sample-metadata alignment, and gene ID scheme check",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 samples in log_expr.csv align correctly with the 6 treated vs 6 control labels in metadata.csv, are the log2(TPM+1) values comparable in distribution across samples, and what gene identifier scheme (HGNC symbol, Ensembl, Entrez) does the 12000-gene matrix use?",
+              "acceptance_criteria": [
+                "Confirms all 12 sample columns in log_expr.csv match the 12 rows in metadata.csv and reports the group sizes (6 treated / 6 control)",
+                "Reports per-sample distribution summaries (median, IQR) of log2 values to check comparability across samples",
+                "Produces a PCA plot and a sample-sample correlation heatmap colored/annotated by condition, flagging any outlier samples",
+                "Explicitly identifies the gene identifier type used (symbol vs Ensembl vs Entrez) by inspecting a sample of row identifiers, and records this for downstream steps"
+              ],
+              "context": "Input is log_expr.csv (12000 genes x 13 columns: gene ID + 12 sample columns) and metadata.csv (12 rows x 2 columns: sample, condition). Values are log2(TPM+1) as delivered by the core facility -- already normalized, single batch, unpaired 6 vs 6 design. No counts were delivered.",
+              "constraints": [
+                "Do not re-normalize or re-transform the log2 values further beyond what is needed for PCA (e.g. centering is fine, do not re-log or quantile-normalize)",
+                "Treat the log2 values as the analysis-ready expression matrix, not as raw counts"
+              ],
+              "caveats": [
+                "12 samples is a small n for PCA; do not over-interpret minor separation as robust structure",
+                "The single batch, unpaired design means no batch-correction step is warranted here"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Differential expression: treated vs control via limma-trend",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between treated (n=6) and control (n=6) muscle samples, given the data is delivered as pre-normalized log2(TPM+1) values rather than counts?",
+              "acceptance_criteria": [
+                "Uses limma's lmFit + eBayes(trend=TRUE, robust=TRUE) directly on the log2(TPM+1) matrix with a design matrix encoding treated vs control (unpaired, no batch term, single batch)",
+                "Does NOT use count-based negative-binomial tools (DESeq2, edgeR with count-based dispersion, pyDESeq2) since no counts were delivered",
+                "Produces a full topTable for all 12000 genes with logFC (log2 fold-change treated vs control), moderated t-statistic, raw p-value, and BH-adjusted p-value (FDR)",
+                "Reports a filtered significant gene list at adj.P.Val < 0.05 and separately notes genes additionally passing |logFC| >= 1 as a stricter effect-size filter",
+                "States explicitly that n=6 vs 6 limits power and that limma's variance moderation partially compensates but borderline genes should be read cautiously"
+              ],
+              "context": "log_expr.csv holds log2(TPM+1) values per the core facility; metadata.csv defines the 6 treated vs 6 control unpaired grouping confirmed in T1S1. This is the primary analysis answering the research question of which genes differ between treated and control.",
+              "constraints": [
+                "Fit the model on the log2 values as given -- do not attempt to back-transform to pseudo-counts",
+                "Use trend=TRUE in eBayes (limma-trend) since no per-gene precision weights from voom are available without counts/library sizes",
+                "Report results for the full gene set, not only the pre-filtered significant subset"
+              ],
+              "caveats": [
+                "limma-trend assumes a roughly monotonic mean-variance relationship on the log scale; if T1S1 flags irregular per-sample distributions, note this as a caveat on the DE results",
+                "Use the gene identifier scheme confirmed in T1S1 consistently when reporting the result table"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Volcano plot, heatmap, and MA-plot of DE results",
+              "track": "T3",
+              "step_type": "visualization",
+              "question": "What do the effect sizes and significance of the treated vs control comparison look like across all genes, and how do the top differentially expressed genes separate the samples?",
+              "acceptance_criteria": [
+                "Produces a volcano plot (log2FC vs -log10 adjusted p-value) from the T2S1 topTable, labeling the top significant genes",
+                "Produces an MA-plot (log2FC vs average log2 expression)",
+                "Produces a heatmap of the top N (up to 50) differentially expressed genes' log2 expression values (z-scored per gene) across all 12 samples, annotated by treated/control",
+                "All plots are generated strictly from the T2S1 result table and the T1S1-validated expression matrix, not re-derived statistics"
+              ],
+              "context": "Consumes the full topTable and significant gene list from T2S1 plus the log2(TPM+1) matrix and condition labels validated in T1S1.",
+              "constraints": [
+                "Do not recompute differential expression in this step -- purely visualize T2S1 outputs"
+              ],
+              "caveats": [
+                "With n=6/group, heatmap clustering of top genes may partly reflect the same genes used to select them (circularity) -- state this when describing the heatmap"
+              ],
+              "packages": [
+                "EnhancedVolcano",
+                "pheatmap",
+                "ComplexHeatmap"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T4S1",
+              "name": "Pathway enrichment of treated vs control DE genes",
+              "track": "T4",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are over-represented among the genes significantly differentially expressed between treated and control muscle, and which pathways show coordinated sub-threshold shifts across the full ranked gene list?",
+              "acceptance_criteria": [
+                "Confirms the gene identifier type recorded in T1S1; if the expression matrix identifiers are not HGNC gene symbols, maps them to HGNC symbols (e.g. via the org.Hs.eg.db annotation package) before testing, since the staged pathway gene sets use HGNC symbols",
+                "Runs over-representation analysis (ORA) on the adj.P.Val < 0.05 significant gene list from T2S1 against a human WikiPathways gene set collection and against the MSigDB human hallmark gene set collection, both staged for this organism",
+                "Runs pre-ranked GSEA (e.g. via fgsea) on the full ranked gene list (all genes ranked by moderated t-statistic from T2S1) against the same two gene set collections",
+                "Applies BH correction across tested gene sets within each collection and reports top pathways by adjusted p-value with their leading-edge/overlapping genes",
+                "If a referenced gene set collection is absent at runtime, reports results from whichever collection is available and explicitly states the gap rather than failing silently"
+              ],
+              "context": "Uses the T2S1 differential expression results (full ranked table and significant gene subset) for a human (Homo sapiens, taxon 9606) muscle dataset. This environment stages a WikiPathways human pathway gene set collection (2026.07.10 snapshot, HGNC symbols) and an MSigDB human hallmark gene set collection (2026.1, 50 sets, HGNC symbols) suitable for this organism.",
+              "constraints": [
+                "Restrict enrichment testing to human (Homo sapiens) gene set collections only -- do not use the mouse or rat WikiPathways collections staged in this environment",
+                "Do not merge _UP/_DN halves of any directional gene set collection if one is substituted in place of WikiPathways/Hallmark"
+              ],
+              "caveats": [
+                "GO-style or hierarchical collections produce correlated blocks of significant hits; Hallmark and WikiPathways are less nested so this is a minor concern here but should still be watched",
+                "ORA on a small significant gene list can be underpowered; GSEA on the full ranked list is the more sensitive complement and should be weighted accordingly in interpretation"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db",
+                "AnnotationDbi"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan does exactly what the reference asks: no second DESeq2 fit, foreground = padj<0.05 (split up/down and pooled), universe = genes with non-NA padj rather than the genome, GO BP named, enrichGO hypergeometric with BH at 0.05 and a 15-500 size window, rrvgo reduction, and per-term GeneRatio/BgRatio/padj/member genes. The fgsea step is clearly framed as a companion rather than the answer to the ORA question, so it is not penalised, though it adds scope beyond what was asked. Count-level criteria (filter, normalization, formula) are largely moot because the results table is the input; the plan handles them correctly by auditing independent-filtering versus Cook's NAs, refusing to touch counts, and defining the contrast direction, but it does not verify the reference level of the supplied contrast and does no sample-level PCA/library-size QC to substantiate the sample_01 caveat it carries forward. Reporting is complete, with database release, universe, cutoffs, unmapped share, seed, and sessionInfo all required."
+}

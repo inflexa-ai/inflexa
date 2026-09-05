@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly treats the known balanced batch as a fixed covariate in ~batch + condition with an explicitly set control reference level, and explicitly refuses to pre-adjust counts, which matches the reference exactly for a 6v6 unpaired design. QC precedes modeling with blind VST PCA, sample-distance heatmap, and library sizes colored by both condition and batch, with an explicit flag-and-note policy (though the action on a flagged outlier is only 'flag', not a stated inclusion/exclusion rule). The low-count filter (>=10 in >=6, the smallest group size) is minimal and justified, normalization is median-of-ratios inside the model, and multiple testing is BH at a stated alpha=0.05 passed into results() with apeglm shrinkage plus p-value histogram and Cook's-NA bookkeeping. Enrichment was not warranted by the question, but the preranked fgsea is specified rigorously (Wald stat ranking, full unthresholded list, 15-500 size window, named/pinned Hallmark and human-filtered Reactome collections), so it costs little; the assumption of human HGNC symbols is unverified. The report covers design, contrast, thresholds, n tested and n significant, diagnostics, and a full reproducibility record, but design-level caveats (n=6 per group power, batch degrees of freedom, no paired structure) are thinner than the rest."
+}

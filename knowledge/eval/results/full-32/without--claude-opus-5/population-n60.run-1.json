@@ -1,0 +1,442 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "population-n60",
+  "run": 1,
+  "startedAt": "2026-09-05T18:05:29.500Z",
+  "elapsedMs": 106233,
+  "outcome": "plan_submitted",
+  "planId": "pln-059080f2",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Build DESeq2 object and cohort QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon counts can be non-integer; rounding is required for DESeq2 and must be recorded",
+          "Duplicate gene symbols are likely in a symbol-indexed matrix; summing is the convention but the number collapsed must be reported",
+          "12000 genes is fewer than a full transcriptome, so the matrix has probably been pre-filtered upstream — note this, as it affects independent filtering and multiple-testing counts",
+          "In whole blood, globin and leukocyte-composition differences can masquerade as disease signal; QC only flags this, it cannot correct it"
+        ],
+        "context": "Human whole blood, bulk RNA-seq, raw gene-level counts from Salmon, single stated batch, unpaired 60 cases vs 60 controls. The metadata carries only sample and condition — there are no covariates available to model, so QC is the only opportunity to detect confounding structure before testing.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats",
+          "data.table"
+        ],
+        "question": "Do the 120 samples in counts.csv and metadata.csv align cleanly into 60 cases vs 60 controls, and does any sample or unmodelled structure threaten the case-vs-control contrast in this whole-blood cohort?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the raw integer counts as input to DESeq2 — do not pre-normalize, do not log-transform, do not use TPM/CPM as model input",
+          "Set the control group as the reference level of the condition factor so log2 fold changes read as case relative to control",
+          "Do not remove samples from the analysis set without explicitly reporting which and why",
+          "Do not add any covariate to the design — metadata.csv contains only sample and condition"
+        ],
+        "description": "Load /eval-full-32-without-population-n60-1/data/inputs/counts/counts.csv (12000 genes x 121 columns: first column is the gene symbol, remaining 120 are samples) and /eval-full-32-without-population-n60-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns, one row per sample with a condition column). Verify the sample identifiers match one-to-one and reorder metadata to the count-matrix column order — never assume the orders already agree. Confirm the group sizes are 60 vs 60 and record the exact condition level names as they appear in the file; set the control/reference level explicitly. Handle duplicate gene symbols by summing counts per symbol and report how many were collapsed. Coerce counts to integers (Salmon output may carry decimals) and record any rounding. Build a DESeqDataSet with design ~condition. Filter to genes with a reasonable minimum count in at least the size of the smaller group (e.g. counts >= 10 in >= 60 samples, or edgeR filterByExpr) and report genes in vs out. Run QC: per-sample library size, detected-gene count, VST transform, PCA (PC1-PC4, coloured by condition, with variance explained), sample-sample Spearman/Pearson correlation heatmap, hierarchical clustering, and per-sample median expression. Test whether PC1-PC4 associate with condition (Wilcoxon or t-test) and report the fraction of total variance condition explains — if condition explains almost nothing on the top PCs, say so, as it bounds how large the downstream effects can be. Because the tissue is whole blood, quantify the fraction of counts taken by haemoglobin genes (HBB, HBA1, HBA2, HBD, HBG1, HBG2, ALAS2) per sample and compare between groups; high or group-imbalanced globin content distorts library composition and must be flagged. Flag outlier samples by low library size, low detection, or low median correlation to the cohort but do NOT drop any sample without reporting it and the reason. Save the filtered DESeqDataSet / count matrix and aligned sample table for downstream steps.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv are matched one-to-one and metadata is reordered to count-column order; any mismatch is reported and quantified",
+          "Group sizes confirmed as 60 vs 60 with the literal condition level names from metadata.csv reported and the reference level stated explicitly",
+          "Gene filtering applied with the number of genes retained out of 12000 reported",
+          "PCA plot with variance explained per PC, plus a statistical test of PC1-PC4 association with condition",
+          "Sample-sample correlation heatmap and per-sample library size / detected-gene table produced",
+          "Haemoglobin gene count fraction per sample reported and compared between groups",
+          "Any outlier samples named with the metric that flagged them; no sample silently dropped",
+          "Filtered count matrix and aligned sample table saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 case vs control with shrunken effect sizes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 60 vs 60, tiny fold changes reach significance; the count of FDR-significant genes on its own answers only half the question and must not be presented as the headline",
+          "Fold changes on genes with very low baseMean are unstable even after shrinkage — report the per-group expression level alongside every top-ranked gene",
+          "apeglm requires the coefficient to be specified by name/index rather than a contrast vector; if the factor coding blocks it, use ashr and say so",
+          "No cell-composition covariate is available, so any DE signal in whole blood may reflect a shift in leukocyte proportions rather than per-cell regulation; this must be stated as a limitation of the gene list"
+        ],
+        "context": "This is the core step answering the research question. With n=60 per group the cohort is unusually well powered for bulk RNA-seq, which means statistical significance is cheap and effect size is the scarce currency — the plan must not conflate the two.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "EnhancedVolcano",
+          "matrixStats",
+          "data.table"
+        ],
+        "question": "Which genes are differentially expressed between the 60 cases and 60 controls at FDR < 0.05, and which of those have effect sizes large enough to matter — formally, which have |log2 fold change| significantly greater than log2(1.5)?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Rank the 'genes that matter' list by SHRUNKEN log2 fold change and by the lfcThreshold test — never by raw MLE LFC, and never by p-value alone",
+          "Report the effect-size threshold used (log2(1.5)) as an explicit, stated choice, and report how the significant-gene count changes at log2(1.2) and log2(2) so the conclusion's sensitivity to that choice is visible",
+          "Do not filter the output table to significant genes only — the full per-gene table must be written",
+          "Do not add covariates: metadata.csv has only a condition column",
+          "State plainly if the p-value histogram is not well-behaved, and do not report FDR counts as reliable if it is not"
+        ],
+        "description": "Run DESeq2 on the filtered object from T1S1 with design ~condition and a Wald test for the case-vs-control contrast. Produce THREE complementary result tables from the same fit. (1) Significance table: full results with BH-adjusted p-values, sorted by padj, reporting the number of genes at padj < 0.05 and at padj < 0.01, split by direction (up in cases / down in cases). (2) Effect-size table: apply lfcShrink with apeglm (fall back to ashr if the coefficient form blocks apeglm) and rank genes by shrunken |log2FC|. Report both the raw MLE LFC and the shrunken LFC side by side so the magnitude of shrinkage is visible — this is what separates a genuinely large effect from an unstable estimate on a low-count gene. Add baseMean, per-group normalized mean expression, and per-group median CPM so that fold changes on near-floor genes can be identified. (3) Thresholded test: re-run results() with lfcThreshold = log2(1.5) and altHypothesis = 'greaterAbs' — this formally tests whether the effect exceeds a biologically motivated floor rather than testing against zero and filtering afterwards, and its padj is the defensible answer to 'large enough to matter'. Report how many genes pass this test at padj < 0.05 and cross-tabulate against the padj<0.05-vs-zero set to show explicitly how many statistically significant genes have trivially small effects. Also compute, per gene, a standardized effect size (Cohen's d on VST values) and Wilcoxon rank-biserial correlation / AUC as distribution-free magnitude measures that do not depend on the count model. Calibrate the finding: run at least 100 label permutations of condition, re-running the DESeq2 Wald test (or a fast equivalent on VST values) each time, and report the null distribution of the number of genes at padj<0.05 against the observed count. Produce diagnostics: dispersion-estimate plot, p-value histogram (which must be checked for the flat-with-left-spike shape; a U-shaped or bumpy histogram invalidates the FDR and must be reported), MA plot before and after shrinkage, and a volcano plot annotated with both the significance and the log2(1.5) effect-size boundaries. Write a single merged per-gene CSV carrying gene symbol, baseMean, per-group means, raw LFC, shrunken LFC, lfcSE, stat, pvalue, padj, threshold-test padj, Cohen's d, and AUC.",
+        "acceptance_criteria": [
+          "DESeq2 Wald results for the case-vs-control contrast with BH-adjusted p-values; counts at padj<0.05 and padj<0.01 reported by direction",
+          "lfcShrink applied (apeglm, or ashr with the substitution stated) and both raw and shrunken LFC present in the output table",
+          "A separate results() call with lfcThreshold=log2(1.5), altHypothesis='greaterAbs', with its own padj column and the count of genes passing at padj<0.05",
+          "Explicit cross-tabulation of the padj<0.05-vs-zero set against the threshold-test set, quantifying how many significant genes have |shrunken LFC| < log2(1.5)",
+          "Cohen's d on VST values and Wilcoxon AUC reported per gene as model-independent magnitude measures",
+          "Permutation null (>=100 label shuffles) reported as the distribution of significant-gene counts, compared to the observed count",
+          "Dispersion plot, p-value histogram, MA plots (pre and post shrinkage), and an annotated volcano produced; the shape of the p-value histogram is explicitly commented on",
+          "One merged per-gene results CSV written with all of the above columns, covering every tested gene not just the significant ones"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Cross-method DE concordance (limma-voom, edgeR QL)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Very high concordance is the expected outcome and is not itself evidence that the biology is real — it only rules out a dispersion-model artefact",
+          "voom's precision weights and DESeq2's shrinkage differ in how they treat low-count genes, so the largest disagreements should be expected at the low-expression end and should be reported by baseMean stratum"
+        ],
+        "context": "Three count-based models with different normalization (median-of-ratios vs TMM) and different dispersion estimators. Agreement is expected to be high in a clean single-batch 60-vs-60 design; disagreement would itself be a finding about the data.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "edgeR",
+          "ggplot2",
+          "ComplexUpset",
+          "data.table"
+        ],
+        "question": "Do limma-voom and edgeR quasi-likelihood recover the same case-vs-control genes and the same effect-size ordering as DESeq2, or is the result an artefact of one dispersion model?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use exactly the same gene filter, sample set, and reference level as T1S1/T1S2 so the comparison is like-for-like",
+          "Use TMM normalization for limma-voom and edgeR; do not reuse DESeq2 size factors, as method independence is the point of this step"
+        ],
+        "description": "Using the same filtered count matrix and sample table from T1S1, fit two independent models for the case-vs-control contrast: (1) limma-voom — TMM normalization via edgeR::calcNormFactors, voom with the ~condition design, lmFit, eBayes, topTable with BH adjustment, plus treat() with lfc = log2(1.5) as the limma analogue of the thresholded test; (2) edgeR quasi-likelihood — estimateDisp, glmQLFit, glmQLFTest, plus glmTreat at log2(1.5). Compare against the DESeq2 output from T1S2: overlap of the padj<0.05 sets as a 3-way Venn/UpSet, Spearman correlation of log2 fold changes pairwise across methods, Spearman correlation of the -log10 p rankings, and the size of the intersection set that also clears |LFC| > log2(1.5) in all three. Produce a consensus table of genes called significant AND above the effect-size threshold by all three methods — this is the highest-confidence answer to the research question. Report genes called by only one method as a caution list rather than discarding them silently.",
+        "acceptance_criteria": [
+          "limma-voom and edgeR-QL results for the case-vs-control contrast, each with BH-adjusted p-values and each with a log2(1.5) thresholded variant (treat / glmTreat)",
+          "Three-way overlap of padj<0.05 gene sets quantified and visualized",
+          "Pairwise Spearman correlations of log2 fold changes and of significance rankings across DESeq2, limma-voom and edgeR reported",
+          "A consensus table of genes significant and above the log2(1.5) effect-size threshold in all three methods",
+          "Method-specific genes listed rather than discarded"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway and blood cell-composition context",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Whole blood expression is dominated by neutrophil and erythroid signal; enrichment can reflect cell proportion shifts rather than transcriptional regulation, and with only a condition column this cannot be adjusted away",
+          "GO-BP sets are heavily nested — the raw count of significant terms will overstate the number of independent findings",
+          "Signature-based cell-type scoring on bulk data is semi-quantitative and gives relative, not absolute, proportions; do not report it as deconvolution"
+        ],
+        "context": "Annotation layer for the gene-level result. Human hallmark (50 sets) and GO-BP (7,538 sets) symbol GMTs are present in the reference store; both are HGNC-symbol keyed, matching the gene-symbol index of counts.csv.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "GSVA",
+          "singscore",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which biological processes are coordinately shifted between the 60 cases and 60 controls, and can the gene-level signal be explained by a shift in blood cell composition rather than per-cell regulation?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use human gene sets only — the data is Homo sapiens; the mouse and rat collections in the store must not be used",
+          "Rank the preranked GSEA input by shrunken log2 fold change from T1S2",
+          "Use the set of genes actually tested after T1S1 filtering as the ORA background universe, not the full genome or the full GMT vocabulary",
+          "Treat this step as annotation: it must not change, re-filter, or override the gene-level conclusions from T1S2 and T1S3"
+        ],
+        "description": "Take the full per-gene table from T1S2. (a) Preranked GSEA (fgsea, or gseapy prerank) on all tested genes ranked by the shrunken log2 fold change — not by p-value, and not on a truncated significant-gene list — against human hallmark gene sets and human GO biological-process gene sets. Report normalized enrichment scores with BH-adjusted p-values, leading-edge genes, and set sizes; collapse redundant parent/child GO terms before reporting a count, since GO's nesting makes correlated hits look like independent findings. (b) Over-representation analysis on the consensus effect-size-passing gene set from T1S3 (genes significant and |shrunken LFC| > log2(1.5)), split by direction, against the same human gene-set collections, using all tested genes as the background universe — never the whole genome. (c) Because the tissue is whole blood and no cell-count covariates exist, score each sample for canonical blood cell-type marker signatures (neutrophil, monocyte, T cell, B cell, NK, platelet, erythroid) on VST values using a rank-based single-sample scoring method, compare scores between cases and controls, and report whether any enriched pathway's leading edge is dominated by markers of a single cell type. Say plainly whether the DE signal is separable from composition — with this metadata it cannot be definitively resolved, and the honest answer is a flag, not a correction. Required reference data: human pathway gene sets (hallmark and GO biological process, HGNC gene symbols). If those gene sets cannot be resolved at run time, report that and emit the ranked gene list with the cell-type scoring only — the gene-level answer from T1S2/T1S3 does not depend on this step.",
+        "acceptance_criteria": [
+          "Preranked GSEA run on the full shrunken-LFC ranking against human hallmark and human GO-BP sets, with NES, BH-adjusted p, set size, and leading-edge genes reported",
+          "Redundant GO terms collapsed before any count of significant pathways is stated",
+          "ORA on the consensus effect-size-passing genes, run separately for up and down directions, using the tested-gene set as background",
+          "Per-sample blood cell-type signature scores compared between cases and controls, with the result stated",
+          "An explicit statement of whether the top enriched pathways' leading edges are dominated by one cell type's markers",
+          "If the pathway gene sets are unavailable at run time, that is reported and the step still delivers the ranked list and cell-type scores"
+        ]
+      }
+    ],
+    "title": "Whole-blood case vs control DE with effect sizes",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq count matrix from Salmon (12,000 gene symbols x 121 columns — gene-symbol column plus 120 sample columns) with a 120-row metadata table carrying one condition column, 60 cases vs 60 controls, unpaired, human whole blood. The research question has two halves: which genes differ statistically, and which differences are large enough to matter. The plan answers them in that order and keeps them separate, because with n=60 per group the study is well powered enough that many genes will clear FDR on effect sizes far too small to be biologically meaningful — that is exactly the trap the question is asking to avoid.\n\nT1S1 builds the DESeq2 object from the two CSVs, aligns sample IDs, filters low-count genes, and runs unsupervised QC (VST, PCA, sample-sample correlation, library-size and detection-rate summaries) so that any outlier samples or unlabelled structure in this nominally single-batch cohort are on record before testing. Whole blood is the specific tissue where globin (HBB/HBA1/HBA2) and residual-globin dominance can consume a large fraction of reads and distort library composition, so that is checked and reported explicitly rather than assumed away.\n\nT1S2 runs the Wald test for case vs control on the raw counts with DESeq2's median-of-ratios normalization, then produces two distinct rankings: statistical significance (BH-adjusted p) and effect size (apeglm/ashr-shrunken log2 fold change, which is the estimate that is honest for ranking because it pulls back the inflated LFCs of low-count genes). It also runs a lfcThreshold Wald test (formally testing |LFC| > log2(1.5)) so that 'large enough to matter' is a hypothesis actually tested, not a post-hoc filter on a point estimate, and it records standardized effect sizes and per-group expression levels so that magnitude can be judged on more than one scale. A permutation-based null (shuffled labels) calibrates whether the observed FDR-significant count exceeds what the design produces by chance.\n\nT1S3 is a sensitivity check: limma-voom and edgeR quasi-likelihood on the same design. Concordance across three independent count models is the cheapest defence against a result that is an artefact of one dispersion estimator, and it directly serves the 'which differences are real and large' framing.\n\nT2S1 takes the shrunken-LFC ranking into gene-set analysis (fgsea preranked against human hallmark and GO-BP; ORA on the effect-size-filtered gene set) purely to give the gene-level result biological context. It is annotation, not the answer — if the pathway reference is absent the step reports that and the DE result stands unchanged. Both hallmark and GO-BP human GMTs are present in the reference store.\n\nNo covariates beyond condition are modelled because the metadata table has only two columns (sample and condition) — no age, sex, batch, or cell-count columns exist to adjust for. This is stated as a limitation rather than worked around: in whole blood, cell-composition differences between cases and controls are a plausible driver of any signal found, and T2S1 includes a blood cell-type signature scoring readout to make that explicit."
+  },
+  "usage": {
+    "inputTokens": 92202,
+    "outputTokens": 7614,
+    "cacheCreationInputTokens": 74030,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "sva",
+          "gseapy",
+          "decoupler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood case vs control DE with effect sizes",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq count matrix from Salmon (12,000 gene symbols x 121 columns — gene-symbol column plus 120 sample columns) with a 120-row metadata table carrying one condition column, 60 cases vs 60 controls, unpaired, human whole blood. The research question has two halves: which genes differ statistically, and which differences are large enough to matter. The plan answers them in that order and keeps them separate, because with n=60 per group the study is well powered enough that many genes will clear FDR on effect sizes far too small to be biologically meaningful — that is exactly the trap the question is asking to avoid.\n\nT1S1 builds the DESeq2 object from the two CSVs, aligns sample IDs, filters low-count genes, and runs unsupervised QC (VST, PCA, sample-sample correlation, library-size and detection-rate summaries) so that any outlier samples or unlabelled structure in this nominally single-batch cohort are on record before testing. Whole blood is the specific tissue where globin (HBB/HBA1/HBA2) and residual-globin dominance can consume a large fraction of reads and distort library composition, so that is checked and reported explicitly rather than assumed away.\n\nT1S2 runs the Wald test for case vs control on the raw counts with DESeq2's median-of-ratios normalization, then produces two distinct rankings: statistical significance (BH-adjusted p) and effect size (apeglm/ashr-shrunken log2 fold change, which is the estimate that is honest for ranking because it pulls back the inflated LFCs of low-count genes). It also runs a lfcThreshold Wald test (formally testing |LFC| > log2(1.5)) so that 'large enough to matter' is a hypothesis actually tested, not a post-hoc filter on a point estimate, and it records standardized effect sizes and per-group expression levels so that magnitude can be judged on more than one scale. A permutation-based null (shuffled labels) calibrates whether the observed FDR-significant count exceeds what the design produces by chance.\n\nT1S3 is a sensitivity check: limma-voom and edgeR quasi-likelihood on the same design. Concordance across three independent count models is the cheapest defence against a result that is an artefact of one dispersion estimator, and it directly serves the 'which differences are real and large' framing.\n\nT2S1 takes the shrunken-LFC ranking into gene-set analysis (fgsea preranked against human hallmark and GO-BP; ORA on the effect-size-filtered gene set) purely to give the gene-level result biological context. It is annotation, not the answer — if the pathway reference is absent the step reports that and the DE result stands unchanged. Both hallmark and GO-BP human GMTs are present in the reference store.\n\nNo covariates beyond condition are modelled because the metadata table has only two columns (sample and condition) — no age, sex, batch, or cell-count columns exist to adjust for. This is stated as a limitation rather than worked around: in whole blood, cell-composition differences between cases and controls are a plausible driver of any signal found, and T2S1 includes a blood cell-type signature scoring readout to make that explicit.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Build DESeq2 object and cohort QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 120 samples in counts.csv and metadata.csv align cleanly into 60 cases vs 60 controls, and does any sample or unmodelled structure threaten the case-vs-control contrast in this whole-blood cohort?",
+              "description": "Load /eval-full-32-without-population-n60-1/data/inputs/counts/counts.csv (12000 genes x 121 columns: first column is the gene symbol, remaining 120 are samples) and /eval-full-32-without-population-n60-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns, one row per sample with a condition column). Verify the sample identifiers match one-to-one and reorder metadata to the count-matrix column order — never assume the orders already agree. Confirm the group sizes are 60 vs 60 and record the exact condition level names as they appear in the file; set the control/reference level explicitly. Handle duplicate gene symbols by summing counts per symbol and report how many were collapsed. Coerce counts to integers (Salmon output may carry decimals) and record any rounding. Build a DESeqDataSet with design ~condition. Filter to genes with a reasonable minimum count in at least the size of the smaller group (e.g. counts >= 10 in >= 60 samples, or edgeR filterByExpr) and report genes in vs out. Run QC: per-sample library size, detected-gene count, VST transform, PCA (PC1-PC4, coloured by condition, with variance explained), sample-sample Spearman/Pearson correlation heatmap, hierarchical clustering, and per-sample median expression. Test whether PC1-PC4 associate with condition (Wilcoxon or t-test) and report the fraction of total variance condition explains — if condition explains almost nothing on the top PCs, say so, as it bounds how large the downstream effects can be. Because the tissue is whole blood, quantify the fraction of counts taken by haemoglobin genes (HBB, HBA1, HBA2, HBD, HBG1, HBG2, ALAS2) per sample and compare between groups; high or group-imbalanced globin content distorts library composition and must be flagged. Flag outlier samples by low library size, low detection, or low median correlation to the cohort but do NOT drop any sample without reporting it and the reason. Save the filtered DESeqDataSet / count matrix and aligned sample table for downstream steps.",
+              "question_notes": "",
+              "context": "Human whole blood, bulk RNA-seq, raw gene-level counts from Salmon, single stated batch, unpaired 60 cases vs 60 controls. The metadata carries only sample and condition — there are no covariates available to model, so QC is the only opportunity to detect confounding structure before testing.",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv are matched one-to-one and metadata is reordered to count-column order; any mismatch is reported and quantified",
+                "Group sizes confirmed as 60 vs 60 with the literal condition level names from metadata.csv reported and the reference level stated explicitly",
+                "Gene filtering applied with the number of genes retained out of 12000 reported",
+                "PCA plot with variance explained per PC, plus a statistical test of PC1-PC4 association with condition",
+                "Sample-sample correlation heatmap and per-sample library size / detected-gene table produced",
+                "Haemoglobin gene count fraction per sample reported and compared between groups",
+                "Any outlier samples named with the metric that flagged them; no sample silently dropped",
+                "Filtered count matrix and aligned sample table saved for downstream steps"
+              ],
+              "constraints": [
+                "Use the raw integer counts as input to DESeq2 — do not pre-normalize, do not log-transform, do not use TPM/CPM as model input",
+                "Set the control group as the reference level of the condition factor so log2 fold changes read as case relative to control",
+                "Do not remove samples from the analysis set without explicitly reporting which and why",
+                "Do not add any covariate to the design — metadata.csv contains only sample and condition"
+              ],
+              "caveats": [
+                "Salmon counts can be non-integer; rounding is required for DESeq2 and must be recorded",
+                "Duplicate gene symbols are likely in a symbol-indexed matrix; summing is the convention but the number collapsed must be reported",
+                "12000 genes is fewer than a full transcriptome, so the matrix has probably been pre-filtered upstream — note this, as it affects independent filtering and multiple-testing counts",
+                "In whole blood, globin and leukocyte-composition differences can masquerade as disease signal; QC only flags this, it cannot correct it"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 case vs control with shrunken effect sizes",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between the 60 cases and 60 controls at FDR < 0.05, and which of those have effect sizes large enough to matter — formally, which have |log2 fold change| significantly greater than log2(1.5)?",
+              "description": "Run DESeq2 on the filtered object from T1S1 with design ~condition and a Wald test for the case-vs-control contrast. Produce THREE complementary result tables from the same fit. (1) Significance table: full results with BH-adjusted p-values, sorted by padj, reporting the number of genes at padj < 0.05 and at padj < 0.01, split by direction (up in cases / down in cases). (2) Effect-size table: apply lfcShrink with apeglm (fall back to ashr if the coefficient form blocks apeglm) and rank genes by shrunken |log2FC|. Report both the raw MLE LFC and the shrunken LFC side by side so the magnitude of shrinkage is visible — this is what separates a genuinely large effect from an unstable estimate on a low-count gene. Add baseMean, per-group normalized mean expression, and per-group median CPM so that fold changes on near-floor genes can be identified. (3) Thresholded test: re-run results() with lfcThreshold = log2(1.5) and altHypothesis = 'greaterAbs' — this formally tests whether the effect exceeds a biologically motivated floor rather than testing against zero and filtering afterwards, and its padj is the defensible answer to 'large enough to matter'. Report how many genes pass this test at padj < 0.05 and cross-tabulate against the padj<0.05-vs-zero set to show explicitly how many statistically significant genes have trivially small effects. Also compute, per gene, a standardized effect size (Cohen's d on VST values) and Wilcoxon rank-biserial correlation / AUC as distribution-free magnitude measures that do not depend on the count model. Calibrate the finding: run at least 100 label permutations of condition, re-running the DESeq2 Wald test (or a fast equivalent on VST values) each time, and report the null distribution of the number of genes at padj<0.05 against the observed count. Produce diagnostics: dispersion-estimate plot, p-value histogram (which must be checked for the flat-with-left-spike shape; a U-shaped or bumpy histogram invalidates the FDR and must be reported), MA plot before and after shrinkage, and a volcano plot annotated with both the significance and the log2(1.5) effect-size boundaries. Write a single merged per-gene CSV carrying gene symbol, baseMean, per-group means, raw LFC, shrunken LFC, lfcSE, stat, pvalue, padj, threshold-test padj, Cohen's d, and AUC.",
+              "question_notes": "",
+              "context": "This is the core step answering the research question. With n=60 per group the cohort is unusually well powered for bulk RNA-seq, which means statistical significance is cheap and effect size is the scarce currency — the plan must not conflate the two.",
+              "acceptance_criteria": [
+                "DESeq2 Wald results for the case-vs-control contrast with BH-adjusted p-values; counts at padj<0.05 and padj<0.01 reported by direction",
+                "lfcShrink applied (apeglm, or ashr with the substitution stated) and both raw and shrunken LFC present in the output table",
+                "A separate results() call with lfcThreshold=log2(1.5), altHypothesis='greaterAbs', with its own padj column and the count of genes passing at padj<0.05",
+                "Explicit cross-tabulation of the padj<0.05-vs-zero set against the threshold-test set, quantifying how many significant genes have |shrunken LFC| < log2(1.5)",
+                "Cohen's d on VST values and Wilcoxon AUC reported per gene as model-independent magnitude measures",
+                "Permutation null (>=100 label shuffles) reported as the distribution of significant-gene counts, compared to the observed count",
+                "Dispersion plot, p-value histogram, MA plots (pre and post shrinkage), and an annotated volcano produced; the shape of the p-value histogram is explicitly commented on",
+                "One merged per-gene results CSV written with all of the above columns, covering every tested gene not just the significant ones"
+              ],
+              "constraints": [
+                "Rank the 'genes that matter' list by SHRUNKEN log2 fold change and by the lfcThreshold test — never by raw MLE LFC, and never by p-value alone",
+                "Report the effect-size threshold used (log2(1.5)) as an explicit, stated choice, and report how the significant-gene count changes at log2(1.2) and log2(2) so the conclusion's sensitivity to that choice is visible",
+                "Do not filter the output table to significant genes only — the full per-gene table must be written",
+                "Do not add covariates: metadata.csv has only a condition column",
+                "State plainly if the p-value histogram is not well-behaved, and do not report FDR counts as reliable if it is not"
+              ],
+              "caveats": [
+                "With 60 vs 60, tiny fold changes reach significance; the count of FDR-significant genes on its own answers only half the question and must not be presented as the headline",
+                "Fold changes on genes with very low baseMean are unstable even after shrinkage — report the per-group expression level alongside every top-ranked gene",
+                "apeglm requires the coefficient to be specified by name/index rather than a contrast vector; if the factor coding blocks it, use ashr and say so",
+                "No cell-composition covariate is available, so any DE signal in whole blood may reflect a shift in leukocyte proportions rather than per-cell regulation; this must be stated as a limitation of the gene list"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "EnhancedVolcano",
+                "matrixStats",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Cross-method DE concordance (limma-voom, edgeR QL)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do limma-voom and edgeR quasi-likelihood recover the same case-vs-control genes and the same effect-size ordering as DESeq2, or is the result an artefact of one dispersion model?",
+              "description": "Using the same filtered count matrix and sample table from T1S1, fit two independent models for the case-vs-control contrast: (1) limma-voom — TMM normalization via edgeR::calcNormFactors, voom with the ~condition design, lmFit, eBayes, topTable with BH adjustment, plus treat() with lfc = log2(1.5) as the limma analogue of the thresholded test; (2) edgeR quasi-likelihood — estimateDisp, glmQLFit, glmQLFTest, plus glmTreat at log2(1.5). Compare against the DESeq2 output from T1S2: overlap of the padj<0.05 sets as a 3-way Venn/UpSet, Spearman correlation of log2 fold changes pairwise across methods, Spearman correlation of the -log10 p rankings, and the size of the intersection set that also clears |LFC| > log2(1.5) in all three. Produce a consensus table of genes called significant AND above the effect-size threshold by all three methods — this is the highest-confidence answer to the research question. Report genes called by only one method as a caution list rather than discarding them silently.",
+              "question_notes": "",
+              "context": "Three count-based models with different normalization (median-of-ratios vs TMM) and different dispersion estimators. Agreement is expected to be high in a clean single-batch 60-vs-60 design; disagreement would itself be a finding about the data.",
+              "acceptance_criteria": [
+                "limma-voom and edgeR-QL results for the case-vs-control contrast, each with BH-adjusted p-values and each with a log2(1.5) thresholded variant (treat / glmTreat)",
+                "Three-way overlap of padj<0.05 gene sets quantified and visualized",
+                "Pairwise Spearman correlations of log2 fold changes and of significance rankings across DESeq2, limma-voom and edgeR reported",
+                "A consensus table of genes significant and above the log2(1.5) effect-size threshold in all three methods",
+                "Method-specific genes listed rather than discarded"
+              ],
+              "constraints": [
+                "Use exactly the same gene filter, sample set, and reference level as T1S1/T1S2 so the comparison is like-for-like",
+                "Use TMM normalization for limma-voom and edgeR; do not reuse DESeq2 size factors, as method independence is the point of this step"
+              ],
+              "caveats": [
+                "Very high concordance is the expected outcome and is not itself evidence that the biology is real — it only rules out a dispersion-model artefact",
+                "voom's precision weights and DESeq2's shrinkage differ in how they treat low-count genes, so the largest disagreements should be expected at the low-expression end and should be reported by baseMean stratum"
+              ],
+              "packages": [
+                "limma",
+                "edgeR",
+                "ggplot2",
+                "ComplexUpset",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway and blood cell-composition context",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes are coordinately shifted between the 60 cases and 60 controls, and can the gene-level signal be explained by a shift in blood cell composition rather than per-cell regulation?",
+              "description": "Take the full per-gene table from T1S2. (a) Preranked GSEA (fgsea, or gseapy prerank) on all tested genes ranked by the shrunken log2 fold change — not by p-value, and not on a truncated significant-gene list — against human hallmark gene sets and human GO biological-process gene sets. Report normalized enrichment scores with BH-adjusted p-values, leading-edge genes, and set sizes; collapse redundant parent/child GO terms before reporting a count, since GO's nesting makes correlated hits look like independent findings. (b) Over-representation analysis on the consensus effect-size-passing gene set from T1S3 (genes significant and |shrunken LFC| > log2(1.5)), split by direction, against the same human gene-set collections, using all tested genes as the background universe — never the whole genome. (c) Because the tissue is whole blood and no cell-count covariates exist, score each sample for canonical blood cell-type marker signatures (neutrophil, monocyte, T cell, B cell, NK, platelet, erythroid) on VST values using a rank-based single-sample scoring method, compare scores between cases and controls, and report whether any enriched pathway's leading edge is dominated by markers of a single cell type. Say plainly whether the DE signal is separable from composition — with this metadata it cannot be definitively resolved, and the honest answer is a flag, not a correction. Required reference data: human pathway gene sets (hallmark and GO biological process, HGNC gene symbols). If those gene sets cannot be resolved at run time, report that and emit the ranked gene list with the cell-type scoring only — the gene-level answer from T1S2/T1S3 does not depend on this step.",
+              "question_notes": "",
+              "context": "Annotation layer for the gene-level result. Human hallmark (50 sets) and GO-BP (7,538 sets) symbol GMTs are present in the reference store; both are HGNC-symbol keyed, matching the gene-symbol index of counts.csv.",
+              "acceptance_criteria": [
+                "Preranked GSEA run on the full shrunken-LFC ranking against human hallmark and human GO-BP sets, with NES, BH-adjusted p, set size, and leading-edge genes reported",
+                "Redundant GO terms collapsed before any count of significant pathways is stated",
+                "ORA on the consensus effect-size-passing genes, run separately for up and down directions, using the tested-gene set as background",
+                "Per-sample blood cell-type signature scores compared between cases and controls, with the result stated",
+                "An explicit statement of whether the top enriched pathways' leading edges are dominated by one cell type's markers",
+                "If the pathway gene sets are unavailable at run time, that is reported and the step still delivers the ranked list and cell-type scores"
+              ],
+              "constraints": [
+                "Use human gene sets only — the data is Homo sapiens; the mouse and rat collections in the store must not be used",
+                "Rank the preranked GSEA input by shrunken log2 fold change from T1S2",
+                "Use the set of genes actually tested after T1S1 filtering as the ORA background universe, not the full genome or the full GMT vocabulary",
+                "Treat this step as annotation: it must not change, re-filter, or override the gene-level conclusions from T1S2 and T1S3"
+              ],
+              "caveats": [
+                "Whole blood expression is dominated by neutrophil and erythroid signal; enrichment can reflect cell proportion shifts rather than transcriptional regulation, and with only a condition column this cannot be adjusted away",
+                "GO-BP sets are heavily nested — the raw count of significant terms will overstate the number of independent findings",
+                "Signature-based cell-type scoring on bulk data is semi-quantitative and gives relative, not absolute, proportions; do not report it as deconvolution"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "msigdbr",
+                "GSVA",
+                "singscore",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

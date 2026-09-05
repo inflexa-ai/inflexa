@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 3,
+    "low_count_filter": 2,
+    "normalization": 2,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 5
+  },
+  "rationale": "The planner correctly identified that the inputs are unquantified paired-end FASTQ files with no count matrix, verified that no aligner or pseudo-aligner and no matching transcriptome index are available, and stopped to ask whether counts exist elsewhere or a quantifier plus reference should be provisioned — exactly the reference outcome, and it avoided the fatal error of running DESeq2 on a nonexistent matrix. This earns full credit on fitting the data state, and enrichment is correctly omitted since there is nothing to rank or test. The clarification message is specific and actionable (names the missing tools, notes only a GENCODE v50 GTF and a bare GRCh38 FASTA are present), which partially covers reporting, but it stops short of stating the downstream plan it would apply once counts arrive. Consequently the analysis-specific criteria — QC of sample structure, the low-count filter, in-model normalization, the design formula and reference level, and BH alpha with LFC shrinkage plus the low-power caveat of 3 vs 3 — are not stated anywhere and cannot be credited."
+}

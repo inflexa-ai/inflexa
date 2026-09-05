@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 3,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly reads the request as pre-test QC and stops there: no model is fitted, no p-values, fold changes, or gene lists appear, and the design formula is declared as used only for object construction and size-factor estimation, which is the right call for a 6v6 unpaired single-batch cohort. QC is unusually thorough and dataset-specific: library sizes as a ratio to the cohort median, detected genes at two thresholds, size factors, blind VST, PCA on the top 500 variable genes colored by condition, a Euclidean distance heatmap, plus a PC-versus-log-depth correlation, and a verdict on sample_01 grounded in centroid distance and detected genes rather than depth alone, with keep as the default and the power consequence of dropping stated numerically. Normalization is handled inside DESeq2 with an explicit prohibition on pre-normalizing, and enrichment and FDR/shrinkage are correctly absent because nothing is tested. The one real gap is the low-count filter: the plan counts genes with >=10 counts as a QC metric but never filters low-expression genes before the VST/PCA/distance computation, which the reference expects and which matters most when one library is 4x shallow."
+}

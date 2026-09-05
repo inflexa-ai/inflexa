@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the >60% duplication as the expected signature of non-UMI rRNA-depleted total RNA and explicitly forbids read-level deduplication and downsampling, instead quantifying composition (top-N feature share, MT, residual rRNA-family, HB fractions) and linking it to size-factor stability — exactly the reasoning the reference demands; it also keeps sample_01 with a documented depth-vs-expression-outlier verdict and a leave-one-out sensitivity refit rather than reflexive exclusion. The statistical core fits the design (unpaired 6v6, single batch, ~condition with control set as explicit reference, Wald contrast, median-of-ratios inside DESeq2 on raw integer counts, apeglm shrinkage, BH at 0.05 with the LFC threshold reported as a subset). QC is thorough and dataset-specific (VST PCA labelled for sample_01, Spearman correlation heatmap, size factor vs library size), though intronic share is not addressed beyond noting read-level metrics are unrecoverable from counts, and the plan stops short of committing to a rule for removing rRNA/MT genes from the matrix if their share is large and uneven, treating it only as an interpretive caveat. The low-count filter names the right rule shape (minimum count in at least smallest-group-size samples) but leaves the count threshold unspecified. Enrichment is well specified — Wald-statistic ranking, DESeq2-tested universe as both GSEA universe and ORA background, 15-500 size window, per-collection BH, seed, redundancy collapsing — but the MSigDB release version is not pinned, and the report section never commits to recording software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core design point: batch is a known, balanced, recorded factor, so it enters the DESeq2 design as ~ batch + condition, with an explicit prohibition on ComBat or removeBatchEffect on the counts fed to the test, and a removeBatchEffect VST retained only for plotting with the condition preserved in the design matrix. QC is thorough and design-aware (cross-tabulation of batch x condition, library sizes, zero fractions, PCA colored by condition and shaped by batch with per-PC association tests, distance heatmap, and a flag-don't-drop outlier policy). Filtering uses filterByExpr with the condition group and reports genes in/out; normalization stays inside the model via DESeq2 size factors (though size factors/TMM are never named outright), and the contrast direction, reference level, BH at 0.05, and apeglm/ashr shrinkage are all explicit with no post hoc fold-change filter. Enrichment is correctly rank-based on the full tested list with the shrunken LFC as the stated metric, a 15-500 size window, per-collection BH, and the tested genes as the ORA universe, but no MSigDB release version is given. Reporting covers method, design, thresholds, tested and significant counts, and honest power caveats; software versions are not explicitly promised, which is the main gap."
+}

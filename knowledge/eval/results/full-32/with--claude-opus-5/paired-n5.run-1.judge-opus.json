@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject (~ subject + condition) with the Wald test on the condition coefficient, explicitly setting the reference level from the observed metadata levels and checking design-matrix rank; it also correctly refuses to fabricate per-subject tests and instead supplies a descriptive per-subject concordance readout, which is exactly the right treatment of the question as posed. QC is dataset-specific and thorough (blind VST, PCA on top 500, distance heatmap, library sizes, annotated by subject and condition, pairing-completeness check) with a stated no-drop policy at QC and Cook's-distance NA reporting downstream. Filtering is minimal and justified (>=10 counts in >=5 samples, the smallest group size) with independent filtering left to results(), normalization stays inside the models (median-of-ratios; TMM for the edgeR cross-check) with no pre-scaled input, and multiple testing is BH at a stated alpha with apeglm shrinkage via coef and thresholds inside the test rather than post hoc. Enrichment is well specified — full ranked list on the Wald statistic, named collection with version, 15-500 size window, seed, tested-gene universe, ORA gated on list size — with the only minor weakness being the substitution of GO BP for the intended second collection, which is at least declared explicitly. The final report names methods, versions, design, contrast direction, thresholds, tested and significant counts, plots, reproducibility record, and the power and whole-blood-composition caveats."
+}

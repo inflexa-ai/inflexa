@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies that TPM cannot feed a negative-binomial model and fits limma lmFit + eBayes(trend=TRUE) on log2(TPM+1) for an unpaired two-group comparison, with PCA and clustering on the log values and an explicit outlier-flagging policy, but it never asks the core for the raw counts or quant directories as the reference does. The filter (TPM>=1 in 3 of 12) is documented with a sensitivity check but is looser than the smallest-group-size rule. The design formula and reference level are not written out, the |log2FC|>=1 cut is applied post hoc rather than in the test, and the ORA lacks a stated universe and size window despite versioned gene-set collections and a correctly specified moderated-t ranking for fgsea. Package versions are not reported."
+}

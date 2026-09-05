@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 5,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames the question as the genotype:treatment interaction, fits one DESeq2 model with explicit reference levels and coefficient names, derives the KO simple effect by coefficient combination from the same fit, and explicitly forbids the Venn-of-simple-effects fallacy; limma-voom serves as a stated robustness check rather than a replacement. QC (library sizes, PCA by both factors, correlation heatmap) with a written outlier policy, a justified minimal filter (>=10 in >=4 samples), BH at stated alphas with named shrinkage, and a full-ranking fgsea with stated metric, size window, seed, collections and overlap fraction are all present. The main gap is normalization: the plan never states that size factors (or TMM for the voom refit) are estimated inside the model, so the criterion is only implicitly met by choice of raw counts as input. Report completeness is strong on design, thresholds, counts and caveats but does not explicitly commit to reporting package versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 6
+  },
+  "rationale": "The design handling is sound and specific: NB model on raw Salmon counts, unpaired 6v6, explicit note that no batch term is needed, and a genuinely strong QC step that quantifies sample_01's depth, checks whether it is a PCA/correlation outlier as well as a depth outlier, applies a pre-specified rule, and runs a with/without sensitivity comparison rather than silently dropping it. Normalization is left inside DESeq2 size factors on raw integers, but the plan never states any low-count/independent filtering step, which is a clear omission. The contrast is only implicit (no stated reference level for chow), and the statistics step is the weakest part: no apeglm/lfcShrink for reported effects, no explicit BH statement, and a |log2FC|>1 cut applied post hoc rather than as an lfcThreshold in the test. Enrichment is handled correctly for a mouse dataset (organism-matched MGI hallmark sets, explicit refusal to substitute human sets, fgsea on the full ranked list with the metric named, coverage fraction reported), though the 15-500 set-size window and a collection version are missing, and the report lacks software versions."
+}

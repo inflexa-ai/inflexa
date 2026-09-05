@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference almost exactly: a single PyDESeq2 model with ~ genotype + treatment + genotype:treatment, explicit WT/vehicle reference levels, the interaction Wald test plus both within-genotype simple effects, and a stated fallback to a four-level group factor with the difference-of-differences contrast if PyDESeq2 cannot express the interaction. QC (blind VST PCA on top 500 variable genes, sample distances, library sizes, coloured by both factors and condition) precedes the model with a report-not-remove policy, the filter is minimal and justified by the smallest cell size, and raw counts enter the model with median-of-ratios size factors estimated internally. FDR is BH within contrast at alpha 0.05 with independent filtering, ashr shrinkage for reporting/ranking, p-value histograms and Cook's/filter NA accounting; the only small gaps are the mild imprecision on whether PyDESeq2's ashr path is fully available and no explicit LFC threshold discussion. Enrichment is preranked GSEA on the full ranked list by Wald stat, human Hallmark and Reactome with species filtering, 15-500 window after intersection with tested genes, seeds and unmapped-symbol diagnostics, with ORA correctly declined for a short interaction list; running GSEA on a noisy underpowered interaction ranking is flagged as weak evidence, which is honest but still somewhat speculative. The report step is thorough on versions, formula, thresholds, tested/significant counts, the PyDESeq2-for-DESeq2 substitution and the n=4 power and no-batch caveats."
+}

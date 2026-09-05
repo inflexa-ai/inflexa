@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: it characterizes sample_03 first (library size, detection, top-gene dominance, Spearman, Cook's, PCA variance and distance heatmap), then runs a pre-specified 10-sample DESeq2 Wald fit and a parallel 9-sample sensitivity fit, reconciles them with robust/outlier-dependent labels, and explicitly refuses silent removal. Design ~condition with control as reference, filter of >=10 counts in >=3 samples re-applied per fit, apeglm shrinkage, BH at 0.05 with 0.10 also reported, and no post hoc fold-change cuts are all stated. Weaknesses are minor: the numeric removal criterion is not fixed in advance (the headline choice is tied to a qualitative T1S1 verdict), normalization is implicit in DESeq() rather than named, the GSEA ranking metric is left as an either/or and the MSigDB version is unstated, and the report does not commit to stating software versions."
+}

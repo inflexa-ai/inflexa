@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that log2(TPM+1) values are not counts, explicitly forbids DESeq2/edgeR/voom, and specifies limma-trend with eBayes(trend=TRUE, robust=TRUE) on the delivered values, including a value-range sanity check and an explicit no-renormalization rule — exactly the reference path. QC (PCA/MDS on top 500 variable genes, distance heatmap, per-sample distributions and detection counts, outlier policy deferred to the modelling step) precedes the fit and is run on the log values without a second transform. The design is explicit (~condition with control releveled as reference, named numerator/denominator), and multiple testing is BH via topTable with any fold-change claim tested inside the model via treat()/topTreat() rather than post hoc, which is the correct substitute for LFC shrinkage on this path; the abundance floor is condition-independent and justified, though 'the low end of the distribution' leaves the numeric cutoff to run time. The report step covers method, versions, design, thresholds, tested/significant counts, and the n=6 power caveat plus the core-facility normalization provenance. The main deduction is scope: the question asks only which genes differ, and the plan bolts on a large three-collection fgsea/camera program; it is well-specified (universe = tested genes, moderated-t ranking stated, 15-500 size window after intersection, collection versions, seed) but goes beyond what was warranted."
+}

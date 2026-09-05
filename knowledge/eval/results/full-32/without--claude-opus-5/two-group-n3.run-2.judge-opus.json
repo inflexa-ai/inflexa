@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses DESeq2 Wald on raw Salmon counts with ~condition, control as reference, alpha 0.05 BH, apeglm shrinkage for ranking, plus an edgeR QL concordance check — exactly matching the reference for an unpaired 3v3 single-batch design, and it correctly declines to invent batch/covariate terms or to lower alpha. QC (library sizes, detected genes, VST PCA with loadings, correlation heatmaps, clustering) precedes the test with an explicit flag-only outlier policy that names the n=2 consequence. The low-count filter (count >=10 in at least 3 samples, the smallest group size) is minimal and justified; normalization stays inside the model via size factors and TMM, with an explicit prohibition on pre-normalized input. The power/stability step answers the confidence half of the question honestly, grounded in fitted dispersions and avoiding post-hoc observed power. Enrichment is well specified (ranked fgsea on shrunken LFC, 10k permutations, size window 15-500, BH, named human collections, mapped-fraction reporting, graceful absence handling), though it names the store contents rather than a versioned MSigDB release and GSEA on an n=3 ranking is of limited value — acceptable but slightly short of ideal."
+}

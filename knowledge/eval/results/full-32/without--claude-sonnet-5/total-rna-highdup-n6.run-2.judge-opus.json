@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan gets the central trap right: it refuses blind deduplication for non-UMI libraries with a cited justification, and it keeps sample_01 in the primary analysis with an explicit sensitivity re-run rather than silently dropping it. However, it never engages with the library chemistry that actually explains the duplication: no rRNA fraction, mitochondrial fraction, or intronic share is reported per sample, and there is no consideration of whether residual rRNA or a few dominant mito genes should be excluded from the matrix before size-factor estimation, which is the substantive QC the design demands. Normalization and filtering are handled correctly inside the model, but the design formula is stated only as ~condition with no reference level or contrast direction, and apeglm/ashr appear only in a package list rather than as a stated shrinkage step for the reported effect sizes. Enrichment names collections and a GSEA ranking metric but omits versions, a size window, and an explicit ORA universe; reporting omits software versions."
+}

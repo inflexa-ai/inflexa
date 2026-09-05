@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 6,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames the question as the genotype:treatment interaction in a PyDESeq2 model with explicit reference levels, tests the interaction coefficient first and then the two simple effects, applies a minimal justified filter tied to the smallest cell, and reports BH at 0.05 with independent filtering and per-contrast FDR. It breaks the Python constraint by routing shrinkage through R's ashr via rpy2 (with a muddled justification, since the 2x2 interaction is a single coefficient that PyDESeq2's own apeglm shrinkage could handle) and gives no fallback if the installed PyDESeq2 cannot express the contrasts. Normalization is only implicit (raw counts into PyDESeq2, size factors never named), QC omits library sizes and states no policy for what to do with a flagged sample beyond naming it, and the enrichment—unrequested—assumes human symbol GMTs for what is likely a mouse knockout. The report section is thorough, naming design, thresholds, counts, versions, and the low-power caveat."
+}

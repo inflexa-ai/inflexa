@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 2,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the question as an interaction test, fits a single factorial model (~genotype + treatment + genotype:treatment), tests the interaction coefficient as primary, and derives both simple effects from the same fit while explicitly warning against substituting eyeballed contrast lists — this is exactly the reference approach, with an appropriate n=4 power caveat. QC is concrete (library sizes, detected genes, PCA and clustering colored by genotype and treatment, cell-count verification, discordance flagging) though it stops at flagging without a stated action policy for an outlier. The clear gap is the absence of any low-count pre-filter; DESeq2 independent filtering is mentioned but that is a different, post hoc device, and normalization is only implicit in feeding raw integer counts to DESeq2 (size factors are never named). Contrasts and the interaction coefficient are explicit, but reference levels are never set (deferring to \"as coded\" is risky for sign interpretation), and BH at 0.05 with apeglm/ashr shrinkage is handled well. Enrichment states fgsea, a signed ranking metric, and WikiPathways human with HGNC symbols, but omits collection version and a gene-set size window, and the human assumption sits uneasily with a brain knockout design; reporting covers design, thresholds and significant-gene counts but not software versions or the number of genes tested after filtering."
+}

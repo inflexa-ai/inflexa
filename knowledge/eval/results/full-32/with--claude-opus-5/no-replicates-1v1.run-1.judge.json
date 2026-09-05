@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses gene-level inference for a 1-vs-1 design: it forbids DESeq()/results()/lfcShrink/edgeR/limma, computes median-of-ratios size factors and descriptive log2(treated/control) with an explicit control reference and stated pseudocount and expression floor, uses a minimal justified filter (>=10 counts in >=1 sample), and leads the report with the limitation and the >=3-per-group design needed for inference. QC is appropriately adapted (library sizes, detection, blind VST correlation, explicit statement that PCA is undefined). The weakness is Step 3: the reference says no p-values should be produced, yet the plan runs fgsea preranked on a descriptive log2FC ranking and will emit permutation p-values and adjusted p-values (and even refers to 'significant sets' for collapsing), relying on labelling to prevent misreading; the enrichment is technically well-specified (full list, stated metric, tested-gene universe, named collections, 15-500 window, seed) but is not warranted here and reintroduces the very p-values the design cannot support."
+}

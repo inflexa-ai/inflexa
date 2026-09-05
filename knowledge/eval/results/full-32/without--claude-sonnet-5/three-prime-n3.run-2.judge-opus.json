@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the 3' tag-seq library as length-independent, explicitly forbids TPM/FPKM and any length offset, and routes raw counts into DESeq2 with median-of-ratios size factors, a ~condition design with control as reference, Wald test, BH, and apeglm shrinkage — all appropriate for an unpaired single-batch 3v3, and it flags the low power at n=3. QC is present (library sizes with a flag for divergent samples, PCA/sample-distance on VST, MA plot) though the outlier policy is only 'flag', not an action rule, and the PCA sits in the modeling step rather than strictly before it. The main deviation is the low-count filter: >=10 counts in at least 3 samples is the full-length default and is stricter than the ~5-count floor appropriate for a 3' tag library, although the floor and retained-gene count are at least reported. Enrichment, while not strictly required by the question, is well specified with a filtered-gene universe, a named and versioned WikiPathways collection, and a GSEA fallback, but it omits a gene-set size window and does not name the ranking metric beyond 'log2FC'. Reporting covers method, design, thresholds, gene counts and caveats but never mentions software versions."
+}

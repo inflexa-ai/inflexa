@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses count models on TPM and fits limma on log2(TPM+1) with eBayes(trend=TRUE), an explicit ~condition design with control as the reference, BH at 0.05 via topTable, and effect-size thresholds tested with treat() rather than post hoc; no size factors, TMM, or voom are applied. QC on the log matrix (PCA/MDS, distance heatmap, detected genes, column-sum check) precedes the model with a flag-only outlier policy, and the filter (TPM>=1 in at least the smallest group size) matches the reference. The enrichment step, though not requested, is properly specified (full ranked list, moderated t as the stated metric, named collections with versions, 15-500 window, tested-gene universe, seed). The one gap against the reference is that the plan records the missing counts/quant directories as a limitation but never explicitly asks the core to deliver them."
+}

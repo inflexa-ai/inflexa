@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 6,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the RSEM expected-count matrix, states that the tximport length offset is lost without the genes.results files, rounds for DESeq2 rather than substituting TPM/FPKM, and fits a Wald test with control as reference, apeglm shrinkage, and BH at 0.05; it falls short of the reference by not actually requesting the genes.results files. QC keeps sample_01, inspects it on PCA and the distance heatmap, reports library sizes, and removes only with a stated reason. Normalization is only implied via 'standard DESeq2 raw-count path' and never named as in-model size factors, so that criterion is scored on what is stated. Enrichment was not asked for a plain treated-vs-control question; the added ORA/fgsea steps are technically well specified (tested-gene universe, Wald-statistic ranking, versioned collections, size window) but represent unrequested scope rather than a correct omission."
+}

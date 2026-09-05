@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with apeglm shrinkage on raw Salmon counts, an explicit minimal filter (>=10 counts in >=3 samples, justified by group size), internal median-of-ratios normalization, ~condition with control releveled as reference and an explicit contrast, BH at 0.05 with alpha set in results() and an explicit refusal to loosen it for n=3. Blind-VST PCA, distance heatmap and library sizes precede modeling with outliers flagged, though the action to take on a flagged sample is not fully specified. The edgeR cross-check with 'intersection as high-confidence set' is a minor overreach in framing but not wrong. Enrichment was not requested; it is nevertheless specified correctly (full ranked list by Wald stat, named Hallmark 2026.1, tested-gene universe, 15-500 window), with the Reactome 'current' version only loosely pinned. The report step covers method, versions, design, thresholds, gene counts and the power caveat."
+}

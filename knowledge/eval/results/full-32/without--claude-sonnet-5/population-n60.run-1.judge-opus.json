@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The DESeq2 negative-binomial Wald test with a single condition factor is a valid (if slower than limma-voom) fit to an unpaired, single-batch 60v60 cohort, and the plan correctly centers effect size, though it uses post hoc |shrunken log2FC| >= 1 filtering rather than an in-test threshold (lfcThreshold/TREAT), which is exactly the distinction the question demands at n=120. QC is concrete (library sizes, zero-count genes, VST PCA colored by condition, an explicit >3SD outlier rule, resolution of the 121-vs-120 mismatch) but omits a sex check against XIST/Y genes and any search for hidden structure beyond the cell-composition check. The weakest point is filtering: the plan leans entirely on DESeq2's independent filtering at the results stage and never states a minimal expression pre-filter, so the tested gene set is undefined up front; normalization is handled correctly with size factors on raw counts. The design formula is described in prose only, with no explicit ~condition formula, reference level, or contrast direction. Enrichment is strong on universe (the tested genes) and offers both ORA and preranked fgsea on named collections, but lacks collection versions and a gene-set size window; reporting covers methods, thresholds, category counts, and deconvolution caveats but not software versions."
+}

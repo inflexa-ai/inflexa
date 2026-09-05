@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on the core design: sex and age enter as fixed terms in ~ sex + age + condition with an explicit control reference level, covariate balance is tabulated and tested before fitting, counts are never residualized, DESeq2 Wald plus an edgeR QL replicate, a justified >=10-in-6 filter, BH at 0.05 with apeglm on the condition coefficient, and a report that names versions, thresholds, tested/significant counts and the confounding caveat. Age centering is only 'optional' where the reference requires it, and the QC lacks the XIST/Y-linked sex check. Enrichment was not asked and the reference omits it; the plan adds a full fgsea section that is technically well specified (full ranked list, Wald statistic, named collections with versions, 15-500 window, explicit universe), so it is credited for correctness but marked down for adding an unwarranted analysis."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every point: DESeq2 Wald on raw counts with ~condition and chow explicitly releveled as reference, contrast written as (condition, HFD, chow), median-of-ratios size factors inside the model, a minimal pre-filter of >=10 counts in >=6 samples tied to the smallest group, apeglm shrinkage and BH at 0.05 with independent filtering and no post-hoc fold-change cut. QC keeps sample_01, inspects it on blind-VST PCA and a Euclidean distance heatmap, reports its library size and detected genes against the median, and allows removal only with a stated reason beyond depth. Enrichment uses fgsea preranked on the full tested-gene list ranked by the Wald statistic with the choice justified, the mouse Hallmark collection with version recorded, size window 15-500 after intersection, mapped-share reporting, a seed, and an explicit refusal to substitute a human collection with a symbol map. The report step names method, versions, design, thresholds, n tested, n DE, the sample_01 decision, and design caveats; the edgeR QL cross-check is a reasonable addition rather than a substitution."
+}

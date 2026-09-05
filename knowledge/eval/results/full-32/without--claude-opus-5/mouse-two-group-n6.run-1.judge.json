@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with ~condition and chow as reference, median-of-ratios normalization inside the model, apeglm shrinkage, BH at 0.05, and an explicit keep/exclude policy for sample_01 grounded in library size, size factors, VST PCA and correlation heatmap, with exclusion only by stated evidence and a pre-registered sensitivity fit. The low-count filter (>=10 in >=6 samples) is justified by the smaller group size and its survivor count is reported. Enrichment uses the mouse MSigDB hallmark collection in MGI symbols with fgsea preranked on the full list, a stated ranking statistic, size window 15-500, and a reported symbol match rate, though the collection version is not pinned. The report covers design, thresholds, counts and caveats but does not explicitly require package versions to be recorded; the |LFC|>1 count is a post hoc cut rather than an lfcThreshold test, a minor deduction."
+}

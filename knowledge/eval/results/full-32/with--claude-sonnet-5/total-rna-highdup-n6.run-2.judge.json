@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "DESeq2 Wald with an edgeR QL cross-check, ~condition with control as explicit reference, a minimal >=10-in->=6 filter, internal size-factor normalization, BH at 0.05 with apeglm shrinkage, and a preranked fgsea with stated metric, universe, collections and size window all match the reference. The plan correctly refuses to deduplicate without UMIs and keeps sample_01 pending PCA/distance evidence. Its main gap is that the QC does not compute the per-sample rRNA, mitochondrial, or intronic fractions from the count matrix to explain the >60% duplication, nor does it consider removing rRNA/mito genes if their share is large and uneven; it only flags duplication as an unverifiable caveat, and the strandedness discussion is a distraction. The report is otherwise complete with versions, thresholds, counts and caveats."
+}

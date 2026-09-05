@@ -1,0 +1,482 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "multi-group-3x4",
+  "run": 1,
+  "startedAt": "2026-09-05T18:15:06.662Z",
+  "elapsedMs": 98562,
+  "outcome": "plan_submitted",
+  "planId": "pln-9437eabd",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Import counts, QC, and fit DESeq2 three-group model",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon counts are estimates and may be non-integer; round rather than truncate, and report the magnitude of the change",
+          "With n=4 per group a single aberrant replicate can dominate a PCA axis — inspect the sample-distance heatmap before concluding a group is heterogeneous",
+          "12,000 genes is smaller than a typical full annotation, suggesting pre-filtering upstream; report this rather than assuming transcriptome-wide coverage"
+        ],
+        "context": "Human liver bulk RNA-seq, single batch, unpaired, 3 groups x 4 replicates. No covariates other than condition are present in the metadata, so the design is ~condition and nothing else can be adjusted for. Gene identifiers are HGNC-style symbols, which is what downstream gene-set files use.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Do the 12 liver samples cluster by condition (control, treated_a, treated_b), are all 4 replicates per group usable, and does a single DESeq2 ~condition model fit cleanly over the 12,000-gene Salmon count matrix?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Fit DESeq() exactly once on all 12 samples; do not subset to pairs of groups and refit",
+          "Set control as the factor reference level explicitly with relevel(); do not rely on alphabetical ordering",
+          "Do not drop any sample on QC grounds without stating the quantitative reason and reporting results both with and without it",
+          "Do not perform any batch correction — the design is single-batch and no batch variable exists"
+        ],
+        "description": "Load /eval-full-32-without-multi-group-3x4-1/data/inputs/counts/counts.csv (12,000 genes x 12 sample columns, first column gene symbol) and /eval-full-32-without-multi-group-3x4-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify the sample columns of the count matrix and the metadata rows match exactly as sets and reorder metadata to the count column order; abort with a clear message if they do not. Confirm counts are non-negative integers (Salmon estimates may need rounding — round and record how many entries changed). Collapse duplicate gene symbols if any exist, by summing counts, and report how many. Set condition as a factor with control as the explicit reference level. Build DESeqDataSet with design ~condition, apply an independent pre-filter (keep genes with a count of at least 10 in at least 4 samples, i.e. the smallest group size), and run DESeq() once — this single fit is the shared basis for all downstream contrasts so dispersion borrows strength across all 12 samples. Emit QC: per-sample library sizes and detected-gene counts, VST-transformed PCA (PC1/PC2 coloured by condition, with percent variance), sample-to-sample Euclidean distance / correlation heatmap, and the dispersion-estimate plot. Persist the fitted DESeqDataSet, the VST matrix, and the normalized count matrix for reuse by T1S2, T1S3, T1S4 and T2S1.",
+        "acceptance_criteria": [
+          "Count matrix and metadata sample identifiers are confirmed to match one-to-one; 12 samples with 4 in each of control, treated_a, treated_b are reported",
+          "Number of genes retained after the >=10 counts in >=4 samples filter is reported, out of the 12,000 input genes",
+          "condition factor reference level is explicitly control, and this is stated in the output",
+          "PCA on VST data and a sample-distance heatmap are produced, with percent variance for PC1/PC2 and an explicit written statement of whether condition separates the samples and whether any replicate is a potential outlier",
+          "Fitted DESeqDataSet, VST matrix and normalized counts are saved to disk for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Omnibus LRT across the three groups",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 4 replicates per group the LRT may return few or zero genes at padj < 0.05; if so, report the number at padj < 0.10 and the top-ranked genes by statistic, and state explicitly that absence of significant hits at n=4 is weak evidence of no effect rather than evidence of no effect",
+          "A non-uniform p-value histogram (e.g. bimodal or U-shaped) indicates a model or dispersion problem and must be reported, not smoothed over"
+        ],
+        "context": "n=4 per group; the LRT with 2 numerator degrees of freedom is the appropriate omnibus test for a 3-level factor with count data, and DESeq2's shrunken dispersions are what make it usable at this sample size.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which genes differ across control, treated_a and treated_b at all — i.e. which genes show any condition effect under a likelihood-ratio test of ~condition versus ~1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use DESeq(..., test='LRT', reduced=~1) on the object from T1S1; do not approximate the omnibus test with an ANOVA on normalized counts or with a union of pairwise hits",
+          "Report BH-adjusted p-values; do not report raw p-value counts as the headline result",
+          "Do not interpret the log2FoldChange column emitted alongside an LRT as the effect size for the omnibus test — replace or clearly relabel it"
+        ],
+        "description": "Using the DESeqDataSet fitted in T1S1, run the DESeq2 likelihood-ratio test with full design ~condition and reduced design ~1. This is the direct answer to the 'differ across the three groups at all' half of the question: it tests the joint null that all three group means are equal, without picking a direction. Extract the full results table (LRT statistic, p-value, BH-adjusted p-value, and the baseMean), and report the number of genes at padj < 0.05 and at padj < 0.10. Because an LRT log2FoldChange is only the coefficient for one arbitrary level and is not the effect size being tested, replace it in the reported table with the per-group mean of VST expression and the maximum absolute pairwise difference between group means, so each significant gene carries an interpretable effect magnitude. Produce a p-value histogram to check the null behaviour of the test, and a heatmap of VST values (row-scaled) for the top 50 LRT genes with samples annotated by condition. Save the complete ranked LRT table to disk.",
+        "acceptance_criteria": [
+          "LRT results table for all filtered genes is saved, with LRT statistic, raw p, BH padj, baseMean, per-group VST means and max pairwise group-mean difference",
+          "Counts of genes at padj < 0.05 and padj < 0.10 are reported explicitly",
+          "A p-value histogram is produced and its shape is commented on (uniform-with-spike versus anomalous)",
+          "Row-scaled VST heatmap of the top 50 LRT genes with condition annotation is produced",
+          "The report states plainly that the LRT identifies that a difference exists somewhere among the three groups and does not say which groups differ"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pairwise Wald contrasts: treated_a vs control, treated_b vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=4 per group gives good power only for large, consistent effects; report median absolute log2FC among significant genes so the reader can judge whether hits are of plausible magnitude or driven by low-count noise",
+          "Genes with very low baseMean can produce extreme fold changes; rely on the shrunken LFC for ranking and flag any top hit whose baseMean is in the bottom decile",
+          "DESeq2's independent filtering sets padj to NA for low-count genes — report how many genes were filtered this way per contrast rather than treating NA as non-significant"
+        ],
+        "context": "control is the reference level set in T1S1, so both contrasts are oriented as treatment-minus-control: positive log2FC means higher in the treatment. Both contrasts come from the same fitted model, so they share dispersion estimates and the size factors computed over all 12 samples.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes does treated_a change relative to control, and which genes does treated_b change relative to control, with direction and effect size?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the single DESeqDataSet from T1S1 with Wald tests via results(contrast=...); do not refit separate two-group models per contrast",
+          "Apply BH correction separately within each contrast; do not pool the two contrasts into one multiple-testing family, and do not restrict the tested gene set to the T1S2 LRT hits",
+          "Use apeglm shrinkage for ranking and plots only; report unshrunk log2FC and p-values in the results tables",
+          "State the direction convention (positive = up in treatment relative to control) explicitly in the output"
+        ],
+        "description": "From the T1S1 fit, run Wald tests for the two contrasts of interest: treated_a vs control and treated_b vs control. Each contrast gets its own results() call with independent BH multiple-testing correction across the filtered gene set — the two treatments are separate questions and must not be pooled into one FDR family, and the gene set tested must be the full filtered set, not the LRT-significant subset. For each contrast report: number of genes at padj < 0.05 with |log2FC| > 1 and at padj < 0.05 with no fold-change cut, split by direction (up/down). Compute apeglm-shrunken LFCs for stable ranking and visualisation while keeping the unshrunk log2FC, lfcSE, stat and p-value in the saved table. Produce per-contrast MA plots and volcano plots (labelled with the top genes by padj), and save both full ranked results tables plus a ranking statistic column suitable for GSEA input (recommended: sign(log2FC) * -log10(pvalue), or the Wald stat) for use by T2S1.",
+        "acceptance_criteria": [
+          "Two complete results tables are saved, one per contrast, each with unshrunk log2FC, lfcSE, stat, pvalue, padj, baseMean, and an apeglm-shrunken log2FC column",
+          "Each contrast's BH correction is applied independently over the full filtered gene set; this is stated in the output",
+          "DE gene counts are reported per contrast, split by direction, at padj<0.05 and at padj<0.05 with |log2FC|>1",
+          "MA plot and volcano plot are produced for each contrast",
+          "A ranking statistic column is present in both saved tables for downstream GSEA"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Reconcile omnibus and pairwise results; compare the two treatments",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The significant-in-one-but-not-the-other pattern is the classic difference-of-significance fallacy; the direct treated_b vs treated_a contrast is the only evidence that bears on differential response and it is the least powered of the three",
+          "Discordant-direction genes at n=4 are frequently noise; require a meaningful |log2FC| in both contrasts before highlighting one"
+        ],
+        "context": "This step answers the implicit comparative question: three groups with a shared control invite the question of whether the two treatments do the same thing. The classification is descriptive labelling built from three independently corrected tests, not a formal interaction test.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "dplyr",
+          "ggplot2",
+          "ComplexUpset",
+          "ggrepel"
+        ],
+        "question": "Of the genes the LRT flags as differing across the three groups, which are driven by treated_a alone, by treated_b alone, or shared by both — and which genes differ between treated_a and treated_b directly?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Derive the treated_b vs treated_a contrast from the same T1S1 fitted object; do not refit",
+          "Classify using padj thresholds consistently and state the threshold used",
+          "Do not claim a gene responds differently to the two treatments on the basis of one contrast being significant and the other not — point to the treated_b vs treated_a contrast for that claim"
+        ],
+        "description": "Integrate the T1S2 LRT table and the two T1S3 contrast tables into one gene-level summary. Add the third pairwise Wald contrast, treated_b vs treated_a (from the same T1S1 fit, independently BH-corrected), so the two treatments can be compared to each other and not only to control. Build a joined table keyed on gene symbol carrying: LRT padj, and for each of the three contrasts the log2FC and padj. Classify each LRT-significant gene into treated_a-specific, treated_b-specific, shared-concordant (same direction in both treatments), or shared-discordant (opposite directions), using padj<0.05 in the relevant contrasts, and report the counts in each class. Produce a Venn or UpSet diagram of the DE gene sets from the three contrasts, and a scatter plot of treated_a-vs-control log2FC against treated_b-vs-control log2FC over all tested genes, with the Pearson and Spearman correlation and the identity line drawn, which shows at a glance whether the two treatments act along the same axis or divergently. Save the joined table.",
+        "acceptance_criteria": [
+          "A joined per-gene table is saved containing LRT padj plus log2FC and padj for all three pairwise contrasts (treated_a vs control, treated_b vs control, treated_b vs treated_a)",
+          "Counts of treated_a-specific, treated_b-specific, shared-concordant and shared-discordant genes among LRT-significant genes are reported",
+          "An UpSet or Venn diagram of the three contrasts' DE gene sets is produced",
+          "A log2FC-vs-log2FC scatter of the two treatment-vs-control contrasts is produced with Pearson and Spearman correlation reported",
+          "The output states that 'treatment-specific' here means significant in one contrast and not the other, which is not the same as a significant difference between the two effects"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Gene-set enrichment for each treatment contrast",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If neither human hallmark nor human GO-BP sets can be resolved at run time, report the absence explicitly and deliver the ranked gene lists alone — the per-gene results from T1S2/T1S3 remain the primary answer and the run should not be treated as failed",
+          "GSEA can return significant sets even when no individual gene passes FDR; that is a legitimate gain in power but it must be reported as a coordinated-shift signal, not as evidence that individual leading-edge genes are differentially expressed",
+          "GO BP sets are heavily nested, so significant hits will arrive in correlated blocks"
+        ],
+        "context": "The background for enrichment must be the genes actually tested in T1S3 after filtering, not all 12,000 input genes and not a genome-wide universe; the counts matrix appears already pre-filtered, which restricts the achievable universe and should be stated.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "dplyr",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which hallmark and GO biological-process gene sets are coordinately shifted by treated_a versus control and by treated_b versus control in liver, and do the two treatments engage the same programmes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the ranking statistic column from T1S3, not a thresholded DE gene list, and do not re-derive rankings from raw counts",
+          "Use human gene sets only — the environment also holds mouse and rat pathway files and selecting one of those would produce confident nonsense on human data",
+          "Report BH-adjusted p-values and set sizes alongside NES; never report a pathway hit without its set size and leading-edge count",
+          "Collapse or flag redundant parent/child GO terms before reporting a headline count of enriched processes"
+        ],
+        "description": "Run rank-based gene set enrichment (fgsea) separately on the two ranked gene lists produced in T1S3 — treated_a vs control and treated_b vs control — using the full ranked list of tested genes rather than a thresholded subset, so the analysis does not inherit the low power of the per-gene cutoff. Required reference data: human hallmark gene sets and human GO biological-process gene sets, both keyed on HGNC gene symbols, which is the identifier space of the counts matrix (a human hallmark GMT and a human GO-BP GMT are present in the environment's pathway reference collection; resolve them at run time rather than assuming a path). Restrict sets to those with between 15 and 500 genes present in the tested background. Report the top enriched sets per contrast by adjusted p-value with NES and leading-edge genes, and produce a side-by-side comparison of NES for sets significant in either contrast so shared versus treatment-specific programmes are visible. Since the tissue is liver, explicitly note whether hepatocyte-relevant programmes (xenobiotic and drug metabolism, bile acid metabolism, fatty acid metabolism, inflammatory response) appear, as these are the expected axes for a liver treatment response — report their absence just as plainly as their presence.",
+        "acceptance_criteria": [
+          "fgsea results tables for both contrasts are saved with pathway, NES, p-value, BH padj, set size and leading-edge genes",
+          "The gene-set collections actually used are named in the output, with their organism (human) confirmed to match the data",
+          "The ranked list used is the full tested gene set from T1S3, and the number of ranked genes and the number of sets tested after the 15-500 size filter are reported",
+          "A comparison of NES between the two contrasts for sets significant in either is produced",
+          "Liver-relevant programmes are explicitly commented on, present or absent"
+        ]
+      }
+    ],
+    "title": "Liver RNA-seq: omnibus LRT + treated_a/treated_b vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment in human liver: raw Salmon gene-level counts (12,000 genes x 12 samples, gene symbols in column 1) with a 12-row metadata table carrying one `condition` column with three levels — control, treated_a, treated_b — 4 unpaired replicates each. The research question has two distinct parts, and they need two distinct statistics, so the plan keeps them separate rather than collapsing one into the other.\n\nPart 1 ('which genes differ across the three groups at all') is an omnibus question: it is answered by a DESeq2 likelihood-ratio test of ~condition against the intercept-only reduced model ~1, which asks whether any group differs without committing to a direction. Part 2 ('which genes does each treatment change relative to control') is two pairwise Wald contrasts, treated_a vs control and treated_b vs control, each with its own independent BH correction — the two contrasts are separate scientific questions and must not share a single FDR family, nor be filtered through the LRT gene set (that would be a two-stage procedure with an uncontrolled error rate). T1S1 fits one DESeq2 object over all 12 samples so that dispersion is estimated from the full design (12 samples, 3 groups) rather than from 8-sample subsets, and emits QC (library sizes, VST PCA, sample-sample correlation) that establishes whether the group structure is the dominant variance axis and whether any replicate is an outlier — 4 per group leaves no room to lose one silently.\n\nT1S2 then reads the same fitted object for the omnibus LRT; T1S3 for the two Wald contrasts with LFC shrinkage (apeglm) for ranking, keeping unshrunk log2FC and p-values for reporting. T1S4 is the integrative step the question implicitly asks for: which LRT genes are driven by treated_a alone, by treated_b alone, or shared, plus the direct treated_a vs treated_b contrast, so the two treatments can be compared to one another rather than only to control. T2S1 puts the ranked contrast statistics through gene-set enrichment against staged human hallmark and GO-BP sets (confirmed present under /mnt/refs, HGNC symbols — matching the counts matrix's gene-symbol index, so no ID mapping is needed).\n\nPower is the honest limitation throughout: n=4 per group is adequate for large, consistent effects and underpowered for modest ones, so the plan requires effect-size reporting alongside FDR and forbids presenting an empty or tiny result set as evidence of no effect."
+  },
+  "usage": {
+    "inputTokens": 92178,
+    "outputTokens": 7315,
+    "cacheCreationInputTokens": 39921,
+    "cacheReadInputTokens": 52233,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "clusterProfiler",
+          "fgsea",
+          "msigdbr",
+          "org.Hs.eg.db",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap",
+          "limma",
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver RNA-seq: omnibus LRT + treated_a/treated_b vs control",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment in human liver: raw Salmon gene-level counts (12,000 genes x 12 samples, gene symbols in column 1) with a 12-row metadata table carrying one `condition` column with three levels — control, treated_a, treated_b — 4 unpaired replicates each. The research question has two distinct parts, and they need two distinct statistics, so the plan keeps them separate rather than collapsing one into the other.\n\nPart 1 ('which genes differ across the three groups at all') is an omnibus question: it is answered by a DESeq2 likelihood-ratio test of ~condition against the intercept-only reduced model ~1, which asks whether any group differs without committing to a direction. Part 2 ('which genes does each treatment change relative to control') is two pairwise Wald contrasts, treated_a vs control and treated_b vs control, each with its own independent BH correction — the two contrasts are separate scientific questions and must not share a single FDR family, nor be filtered through the LRT gene set (that would be a two-stage procedure with an uncontrolled error rate). T1S1 fits one DESeq2 object over all 12 samples so that dispersion is estimated from the full design (12 samples, 3 groups) rather than from 8-sample subsets, and emits QC (library sizes, VST PCA, sample-sample correlation) that establishes whether the group structure is the dominant variance axis and whether any replicate is an outlier — 4 per group leaves no room to lose one silently.\n\nT1S2 then reads the same fitted object for the omnibus LRT; T1S3 for the two Wald contrasts with LFC shrinkage (apeglm) for ranking, keeping unshrunk log2FC and p-values for reporting. T1S4 is the integrative step the question implicitly asks for: which LRT genes are driven by treated_a alone, by treated_b alone, or shared, plus the direct treated_a vs treated_b contrast, so the two treatments can be compared to one another rather than only to control. T2S1 puts the ranked contrast statistics through gene-set enrichment against staged human hallmark and GO-BP sets (confirmed present under /mnt/refs, HGNC symbols — matching the counts matrix's gene-symbol index, so no ID mapping is needed).\n\nPower is the honest limitation throughout: n=4 per group is adequate for large, consistent effects and underpowered for modest ones, so the plan requires effect-size reporting alongside FDR and forbids presenting an empty or tiny result set as evidence of no effect.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Import counts, QC, and fit DESeq2 three-group model",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the 12 liver samples cluster by condition (control, treated_a, treated_b), are all 4 replicates per group usable, and does a single DESeq2 ~condition model fit cleanly over the 12,000-gene Salmon count matrix?",
+              "description": "Load /eval-full-32-without-multi-group-3x4-1/data/inputs/counts/counts.csv (12,000 genes x 12 sample columns, first column gene symbol) and /eval-full-32-without-multi-group-3x4-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify the sample columns of the count matrix and the metadata rows match exactly as sets and reorder metadata to the count column order; abort with a clear message if they do not. Confirm counts are non-negative integers (Salmon estimates may need rounding — round and record how many entries changed). Collapse duplicate gene symbols if any exist, by summing counts, and report how many. Set condition as a factor with control as the explicit reference level. Build DESeqDataSet with design ~condition, apply an independent pre-filter (keep genes with a count of at least 10 in at least 4 samples, i.e. the smallest group size), and run DESeq() once — this single fit is the shared basis for all downstream contrasts so dispersion borrows strength across all 12 samples. Emit QC: per-sample library sizes and detected-gene counts, VST-transformed PCA (PC1/PC2 coloured by condition, with percent variance), sample-to-sample Euclidean distance / correlation heatmap, and the dispersion-estimate plot. Persist the fitted DESeqDataSet, the VST matrix, and the normalized count matrix for reuse by T1S2, T1S3, T1S4 and T2S1.",
+              "context": "Human liver bulk RNA-seq, single batch, unpaired, 3 groups x 4 replicates. No covariates other than condition are present in the metadata, so the design is ~condition and nothing else can be adjusted for. Gene identifiers are HGNC-style symbols, which is what downstream gene-set files use.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "Count matrix and metadata sample identifiers are confirmed to match one-to-one; 12 samples with 4 in each of control, treated_a, treated_b are reported",
+                "Number of genes retained after the >=10 counts in >=4 samples filter is reported, out of the 12,000 input genes",
+                "condition factor reference level is explicitly control, and this is stated in the output",
+                "PCA on VST data and a sample-distance heatmap are produced, with percent variance for PC1/PC2 and an explicit written statement of whether condition separates the samples and whether any replicate is a potential outlier",
+                "Fitted DESeqDataSet, VST matrix and normalized counts are saved to disk for downstream steps"
+              ],
+              "constraints": [
+                "Fit DESeq() exactly once on all 12 samples; do not subset to pairs of groups and refit",
+                "Set control as the factor reference level explicitly with relevel(); do not rely on alphabetical ordering",
+                "Do not drop any sample on QC grounds without stating the quantitative reason and reporting results both with and without it",
+                "Do not perform any batch correction — the design is single-batch and no batch variable exists"
+              ],
+              "caveats": [
+                "Salmon counts are estimates and may be non-integer; round rather than truncate, and report the magnitude of the change",
+                "With n=4 per group a single aberrant replicate can dominate a PCA axis — inspect the sample-distance heatmap before concluding a group is heterogeneous",
+                "12,000 genes is smaller than a typical full annotation, suggesting pre-filtering upstream; report this rather than assuming transcriptome-wide coverage"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "track_note": null
+            },
+            {
+              "id": "T1S2",
+              "name": "Omnibus LRT across the three groups",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ across control, treated_a and treated_b at all — i.e. which genes show any condition effect under a likelihood-ratio test of ~condition versus ~1?",
+              "description": "Using the DESeqDataSet fitted in T1S1, run the DESeq2 likelihood-ratio test with full design ~condition and reduced design ~1. This is the direct answer to the 'differ across the three groups at all' half of the question: it tests the joint null that all three group means are equal, without picking a direction. Extract the full results table (LRT statistic, p-value, BH-adjusted p-value, and the baseMean), and report the number of genes at padj < 0.05 and at padj < 0.10. Because an LRT log2FoldChange is only the coefficient for one arbitrary level and is not the effect size being tested, replace it in the reported table with the per-group mean of VST expression and the maximum absolute pairwise difference between group means, so each significant gene carries an interpretable effect magnitude. Produce a p-value histogram to check the null behaviour of the test, and a heatmap of VST values (row-scaled) for the top 50 LRT genes with samples annotated by condition. Save the complete ranked LRT table to disk.",
+              "context": "n=4 per group; the LRT with 2 numerator degrees of freedom is the appropriate omnibus test for a 3-level factor with count data, and DESeq2's shrunken dispersions are what make it usable at this sample size.",
+              "acceptance_criteria": [
+                "LRT results table for all filtered genes is saved, with LRT statistic, raw p, BH padj, baseMean, per-group VST means and max pairwise group-mean difference",
+                "Counts of genes at padj < 0.05 and padj < 0.10 are reported explicitly",
+                "A p-value histogram is produced and its shape is commented on (uniform-with-spike versus anomalous)",
+                "Row-scaled VST heatmap of the top 50 LRT genes with condition annotation is produced",
+                "The report states plainly that the LRT identifies that a difference exists somewhere among the three groups and does not say which groups differ"
+              ],
+              "constraints": [
+                "Use DESeq(..., test='LRT', reduced=~1) on the object from T1S1; do not approximate the omnibus test with an ANOVA on normalized counts or with a union of pairwise hits",
+                "Report BH-adjusted p-values; do not report raw p-value counts as the headline result",
+                "Do not interpret the log2FoldChange column emitted alongside an LRT as the effect size for the omnibus test — replace or clearly relabel it"
+              ],
+              "caveats": [
+                "With 4 replicates per group the LRT may return few or zero genes at padj < 0.05; if so, report the number at padj < 0.10 and the top-ranked genes by statistic, and state explicitly that absence of significant hits at n=4 is weak evidence of no effect rather than evidence of no effect",
+                "A non-uniform p-value histogram (e.g. bimodal or U-shaped) indicates a model or dispersion problem and must be reported, not smoothed over"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Pairwise Wald contrasts: treated_a vs control, treated_b vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes does treated_a change relative to control, and which genes does treated_b change relative to control, with direction and effect size?",
+              "description": "From the T1S1 fit, run Wald tests for the two contrasts of interest: treated_a vs control and treated_b vs control. Each contrast gets its own results() call with independent BH multiple-testing correction across the filtered gene set — the two treatments are separate questions and must not be pooled into one FDR family, and the gene set tested must be the full filtered set, not the LRT-significant subset. For each contrast report: number of genes at padj < 0.05 with |log2FC| > 1 and at padj < 0.05 with no fold-change cut, split by direction (up/down). Compute apeglm-shrunken LFCs for stable ranking and visualisation while keeping the unshrunk log2FC, lfcSE, stat and p-value in the saved table. Produce per-contrast MA plots and volcano plots (labelled with the top genes by padj), and save both full ranked results tables plus a ranking statistic column suitable for GSEA input (recommended: sign(log2FC) * -log10(pvalue), or the Wald stat) for use by T2S1.",
+              "context": "control is the reference level set in T1S1, so both contrasts are oriented as treatment-minus-control: positive log2FC means higher in the treatment. Both contrasts come from the same fitted model, so they share dispersion estimates and the size factors computed over all 12 samples.",
+              "acceptance_criteria": [
+                "Two complete results tables are saved, one per contrast, each with unshrunk log2FC, lfcSE, stat, pvalue, padj, baseMean, and an apeglm-shrunken log2FC column",
+                "Each contrast's BH correction is applied independently over the full filtered gene set; this is stated in the output",
+                "DE gene counts are reported per contrast, split by direction, at padj<0.05 and at padj<0.05 with |log2FC|>1",
+                "MA plot and volcano plot are produced for each contrast",
+                "A ranking statistic column is present in both saved tables for downstream GSEA"
+              ],
+              "constraints": [
+                "Use the single DESeqDataSet from T1S1 with Wald tests via results(contrast=...); do not refit separate two-group models per contrast",
+                "Apply BH correction separately within each contrast; do not pool the two contrasts into one multiple-testing family, and do not restrict the tested gene set to the T1S2 LRT hits",
+                "Use apeglm shrinkage for ranking and plots only; report unshrunk log2FC and p-values in the results tables",
+                "State the direction convention (positive = up in treatment relative to control) explicitly in the output"
+              ],
+              "caveats": [
+                "n=4 per group gives good power only for large, consistent effects; report median absolute log2FC among significant genes so the reader can judge whether hits are of plausible magnitude or driven by low-count noise",
+                "Genes with very low baseMean can produce extreme fold changes; rely on the shrunken LFC for ranking and flag any top hit whose baseMean is in the bottom decile",
+                "DESeq2's independent filtering sets padj to NA for low-count genes — report how many genes were filtered this way per contrast rather than treating NA as non-significant"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Reconcile omnibus and pairwise results; compare the two treatments",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Of the genes the LRT flags as differing across the three groups, which are driven by treated_a alone, by treated_b alone, or shared by both — and which genes differ between treated_a and treated_b directly?",
+              "description": "Integrate the T1S2 LRT table and the two T1S3 contrast tables into one gene-level summary. Add the third pairwise Wald contrast, treated_b vs treated_a (from the same T1S1 fit, independently BH-corrected), so the two treatments can be compared to each other and not only to control. Build a joined table keyed on gene symbol carrying: LRT padj, and for each of the three contrasts the log2FC and padj. Classify each LRT-significant gene into treated_a-specific, treated_b-specific, shared-concordant (same direction in both treatments), or shared-discordant (opposite directions), using padj<0.05 in the relevant contrasts, and report the counts in each class. Produce a Venn or UpSet diagram of the DE gene sets from the three contrasts, and a scatter plot of treated_a-vs-control log2FC against treated_b-vs-control log2FC over all tested genes, with the Pearson and Spearman correlation and the identity line drawn, which shows at a glance whether the two treatments act along the same axis or divergently. Save the joined table.",
+              "context": "This step answers the implicit comparative question: three groups with a shared control invite the question of whether the two treatments do the same thing. The classification is descriptive labelling built from three independently corrected tests, not a formal interaction test.",
+              "acceptance_criteria": [
+                "A joined per-gene table is saved containing LRT padj plus log2FC and padj for all three pairwise contrasts (treated_a vs control, treated_b vs control, treated_b vs treated_a)",
+                "Counts of treated_a-specific, treated_b-specific, shared-concordant and shared-discordant genes among LRT-significant genes are reported",
+                "An UpSet or Venn diagram of the three contrasts' DE gene sets is produced",
+                "A log2FC-vs-log2FC scatter of the two treatment-vs-control contrasts is produced with Pearson and Spearman correlation reported",
+                "The output states that 'treatment-specific' here means significant in one contrast and not the other, which is not the same as a significant difference between the two effects"
+              ],
+              "constraints": [
+                "Derive the treated_b vs treated_a contrast from the same T1S1 fitted object; do not refit",
+                "Classify using padj thresholds consistently and state the threshold used",
+                "Do not claim a gene responds differently to the two treatments on the basis of one contrast being significant and the other not — point to the treated_b vs treated_a contrast for that claim"
+              ],
+              "caveats": [
+                "The significant-in-one-but-not-the-other pattern is the classic difference-of-significance fallacy; the direct treated_b vs treated_a contrast is the only evidence that bears on differential response and it is the least powered of the three",
+                "Discordant-direction genes at n=4 are frequently noise; require a meaningful |log2FC| in both contrasts before highlighting one"
+              ],
+              "packages": [
+                "DESeq2",
+                "dplyr",
+                "ggplot2",
+                "ComplexUpset",
+                "ggrepel"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Gene-set enrichment for each treatment contrast",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which hallmark and GO biological-process gene sets are coordinately shifted by treated_a versus control and by treated_b versus control in liver, and do the two treatments engage the same programmes?",
+              "description": "Run rank-based gene set enrichment (fgsea) separately on the two ranked gene lists produced in T1S3 — treated_a vs control and treated_b vs control — using the full ranked list of tested genes rather than a thresholded subset, so the analysis does not inherit the low power of the per-gene cutoff. Required reference data: human hallmark gene sets and human GO biological-process gene sets, both keyed on HGNC gene symbols, which is the identifier space of the counts matrix (a human hallmark GMT and a human GO-BP GMT are present in the environment's pathway reference collection; resolve them at run time rather than assuming a path). Restrict sets to those with between 15 and 500 genes present in the tested background. Report the top enriched sets per contrast by adjusted p-value with NES and leading-edge genes, and produce a side-by-side comparison of NES for sets significant in either contrast so shared versus treatment-specific programmes are visible. Since the tissue is liver, explicitly note whether hepatocyte-relevant programmes (xenobiotic and drug metabolism, bile acid metabolism, fatty acid metabolism, inflammatory response) appear, as these are the expected axes for a liver treatment response — report their absence just as plainly as their presence.",
+              "context": "The background for enrichment must be the genes actually tested in T1S3 after filtering, not all 12,000 input genes and not a genome-wide universe; the counts matrix appears already pre-filtered, which restricts the achievable universe and should be stated.",
+              "acceptance_criteria": [
+                "fgsea results tables for both contrasts are saved with pathway, NES, p-value, BH padj, set size and leading-edge genes",
+                "The gene-set collections actually used are named in the output, with their organism (human) confirmed to match the data",
+                "The ranked list used is the full tested gene set from T1S3, and the number of ranked genes and the number of sets tested after the 15-500 size filter are reported",
+                "A comparison of NES between the two contrasts for sets significant in either is produced",
+                "Liver-relevant programmes are explicitly commented on, present or absent"
+              ],
+              "constraints": [
+                "Use the ranking statistic column from T1S3, not a thresholded DE gene list, and do not re-derive rankings from raw counts",
+                "Use human gene sets only — the environment also holds mouse and rat pathway files and selecting one of those would produce confident nonsense on human data",
+                "Report BH-adjusted p-values and set sizes alongside NES; never report a pathway hit without its set size and leading-edge count",
+                "Collapse or flag redundant parent/child GO terms before reporting a headline count of enriched processes"
+              ],
+              "caveats": [
+                "If neither human hallmark nor human GO-BP sets can be resolved at run time, report the absence explicitly and deliver the ranked gene lists alone — the per-gene results from T1S2/T1S3 remain the primary answer and the run should not be treated as failed",
+                "GSEA can return significant sets even when no individual gene passes FDR; that is a legitimate gain in power but it must be reported as a coordinated-shift signal, not as evidence that individual leading-edge genes are differentially expressed",
+                "GO BP sets are heavily nested, so significant hits will arrive in correlated blocks"
+              ],
+              "packages": [
+                "fgsea",
+                "dplyr",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

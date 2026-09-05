@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 7,
+    "low_count_filter": 0,
+    "normalization": 7,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The central failure is that the plan never infers strandedness from alignments or reads (infer_experiment.py or salmon libType A) and never re-counts; it substitutes a count-matrix proxy diagnostic that cannot actually determine strand mode, then fits DESeq2 on the counts as delivered, which the reference explicitly calls wrong. The DESeq2 Wald test on raw counts with BH at 0.05 and an explicit n=3 power caveat is appropriate, and sample QC (library size, PCA, correlation, outlier discussion) is present. No low count filter is mentioned, no fold change shrinkage (apeglm) is specified, and the reference level of the design is not stated. Enrichment was not requested; the plan adds it with a named, versioned collection and a GSEA fallback but without a stated ranking metric, ORA universe, or set size window, and the report omits software versions."
+}

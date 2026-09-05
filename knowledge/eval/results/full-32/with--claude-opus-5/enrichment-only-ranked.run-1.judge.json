@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly does not redo DE and runs fgseaMultilevel preranked on the full 12,000-gene list ranked by the Wald statistic, with the metric and rejected alternatives stated, the tested genes as universe, Hallmark 2026.1 named, a 15-500 size window applied after intersection, a fixed seed, BH at 0.05, leading edges and redundancy collapsing. QC is dataset-specific: blind VST PCA and distance heatmap colored by condition, library sizes with sample_01's ratio to the median quantified, and an explicit keep-and-report policy; normalization is kept inside DESeq2 size factors. The design formula is not stated because DE is supplied, but the plan compensates by empirically verifying the contrast's sign convention against group means; no explicit low-count filter is needed and the NA/independent-filtering handling is described. The report step names tool versions, collection version, ranking metric, thresholds, significant-gene counts, the sample_01 caveat and a reproducibility record."
+}

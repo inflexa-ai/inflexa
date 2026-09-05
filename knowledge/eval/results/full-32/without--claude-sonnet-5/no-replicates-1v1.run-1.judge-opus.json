@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 6,
+    "low_count_filter": 4,
+    "normalization": 6,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses the absence of replication and foregrounds descriptive fold changes and ranks, but it then leaves the door open to DESeq2 with a manually fixed or 'borrowed' dispersion, which manufactures p-values that cannot be calibrated from these data; labeling them 'descriptive' does not rescue an invalid test, and the plan never states the replication level (three or more per group) that would support inference. QC is limited to library sizes, zero counts and distributions, which is about all that two samples permit, but there is no outlier or shallow-sample policy. Normalization is handled sensibly with raw counts and CPM/size factors, though the expression floor is left as an unspecified 'e.g. CPM > threshold' and no design formula, reference level, or contrast is written out. Multiple testing and shrinkage are unaddressed, and the enrichment step is not warranted here yet is performed anyway, on a |log2FC|-ranked list with no stated universe or gene-set size window, producing enrichment p-values and FDRs that inherit the uncalibrated ranking."
+}

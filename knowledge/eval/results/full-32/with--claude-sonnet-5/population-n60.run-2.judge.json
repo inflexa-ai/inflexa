@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core method: limma-voom with TMM, ~condition with control as explicit reference, eBayes, BH at 0.05, TREAT against a stated log2FC threshold, and shrunken effect sizes with CIs reported beside every p-value, with the Wilcoxon cross-check as a reasonable extra. Enrichment is ranked on the moderated t for both camera and fgsea, with a tested-gene universe, a 15-500 size window, and named, versioned collections. QC covers PCA, distances, library sizes, and an explicit flag-not-drop outlier policy, but omits the sex check against XIST/Y-linked genes and any search for hidden structure with candidate factors reported, which the reference requires for a human cohort. The report is thorough on versions, thresholds, and counts, but does not name whole-blood cell-composition or unmeasured-covariate (sex, age) caveats as design limitations."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: ~ sex + age + condition with control releveled, age centered and continuous, an explicit confounding/collinearity assessment before the test, and counts never adjusted for covariates outside the model. Filtering (10 counts in 6 samples then independent filtering), size factors/TMM inside the model, BH at 0.05 in results(), and apeglm on the condition coefficient are all stated correctly. QC covers PCA by condition, sex and age with an outlier flag policy, but omits the XIST/Y-linked sex verification the reference calls for. Enrichment was not asked; the plan adds a well-specified fgsea (full ranked list, Wald stat, Hallmark/GO named, 15-500 window, seed), so it is not penalized heavily, but it is extra rather than warranted. The report specification is complete, including the residual-df and unmatched-age limitations."
+}

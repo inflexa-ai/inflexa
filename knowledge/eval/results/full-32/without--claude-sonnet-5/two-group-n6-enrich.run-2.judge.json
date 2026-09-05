@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 Wald with median-of-ratios normalization inside the model, apeglm/ashr shrinkage and BH at 0.05 fits the unpaired 6v6 single-batch design, and the plan explicitly refuses a pairing term. QC covers library sizes, a VST PCA/correlation view, and a stated retain-or-exclude policy with a sensitivity re-fit, though coloring by condition is not stated. The low-count filter is deferred to an unspecified 'threshold to be applied downstream' rather than a minimal, justified rule; the reference level is implied but not set explicitly; the |log2FC|>=1 cut is applied post hoc rather than via lfcThreshold. GSEA is preranked fgsea on the full list against a versioned Hallmark GMT, but the ranking metric is left as an 'e.g.' choice and no set-size window is given; package versions are not requested in the report."
+}

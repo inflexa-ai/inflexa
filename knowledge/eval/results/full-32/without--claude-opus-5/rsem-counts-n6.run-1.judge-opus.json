@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the RSEM specifics: it keeps expected counts, rounds them for DESeq2 with the rounding stated, never substitutes TPM/FPKM, and states explicitly that no effective-length offset is applied because the genes.results files were not delivered. Its one real gap against the reference is that it accepts the loss rather than requesting the per-sample genes.results files, and its justification that length 'cancels within the contrast' glosses over sample-level effective-length variation. QC is exemplary and dataset-specific: library sizes, size factors, detected genes, vst PCA, distance heatmap, and a PC1-vs-log-depth correlation to distinguish depth from biology, with sample_01 retained as primary and a leave-one-out sensitivity run rather than a silent drop. The model (~condition, control as reference, explicit direction), median-of-ratios normalization inside the model, BH with stated alphas, and apeglm shrinkage used only for ranking are all correct; the count>=10 in >=6 samples filter is condition-independent and justified but slightly stricter than needed. Enrichment is well specified (full ranked list, stated metric, named human collections, 15-500 size window, filtered genes as ORA universe, mapping rate) though no collection version is pinned, and the report plan lacks an explicit software-version statement."
+}

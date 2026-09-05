@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The negative binomial modelling is well matched to a 3-vs-3 unpaired single-batch design: DESeq2 Wald with control as explicit reference, edgeR QL cross-check, minimal >=10-in-3 filter, internal size factors/TMM, BH at 0.05 with apeglm shrinkage, and an honest power statement without alpha loosening. The weakness is the strandedness question: the plan names RSeQC infer_experiment as the required check but declares it impossible and proceeds to fit the counts as delivered, backed only by count-matrix proxies that it admits cannot detect a uniformly wrong strand setting; the reference requires inferring strandedness on alignments or reads and re-counting, and the plan never asks for the BAMs/FASTQs or makes the DE result conditional on obtaining them. QC is complete (blind VST PCA, distance heatmap, library sizes, coloured by condition, outlier policy stated). Enrichment was not requested but is specified correctly (full Wald-ranked list, tested-gene universe, named collections with version, 15-500 window, seed), so it is not penalised heavily. The report section covers method, versions, design, contrast, thresholds, gene counts, and caveats."
+}

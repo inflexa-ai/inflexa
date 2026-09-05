@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to refit the count model, uses enrichGO on GO:BP with the 12000 tested genes as the universe, BH adjustment, a stated 15-500 size window, and rrvgo redundancy reduction, and its report carries term, gene ratio, padj, member genes, versions, seed and the sample_01 caveat. It loses points for never testing up- and down-regulated genes apart nor explicitly stating that they are pooled, and for bolting on a parallel GO:BP GSEA that the consolidated report merges with the ORA answer, which the reference flags as not an answer to an over-representation question and which pads the plan without addressing the asked question. The design-level criteria (QC, filtering, normalization, formula) are largely inherited from the supplied results and the plan handles them only as acknowledged caveats, so they score as adequate rather than complete."
+}

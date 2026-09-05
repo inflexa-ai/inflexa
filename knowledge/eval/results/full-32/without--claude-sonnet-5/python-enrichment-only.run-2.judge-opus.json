@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly recognizes that the DE table is the starting point and runs a single pre-ranked GSEA in Python (gseapy.prerank) on the full 12,000-gene ranked list with an explicit, correctly signed metric (DESeq2 stat, falling back to sign(LFC)*-log10(p)), an explicit de-duplication rule, NA handling, a local GMT resolved at run time, >=1000 permutations, and FDR<0.05 reporting split by NES direction — avoiding the two classic errors of pre-filtering on padj and calling the Enrichr web service. It falls short of the reference on a few operational details: no gene set size window (15–500), no fixed random seed for the permutation test, no named MSigDB release version, and no tie-handling rule for the rank metric. Count-model criteria (filtering, normalization, design formula, shrinkage) are legitimately out of scope here and the plan says so explicitly rather than silently skipping them, but it never restates the contrast reference level or checks whether padj-NA (independent filtering) genes should be retained by their stat. Sample-level QC is impossible from a DE table, and the plan responsibly carries the sample_01 shallow-library caveat forward, though it offers no diagnostic of the rank distribution or of upstream fit quality. Reporting is strong on NES/FDR/leading edge and per-set coverage but omits package versions."
+}

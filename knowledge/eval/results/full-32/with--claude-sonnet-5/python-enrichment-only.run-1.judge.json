@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 4,
+    "low_count_filter": 5,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly starts from the existing DESeq2 table without refitting, ranks every tested gene by the Wald statistic with missing stats dropped, and runs gseapy.prerank against a locally staged, version-named Hallmark GMT with a 15-500 size window, 1000 permutations, and seed 42, reporting NES, FDR q, and leading-edge genes; it explicitly forbids ORA on a thresholded list. It omits a stated tie-breaking rule and the Reactome 'current' collection is unpinned, though this is flagged. Sample-level QC is limited to a caveat about sample_01 rather than a PCA/library-size check or a stated policy, and the reference level and design formula of the upstream contrast are not stated. Filtering and normalization are not re-done, which is appropriate here, but the plan says nothing about how the upstream table handled them."
+}

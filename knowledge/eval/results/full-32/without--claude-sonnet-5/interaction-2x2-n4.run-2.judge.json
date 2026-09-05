@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 3,
+    "low_count_filter": 7,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the question as the genotype:treatment interaction in a full factorial DESeq2 model, names the formula, the reference levels, the interaction coefficient, and the within-genotype simple effects, and states BH at 0.05 with shrinkage for reported effects. Sample-structure QC is thin: it resolves the 17-vs-16 column mismatch and checks cell balance but has no PCA, sample distances, or library-size check and no outlier policy. Normalization is only implied by feeding raw counts to DESeq2; size factors are never stated. Enrichment is not warranted by the question, and where included it names the collections and a ranking metric but lacks versions, an explicit ORA universe, and a size window; software versions are also absent from the reporting."
+}

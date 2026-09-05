@@ -1,0 +1,300 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 2,
+  "startedAt": "2026-09-05T17:17:53.210Z",
+  "elapsedMs": 37056,
+  "outcome": "plan_submitted",
+  "planId": "pln-e2fcaaeb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and design matrix construction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The counts file has 17 columns for a 16-row metadata table — resolve this discrepancy (e.g., extra gene-symbol column vs an extra sample) before modeling and report which it was."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the 17-sample count matrix and 16-sample metadata table align into a complete, balanced 2x2 factorial design (WT/KO x vehicle/drug, n=4 per cell), and which genes pass a minimum-expression filter for differential testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample identifiers in counts.csv columns are matched against metadata.csv rows; any mismatch (counts has 17 columns vs 16 metadata rows) is explicitly resolved and reported, not silently dropped",
+          "Confirms 4 groups (WT-vehicle, WT-drug, KO-vehicle, KO-drug) each with the expected replicate count",
+          "Low-count genes are filtered (e.g., require count >=10 in at least 4 samples) prior to modeling, with the number of genes retained out of the starting 12000 reported",
+          "Outputs a cleaned counts matrix and metadata table with genotype and treatment as factors with explicit reference levels (genotype: WT reference, treatment: vehicle reference)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Full factorial DESeq2 model: interaction and simple effects",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=4 per cell and 12000 genes, interaction-term power is limited — flag this explicitly rather than overinterpreting a small significant-gene count.",
+          "Use apeglm or ashr shrinkage cautiously for interaction terms; do not shrink before extracting nominal interaction p-values for significance testing."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Using the design genotype + treatment + genotype:treatment, which genes show a significant genotype x treatment interaction (drug effect differs between KO and WT), and what are the simple drug-vs-vehicle effects within each genotype (WT: drug vs vehicle; KO: drug vs vehicle)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 fit uses the full model ~genotype + treatment + genotype:treatment on raw integer counts with the filtered gene set from T1S1",
+          "Interaction coefficient (genotypeKO.treatmentdrug) is extracted with log2FoldChange, p-value, and BH-adjusted p-value for every tested gene",
+          "Simple effects (drug vs vehicle within WT, drug vs vehicle within KO) are extracted via contrasts or by relevelling, each with its own DE result table",
+          "Reports counts of significant genes (padj < 0.05) for the interaction term and for each simple effect separately, and explicitly states that a non-significant interaction does not permit interpreting the simple effects as genotype-specific",
+          "Result tables are saved as gene x (log2FC, pvalue, padj) for all three contrasts"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on interaction and simple-effect gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Small interaction gene lists are common in underpowered 2x2 designs at n=4; a null enrichment result there is informative, not a failure."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "What biological pathways (WikiPathways human, MSigDB Hallmark) are enriched among genes with a significant genotype x treatment interaction, versus genes driving the drug response within WT alone or within KO alone?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Runs enrichment (e.g., fgsea pre-ranked by signed -log10(p)*sign(log2FC), or hypergeometric on padj<0.05 gene lists) separately for: (a) interaction-term genes, (b) WT drug-vs-vehicle genes, (c) KO drug-vs-vehicle genes",
+          "Uses the WikiPathways human gene sets and MSigDB Hallmark human gene sets found under /mnt/refs for Homo sapiens",
+          "Reports top enriched pathways per gene set/contrast with adjusted p-values, and explicitly flags if the interaction-term gene list is too small (e.g., <10 genes) for meaningful enrichment",
+          "If either reference GMT is unavailable at run time, the step reports the enrichment as skipped for that resource rather than failing silently"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Integrated interpretation: genotype-dependent vs genotype-independent drug response",
+        "agent": "statistical-modeling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Keep the final claim proportionate to power: a 2x2 design with n=4/cell has limited sensitivity to detect interaction effects unless they are large."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which genes and pathways show a genotype-dependent drug response (significant interaction) versus a genotype-independent additive drug response (significant simple effect in both genotypes with concordant direction and no significant interaction), and does this support or refute a differential drug action in KO vs WT overall?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "integration",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Cross-tabulates the interaction-term result against both simple-effect result tables to classify each tested gene into: interaction-significant (genotype-dependent), simple-effect-only concordant (genotype-independent/additive), simple-effect-only discordant, or non-significant",
+          "Produces a summary table/figure (e.g., counts per category, or a scatter of WT-effect vs KO-effect log2FC colored by interaction significance) grounded in the actual DESeq2 outputs from T1S2",
+          "States a direct, non-speculative answer to the research question (does the drug act differently in KO than WT) based on the number and identity of interaction-significant genes/pathways, explicitly noting the statistical power limitation of n=4/cell for detecting interactions",
+          "Does not claim mechanistic causality beyond what the DE and pathway enrichment results support"
+        ]
+      }
+    ],
+    "title": "Genotype x Treatment Interaction DE + Pathway Analysis",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The research question — does the drug act differently in KO than in WT — is fundamentally a question about a genotype:treatment interaction term in a 2x2 factorial design (WT/KO x vehicle/drug, n=4/cell, 16 samples, 12000 genes, raw salmon counts). This requires a single DESeq2 model with a full design formula (~genotype + treatment + genotype:treatment) rather than pairwise contrasts, because only the interaction coefficient formally answers 'does the treatment effect differ by genotype'. The plan: (1) QC and filter the count matrix and align it to metadata, confirming the 2x2 cell balance; (2) fit the full factorial DESeq2 model and extract the interaction term (drug effect in KO vs drug effect in WT) alongside the two simple main effects (drug vs vehicle within WT, drug vs vehicle within KO) for interpretability; (3) run pathway enrichment (WikiPathways human + MSigDB Hallmark) separately on the interaction-driven gene set and on each simple effect to characterize what differs mechanistically; (4) integrate the three DE result sets into one interpretive summary distinguishing genes with a genotype-dependent drug response from genes with a genotype-independent (additive) drug response. All steps use only human (Homo sapiens) reference gene sets, matching the dataset's stated organism."
+  },
+  "usage": {
+    "inputTokens": 132913,
+    "outputTokens": 3150,
+    "cacheCreationInputTokens": 71354,
+    "cacheReadInputTokens": 61523,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Genotype x Treatment Interaction DE + Pathway Analysis",
+          "analytical_narrative": "The research question — does the drug act differently in KO than in WT — is fundamentally a question about a genotype:treatment interaction term in a 2x2 factorial design (WT/KO x vehicle/drug, n=4/cell, 16 samples, 12000 genes, raw salmon counts). This requires a single DESeq2 model with a full design formula (~genotype + treatment + genotype:treatment) rather than pairwise contrasts, because only the interaction coefficient formally answers 'does the treatment effect differ by genotype'. The plan: (1) QC and filter the count matrix and align it to metadata, confirming the 2x2 cell balance; (2) fit the full factorial DESeq2 model and extract the interaction term (drug effect in KO vs drug effect in WT) alongside the two simple main effects (drug vs vehicle within WT, drug vs vehicle within KO) for interpretability; (3) run pathway enrichment (WikiPathways human + MSigDB Hallmark) separately on the interaction-driven gene set and on each simple effect to characterize what differs mechanistically; (4) integrate the three DE result sets into one interpretive summary distinguishing genes with a genotype-dependent drug response from genes with a genotype-independent (additive) drug response. All steps use only human (Homo sapiens) reference gene sets, matching the dataset's stated organism.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and design matrix construction",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Do the 17-sample count matrix and 16-sample metadata table align into a complete, balanced 2x2 factorial design (WT/KO x vehicle/drug, n=4 per cell), and which genes pass a minimum-expression filter for differential testing?",
+              "acceptance_criteria": [
+                "Sample identifiers in counts.csv columns are matched against metadata.csv rows; any mismatch (counts has 17 columns vs 16 metadata rows) is explicitly resolved and reported, not silently dropped",
+                "Confirms 4 groups (WT-vehicle, WT-drug, KO-vehicle, KO-drug) each with the expected replicate count",
+                "Low-count genes are filtered (e.g., require count >=10 in at least 4 samples) prior to modeling, with the number of genes retained out of the starting 12000 reported",
+                "Outputs a cleaned counts matrix and metadata table with genotype and treatment as factors with explicit reference levels (genotype: WT reference, treatment: vehicle reference)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "The counts file has 17 columns for a 16-row metadata table — resolve this discrepancy (e.g., extra gene-symbol column vs an extra sample) before modeling and report which it was."
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Full factorial DESeq2 model: interaction and simple effects",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using the design genotype + treatment + genotype:treatment, which genes show a significant genotype x treatment interaction (drug effect differs between KO and WT), and what are the simple drug-vs-vehicle effects within each genotype (WT: drug vs vehicle; KO: drug vs vehicle)?",
+              "acceptance_criteria": [
+                "DESeq2 fit uses the full model ~genotype + treatment + genotype:treatment on raw integer counts with the filtered gene set from T1S1",
+                "Interaction coefficient (genotypeKO.treatmentdrug) is extracted with log2FoldChange, p-value, and BH-adjusted p-value for every tested gene",
+                "Simple effects (drug vs vehicle within WT, drug vs vehicle within KO) are extracted via contrasts or by relevelling, each with its own DE result table",
+                "Reports counts of significant genes (padj < 0.05) for the interaction term and for each simple effect separately, and explicitly states that a non-significant interaction does not permit interpreting the simple effects as genotype-specific",
+                "Result tables are saved as gene x (log2FC, pvalue, padj) for all three contrasts"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=4 per cell and 12000 genes, interaction-term power is limited — flag this explicitly rather than overinterpreting a small significant-gene count.",
+                "Use apeglm or ashr shrinkage cautiously for interaction terms; do not shrink before extracting nominal interaction p-values for significance testing."
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on interaction and simple-effect gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What biological pathways (WikiPathways human, MSigDB Hallmark) are enriched among genes with a significant genotype x treatment interaction, versus genes driving the drug response within WT alone or within KO alone?",
+              "acceptance_criteria": [
+                "Runs enrichment (e.g., fgsea pre-ranked by signed -log10(p)*sign(log2FC), or hypergeometric on padj<0.05 gene lists) separately for: (a) interaction-term genes, (b) WT drug-vs-vehicle genes, (c) KO drug-vs-vehicle genes",
+                "Uses the WikiPathways human gene sets and MSigDB Hallmark human gene sets found under /mnt/refs for Homo sapiens",
+                "Reports top enriched pathways per gene set/contrast with adjusted p-values, and explicitly flags if the interaction-term gene list is too small (e.g., <10 genes) for meaningful enrichment",
+                "If either reference GMT is unavailable at run time, the step reports the enrichment as skipped for that resource rather than failing silently"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Small interaction gene lists are common in underpowered 2x2 designs at n=4; a null enrichment result there is informative, not a failure."
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Integrated interpretation: genotype-dependent vs genotype-independent drug response",
+              "track": "T3",
+              "step_type": "integration",
+              "question": "Which genes and pathways show a genotype-dependent drug response (significant interaction) versus a genotype-independent additive drug response (significant simple effect in both genotypes with concordant direction and no significant interaction), and does this support or refute a differential drug action in KO vs WT overall?",
+              "acceptance_criteria": [
+                "Cross-tabulates the interaction-term result against both simple-effect result tables to classify each tested gene into: interaction-significant (genotype-dependent), simple-effect-only concordant (genotype-independent/additive), simple-effect-only discordant, or non-significant",
+                "Produces a summary table/figure (e.g., counts per category, or a scatter of WT-effect vs KO-effect log2FC colored by interaction significance) grounded in the actual DESeq2 outputs from T1S2",
+                "States a direct, non-speculative answer to the research question (does the drug act differently in KO than WT) based on the number and identity of interaction-significant genes/pathways, explicitly noting the statistical power limitation of n=4/cell for detecting interactions",
+                "Does not claim mechanistic causality beyond what the DE and pathway enrichment results support"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "Keep the final claim proportionate to power: a 2x2 design with n=4/cell has limited sensitivity to detect interaction effects unless they are large."
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

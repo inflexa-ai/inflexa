@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts for an unpaired 6v6 single-batch design, blind-VST PCA and distance heatmap with sample_01 labeled and a stated keep-unless-outlier policy plus library-size reporting, median-of-ratios inside the model, explicit ~condition with chow as reference, apeglm shrinkage and BH at 0.05 with selection by padj only. Enrichment is fgsea preranked on the Wald statistic over all tested genes against the mouse-native Hallmark collection with a 15-500 size window and the universe and collection version stated; the only softness is that it treats absence of the mouse collection as a blocking gap rather than offering a proper ortholog-map fallback. The >=10 counts in >=6 samples filter is standard and tied to group size, though slightly on the stricter side of 'minimal'. The report step names versions, design, thresholds, tested/DE counts, the sample_01 decision, seed, and design caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the RSEM expected counts, states that the length offset is lost without the genes.results files, rounds for DESeq2 and never substitutes TPM/FPKM, and keeps median-of-ratios inside the model; it keeps sample_01 with a stated sensitivity policy and reports its depth, though it does not ask for the per-sample files and does not say the PCA/heatmap is colored by condition. It names design ~condition but never sets the reference level, gives no explicit low count filter beyond DESeq2's independent filtering, and omits fold change shrinkage (apeglm) entirely. The enrichment step names a versioned WikiPathways collection but specifies no universe, no size window, and leaves ORA versus GSEA and the ranking metric undecided. Reporting covers method, design, thresholds and caveats but not software versions or the number of genes tested."
+}

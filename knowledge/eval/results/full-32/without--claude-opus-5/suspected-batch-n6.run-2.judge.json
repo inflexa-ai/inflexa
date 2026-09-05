@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core decision: svaseq with ~condition full and ~1 null, n.sv from the estimator rather than the two clusters, explicit SV-vs-condition collinearity checks, SVs added as covariates in DESeq2 rather than a corrected matrix, with BH at 0.05 and lfcShrink. It does not first ask the analyst for the unrecorded variable (extraction date, lane), and the instruction to run svaseq 'on the normalized counts' is ambiguous. The low-count filter is left as 'a reasonable count in at least 6 samples' with no stated threshold or justification, size-factor normalization is only implicit, and the |log2FC|>1 cut is applied post hoc rather than via lfcThreshold. Enrichment names collections and the ranking metric and reports symbol overlap, but gives no version or set-size window; the report specifies design, thresholds, hit counts, residual df and caveats, with versions stated for sva only."
+}

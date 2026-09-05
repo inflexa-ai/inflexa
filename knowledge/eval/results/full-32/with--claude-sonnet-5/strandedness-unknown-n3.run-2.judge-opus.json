@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The DESeq2 Wald setup is correctly matched to an unpaired 3-vs-3 single-batch raw-count design, with an honest statement of low power that does not loosen alpha, and the QC, filtering, normalization, contrast, FDR/shrinkage, enrichment and reporting steps are all explicit and well specified. The central weakness is the dataset's defining concern: the plan declares that alignments are unavailable and substitutes an indirect, admittedly inconclusive inspection of the count matrix for a real strandedness inference, never running RSeQC infer_experiment or salmon libType A per sample, never comparing the inferred protocol against the strand setting used at counting, and never proposing re-counting with the correct -s option. It does at least refuse to silently trust the counts, flags the residual uncertainty in the report, and names RSeQC as the authoritative check should BAMs surface, which is much better than fitting the model as if strandedness were a non-issue. Enrichment is well grounded (full ranked list on the Wald statistic, tested-gene universe, named collections with versions, 15-500 size window, leading edges), but every downstream result still rests on a count matrix whose validity was not established."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the RSEM expected counts, states that the length offset is lost without the genes.results files, rounds for DESeq2 rather than substituting TPM/FPKM, and fits a Wald test with median-of-ratios normalization inside the model on a ~condition design appropriate for 6v6 unpaired single-batch; it does not, however, request the missing per-sample files. QC is thorough, keeps sample_01 with a stated policy, and adds a sensitivity rerun. The low-count filter is left vague ('very low counts') with no threshold or justification; the reference level and the BH procedure are implied by DESeq2 defaults rather than stated, and no package versions are named. Enrichment and a STRING network are added although not warranted by the question, and the enrichment lacks an explicit ORA universe, collection versions, and a set-size window."
+}

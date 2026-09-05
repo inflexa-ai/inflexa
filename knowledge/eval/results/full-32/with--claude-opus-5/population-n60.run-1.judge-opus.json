@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan selects limma-voom with a fixed-effects ~condition design and eBayes for a 60v60 unpaired single-batch cohort, which is exactly the reference method, and adds a Wilcoxon control that is appropriate rather than gratuitous at this n. Effect size is handled inside the model with TREAT at a stated lfc=1 plus 95% CIs beside every p-value, with the naive post-hoc filter explicitly labeled as lacking FDR control; filterByExpr before TMM and BH at 0.05 are all specified correctly with no pre-normalization leaking into the count model. Enrichment is fully specified: camera with inter-gene correlation, fgsea preranked on the moderated t, tested-gene universe, 15-500 size window applied after intersection, named collection with version, seed, and honest handling of the missing Reactome collection. QC covers library sizes, blind VST PCA on top-500 variable genes, distance heatmap, and a flag-don't-drop outlier policy, but it omits the sex check against XIST/Y-linked genes and any explicit search for hidden structure beyond noting that no covariates exist, which is the one gap against the reference. The report step names design, reference level, contrast direction, filter, n tested of 12,000, n DE, thresholds, diagnostics, and a reproducibility record with the cell-composition confound stated prominently."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: ~ subject + condition in DESeq2 with the Wald test on the condition coefficient, an edgeR QL cross-check on the same blocked design, and an explicit statement that no per-subject test is possible with one sample per subject per condition. QC uses blind VST, PCA, sample distances and library sizes coloured by subject and condition, with pairing verification and a named-but-not-dropped outlier policy, though no explicit rule for a shallow library is given. Filtering (>=10 counts in 5 samples), in-model normalization, an explicitly set reference level, the named contrast triple, BH at 0.05, apeglm shrinkage, and lfcThreshold-in-results are all stated. Enrichment was not requested but is executed correctly (full Wald-stat ranking, named collection and version, 15–500 size window, tested-gene universe for any ORA); the report step lists method, versions, design, thresholds, tested/DE counts, and design caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 2,
+    "low_count_filter": 1,
+    "normalization": 2,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 3
+  },
+  "rationale": "The planner correctly recognised that raw paired-end FASTQ files cannot be tested for differential expression, refused to invent a count matrix, named concrete quantifiers (STAR/HISAT2+featureCounts, Salmon/kallisto), identified the GRCh38/GENCODE v50 annotation present, and asked the right question about whether counts exist elsewhere or a quantifier will be provisioned; this matches the reference outcome, so the method-fits-design criterion scores high. However, no plan was submitted and the message does not sketch what applies once counts arrive: no QC step, no low-count filter, no statement that normalization occurs inside DESeq2, no design formula or contrast with reference level, no BH alpha or fold-change shrinkage, and no acknowledgement of the low power of 3 vs 3. DESeq2/PyDESeq2 is mentioned only in passing, which does not amount to a stated method. Enrichment is correctly omitted as unwarranted. Report elements are limited to a good description of the environment and references."
+}

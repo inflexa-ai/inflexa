@@ -1,0 +1,483 @@
+{
+  "campaign": "full-32",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T18:11:55.960Z",
+  "elapsedMs": 64636,
+  "outcome": "plan_submitted",
+  "planId": "pln-9b1c2a9b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and batch characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not adjust or remove-batch the counts at this stage — this step is diagnostic only",
+          "If a recorded variable explains the split and is balanced across condition, add it as a fixed effect instead of using SVA in T1S2"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 kidney samples (6 treated, 6 control) show a PCA/sample-distance structure that splits into two six-sample clusters unrelated to condition, and does any recorded metadata field (even if not labeled 'batch') explain that split?",
+        "grounding": {
+          "claims": [
+            "R-0022@6ba4",
+            "R-0033@40bf",
+            "R-0034@39e2"
+          ],
+          "reason": "Suspected-batch dataset: blinded VST + PCA + sample-distance heatmap colored by every processing variable, per R-0022/R-0033/R-0034",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "description": "Load the raw Salmon gene-level count matrix (12000 genes x 12 samples) and the 12x2 metadata table. Apply DESeq2's blind variance-stabilizing transformation, compute PCA on the top 500 most variable genes, and draw a sample-distance (Euclidean) heatmap. Color both by condition (treated/control) and by every other column present in the metadata table. Confirm the two six-sample clusters reported in the data profile, and check library size and detected-gene-count per sample as candidate technical explanations. Explicitly test whether any single sample is a PCA/heatmap outlier apart from the two-cluster split (quality_flag: outlier_sample) and, if so, document library size / detected genes for that sample as a candidate technical cause without removing it yet.",
+        "acceptance_criteria": [
+          "PCA plot and sample-distance heatmap produced, colored by condition and by all metadata columns",
+          "Confirms or refutes that the two six-sample clusters correspond to a recorded metadata variable",
+          "Reports library size and detected-gene count per sample",
+          "States explicitly whether any sample is flagged as a distinct outlier beyond the two-cluster split, with reasoning, per outlier investigation rule"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression with surrogate-variable adjustment for the unrecorded batch",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Never test on batch-adjusted/removed counts — surrogate variables enter the design as covariates only",
+          "State the number of surrogate variables and keep it small relative to sample size (n=12)",
+          "If the post-SVA p-value histogram remains irregular, state this and do not present BH-adjusted p-values as fully reliable"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "sva",
+          "apeglm",
+          "edgeR"
+        ],
+        "question": "Which of the 12000 genes differ between treated (n=6) and control (n=6) kidney samples once the unrecorded structural batch (the two six-sample PCA clusters orthogonal to condition) is accounted for via surrogate variable analysis?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0068@eb3c",
+            "R-0036@9786",
+            "R-0025@1e65",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0067@e082",
+            "R-0009@f54e",
+            "R-0084@2a4e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "6v6, suspected unrecorded batch, no known batch variable: sva-estimated surrogate variables as design covariates (R-0025/R-0068), DESeq2 Wald + apeglm as primary (R-0001/R-0009), edgeR QL as second method for overlap (R-0042/R-0001), BH+independent filtering (R-0010/R-0043)",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Pre-filter genes to those with >=10 counts in at least 6 samples (the smaller group size). Since T1S1 is expected to confirm no recorded metadata variable explains the two-cluster split, estimate surrogate variables with sva (condition as the known factor of interest) and add them as covariates in the DESeq2 design formula alongside condition (~ SV1 + ... + condition), explicitly setting control as the reference level. Fit DESeq2 with the Wald test on this extended design, apply apeglm shrinkage to the condition coefficient, and inspect the raw p-value histogram for irregular shape (a hill mid-distribution or a rise toward 1) as a check that the surrogate variables absorbed the batch structure — if irregular, note this explicitly rather than trusting the BH-adjusted p-values. As a robustness cross-check, additionally fit edgeR quasi-likelihood F-test on the identical extended design (counts, filter, covariates) and report the intersection of DESeq2- and edgeR-significant gene sets (padj < 0.05) as the high-confidence set, with method-specific-only genes as secondary. If T1S1 flagged a distinct outlier sample (not just the two-cluster split) and the smallest group still has >=3 replicates, keep the sample and do not remove it (report a down-weighted/robust variant only as sensitivity, not primary).",
+        "acceptance_criteria": [
+          "Design formula includes estimated surrogate variable(s) plus condition, with condition releveled so control is the reference",
+          "Number of surrogate variables estimated and each one's correlation with the observed cluster split reported",
+          "DESeq2 Wald test results table with unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, p-value, BH-adjusted p-value for every tested gene",
+          "edgeR QL F-test run on the same extended design; DESeq2/edgeR overlap reported as the high-confidence gene set",
+          "p-value histogram (pre- and post-SVA) inspected and its shape stated in output",
+          "Count of genes at padj < 0.05 reported, with NA-flagged genes (Cook's outlier) separated from independent-filtering NAs"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA on the DESeq2 Wald statistic (Hallmark, then Reactome)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Local reference store carries Hallmark human (h.all.v2026.1.Hs.symbols.gmt) and Reactome pathways (ReactomePathways.gmt, all-species — must filter to Homo sapiens using ReactomePathways.txt); KEGG legacy sets are not served, only KEGG MEDICUS is available separately if needed"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which MSigDB Hallmark and Reactome pathways are enriched among genes ranked by the treated-vs-control Wald statistic from the batch-adjusted DESeq2 model?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77",
+            "R-0108@409f"
+          ],
+          "reason": "Ranked stat metric chosen per disputed rule R-0108 (Wald statistic side); Hallmark first then Reactome as second collection per R-0098/R-0048; both staged locally in the reference store",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Map gene symbols in the DESeq2 results table to the identifier space of the local gene set collections (both staged as HGNC symbol GMTs, so no additional ID mapping is required beyond confirming symbol consistency; report the unmapped share). Rank the full list of tested genes (post pre-filter, pre significance-threshold) by the DESeq2 Wald statistic (stat column) — not by unshrunken log2FoldChange, not by a signed p-value. Run fgsea preranked GSEA against the local MSigDB Hallmark human gene set collection (50 sets) restricting to sets with 15-500 members among tested genes, with BH adjustment. Repeat against the local Reactome human pathway gene sets as the second collection. Collapse redundant significant sets and report leading-edge genes for each significant set in both collections.",
+        "acceptance_criteria": [
+          "Ranked list uses full set of tested genes (no pre-threshold), ranked by DESeq2 Wald statistic",
+          "fgsea run against local MSigDB Hallmark (50 sets) and local Reactome pathway gene sets, each with min/max set size 15-500 among tested genes",
+          "Unmapped gene symbol share reported for each collection",
+          "Significant sets (BH padj < 0.05) reported with leading-edge genes; redundant sets collapsed",
+          "Gene set collection identity and version stated in output (MSigDB Hallmark 2026.1, Reactome current release)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated differential expression and enrichment report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The suspected-batch adjustment is a statistical correction for an unconfirmed structural axis of variance; state this uncertainty prominently rather than presenting the SVA-adjusted result as equivalent in confidence to a known, balanced batch design"
+        ],
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the reproducible, batch-aware summary of genes differing between treated and control kidney samples, and which pathways are implicated?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report step: standard reproducibility record, gene-set/effect-size reporting fields, and DESeq2/edgeR overlap reporting per R-0041/R-0042/R-0086",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "description": "Assemble a single report combining: the sample structure QC findings (T1S1, including whether the two six-sample clusters correspond to any recorded variable), the surrogate-variable count and design formula used, DESeq2 fit diagnostics (MA plot, dispersion plot), p-value histograms before and after SVA adjustment with their shape stated, the DESeq2 vs edgeR gene-set overlap and the high-confidence intersection list, the full DE gene table (unshrunken LFC, apeglm-shrunken LFC, lfcSE, padj) ranked by shrunken LFC, and the fgsea Hallmark/Reactome results with leading-edge genes. State explicitly that the surrogate-variable design is a modeling correction for a suspected but unconfirmed batch (not a confirmed technical batch), and that this is an inferential caveat on the confidence of the result. Include full session info, package versions, and gene-set collection versions for reproducibility.",
+        "acceptance_criteria": [
+          "Report states design formula, reference level, contrast, alpha=0.05 threshold, and number of tested/significant genes",
+          "Reports DESeq2 and edgeR overlap and the high-confidence gene set",
+          "States the number of surrogate variables and explicitly flags that the batch was suspected, not confirmed, framing this as an interpretive caveat",
+          "Includes MA plot, dispersion plot, and pre/post-SVA p-value histograms with stated shape",
+          "Lists leading-edge genes per significant enriched pathway",
+          "Includes session_info, package versions, and gene-set collection versions"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with suspected batch adjustment",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The data profile shows 6 treated vs 6 control kidney samples with raw gene-level Salmon counts (12000 genes x 13 columns incl. gene symbol), but the PCA reported in the profile splits the 12 samples into two clusters of six that align with NEITHER condition, and no processing batch was recorded. This is the classic suspected-unrecorded-batch scenario: an unmodeled structural axis of variance that is orthogonal to the condition of interest. Per the grounded procedure (Inflexa full_plan, digest sha256:ad61b0ba1...39624), the correct response is (1) formally characterize the sample structure via blinded VST + PCA + sample-distance heatmap and correlate the PC1/cluster assignment against every available metadata field to rule out a recorded but mislabeled batch; (2) since no variable explains the split, estimate surrogate variables with sva using the condition as the known factor of interest, and add them as covariates in the DESeq2 design (never remove/adjust counts pre-test, which would inflate confidence); (3) run the DESeq2 Wald test with apeglm shrinkage on the extended design, inspect the p-value histogram post-adjustment as a check that the surrogate variables absorbed the structure, and apply BH multiple testing with independent filtering; (4) as a robustness cross-check, run edgeR quasi-likelihood F-test on the same extended design and report the DESeq2/edgeR intersection as the high-confidence gene set; (5) rank the tested genes by the DESeq2 Wald statistic and run fgsea preranked GSEA against MSigDB Hallmark (staged locally) followed by Reactome (staged locally) as the second collection; (6) produce one consolidated report with both fits (with and without any flagged outlier sample), the surrogate-variable count and its correlation with the observed 6/6 split, fit diagnostics (MA plot, dispersion plot, p-value histograms before/after SVA), the DE gene table (unshrunken and shrunken LFC), and the enrichment tables with leading-edge genes."
+  },
+  "usage": {
+    "inputTokens": 392585,
+    "outputTokens": 6138,
+    "cacheCreationInputTokens": 151679,
+    "cacheReadInputTokens": 240846,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "suspected",
+        "quality_flags": [
+          "outlier_sample"
+        ],
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "sva",
+          "DESeq2",
+          "apeglm",
+          "org.Hs.eg.db",
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome C2 curated"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with suspected batch adjustment",
+          "analytical_narrative": "The data profile shows 6 treated vs 6 control kidney samples with raw gene-level Salmon counts (12000 genes x 13 columns incl. gene symbol), but the PCA reported in the profile splits the 12 samples into two clusters of six that align with NEITHER condition, and no processing batch was recorded. This is the classic suspected-unrecorded-batch scenario: an unmodeled structural axis of variance that is orthogonal to the condition of interest. Per the grounded procedure (Inflexa full_plan, digest sha256:ad61b0ba1...39624), the correct response is (1) formally characterize the sample structure via blinded VST + PCA + sample-distance heatmap and correlate the PC1/cluster assignment against every available metadata field to rule out a recorded but mislabeled batch; (2) since no variable explains the split, estimate surrogate variables with sva using the condition as the known factor of interest, and add them as covariates in the DESeq2 design (never remove/adjust counts pre-test, which would inflate confidence); (3) run the DESeq2 Wald test with apeglm shrinkage on the extended design, inspect the p-value histogram post-adjustment as a check that the surrogate variables absorbed the structure, and apply BH multiple testing with independent filtering; (4) as a robustness cross-check, run edgeR quasi-likelihood F-test on the same extended design and report the DESeq2/edgeR intersection as the high-confidence gene set; (5) rank the tested genes by the DESeq2 Wald statistic and run fgsea preranked GSEA against MSigDB Hallmark (staged locally) followed by Reactome (staged locally) as the second collection; (6) produce one consolidated report with both fits (with and without any flagged outlier sample), the surrogate-variable count and its correlation with the observed 6/6 split, fit diagnostics (MA plot, dispersion plot, p-value histograms before/after SVA), the DE gene table (unshrunken and shrunken LFC), and the enrichment tables with leading-edge genes.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and batch characterization",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 kidney samples (6 treated, 6 control) show a PCA/sample-distance structure that splits into two six-sample clusters unrelated to condition, and does any recorded metadata field (even if not labeled 'batch') explain that split?",
+              "description": "Load the raw Salmon gene-level count matrix (12000 genes x 12 samples) and the 12x2 metadata table. Apply DESeq2's blind variance-stabilizing transformation, compute PCA on the top 500 most variable genes, and draw a sample-distance (Euclidean) heatmap. Color both by condition (treated/control) and by every other column present in the metadata table. Confirm the two six-sample clusters reported in the data profile, and check library size and detected-gene-count per sample as candidate technical explanations. Explicitly test whether any single sample is a PCA/heatmap outlier apart from the two-cluster split (quality_flag: outlier_sample) and, if so, document library size / detected genes for that sample as a candidate technical cause without removing it yet.",
+              "acceptance_criteria": [
+                "PCA plot and sample-distance heatmap produced, colored by condition and by all metadata columns",
+                "Confirms or refutes that the two six-sample clusters correspond to a recorded metadata variable",
+                "Reports library size and detected-gene count per sample",
+                "States explicitly whether any sample is flagged as a distinct outlier beyond the two-cluster split, with reasoning, per outlier investigation rule"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0022@6ba4",
+                  "R-0033@40bf",
+                  "R-0034@39e2"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Suspected-batch dataset: blinded VST + PCA + sample-distance heatmap colored by every processing variable, per R-0022/R-0033/R-0034"
+              },
+              "caveats": [
+                "Do not adjust or remove-batch the counts at this stage — this step is diagnostic only",
+                "If a recorded variable explains the split and is balanced across condition, add it as a fixed effect instead of using SVA in T1S2"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression with surrogate-variable adjustment for the unrecorded batch",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes differ between treated (n=6) and control (n=6) kidney samples once the unrecorded structural batch (the two six-sample PCA clusters orthogonal to condition) is accounted for via surrogate variable analysis?",
+              "description": "Pre-filter genes to those with >=10 counts in at least 6 samples (the smaller group size). Since T1S1 is expected to confirm no recorded metadata variable explains the two-cluster split, estimate surrogate variables with sva (condition as the known factor of interest) and add them as covariates in the DESeq2 design formula alongside condition (~ SV1 + ... + condition), explicitly setting control as the reference level. Fit DESeq2 with the Wald test on this extended design, apply apeglm shrinkage to the condition coefficient, and inspect the raw p-value histogram for irregular shape (a hill mid-distribution or a rise toward 1) as a check that the surrogate variables absorbed the batch structure — if irregular, note this explicitly rather than trusting the BH-adjusted p-values. As a robustness cross-check, additionally fit edgeR quasi-likelihood F-test on the identical extended design (counts, filter, covariates) and report the intersection of DESeq2- and edgeR-significant gene sets (padj < 0.05) as the high-confidence set, with method-specific-only genes as secondary. If T1S1 flagged a distinct outlier sample (not just the two-cluster split) and the smallest group still has >=3 replicates, keep the sample and do not remove it (report a down-weighted/robust variant only as sensitivity, not primary).",
+              "acceptance_criteria": [
+                "Design formula includes estimated surrogate variable(s) plus condition, with condition releveled so control is the reference",
+                "Number of surrogate variables estimated and each one's correlation with the observed cluster split reported",
+                "DESeq2 Wald test results table with unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, p-value, BH-adjusted p-value for every tested gene",
+                "edgeR QL F-test run on the same extended design; DESeq2/edgeR overlap reported as the high-confidence gene set",
+                "p-value histogram (pre- and post-SVA) inspected and its shape stated in output",
+                "Count of genes at padj < 0.05 reported, with NA-flagged genes (Cook's outlier) separated from independent-filtering NAs"
+              ],
+              "packages": [
+                "DESeq2",
+                "sva",
+                "apeglm",
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0068@eb3c",
+                  "R-0036@9786",
+                  "R-0025@1e65",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0067@e082",
+                  "R-0009@f54e",
+                  "R-0084@2a4e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "6v6, suspected unrecorded batch, no known batch variable: sva-estimated surrogate variables as design covariates (R-0025/R-0068), DESeq2 Wald + apeglm as primary (R-0001/R-0009), edgeR QL as second method for overlap (R-0042/R-0001), BH+independent filtering (R-0010/R-0043)"
+              },
+              "caveats": [
+                "Never test on batch-adjusted/removed counts — surrogate variables enter the design as covariates only",
+                "State the number of surrogate variables and keep it small relative to sample size (n=12)",
+                "If the post-SVA p-value histogram remains irregular, state this and do not present BH-adjusted p-values as fully reliable"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on the DESeq2 Wald statistic (Hallmark, then Reactome)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark and Reactome pathways are enriched among genes ranked by the treated-vs-control Wald statistic from the batch-adjusted DESeq2 model?",
+              "description": "Map gene symbols in the DESeq2 results table to the identifier space of the local gene set collections (both staged as HGNC symbol GMTs, so no additional ID mapping is required beyond confirming symbol consistency; report the unmapped share). Rank the full list of tested genes (post pre-filter, pre significance-threshold) by the DESeq2 Wald statistic (stat column) — not by unshrunken log2FoldChange, not by a signed p-value. Run fgsea preranked GSEA against the local MSigDB Hallmark human gene set collection (50 sets) restricting to sets with 15-500 members among tested genes, with BH adjustment. Repeat against the local Reactome human pathway gene sets as the second collection. Collapse redundant significant sets and report leading-edge genes for each significant set in both collections.",
+              "acceptance_criteria": [
+                "Ranked list uses full set of tested genes (no pre-threshold), ranked by DESeq2 Wald statistic",
+                "fgsea run against local MSigDB Hallmark (50 sets) and local Reactome pathway gene sets, each with min/max set size 15-500 among tested genes",
+                "Unmapped gene symbol share reported for each collection",
+                "Significant sets (BH padj < 0.05) reported with leading-edge genes; redundant sets collapsed",
+                "Gene set collection identity and version stated in output (MSigDB Hallmark 2026.1, Reactome current release)"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77",
+                  "R-0108@409f"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Ranked stat metric chosen per disputed rule R-0108 (Wald statistic side); Hallmark first then Reactome as second collection per R-0098/R-0048; both staged locally in the reference store"
+              },
+              "caveats": [
+                "Local reference store carries Hallmark human (h.all.v2026.1.Hs.symbols.gmt) and Reactome pathways (ReactomePathways.gmt, all-species — must filter to Homo sapiens using ReactomePathways.txt); KEGG legacy sets are not served, only KEGG MEDICUS is available separately if needed"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated differential expression and enrichment report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the reproducible, batch-aware summary of genes differing between treated and control kidney samples, and which pathways are implicated?",
+              "description": "Assemble a single report combining: the sample structure QC findings (T1S1, including whether the two six-sample clusters correspond to any recorded variable), the surrogate-variable count and design formula used, DESeq2 fit diagnostics (MA plot, dispersion plot), p-value histograms before and after SVA adjustment with their shape stated, the DESeq2 vs edgeR gene-set overlap and the high-confidence intersection list, the full DE gene table (unshrunken LFC, apeglm-shrunken LFC, lfcSE, padj) ranked by shrunken LFC, and the fgsea Hallmark/Reactome results with leading-edge genes. State explicitly that the surrogate-variable design is a modeling correction for a suspected but unconfirmed batch (not a confirmed technical batch), and that this is an inferential caveat on the confidence of the result. Include full session info, package versions, and gene-set collection versions for reproducibility.",
+              "acceptance_criteria": [
+                "Report states design formula, reference level, contrast, alpha=0.05 threshold, and number of tested/significant genes",
+                "Reports DESeq2 and edgeR overlap and the high-confidence gene set",
+                "States the number of surrogate variables and explicitly flags that the batch was suspected, not confirmed, framing this as an interpretive caveat",
+                "Includes MA plot, dispersion plot, and pre/post-SVA p-value histograms with stated shape",
+                "Lists leading-edge genes per significant enriched pathway",
+                "Includes session_info, package versions, and gene-set collection versions"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report step: standard reproducibility record, gene-set/effect-size reporting fields, and DESeq2/edgeR overlap reporting per R-0041/R-0042/R-0086"
+              },
+              "caveats": [
+                "The suspected-batch adjustment is a statistical correction for an unconfirmed structural axis of variance; state this uncertainty prominently rather than presenting the SVA-adjusted result as equivalent in confidence to a known, balanced batch design"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+  }
+}

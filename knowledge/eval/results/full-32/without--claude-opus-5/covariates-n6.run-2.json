@@ -1,0 +1,453 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "covariates-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T18:10:56.059Z",
+  "elapsedMs": 103588,
+  "outcome": "plan_submitted",
+  "planId": "pln-d0b22350",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Covariate structure and confounding diagnostic",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per arm means PCA structure can be dominated by one sample; do not over-interpret a PC that is driven by a single point",
+          "Sex-marker checks can be ambiguous in low-depth libraries — report values rather than asserting a swap",
+          "A non-significant age-imbalance test at n=12 does not mean age is balanced; report the effect size alongside the p-value"
+        ],
+        "context": "Human subcutaneous/visceral adipose bulk RNA-seq, 6 treated vs 6 control, unpaired, single batch. Sex and age were recorded per sample; the arms are explicitly not age-matched. With 12 samples and a 4-coefficient model there are only 8 residual degrees of freedom, so whether covariate adjustment is worth its cost has to be stated with numbers before the DE results are read.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats",
+          "car",
+          "data.table"
+        ],
+        "question": "In the 12 adipose samples, how are sex and age distributed across the treated and control arms, and how much expression variance do condition, sex and age each explain before any differential model is fitted?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use only the two provided input files; do not download anything",
+          "Do not drop samples in this step — flag suspicious samples for T1S2 to consider, do not remove them",
+          "Keep age continuous here; do not bin into categories",
+          "Report the retained gene count and all filter parameters explicitly",
+          "This step must not select the primary DE model — it is diagnostic and descriptive only"
+        ],
+        "description": "Load /eval-full-32-without-covariates-n6-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer Salmon counts, first column = gene symbol) and /eval-full-32-without-covariates-n6-2/data/inputs/metadata/metadata.csv (12 rows: sample, condition, sex, age). Verify sample identifiers match one-to-one between the two files and in the same order; abort loudly on mismatch rather than reordering silently. Report the design table: counts of treated vs control, the sex x condition cross-tabulation, and the age distribution per arm (mean, SD, range) with a Wilcoxon rank-sum test and standardised mean difference quantifying the age imbalance the user flagged. Build a DESeqDataSet, filter to genes with count >= 10 in at least 6 samples, apply variance-stabilising transformation, and produce: PCA (PC1-PC4) coloured by condition, by sex and by age; the fraction of variance each PC carries; and the association of each of PC1-PC4 with condition (Wilcoxon), sex (Wilcoxon) and age (Spearman). Also report sample-sample Euclidean-distance and Spearman-correlation heatmaps, per-sample library sizes and detected-gene counts, and the expression of canonical sex-chromosome markers (XIST, RPS4Y1, DDX3Y, UTY, KDM5D, EIF1AY) against the recorded sex to check for label errors. Output a written confounding assessment: whether age is imbalanced enough to bias an unadjusted contrast, whether sex is imbalanced across arms, and the collinearity between condition and each covariate (variance inflation from the model matrix of ~ sex + age + condition). This is diagnostic only — it does NOT choose the primary model, which is pre-specified in T1S2.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv are confirmed to match one-to-one, with the check reported",
+          "Design table reported: n per condition, sex x condition cross-tab, per-arm age mean/SD/range plus a formal test and standardised mean difference for the age imbalance",
+          "Number of genes retained after the count>=10 in >=6 samples filter is reported out of 12,000",
+          "PCA on VST data with PC1-PC4 variance fractions and explicit association statistics of each PC with condition, sex and age",
+          "Sex-marker expression (XIST/RPS4Y1/DDX3Y/UTY/KDM5D/EIF1AY) compared against recorded sex, with any discordant sample named",
+          "Variance inflation factors for the ~ sex + age + condition model matrix reported",
+          "A written statement on whether condition is confounded with age and/or sex in this cohort"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 treated vs control adjusted for sex and age",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "6 vs 6 is modest power; a small or empty FDR<0.05 list is a real and reportable outcome, not a reason to relax the threshold",
+          "With age imbalanced across arms, part of the treatment effect and part of the age effect are collinear — adjusted log2FCs are attenuated relative to the unadjusted ones by construction, and that is the correct behaviour",
+          "If T1S1 found sex badly imbalanced across arms, the sex coefficient absorbs treatment signal for sex-linked genes; note this rather than dropping the term",
+          "Shrunken LFCs are for ranking and visualisation; p-values come from the unshrunken Wald test"
+        ],
+        "context": "The primary scientific question is the treated-vs-control contrast. Because the user states the arms are not age-matched, the covariate-adjusted model is primary and the unadjusted model is a sensitivity check, not the other way around. DESeq2 is the right estimator here: 12,000 genes, 12 samples, raw Salmon integer counts, negative-binomial with empirical-Bayes dispersion shrinkage is well calibrated at n=6 per arm where per-gene variance estimates alone are not.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggrepel",
+          "data.table"
+        ],
+        "question": "Which genes are differentially expressed between treated and control adipose samples when sex and age are adjusted for, and how much does that gene list change if the covariates are dropped?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design must be ~ sex + age_centred + condition with control as reference; do not swap the contrast direction",
+          "Age must enter as a centred continuous covariate — do not dichotomise it",
+          "Use the same gene filter as T1S1 so all models are compared on an identical gene set",
+          "Do not apply a log2FC cutoff when defining significance; report effect sizes separately",
+          "Do not use surrogate-variable or batch-correction methods — the design is a single batch with known covariates, and with 8 residual df there is no room for latent factors",
+          "Report exact numbers, never 'many genes changed'"
+        ],
+        "description": "Fit the pre-specified primary model in DESeq2 on the same filtered gene set as T1S1 (count >= 10 in at least 6 samples): design ~ sex + age_centred + condition, with condition releveled so control is the reference and age mean-centred and kept continuous. Extract the treated-vs-control contrast with BH FDR and DESeq2's default independent filtering; report the number of genes at FDR < 0.05 and at FDR < 0.10, split by direction. Produce both the unshrunken log2FC/Wald results and apeglm-shrunken LFCs for ranking, and write a full results table for all tested genes (gene symbol, baseMean, log2FC, lfcSE, shrunken log2FC, stat, pvalue, padj) plus a significant-gene table. Report dispersion-estimate and p-value-histogram plots, the number of genes flagged by Cook's-distance outlier filtering, and the number removed by independent filtering with the fitted filter threshold. As a pre-declared sensitivity analysis, refit the identical gene set with (a) ~ condition alone and (b) ~ sex + condition, and report a three-way comparison: the count of FDR<0.05 genes under each model, the overlap of the three significant sets, and the rank correlation of the condition log2FCs. State plainly which genes appear only when covariates are omitted — those are the ones most likely to be age- or sex-driven rather than treatment-driven. Generate a volcano plot and an MA plot of the primary contrast and a VST heatmap of the top 40 genes by adjusted p-value annotated with condition, sex and age.",
+        "acceptance_criteria": [
+          "Primary results come from DESeq2 with design ~ sex + age_centred + condition and control as the reference level",
+          "Full results table for every tested gene plus a separate FDR<0.05 significant table, both keyed by gene symbol",
+          "Counts of DE genes at FDR<0.05 and FDR<0.10 reported separately for up- and down-regulation",
+          "apeglm-shrunken log2FC reported alongside unshrunken estimates",
+          "Dispersion plot, p-value histogram, volcano, MA plot and top-40 heatmap annotated with condition, sex and age all produced",
+          "Sensitivity comparison against ~condition and ~sex+condition reported as DE counts, set overlaps and log2FC rank correlation",
+          "Genes significant only in the unadjusted model are listed explicitly",
+          "Cook's-distance flagged genes and independent-filtering threshold reported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Robustness audit of the DE hits",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Leave-one-out at n=12 is unstable by nature; the point is to flag fragility, not to produce a corrected p-value",
+          "A Wilcoxon test at 6 vs 6 has a minimum attainable p-value near 0.002 and cannot survive genome-wide correction — use it as a directional sanity check only",
+          "Gene symbols in the counts matrix may not all resolve against an annotation resource; report the unmapped fraction rather than dropping genes silently"
+        ],
+        "context": "At 6 vs 6 with an age-imbalanced design, the two ways a DE list misleads are outlier-driven hits and covariate leakage. Neither is visible in a volcano plot. This step produces the evidence a reader needs to decide which hits to believe, and is deliberately separated from T1S2 so the primary statistics are not tuned in response to it.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "ggrepel",
+          "data.table",
+          "ppcor",
+          "org.Hs.eg.db",
+          "AnnotationDbi"
+        ],
+        "question": "Are the treated-vs-control hits driven by treatment, or by sex-chromosome genes, residual age effects, or single outlier samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Do not modify or re-run the primary DE model to improve results — this step reports on T1S2's output, it does not replace it",
+          "Use VST values from the same filtered matrix as T1S2 for all visualisation and non-parametric testing",
+          "Name genes explicitly in the shortlist and the exclusion list; do not summarise as counts only",
+          "Match the organism when resolving any annotation resource — this is Homo sapiens (taxon 9606) data with HGNC gene symbols"
+        ],
+        "description": "Audit the primary FDR<0.05 gene list (or, if fewer than 20 genes reach FDR<0.05, the top 50 by adjusted p-value) from T1S2. For each audited gene: (1) plot VST expression per sample coloured by condition and shaped by sex with age as a label, so single-sample-driven effects are visible; (2) compute a leave-one-sample-out re-fit of the primary DESeq2 model and report, per gene, the maximum change in log2FC and whether the gene loses FDR<0.05 when any single sample is dropped — flag every gene whose significance depends on one sample; (3) run a covariate-free Wilcoxon rank-sum test on VST values as a distribution-free cross-check, reporting the concordance in direction and how many DESeq2 hits are also nominally significant non-parametrically. Separately, annotate which audited genes lie on chrX or chrY using an available human gene-identifier/annotation resource, and report the Spearman correlation of each audited gene's VST expression with age across all 12 samples together with the partial correlation given condition — genes with strong age association and weak within-arm condition separation should be named as likely age-confounded. If no human chromosome annotation resource is available in the environment, fall back to the canonical sex-linked marker panel used in T1S1 and say explicitly that a genome-wide chrX/chrY assignment could not be made; the rest of the audit proceeds unchanged.",
+        "acceptance_criteria": [
+          "Per-gene expression plots for the audited gene set, showing condition, sex and age per sample",
+          "Leave-one-out re-fit results reported per gene, with an explicit list of genes whose FDR<0.05 status depends on a single sample",
+          "Wilcoxon cross-check reported with directional concordance and the count of DESeq2 hits that are also nominally significant",
+          "chrX/chrY membership annotated for audited genes, or an explicit statement that no chromosome annotation resource was available and the marker-panel fallback was used",
+          "Age correlation and condition-adjusted partial correlation reported per audited gene, with likely age-confounded genes named",
+          "A final ranked shortlist of hits judged robust, with the reason each excluded gene was excluded"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Rank-based pathway enrichment of the adjusted contrast",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "FDR<0.25 is the conventional exploratory GSEA threshold and is not evidence of a confirmed pathway effect — label these results exploratory",
+          "GO-BP parent/child sets overlap heavily; an uncollapsed count of significant terms overstates the number of independent findings",
+          "The counts matrix holds 12,000 gene symbols, a subset of the transcriptome — gene sets will be partially covered and NES is affected by that truncation; report the coverage",
+          "If the underlying DE signal is weak, GSEA will still return ranked sets — an NES without a supporting leading edge of audited genes should not be reported as a finding"
+        ],
+        "context": "Human adipose, treated vs control. With 12 samples the thresholded DE list may be short, so a rank-based GSEA over the whole ranking is the better-powered primary enrichment readout. The environment stages MSigDB human hallmark (50 sets) and human GO BP/CC/MF collections as symbol GMTs — HGNC symbols, matching the counts matrix's gene-symbol index — so no identifier conversion should be needed beyond reporting the overlap.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2",
+          "BiocParallel"
+        ],
+        "question": "Which biological processes and hallmark programmes are coordinately shifted between treated and control adipose, using the full covariate-adjusted ranking rather than a thresholded gene list?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the human (Homo sapiens) hallmark and GO gene-set collections — never the mouse or rat versions",
+          "Rank on the covariate-adjusted primary contrast from T1S2, not on the unadjusted sensitivity model",
+          "Background for any over-representation test is the T1S2 tested-gene universe, not the full 12,000-row input",
+          "Set a fixed random seed for fgsea and report it",
+          "If a required human gene-set collection is not present at run time, report which one was missing and run the enrichment on whichever staged human collection is available rather than substituting another organism"
+        ],
+        "description": "Take the complete T1S2 primary-contrast results table (all tested genes, sex+age-adjusted) and build a single ranking statistic per gene — the Wald statistic, or sign(log2FC) * -log10(pvalue) if the Wald statistic is unavailable — deduplicating repeated gene symbols by keeping the most extreme statistic and reporting how many duplicates were collapsed. Run fgsea (multilevel) against human hallmark gene sets and human GO Biological Process gene sets from the staged pathway references, restricted to sets of 15-500 genes after intersecting with the tested-gene universe. Report normalised enrichment scores, BH-adjusted p-values, set sizes and leading-edge gene symbols for every set at FDR<0.25, and enrichment plots for the top 10 by adjusted p-value. Because GO-BP sets are hierarchically nested and share members, collapse redundant significant GO terms (fgsea's collapsePathways or a leading-edge Jaccard cut) and report both the raw and collapsed counts. As a secondary readout only, run an over-representation test (hypergeometric, background = the tested-gene universe from T1S2, not all 12,000 rows) on the FDR<0.05 up- and down-regulated lists separately — and if fewer than 15 genes are significant in a direction, skip ORA for that direction and state why rather than running an underpowered test. Cross-reference the leading-edge genes of the top pathways against the robust shortlist from T1S3 so pathway claims stay traceable to genes that survived the audit.",
+        "acceptance_criteria": [
+          "Ranking statistic construction documented, including how duplicate gene symbols were collapsed and how many",
+          "fgsea run against human hallmark and human GO-BP sets with minSize=15, maxSize=500 after intersecting with the tested universe, and the number of sets tested reported for each collection",
+          "Results table with NES, p, BH-adjusted p, set size and leading-edge symbols for all sets at FDR<0.25",
+          "Redundant GO terms collapsed, with both raw and collapsed significant counts reported",
+          "ORA run only where >=15 genes are significant in a direction, using the tested-gene universe as background, or explicitly skipped with the reason stated",
+          "Top pathway leading-edge genes cross-referenced against the T1S3 robust shortlist",
+          "Fraction of tested genes matching the gene-set universe reported"
+        ]
+      }
+    ],
+    "title": "Adipose treated vs control DE with sex/age covariates",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single bulk RNA-seq experiment: /data/inputs/counts/counts.csv, 12,000 gene symbols x 12 human adipose samples of raw Salmon-derived integer counts, with /data/inputs/metadata/metadata.csv giving condition (6 treated, 6 control), sex (F/M) and age (years) per sample. The research question is a plain two-group contrast, but the user flags two nuisance structures the design does not control: sex is a strong transcriptional covariate in adipose (X/Y-linked genes especially), and the groups are NOT age-matched, so age is a potential confounder of the treatment effect rather than merely a source of noise.\n\nT1S1 first establishes what the covariates actually do before any model is fixed: filter low-count genes, VST-transform, and quantify how much variance PCs carry from condition, sex and age, and — critically — how badly age is imbalanced between arms and whether sex is imbalanced too. With n=6 per arm and 3 model terms, degrees of freedom are scarce (12 samples - 4 coefficients = 8 residual df), so the diagnostic decides whether adjusting for age buys anything or merely burns df and collinearity with the very effect being estimated. That diagnostic is reported, not used to silently reshape the primary model.\n\nT1S2 runs the primary DESeq2 analysis with the pre-specified design ~ sex + age + condition, treating control as the reference level, with age centred and kept continuous. The adjusted model is the primary result because the user explicitly says the arms are not age-matched: an unadjusted contrast cannot separate treatment from age. Two secondary models — ~condition alone and ~sex + condition — are run on the identical filtered gene set purely as a sensitivity comparison, so the report can state how much of the gene list depends on the covariate choice. Shrunken LFCs (apeglm) are produced for ranking. Independent filtering and BH FDR are used as DESeq2 defaults; a hard fold-change filter is not applied to define significance.\n\nT1S3 sits between statistics and biology: it audits whether the surviving hits are simply sex-linked or age-driven genes leaking through, checks sex-chromosome genes explicitly, and re-tests the top hits with a covariate-free non-parametric check to flag any hit that is one-sample-driven. n=6 vs 6 is modest; outlier-driven hits are the dominant failure mode at this size and Cook's distance filtering alone does not surface them for the reader.\n\nT2S1 takes the ranked statistic (not a thresholded list) into fgsea against staged human hallmark and GO-BP gene sets, because with 12 samples a rank-based enrichment is far better powered than an overlap test on a possibly-tiny significant list. It runs on the primary adjusted contrast and reports leading-edge genes so pathway calls stay traceable to individual genes."
+  },
+  "usage": {
+    "inputTokens": 92246,
+    "outputTokens": 7373,
+    "cacheCreationInputTokens": 74074,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "sva",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "pydeseq2",
+          "decoupleR",
+          "msigdbr",
+          "GSVA"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Adipose treated vs control DE with sex/age covariates",
+          "analytical_narrative": "The input is a single bulk RNA-seq experiment: /data/inputs/counts/counts.csv, 12,000 gene symbols x 12 human adipose samples of raw Salmon-derived integer counts, with /data/inputs/metadata/metadata.csv giving condition (6 treated, 6 control), sex (F/M) and age (years) per sample. The research question is a plain two-group contrast, but the user flags two nuisance structures the design does not control: sex is a strong transcriptional covariate in adipose (X/Y-linked genes especially), and the groups are NOT age-matched, so age is a potential confounder of the treatment effect rather than merely a source of noise.\n\nT1S1 first establishes what the covariates actually do before any model is fixed: filter low-count genes, VST-transform, and quantify how much variance PCs carry from condition, sex and age, and — critically — how badly age is imbalanced between arms and whether sex is imbalanced too. With n=6 per arm and 3 model terms, degrees of freedom are scarce (12 samples - 4 coefficients = 8 residual df), so the diagnostic decides whether adjusting for age buys anything or merely burns df and collinearity with the very effect being estimated. That diagnostic is reported, not used to silently reshape the primary model.\n\nT1S2 runs the primary DESeq2 analysis with the pre-specified design ~ sex + age + condition, treating control as the reference level, with age centred and kept continuous. The adjusted model is the primary result because the user explicitly says the arms are not age-matched: an unadjusted contrast cannot separate treatment from age. Two secondary models — ~condition alone and ~sex + condition — are run on the identical filtered gene set purely as a sensitivity comparison, so the report can state how much of the gene list depends on the covariate choice. Shrunken LFCs (apeglm) are produced for ranking. Independent filtering and BH FDR are used as DESeq2 defaults; a hard fold-change filter is not applied to define significance.\n\nT1S3 sits between statistics and biology: it audits whether the surviving hits are simply sex-linked or age-driven genes leaking through, checks sex-chromosome genes explicitly, and re-tests the top hits with a covariate-free non-parametric check to flag any hit that is one-sample-driven. n=6 vs 6 is modest; outlier-driven hits are the dominant failure mode at this size and Cook's distance filtering alone does not surface them for the reader.\n\nT2S1 takes the ranked statistic (not a thresholded list) into fgsea against staged human hallmark and GO-BP gene sets, because with 12 samples a rank-based enrichment is far better powered than an overlap test on a possibly-tiny significant list. It runs on the primary adjusted contrast and reports leading-edge genes so pathway calls stay traceable to individual genes.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Covariate structure and confounding diagnostic",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "In the 12 adipose samples, how are sex and age distributed across the treated and control arms, and how much expression variance do condition, sex and age each explain before any differential model is fitted?",
+              "description": "Load /eval-full-32-without-covariates-n6-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer Salmon counts, first column = gene symbol) and /eval-full-32-without-covariates-n6-2/data/inputs/metadata/metadata.csv (12 rows: sample, condition, sex, age). Verify sample identifiers match one-to-one between the two files and in the same order; abort loudly on mismatch rather than reordering silently. Report the design table: counts of treated vs control, the sex x condition cross-tabulation, and the age distribution per arm (mean, SD, range) with a Wilcoxon rank-sum test and standardised mean difference quantifying the age imbalance the user flagged. Build a DESeqDataSet, filter to genes with count >= 10 in at least 6 samples, apply variance-stabilising transformation, and produce: PCA (PC1-PC4) coloured by condition, by sex and by age; the fraction of variance each PC carries; and the association of each of PC1-PC4 with condition (Wilcoxon), sex (Wilcoxon) and age (Spearman). Also report sample-sample Euclidean-distance and Spearman-correlation heatmaps, per-sample library sizes and detected-gene counts, and the expression of canonical sex-chromosome markers (XIST, RPS4Y1, DDX3Y, UTY, KDM5D, EIF1AY) against the recorded sex to check for label errors. Output a written confounding assessment: whether age is imbalanced enough to bias an unadjusted contrast, whether sex is imbalanced across arms, and the collinearity between condition and each covariate (variance inflation from the model matrix of ~ sex + age + condition). This is diagnostic only — it does NOT choose the primary model, which is pre-specified in T1S2.",
+              "question_context": "",
+              "context": "Human subcutaneous/visceral adipose bulk RNA-seq, 6 treated vs 6 control, unpaired, single batch. Sex and age were recorded per sample; the arms are explicitly not age-matched. With 12 samples and a 4-coefficient model there are only 8 residual degrees of freedom, so whether covariate adjustment is worth its cost has to be stated with numbers before the DE results are read.",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv are confirmed to match one-to-one, with the check reported",
+                "Design table reported: n per condition, sex x condition cross-tab, per-arm age mean/SD/range plus a formal test and standardised mean difference for the age imbalance",
+                "Number of genes retained after the count>=10 in >=6 samples filter is reported out of 12,000",
+                "PCA on VST data with PC1-PC4 variance fractions and explicit association statistics of each PC with condition, sex and age",
+                "Sex-marker expression (XIST/RPS4Y1/DDX3Y/UTY/KDM5D/EIF1AY) compared against recorded sex, with any discordant sample named",
+                "Variance inflation factors for the ~ sex + age + condition model matrix reported",
+                "A written statement on whether condition is confounded with age and/or sex in this cohort"
+              ],
+              "constraints": [
+                "Use only the two provided input files; do not download anything",
+                "Do not drop samples in this step — flag suspicious samples for T1S2 to consider, do not remove them",
+                "Keep age continuous here; do not bin into categories",
+                "Report the retained gene count and all filter parameters explicitly",
+                "This step must not select the primary DE model — it is diagnostic and descriptive only"
+              ],
+              "caveats": [
+                "n=6 per arm means PCA structure can be dominated by one sample; do not over-interpret a PC that is driven by a single point",
+                "Sex-marker checks can be ambiguous in low-depth libraries — report values rather than asserting a swap",
+                "A non-significant age-imbalance test at n=12 does not mean age is balanced; report the effect size alongside the p-value"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats",
+                "car",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 treated vs control adjusted for sex and age",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control adipose samples when sex and age are adjusted for, and how much does that gene list change if the covariates are dropped?",
+              "description": "Fit the pre-specified primary model in DESeq2 on the same filtered gene set as T1S1 (count >= 10 in at least 6 samples): design ~ sex + age_centred + condition, with condition releveled so control is the reference and age mean-centred and kept continuous. Extract the treated-vs-control contrast with BH FDR and DESeq2's default independent filtering; report the number of genes at FDR < 0.05 and at FDR < 0.10, split by direction. Produce both the unshrunken log2FC/Wald results and apeglm-shrunken LFCs for ranking, and write a full results table for all tested genes (gene symbol, baseMean, log2FC, lfcSE, shrunken log2FC, stat, pvalue, padj) plus a significant-gene table. Report dispersion-estimate and p-value-histogram plots, the number of genes flagged by Cook's-distance outlier filtering, and the number removed by independent filtering with the fitted filter threshold. As a pre-declared sensitivity analysis, refit the identical gene set with (a) ~ condition alone and (b) ~ sex + condition, and report a three-way comparison: the count of FDR<0.05 genes under each model, the overlap of the three significant sets, and the rank correlation of the condition log2FCs. State plainly which genes appear only when covariates are omitted — those are the ones most likely to be age- or sex-driven rather than treatment-driven. Generate a volcano plot and an MA plot of the primary contrast and a VST heatmap of the top 40 genes by adjusted p-value annotated with condition, sex and age.",
+              "question_context": "",
+              "context": "The primary scientific question is the treated-vs-control contrast. Because the user states the arms are not age-matched, the covariate-adjusted model is primary and the unadjusted model is a sensitivity check, not the other way around. DESeq2 is the right estimator here: 12,000 genes, 12 samples, raw Salmon integer counts, negative-binomial with empirical-Bayes dispersion shrinkage is well calibrated at n=6 per arm where per-gene variance estimates alone are not.",
+              "acceptance_criteria": [
+                "Primary results come from DESeq2 with design ~ sex + age_centred + condition and control as the reference level",
+                "Full results table for every tested gene plus a separate FDR<0.05 significant table, both keyed by gene symbol",
+                "Counts of DE genes at FDR<0.05 and FDR<0.10 reported separately for up- and down-regulation",
+                "apeglm-shrunken log2FC reported alongside unshrunken estimates",
+                "Dispersion plot, p-value histogram, volcano, MA plot and top-40 heatmap annotated with condition, sex and age all produced",
+                "Sensitivity comparison against ~condition and ~sex+condition reported as DE counts, set overlaps and log2FC rank correlation",
+                "Genes significant only in the unadjusted model are listed explicitly",
+                "Cook's-distance flagged genes and independent-filtering threshold reported"
+              ],
+              "constraints": [
+                "Design must be ~ sex + age_centred + condition with control as reference; do not swap the contrast direction",
+                "Age must enter as a centred continuous covariate — do not dichotomise it",
+                "Use the same gene filter as T1S1 so all models are compared on an identical gene set",
+                "Do not apply a log2FC cutoff when defining significance; report effect sizes separately",
+                "Do not use surrogate-variable or batch-correction methods — the design is a single batch with known covariates, and with 8 residual df there is no room for latent factors",
+                "Report exact numbers, never 'many genes changed'"
+              ],
+              "caveats": [
+                "6 vs 6 is modest power; a small or empty FDR<0.05 list is a real and reportable outcome, not a reason to relax the threshold",
+                "With age imbalanced across arms, part of the treatment effect and part of the age effect are collinear — adjusted log2FCs are attenuated relative to the unadjusted ones by construction, and that is the correct behaviour",
+                "If T1S1 found sex badly imbalanced across arms, the sex coefficient absorbs treatment signal for sex-linked genes; note this rather than dropping the term",
+                "Shrunken LFCs are for ranking and visualisation; p-values come from the unshrunken Wald test"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggrepel",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Robustness audit of the DE hits",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Are the treated-vs-control hits driven by treatment, or by sex-chromosome genes, residual age effects, or single outlier samples?",
+              "description": "Audit the primary FDR<0.05 gene list (or, if fewer than 20 genes reach FDR<0.05, the top 50 by adjusted p-value) from T1S2. For each audited gene: (1) plot VST expression per sample coloured by condition and shaped by sex with age as a label, so single-sample-driven effects are visible; (2) compute a leave-one-sample-out re-fit of the primary DESeq2 model and report, per gene, the maximum change in log2FC and whether the gene loses FDR<0.05 when any single sample is dropped — flag every gene whose significance depends on one sample; (3) run a covariate-free Wilcoxon rank-sum test on VST values as a distribution-free cross-check, reporting the concordance in direction and how many DESeq2 hits are also nominally significant non-parametrically. Separately, annotate which audited genes lie on chrX or chrY using an available human gene-identifier/annotation resource, and report the Spearman correlation of each audited gene's VST expression with age across all 12 samples together with the partial correlation given condition — genes with strong age association and weak within-arm condition separation should be named as likely age-confounded. If no human chromosome annotation resource is available in the environment, fall back to the canonical sex-linked marker panel used in T1S1 and say explicitly that a genome-wide chrX/chrY assignment could not be made; the rest of the audit proceeds unchanged.",
+              "question_context": "",
+              "context": "At 6 vs 6 with an age-imbalanced design, the two ways a DE list misleads are outlier-driven hits and covariate leakage. Neither is visible in a volcano plot. This step produces the evidence a reader needs to decide which hits to believe, and is deliberately separated from T1S2 so the primary statistics are not tuned in response to it.",
+              "acceptance_criteria": [
+                "Per-gene expression plots for the audited gene set, showing condition, sex and age per sample",
+                "Leave-one-out re-fit results reported per gene, with an explicit list of genes whose FDR<0.05 status depends on a single sample",
+                "Wilcoxon cross-check reported with directional concordance and the count of DESeq2 hits that are also nominally significant",
+                "chrX/chrY membership annotated for audited genes, or an explicit statement that no chromosome annotation resource was available and the marker-panel fallback was used",
+                "Age correlation and condition-adjusted partial correlation reported per audited gene, with likely age-confounded genes named",
+                "A final ranked shortlist of hits judged robust, with the reason each excluded gene was excluded"
+              ],
+              "constraints": [
+                "Do not modify or re-run the primary DE model to improve results — this step reports on T1S2's output, it does not replace it",
+                "Use VST values from the same filtered matrix as T1S2 for all visualisation and non-parametric testing",
+                "Name genes explicitly in the shortlist and the exclusion list; do not summarise as counts only",
+                "Match the organism when resolving any annotation resource — this is Homo sapiens (taxon 9606) data with HGNC gene symbols"
+              ],
+              "caveats": [
+                "Leave-one-out at n=12 is unstable by nature; the point is to flag fragility, not to produce a corrected p-value",
+                "A Wilcoxon test at 6 vs 6 has a minimum attainable p-value near 0.002 and cannot survive genome-wide correction — use it as a directional sanity check only",
+                "Gene symbols in the counts matrix may not all resolve against an annotation resource; report the unmapped fraction rather than dropping genes silently"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "ggrepel",
+                "data.table",
+                "ppcor",
+                "org.Hs.eg.db",
+                "AnnotationDbi"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Rank-based pathway enrichment of the adjusted contrast",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes and hallmark programmes are coordinately shifted between treated and control adipose, using the full covariate-adjusted ranking rather than a thresholded gene list?",
+              "description": "Take the complete T1S2 primary-contrast results table (all tested genes, sex+age-adjusted) and build a single ranking statistic per gene — the Wald statistic, or sign(log2FC) * -log10(pvalue) if the Wald statistic is unavailable — deduplicating repeated gene symbols by keeping the most extreme statistic and reporting how many duplicates were collapsed. Run fgsea (multilevel) against human hallmark gene sets and human GO Biological Process gene sets from the staged pathway references, restricted to sets of 15-500 genes after intersecting with the tested-gene universe. Report normalised enrichment scores, BH-adjusted p-values, set sizes and leading-edge gene symbols for every set at FDR<0.25, and enrichment plots for the top 10 by adjusted p-value. Because GO-BP sets are hierarchically nested and share members, collapse redundant significant GO terms (fgsea's collapsePathways or a leading-edge Jaccard cut) and report both the raw and collapsed counts. As a secondary readout only, run an over-representation test (hypergeometric, background = the tested-gene universe from T1S2, not all 12,000 rows) on the FDR<0.05 up- and down-regulated lists separately — and if fewer than 15 genes are significant in a direction, skip ORA for that direction and state why rather than running an underpowered test. Cross-reference the leading-edge genes of the top pathways against the robust shortlist from T1S3 so pathway claims stay traceable to genes that survived the audit.",
+              "question_context": "",
+              "context": "Human adipose, treated vs control. With 12 samples the thresholded DE list may be short, so a rank-based GSEA over the whole ranking is the better-powered primary enrichment readout. The environment stages MSigDB human hallmark (50 sets) and human GO BP/CC/MF collections as symbol GMTs — HGNC symbols, matching the counts matrix's gene-symbol index — so no identifier conversion should be needed beyond reporting the overlap.",
+              "acceptance_criteria": [
+                "Ranking statistic construction documented, including how duplicate gene symbols were collapsed and how many",
+                "fgsea run against human hallmark and human GO-BP sets with minSize=15, maxSize=500 after intersecting with the tested universe, and the number of sets tested reported for each collection",
+                "Results table with NES, p, BH-adjusted p, set size and leading-edge symbols for all sets at FDR<0.25",
+                "Redundant GO terms collapsed, with both raw and collapsed significant counts reported",
+                "ORA run only where >=15 genes are significant in a direction, using the tested-gene universe as background, or explicitly skipped with the reason stated",
+                "Top pathway leading-edge genes cross-referenced against the T1S3 robust shortlist",
+                "Fraction of tested genes matching the gene-set universe reported"
+              ],
+              "constraints": [
+                "Use the human (Homo sapiens) hallmark and GO gene-set collections — never the mouse or rat versions",
+                "Rank on the covariate-adjusted primary contrast from T1S2, not on the unadjusted sensitivity model",
+                "Background for any over-representation test is the T1S2 tested-gene universe, not the full 12,000-row input",
+                "Set a fixed random seed for fgsea and report it",
+                "If a required human gene-set collection is not present at run time, report which one was missing and run the enrichment on whichever staged human collection is available rather than substituting another organism"
+              ],
+              "caveats": [
+                "FDR<0.25 is the conventional exploratory GSEA threshold and is not evidence of a confirmed pathway effect — label these results exploratory",
+                "GO-BP parent/child sets overlap heavily; an uncollapsed count of significant terms overstates the number of independent findings",
+                "The counts matrix holds 12,000 gene symbols, a subset of the transcriptome — gene sets will be partially covered and NES is affected by that truncation; report the coverage",
+                "If the underlying DE signal is weak, GSEA will still return ranked sets — an NES without a supporting leading edge of audited genes should not be reported as a finding"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2",
+                "BiocParallel"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

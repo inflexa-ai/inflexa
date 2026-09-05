@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses an unrecorded latent factor, checks the cross-tabulation against condition before committing to a design, and keeps the adjustment inside the count model (blocking term or svaseq surrogate variables with full model ~condition, null ~1, SV number chosen by num.sv, checked against condition), explicitly barring ComBat-style corrected matrices and restricting removeBatchEffect to visualization — all in line with the reference. It deviates by making a hard-coded k-means/hclust cluster label the primary blocking variable rather than treating sva as the primary estimator, and it never asks the analyst for the unrecorded variable (extraction date, lane) first; it also does not flag the circularity of deriving the blocking factor from the same expression data, though the blind svaseq convergence check partly mitigates this. QC is thorough (VST PCA with gene-count stability, dual clustering, library size/complexity by cluster, sex-gene check) but lacks an explicit outlier or shallow-sample policy. Filtering (>=10 counts in >=6 samples), size-factor normalization on raw integers, explicit formulas and direction convention, BH at 0.05 with apeglm/ashr shrinkage, and an enrichment universe limited to the 12,000 measured symbols are all correct; minor gaps are the post hoc |log2FC|>1 filter instead of a tested lfcThreshold, no gene-set size window, and no stated software versions."
+}

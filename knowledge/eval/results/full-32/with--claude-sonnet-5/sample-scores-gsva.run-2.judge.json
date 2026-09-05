@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies this as a per-sample pathway score question and answers it with GSVA on a VST matrix (Gaussian kernel, matching the continuous input) against a versioned MSigDB Hallmark 2026.1 collection with a 15-500 size window, followed by limma with BH on the score matrix and a condition-annotated heatmap. QC is design-specific: blind VST PCA, sample distances, library sizes, and an explicit keep-unless-justified policy for the shallow sample_01, with size factors handling depth. Design formula, control reference level, named contrast, apeglm shrinkage, BH at 0.05, and a minimal group-size-based prefilter are all stated. The one departure from the reference is the inclusion of a full gene-level DESeq2 test ahead of the scoring, which is not needed to answer the question, though it does not compromise the pathway analysis; the limma step on scores could also state its alpha explicitly."
+}

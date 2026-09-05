@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on every design point: DESeq2 Wald on raw counts for an unpaired single-batch 3-vs-3, blind-VST PCA and distance heatmap with an explicit outlier policy, a minimal ≥10-in-≥3 filter, median-of-ratios inside the model, ~condition with control releveled and the contrast stated, BH at 0.05 set in results() with apeglm shrinkage, and a clear power caveat. Enrichment follows the ortholog-map path correctly (babelgene one-to-one, mapped share reported, full Wald-stat ranked list, Hallmark with version, 15-500 window) and honestly flags the absence of a zebrafish collection and the thinness of GO. Minor deductions: the parallel goseq GO path is an over-representation test that sits awkwardly beside the plan's own rule against ORA on a short list, its universe is only implied, and gene lengths for the goseq offset are not sourced; the report promises to state the Ensembl release but never names it."
+}

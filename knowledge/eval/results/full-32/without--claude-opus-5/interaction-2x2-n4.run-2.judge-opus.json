@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the question as the genotype:treatment interaction, fits a single DESeq2 model with ~genotype + treatment + genotype:treatment on all 16 samples, relevels to WT/vehicle so the coefficient is interpretable, and derives the KO simple effect by combining coefficients from the shared fit rather than subsetting — exactly the reference behaviour, with an explicit prohibition on Venn/intersection reasoning and a limma-voom orthogonal check plus a variance-grounded detectable-effect-size analysis appropriate to n=4. QC is thorough and design-aware (cross-tab of cells, VST-PCA coloured three ways, correlation heatmap, library sizes, named outlier policy with the 25%-of-a-group cost stated). The low-count filter (≥10 counts in ≥4 samples, tied to the smallest group size, with genes retained reported) is minimal and justified, and FDR is BH across all filtered genes at stated alphas with named shrinkage (apeglm/ashr) and a pre-committed handling of a zero-gene outcome. Normalization is the weakest point: DESeq2 size factors and TMM/voom normalization are only implicit — the plan never states that normalization happens inside the model or that no pre-normalized values enter the count fit. Enrichment is well specified (preranked fgsea on the full signed statistic, named collections with versions and set counts printed, seed, size window, collapsePathways, overlap fraction), though the confident assertion of human/HGNC sets is an assumption that could misfire for a knockout brain study."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the duplication flag as a property of deep, rRNA-depleted total-RNA libraries without UMIs, explicitly refuses de-duplication with the right reason, and reports mitochondrial share, a residual-rRNA proxy, and a top-1% complexity proxy per sample, while noting that duplication and strandedness are read-level metrics not recomputable from a count matrix — exactly the reference behaviour. Sample_01 is retained with depth reported and size factors handling depth inside the model, and the QC (blind VST PCA, distance heatmap, per-sample table, explicit keep/drop policy) precedes the test. Modelling is sound: minimal >=10-in->=6 filter tied to group size, median-of-ratios size factors inside the model with no pre-scaling, explicit reference level and (condition, treated, control) contrast, Wald test, BH at alpha 0.05 with independent filtering, apeglm shrinkage kept beside the unshrunken estimate, plus an edgeR QL cross-check reported as an intersection. Enrichment is well specified (Wald-statistic ranking, tested-gene universe, human-restricted Reactome, 15-500 window, seed, versions) and the report carries versions, thresholds, tested/significant counts, and all data caveats. The only real gap against the reference is that, having computed rRNA and MT shares, the plan never states a decision rule for removing those genes from the matrix before normalization when their share is large and uneven."
+}

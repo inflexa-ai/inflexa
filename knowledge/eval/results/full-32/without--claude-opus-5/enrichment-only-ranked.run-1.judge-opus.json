@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to re-run DE, reads the supplied table, and answers the question with a threshold-free preranked fgsea against the 50 human hallmark sets on the full ranked list, with an explicitly stated metric (sign(log2FC) * -log10(p), a permitted alternative to the Wald stat), a size window, a fixed seed, reported eps/nPermSimple, leading edges, and all 50 sets reported so absence is distinguishable from untested. QC is genuinely dataset-specific: library sizes and DESeq2 size factors for all 12 samples, VST PCA coloured by condition, an explicit written verdict on whether sample_01 is an outlier, a policy of characterise-not-remove plus a leave-one-out sensitivity check, and a p-value histogram on the supplied table. Filtering and normalization are handled appropriately for the situation — no new count filter is imposed, the 12,000-gene table is correctly declared as the enrichment universe, size factors/VST are used rather than any pre-normalized or manually adjusted values. Weaker points: no design formula or reference level is stated (only a direction convention, defensible since DE is not refit), the size window is 10–500 rather than 15–500, and the report requirements name the seed and settings but never the fgsea version or the MSigDB release; the third ssGSEA/GSVA step is reasonable orthogonal support but is scope beyond what the question needs."
+}

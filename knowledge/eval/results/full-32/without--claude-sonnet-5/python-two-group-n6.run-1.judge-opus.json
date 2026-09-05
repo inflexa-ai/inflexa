@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 1,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly chooses PyDESeq2 on raw counts for an unpaired 6v6 single-batch design and stays within the Python constraint, with normalization handled inside the model via reported size factors and no pre-normalized input. QC is a genuine strength: per-sample library sizes, zero/near-zero gene counts, PCA/correlation placement of sample_01, and an explicit retain-or-exclude decision with the 6v6 to 6v5 consequence stated. The main gaps are the complete absence of any low-count pre-filter, no LFC shrinkage and a post hoc |log2FC|>1 cutoff rather than an lfcThreshold in the test, and a design specification that names the factor and direction but never writes the formula or sets the reference level. Enrichment names Hallmark and runs prerank on the full ranked list with a stated ranking metric, but omits the collection version, the 15-500 set size window, a fixed seed, and an explicit ORA universe; reporting covers design, thresholds, and DEG counts but not package versions."
+}

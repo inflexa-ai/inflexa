@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the repeated-measures structure and blocks subject as a fixed effect in both the full (~subject + condition) and reduced (~subject) models, running an omnibus LRT for any condition effect followed by the three named pairwise Wald contrasts with control as the explicit reference — exactly the reference approach, with a sound justification for ashr over apeglm for the treated_a vs treated_b contrast. QC precedes modeling with blind VST, PCA colored by both subject and condition, distance heatmap and library sizes, though the outlier policy is only 'flag explicitly' rather than a stated decision rule. The filter (>=10 counts in >=4 samples, tied to smallest group size) is minimal and justified; normalization is internal median-of-ratios with no pre-normalization, and the missing tximport length offsets are honestly noted. FDR is BH at alpha 0.05 within each contrast with independent filtering and p-value histogram diagnostics, and reporting covers design, reference level, contrasts, n tested, n DE, diagnostics, versions, and the low-residual-df caveat. Enrichment was not strictly demanded by the question but is specified correctly (preranked fgsea on the Wald statistic, tested genes as universe, named versioned collections, 15-500 size window, per-contrast, leading edge)."
+}

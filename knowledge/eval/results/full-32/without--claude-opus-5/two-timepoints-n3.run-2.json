@@ -1,0 +1,404 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "two-timepoints-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T18:00:33.775Z",
+  "elapsedMs": 85184,
+  "outcome": "plan_submitted",
+  "planId": "pln-58785cc1",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Build DESeq2 object, verify 2x2 design, QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Duplicate gene symbols may exist in the first column; aggregate by summing counts per symbol or keep the first occurrence, but state which was done and how many rows were affected",
+          "time_hours may be numeric; treat time as a two-level factor for the model regardless, since two levels cannot support a continuous trend"
+        ],
+        "context": "This is the only setup step; every later step reuses its object. The design is a single batch, so no batch covariate exists or should be invented. With 12 samples the QC purpose is not outlier removal by rule but documenting whether time or treatment dominates the variance, which determines how a null interaction should later be interpreted.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Are the 12 samples in counts.csv a balanced 3-per-cell 2x2 of condition x time, and do the VST-transformed data separate primarily by treatment, by time, or by neither?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use design ~ condition + time + condition:time — do not drop the interaction term",
+          "Do not add a batch term; the data context states a single batch",
+          "Do not remove samples: with n=3 per cell, dropping one sample leaves that cell unable to estimate within-group dispersion. If a sample looks like an outlier on PCA, flag it in the report and let it stay in the model",
+          "Gene identifiers are gene symbols; keep them as-is and do not attempt Ensembl mapping"
+        ],
+        "description": "Load /eval-full-32-without-two-timepoints-n3-2/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in the first column, raw integer Salmon counts) and /eval-full-32-without-two-timepoints-n3-2/data/inputs/metadata/metadata.csv (12 rows x 4 columns: sample, condition, time, time_hours). Match sample column names to metadata rows exactly and fail loudly on any mismatch rather than reordering silently. Cross-tabulate condition x time and report the cell counts; confirm 3/3/3/3 and confirm the two factors are crossed rather than nested. Set factor reference levels explicitly (control/untreated condition as reference, t0 as reference time) and record which level was chosen as reference for each. Build a DESeqDataSet with design ~ condition + time + condition:time. Filter to genes with at least 10 counts in at least 3 samples (the smallest group size). Run VST (blind=TRUE) and produce: PCA coloured by condition and shaped by time with percent variance on the axes, a sample-sample Euclidean distance heatmap, library size bar plot, and per-sample count distribution. Report the number of genes retained after filtering and the size factors. Save the filtered DESeqDataSet and the VST matrix as artifacts for downstream steps.",
+        "acceptance_criteria": [
+          "condition x time cross-tabulation printed and confirmed as 3 samples per cell (12 total)",
+          "Sample identifiers in counts.csv columns and metadata.csv rows are confirmed to match one-to-one before the DESeqDataSet is built",
+          "Reference levels for condition and time are stated explicitly in the output",
+          "Number of genes passing the >=10 counts in >=3 samples filter is reported out of 12,000",
+          "PCA plot with percent variance per axis, sample distance heatmap, and library size summary are produced",
+          "Filtered DESeqDataSet and VST matrix saved for reuse by T1S2 and T1S3"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Interaction test: does the treatment effect differ by time",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "With n=3 per cell (8 residual df) the interaction test is the least powerful contrast in this design; a null result is expected under modest effect-size differences",
+          "apeglm shrinkage of an interaction coefficient may require refitting with a relevelled design or falling back to ashr — either is acceptable, state which was used"
+        ],
+        "context": "The interaction coefficient is the difference of differences: (treated_t1 - control_t1) - (treated_t0 - control_t0). Its sign and magnitude are what distinguish an amplified, damped, or reversed treatment effect over time. Everything downstream depends on this ranking.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "EnhancedVolcano",
+          "dplyr"
+        ],
+        "question": "For how many genes does the treatment effect at t1 differ significantly from the treatment effect at t0 — i.e. which genes have a non-zero condition:time interaction?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Report BH-adjusted p-values; do not switch to a nominal p threshold to manufacture hits",
+          "Do not interpret the condition main effect as 'the treatment effect' — under a model with an interaction it is the treatment effect at the reference time level only. State this explicitly if the main effect is reported at all",
+          "If zero genes reach FDR<0.1, say so plainly and report the top 20 genes by nominal p as exploratory only, labelled as such"
+        ],
+        "description": "This step answers the research question directly. Using the filtered DESeqDataSet from T1S1, run DESeq() and extract the condition:time interaction coefficient with a Wald test. In parallel, run a likelihood-ratio test comparing the full design ~ condition + time + condition:time against the reduced design ~ condition + time; the LRT p-values are the formal test of 'is there any time-dependence of the treatment effect' and should be reported alongside the Wald result, with the degree of agreement between them stated. Apply LFC shrinkage to the interaction coefficient (apeglm, or ashr if apeglm cannot handle the coefficient) for ranking and plotting. Report: number of genes with interaction FDR < 0.05 and < 0.1 (BH), the full results table sorted by adjusted p-value with baseMean, raw and shrunken LFC, p, and padj, a volcano plot of the interaction term, an MA plot, and a p-value histogram (a flat histogram with no peak near zero is direct evidence of no detectable interaction and must be reported as such). Write a plain statement of the headline answer with the actual gene count, and state the caveat that with 3 replicates per cell an interaction contrast has substantially less power than a main effect, so absence of significant genes is 'no detectable difference' and not evidence that the treatment effects are equal.",
+        "acceptance_criteria": [
+          "Interaction coefficient name is printed from resultsNames() and the extracted contrast is confirmed to be the condition:time term, not a main effect",
+          "Both the Wald test on the interaction coefficient and the LRT (full ~condition+time+condition:time vs reduced ~condition+time) are reported, with counts of genes at FDR<0.05 and FDR<0.1 for each",
+          "Full interaction results table exported as CSV with baseMean, log2FoldChange, lfcSE, shrunken LFC, pvalue, padj",
+          "Volcano, MA, and p-value histogram plots produced for the interaction term",
+          "A one-sentence headline answer states the number of interaction genes and whether the answer to the research question is yes, no, or underpowered",
+          "Dispersion estimate plot produced and the fitted dispersion trend commented on"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Simple treatment effects within t0 and within t1",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Regression of LFC(t1) on LFC(t0) suffers regression dilution because the x-axis is itself estimated with error, so the slope is biased toward zero — report it as descriptive and note the bias rather than treating it as an unbiased attenuation estimate"
+        ],
+        "context": "Simple effects are the interpretation layer for the interaction result. They also provide a global, per-gene-threshold-free view of whether the treatment effect changed: the LFC-vs-LFC slope and correlation are far more stable at n=3 than any count of significant genes, and if the interaction test in T1S2 is null, this is the evidence that says whether the effects are genuinely similar or merely indistinguishable.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "dplyr",
+          "ComplexUpset",
+          "EnhancedVolcano"
+        ],
+        "question": "What is the treatment effect at t0 and separately at t1, and do the two effect-size vectors agree in magnitude and direction across genes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Both contrasts must come from the single model fitted in T1S2 — do not refit two separate per-time-point models on 6 samples each, which discards shared dispersion information",
+          "Do NOT conclude that the treatment effect differs because one simple contrast is significant and the other is not. Difference-of-significance is not significance-of-difference; only the T1S2 interaction test answers the research question. State this explicitly in the step output"
+        ],
+        "description": "Extract the two simple within-time treatment contrasts from the same fitted model in T1S2: treated vs control at t0, and treated vs control at t1. Report for each the number of DE genes at FDR<0.05 and FDR<0.1, a results table, and a volcano plot. Then quantify the agreement between the two effects directly: scatter of LFC(t1) against LFC(t0) across all tested genes with the y=x line, Pearson and Spearman correlation of the two LFC vectors, the regression slope of LFC(t1) on LFC(t0) (a slope near 1 means the treatment effect is preserved; well below 1 means damped; above 1 amplified; negative means reversed), and the overlap of the two DE gene sets as a Venn/UpSet plot with counts. Cross-reference: for the top interaction genes from T1S2, tabulate their t0 and t1 simple effects side by side so the direction of each interaction is readable. Restrict the correlation and slope analysis to genes with reasonable expression (baseMean above the median) and report how the estimate changes on the full set, since low-count genes add noise that flattens the slope toward zero.",
+        "acceptance_criteria": [
+          "Both simple contrasts (treated vs control at t0; treated vs control at t1) extracted from the single fitted model and exported as CSV tables",
+          "DE gene counts at FDR<0.05 and FDR<0.1 reported for each time point",
+          "LFC(t1) vs LFC(t0) scatter with y=x reference, plus Pearson and Spearman correlation and regression slope with confidence interval",
+          "Overlap of the two DE gene sets reported with counts and a set plot",
+          "Top interaction genes from T1S2 tabulated with their t0 and t1 simple-effect LFCs and p-values side by side"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GSEA on interaction and simple-effect rankings",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "A set-level hit on the interaction ranking with no gene reaching gene-level FDR is a legitimate and common outcome here, but it is a weaker claim — report it as suggestive and name the leading-edge genes so it can be followed up",
+          "NES values from separate GSEA runs are comparable in direction and roughly in magnitude but are not on a formally shared scale; treat the NES(t0) vs NES(t1) comparison as descriptive, not as a test of difference"
+        ],
+        "context": "Gene-level interaction tests at n=3 per cell are the noisiest contrast in the design, so the set-level readout is where a genuine time-dependent response is most likely to be detectable. Running GSEA on the two simple-effect rankings in addition to the interaction ranking makes the result interpretable as 'this program is on at t0 and gone by t1' rather than an unanchored list of interaction-enriched sets.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "dplyr",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which biological processes show a time-dependent treatment response, and are the pathways engaged by treatment at t0 the same ones engaged at t1?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use human gene sets only — the data is Homo sapiens; do not substitute mouse or rat collections",
+          "Use the filtered gene list from T1S2 as the universe, not a genome-wide background",
+          "Set a fixed random seed and report it, since fgsea permutation p-values are stochastic",
+          "Do not convert gene identifiers; the counts matrix already uses HGNC symbols matching the GMT files"
+        ],
+        "description": "Run pre-ranked GSEA on three gene rankings from track 1: (a) the shrunken condition:time interaction LFC from T1S2, (b) the treated-vs-control LFC at t0 from T1S3, and (c) the same at t1. Rank by shrunken LFC (or by sign(LFC) * -log10(p) if shrinkage was unavailable), with the ranking metric used stated in the output. This step needs two kinds of human gene-set reference: a broad hallmark collection of ~50 coherent biological states, and a Gene Ontology biological-process collection for mechanism-level resolution — both keyed on HGNC gene symbols, which match the counts.csv row identifiers so no identifier conversion is required. Resolve both against what the environment actually provides at run time and report the collection name, version, and set count used. Restrict sets to 15-500 genes after intersecting with the tested gene universe (the ~12,000 filtered genes, NOT the whole genome), report BH-adjusted set-level p-values, and produce for each ranking a table of significant sets and enrichment plots for the top sets. The key output is a side-by-side comparison of normalized enrichment scores at t0 versus t1 for every set tested in both, as a scatter and as a table of the sets whose NES changed most, which is the pathway-level statement of whether the treatment effect differs between time points. If the GO collection is unavailable, run hallmark alone and say so; if neither is available, report the gap rather than substituting a different organism's sets.",
+        "acceptance_criteria": [
+          "Three pre-ranked GSEA runs completed: interaction ranking, t0 simple-effect ranking, t1 simple-effect ranking",
+          "The gene-set collections actually used are named with version and set count in the output; a human hallmark collection and, if available, a human GO biological-process collection",
+          "Gene universe is restricted to the genes tested in T1S2, and the number of sets surviving the 15-500 size filter after intersection is reported",
+          "BH-adjusted set-level p-values reported; significant sets tabulated per ranking with NES, padj, and leading-edge genes",
+          "NES(t1) versus NES(t0) comparison produced as both a scatter plot and a table of the largest NES shifts"
+        ]
+      }
+    ],
+    "title": "Treatment x time interaction in 2x2 bulk RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is explicitly an interaction question: does the treatment effect at t1 differ from the treatment effect at t0? The design is a balanced 2x2 factorial (2 conditions x 2 time points, n=3 per cell, 12 samples, 12,000 genes, single batch, raw Salmon counts in counts.csv with a gene-symbol first column, and metadata.csv carrying condition, time, time_hours). Twelve samples and a single batch mean the analysis is a straightforward DESeq2 Wald/LRT on ~design ~condition + time + condition:time; there is no batch term to fit and no room for anything more elaborate — 8 residual df is the ceiling.\n\nTrack 1 sets up the object once (T1S1: filter low counts, VST, PCA/sample-distance QC, and — critically — verify that the metadata cells are actually 3/3/3/3 and that condition and time are non-confounded), then runs the interaction test (T1S2) as the primary answer, and the two simple within-time treatment contrasts (T1S3) as the interpretation layer. The simple effects are what make an interaction readable (amplification, reversal, or an effect present only at one time), and they also cover the honest case where the interaction test is underpowered: with n=3 per cell an interaction has roughly half the effective power of a main effect, so a null interaction must be reported as 'no detectable difference', not 'the effects are the same'. T1S3 explicitly guards against the classic error of declaring a difference because one simple contrast is significant and the other is not — that comparison is not a test, and only T1S2 answers the question.\n\nTrack 2 (T2S1) takes the interaction statistic to the pathway level with GSEA on the shrunken interaction LFC ranking, using the staged human hallmark and GO-BP gene sets (HGNC symbols, which match the counts.csv row identifiers directly — no ID mapping needed). Gene-level interaction tests are noisy at this sample size, so a set-level readout is where a real time-dependent treatment effect is most likely to be visible. It also runs GSEA on the two simple-effect rankings so the pathway story can be phrased as 'engaged at t0 and lost by t1' rather than an unanchored interaction set list."
+  },
+  "usage": {
+    "inputTokens": 92397,
+    "outputTokens": 6127,
+    "cacheCreationInputTokens": 74225,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "limma",
+          "edgeR",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "ComplexHeatmap",
+          "decoupleR",
+          "msigdbr",
+          "babelgene",
+          "gseapy"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treatment x time interaction in 2x2 bulk RNA-seq",
+          "analytical_narrative": "The question is explicitly an interaction question: does the treatment effect at t1 differ from the treatment effect at t0? The design is a balanced 2x2 factorial (2 conditions x 2 time points, n=3 per cell, 12 samples, 12,000 genes, single batch, raw Salmon counts in counts.csv with a gene-symbol first column, and metadata.csv carrying condition, time, time_hours). Twelve samples and a single batch mean the analysis is a straightforward DESeq2 Wald/LRT on ~design ~condition + time + condition:time; there is no batch term to fit and no room for anything more elaborate — 8 residual df is the ceiling.\n\nTrack 1 sets up the object once (T1S1: filter low counts, VST, PCA/sample-distance QC, and — critically — verify that the metadata cells are actually 3/3/3/3 and that condition and time are non-confounded), then runs the interaction test (T1S2) as the primary answer, and the two simple within-time treatment contrasts (T1S3) as the interpretation layer. The simple effects are what make an interaction readable (amplification, reversal, or an effect present only at one time), and they also cover the honest case where the interaction test is underpowered: with n=3 per cell an interaction has roughly half the effective power of a main effect, so a null interaction must be reported as 'no detectable difference', not 'the effects are the same'. T1S3 explicitly guards against the classic error of declaring a difference because one simple contrast is significant and the other is not — that comparison is not a test, and only T1S2 answers the question.\n\nTrack 2 (T2S1) takes the interaction statistic to the pathway level with GSEA on the shrunken interaction LFC ranking, using the staged human hallmark and GO-BP gene sets (HGNC symbols, which match the counts.csv row identifiers directly — no ID mapping needed). Gene-level interaction tests are noisy at this sample size, so a set-level readout is where a real time-dependent treatment effect is most likely to be visible. It also runs GSEA on the two simple-effect rankings so the pathway story can be phrased as 'engaged at t0 and lost by t1' rather than an unanchored interaction set list.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Build DESeq2 object, verify 2x2 design, QC",
+              "track": "1",
+              "step_type": "qc",
+              "question": "Are the 12 samples in counts.csv a balanced 3-per-cell 2x2 of condition x time, and do the VST-transformed data separate primarily by treatment, by time, or by neither?",
+              "description": "Load /eval-full-32-without-two-timepoints-n3-2/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in the first column, raw integer Salmon counts) and /eval-full-32-without-two-timepoints-n3-2/data/inputs/metadata/metadata.csv (12 rows x 4 columns: sample, condition, time, time_hours). Match sample column names to metadata rows exactly and fail loudly on any mismatch rather than reordering silently. Cross-tabulate condition x time and report the cell counts; confirm 3/3/3/3 and confirm the two factors are crossed rather than nested. Set factor reference levels explicitly (control/untreated condition as reference, t0 as reference time) and record which level was chosen as reference for each. Build a DESeqDataSet with design ~ condition + time + condition:time. Filter to genes with at least 10 counts in at least 3 samples (the smallest group size). Run VST (blind=TRUE) and produce: PCA coloured by condition and shaped by time with percent variance on the axes, a sample-sample Euclidean distance heatmap, library size bar plot, and per-sample count distribution. Report the number of genes retained after filtering and the size factors. Save the filtered DESeqDataSet and the VST matrix as artifacts for downstream steps.",
+              "question_context": "",
+              "context": "This is the only setup step; every later step reuses its object. The design is a single batch, so no batch covariate exists or should be invented. With 12 samples the QC purpose is not outlier removal by rule but documenting whether time or treatment dominates the variance, which determines how a null interaction should later be interpreted.",
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "acceptance_criteria": [
+                "condition x time cross-tabulation printed and confirmed as 3 samples per cell (12 total)",
+                "Sample identifiers in counts.csv columns and metadata.csv rows are confirmed to match one-to-one before the DESeqDataSet is built",
+                "Reference levels for condition and time are stated explicitly in the output",
+                "Number of genes passing the >=10 counts in >=3 samples filter is reported out of 12,000",
+                "PCA plot with percent variance per axis, sample distance heatmap, and library size summary are produced",
+                "Filtered DESeqDataSet and VST matrix saved for reuse by T1S2 and T1S3"
+              ],
+              "constraints": [
+                "Use design ~ condition + time + condition:time — do not drop the interaction term",
+                "Do not add a batch term; the data context states a single batch",
+                "Do not remove samples: with n=3 per cell, dropping one sample leaves that cell unable to estimate within-group dispersion. If a sample looks like an outlier on PCA, flag it in the report and let it stay in the model",
+                "Gene identifiers are gene symbols; keep them as-is and do not attempt Ensembl mapping"
+              ],
+              "caveats": [
+                "Duplicate gene symbols may exist in the first column; aggregate by summing counts per symbol or keep the first occurrence, but state which was done and how many rows were affected",
+                "time_hours may be numeric; treat time as a two-level factor for the model regardless, since two levels cannot support a continuous trend"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Interaction test: does the treatment effect differ by time",
+              "track": "1",
+              "step_type": "analysis",
+              "question": "For how many genes does the treatment effect at t1 differ significantly from the treatment effect at t0 — i.e. which genes have a non-zero condition:time interaction?",
+              "description": "This step answers the research question directly. Using the filtered DESeqDataSet from T1S1, run DESeq() and extract the condition:time interaction coefficient with a Wald test. In parallel, run a likelihood-ratio test comparing the full design ~ condition + time + condition:time against the reduced design ~ condition + time; the LRT p-values are the formal test of 'is there any time-dependence of the treatment effect' and should be reported alongside the Wald result, with the degree of agreement between them stated. Apply LFC shrinkage to the interaction coefficient (apeglm, or ashr if apeglm cannot handle the coefficient) for ranking and plotting. Report: number of genes with interaction FDR < 0.05 and < 0.1 (BH), the full results table sorted by adjusted p-value with baseMean, raw and shrunken LFC, p, and padj, a volcano plot of the interaction term, an MA plot, and a p-value histogram (a flat histogram with no peak near zero is direct evidence of no detectable interaction and must be reported as such). Write a plain statement of the headline answer with the actual gene count, and state the caveat that with 3 replicates per cell an interaction contrast has substantially less power than a main effect, so absence of significant genes is 'no detectable difference' and not evidence that the treatment effects are equal.",
+              "question_context": "",
+              "context": "The interaction coefficient is the difference of differences: (treated_t1 - control_t1) - (treated_t0 - control_t0). Its sign and magnitude are what distinguish an amplified, damped, or reversed treatment effect over time. Everything downstream depends on this ranking.",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "EnhancedVolcano",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "acceptance_criteria": [
+                "Interaction coefficient name is printed from resultsNames() and the extracted contrast is confirmed to be the condition:time term, not a main effect",
+                "Both the Wald test on the interaction coefficient and the LRT (full ~condition+time+condition:time vs reduced ~condition+time) are reported, with counts of genes at FDR<0.05 and FDR<0.1 for each",
+                "Full interaction results table exported as CSV with baseMean, log2FoldChange, lfcSE, shrunken LFC, pvalue, padj",
+                "Volcano, MA, and p-value histogram plots produced for the interaction term",
+                "A one-sentence headline answer states the number of interaction genes and whether the answer to the research question is yes, no, or underpowered",
+                "Dispersion estimate plot produced and the fitted dispersion trend commented on"
+              ],
+              "constraints": [
+                "Report BH-adjusted p-values; do not switch to a nominal p threshold to manufacture hits",
+                "Do not interpret the condition main effect as 'the treatment effect' — under a model with an interaction it is the treatment effect at the reference time level only. State this explicitly if the main effect is reported at all",
+                "If zero genes reach FDR<0.1, say so plainly and report the top 20 genes by nominal p as exploratory only, labelled as such"
+              ],
+              "caveats": [
+                "With n=3 per cell (8 residual df) the interaction test is the least powerful contrast in this design; a null result is expected under modest effect-size differences",
+                "apeglm shrinkage of an interaction coefficient may require refitting with a relevelled design or falling back to ashr — either is acceptable, state which was used"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Simple treatment effects within t0 and within t1",
+              "track": "1",
+              "step_type": "analysis",
+              "question": "What is the treatment effect at t0 and separately at t1, and do the two effect-size vectors agree in magnitude and direction across genes?",
+              "description": "Extract the two simple within-time treatment contrasts from the same fitted model in T1S2: treated vs control at t0, and treated vs control at t1. Report for each the number of DE genes at FDR<0.05 and FDR<0.1, a results table, and a volcano plot. Then quantify the agreement between the two effects directly: scatter of LFC(t1) against LFC(t0) across all tested genes with the y=x line, Pearson and Spearman correlation of the two LFC vectors, the regression slope of LFC(t1) on LFC(t0) (a slope near 1 means the treatment effect is preserved; well below 1 means damped; above 1 amplified; negative means reversed), and the overlap of the two DE gene sets as a Venn/UpSet plot with counts. Cross-reference: for the top interaction genes from T1S2, tabulate their t0 and t1 simple effects side by side so the direction of each interaction is readable. Restrict the correlation and slope analysis to genes with reasonable expression (baseMean above the median) and report how the estimate changes on the full set, since low-count genes add noise that flattens the slope toward zero.",
+              "question_context": "",
+              "context": "Simple effects are the interpretation layer for the interaction result. They also provide a global, per-gene-threshold-free view of whether the treatment effect changed: the LFC-vs-LFC slope and correlation are far more stable at n=3 than any count of significant genes, and if the interaction test in T1S2 is null, this is the evidence that says whether the effects are genuinely similar or merely indistinguishable.",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "dplyr",
+                "ComplexUpset",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "acceptance_criteria": [
+                "Both simple contrasts (treated vs control at t0; treated vs control at t1) extracted from the single fitted model and exported as CSV tables",
+                "DE gene counts at FDR<0.05 and FDR<0.1 reported for each time point",
+                "LFC(t1) vs LFC(t0) scatter with y=x reference, plus Pearson and Spearman correlation and regression slope with confidence interval",
+                "Overlap of the two DE gene sets reported with counts and a set plot",
+                "Top interaction genes from T1S2 tabulated with their t0 and t1 simple-effect LFCs and p-values side by side"
+              ],
+              "constraints": [
+                "Both contrasts must come from the single model fitted in T1S2 — do not refit two separate per-time-point models on 6 samples each, which discards shared dispersion information",
+                "Do NOT conclude that the treatment effect differs because one simple contrast is significant and the other is not. Difference-of-significance is not significance-of-difference; only the T1S2 interaction test answers the research question. State this explicitly in the step output"
+              ],
+              "caveats": [
+                "Regression of LFC(t1) on LFC(t0) suffers regression dilution because the x-axis is itself estimated with error, so the slope is biased toward zero — report it as descriptive and note the bias rather than treating it as an unbiased attenuation estimate"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "GSEA on interaction and simple-effect rankings",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "Which biological processes show a time-dependent treatment response, and are the pathways engaged by treatment at t0 the same ones engaged at t1?",
+              "description": "Run pre-ranked GSEA on three gene rankings from track 1: (a) the shrunken condition:time interaction LFC from T1S2, (b) the treated-vs-control LFC at t0 from T1S3, and (c) the same at t1. Rank by shrunken LFC (or by sign(LFC) * -log10(p) if shrinkage was unavailable), with the ranking metric used stated in the output. This step needs two kinds of human gene-set reference: a broad hallmark collection of ~50 coherent biological states, and a Gene Ontology biological-process collection for mechanism-level resolution — both keyed on HGNC gene symbols, which match the counts.csv row identifiers so no identifier conversion is required. Resolve both against what the environment actually provides at run time and report the collection name, version, and set count used. Restrict sets to 15-500 genes after intersecting with the tested gene universe (the ~12,000 filtered genes, NOT the whole genome), report BH-adjusted set-level p-values, and produce for each ranking a table of significant sets and enrichment plots for the top sets. The key output is a side-by-side comparison of normalized enrichment scores at t0 versus t1 for every set tested in both, as a scatter and as a table of the sets whose NES changed most, which is the pathway-level statement of whether the treatment effect differs between time points. If the GO collection is unavailable, run hallmark alone and say so; if neither is available, report the gap rather than substituting a different organism's sets.",
+              "question_context": "",
+              "context": "Gene-level interaction tests at n=3 per cell are the noisiest contrast in the design, so the set-level readout is where a genuine time-dependent response is most likely to be detectable. Running GSEA on the two simple-effect rankings in addition to the interaction ranking makes the result interpretable as 'this program is on at t0 and gone by t1' rather than an unanchored list of interaction-enriched sets.",
+              "packages": [
+                "fgsea",
+                "dplyr",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "acceptance_criteria": [
+                "Three pre-ranked GSEA runs completed: interaction ranking, t0 simple-effect ranking, t1 simple-effect ranking",
+                "The gene-set collections actually used are named with version and set count in the output; a human hallmark collection and, if available, a human GO biological-process collection",
+                "Gene universe is restricted to the genes tested in T1S2, and the number of sets surviving the 15-500 size filter after intersection is reported",
+                "BH-adjusted set-level p-values reported; significant sets tabulated per ranking with NES, padj, and leading-edge genes",
+                "NES(t1) versus NES(t0) comparison produced as both a scatter plot and a table of the largest NES shifts"
+              ],
+              "constraints": [
+                "Use human gene sets only — the data is Homo sapiens; do not substitute mouse or rat collections",
+                "Use the filtered gene list from T1S2 as the universe, not a genome-wide background",
+                "Set a fixed random seed and report it, since fgsea permutation p-values are stochastic",
+                "Do not convert gene identifiers; the counts matrix already uses HGNC symbols matching the GMT files"
+              ],
+              "caveats": [
+                "A set-level hit on the interaction ranking with no gene reaching gene-level FDR is a legitimate and common outcome here, but it is a weaker claim — report it as suggestive and name the leading-edge genes so it can be followed up",
+                "NES values from separate GSEA runs are comparable in direction and roughly in magnitude but are not on a formally shared scale; treat the NES(t0) vs NES(t1) comparison as descriptive, not as a test of difference"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

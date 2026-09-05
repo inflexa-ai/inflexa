@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the input as RSEM expected counts, names tximport type='rsem' with effective lengths as a model offset as the sourced route, states that route is unavailable without the genes.results files, rounds for DESeq2 as a labelled deviation, and explicitly forbids substituting TPM/FPKM — matching the reference on the hardest point, though it only notes a re-run 'if the files can be provided later' rather than requesting them up front. QC is exemplary: identifier checks, per-sample depth and detected genes, blind VST PCA plus distance heatmap with sample_01 located, a keep-by-default policy that rejects depth alone as a drop reason, and a leave-one-out sensitivity refit. Filtering (>=10 counts in >=6 samples, smallest group size) is minimal and justified, normalization is median-of-ratios/TMM inside the models with no pre-scaling, the reference level and contrast direction are explicit, and BH at alpha 0.05 with independent filtering plus apeglm shrinkage and no post hoc LFC cut are all stated. Enrichment is well specified (full ranked list on the Wald stat with the choice defended, tested-genes universe, 15-500 window, named human-filtered collections, collapse, seed, ORA suppressed below ~50 hits), and the report covers method, versions, design, thresholds, n tested/n DE, method-overlap, and the three required caveats."
+}

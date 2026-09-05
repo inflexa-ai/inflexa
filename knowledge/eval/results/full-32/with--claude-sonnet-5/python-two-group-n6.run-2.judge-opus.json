@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 0,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 0,
+    "report_completeness": 0
+  },
+  "rationale": "No plan was submitted; the planner terminated with a clarification request whose question was a placeholder and carried no analytic content. There is nothing stated about the statistical method, QC, filtering, normalization, design formula, multiple testing, enrichment, or reporting. The task as specified (6v6 unpaired, single batch, raw Salmon counts, one shallow library) was fully actionable without clarification, so the stop is not justified. All criteria score 0 for absence."
+}

@@ -1,0 +1,505 @@
+{
+  "campaign": "full-32",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "enrichment-only-ranked",
+  "run": 1,
+  "startedAt": "2026-09-05T18:30:57.671Z",
+  "elapsedMs": 96083,
+  "outcome": "plan_submitted",
+  "planId": "pln-a2673310",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Input integrity and sample-structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12 samples with 12,000 genes is small — a PCA on 12 points is easily dominated by one sample; do not over-interpret cluster structure",
+          "If the sign convention cannot be verified because sample-to-column mapping is ambiguous, stop and report that rather than guessing, since it inverts every up/down pathway call downstream",
+          "NA adjusted p-values are expected from independent filtering and from Cook's-distance outlier flagging at 6 replicates per group; they are not an error"
+        ],
+        "context": "Inputs: /eval-full-32-with-enrichment-only-ranked-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, raw integer gene-level counts from Salmon, first column gene symbol), /eval-full-32-with-enrichment-only-ranked-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition), /eval-full-32-with-enrichment-only-ranked-1/data/inputs/results/de_results.csv (12,000 rows, DESeq2 results of the treated vs control contrast: gene, base_mean, log2_fold_change, log2_fold_change SE, stat, p-value, adjusted p-value). Differential expression is NOT to be re-run; this step only validates what the enrichment will consume.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2",
+          "matrixStats"
+        ],
+        "question": "Do the 6 treated (psoriasis lesional) and 6 control skin samples separate in expression space, does sample_01 (library size ~4x below median) behave as an outlier beyond its depth, and is the supplied de_results.csv consistent with counts.csv in gene identifiers and contrast direction?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d",
+            "R-0030@2248",
+            "R-0083@12de",
+            "R-0039@e17a"
+          ],
+          "reason": "Raw counts with a flagged low-depth sample: blind VST + PCA on top 500 variable genes + sample distance heatmap (R-0033), keep and report the low-depth sample rather than dropping it (R-0008, R-0030), inspect the p-value histogram and the NA/outlier genes of the supplied DESeq2 table (R-0083, R-0039).",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do NOT re-run differential expression; the supplied de_results.csv is the authoritative DE result",
+          "Do NOT remove sample_01 or any sample — a library size far below the median is accounted for by the size factors and is not on its own a reason to drop a sample (R-0008, R-0030)",
+          "Use the blind VST (blind=TRUE) so the design does not influence the QC transform",
+          "Do not scale, transform, or pre-normalize the raw counts outside the DESeq2 size-factor machinery",
+          "Set and record a random seed; record sessionInfo"
+        ],
+        "description": "Build a DESeqDataSet from counts.csv and metadata.csv purely for QC (no differential test). Report per-sample library size and detected-gene count, confirming and quantifying the sample_01 depth anomaly. Apply the blind variance-stabilizing transformation, plot PCA on the 500 most variable genes coloured by condition and labelled by sample, and draw a Euclidean sample-distance heatmap. Separately, cross-check de_results.csv against counts.csv: fraction of gene identifiers shared, number of rows with NA p-value or NA adjusted p-value (DESeq2 sets these on Cook's-distance outliers and on independently filtered genes — report the two causes separately if distinguishable), the p-value histogram shape, and the count of genes at adjusted p < 0.05 (and at < 0.1). Verify the sign convention by taking the 5 genes with the largest positive and 5 with the largest negative log2_fold_change and comparing normalized group means between the two condition levels — state explicitly whether positive log2_fold_change means higher in treated/lesional. Write a short QC summary table and the figures to the step outputs.",
+        "acceptance_criteria": [
+          "Per-sample library sizes and detected-gene counts reported for all 12 samples, with sample_01's ratio to the median stated numerically",
+          "PCA (top 500 variable genes, blind VST) and sample-distance heatmap produced and coloured/labelled by condition and sample id",
+          "No sample is removed; if sample_01 is also a positional outlier on PCA, that is stated as an observation with its consequence for the enrichment, not acted on silently",
+          "Gene-identifier overlap between de_results.csv and counts.csv reported as a fraction, with the count of non-overlapping identifiers",
+          "Number of genes with adjusted p < 0.05 and < 0.1 reported, together with the number of NA p-values and NA adjusted p-values",
+          "Sign convention of log2_fold_change verified empirically against group means and stated in plain words (which condition is the numerator)",
+          "p-value histogram plotted and its shape described (flat/anti-conservative/irregular)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked hallmark GSEA on the Wald statistic",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than about 50 genes pass adjusted p < 0.05 in the supplied table, that is not a reason to switch to an over-representation test — the ranked method is already the right one; state the size of the significant list in the report (R-0103)",
+          "Reactome is the conventional second human collection but is not staged in this environment; using WikiPathways and GO BP instead is a substitution that must be stated. If the hallmark collection itself is absent at run time, stop and report that rather than silently substituting GO or WikiPathways for the primary pass — the question asks specifically about hallmark pathways",
+          "Hallmark sets overlap (e.g. the several inflammatory/interferon sets share many genes); a block of significant sets driven by one leading edge is one finding",
+          "GSEA NES is a statement about coordinated rank position, not about pathway activity or causality"
+        ],
+        "context": "Reads /eval-full-32-with-enrichment-only-ranked-1/data/inputs/results/de_results.csv — the DESeq2 results table of the treated vs control contrast, 12,000 genes with base_mean, log2_fold_change, its standard error, the Wald statistic, p-value and adjusted p-value; gene identifiers are HGNC symbols, matching the symbol space of the staged hallmark GMT. Required reference data: the human hallmark gene set collection (MSigDB hallmark, HGNC symbols, GMT), with the human WikiPathways and human GO Biological Process collections as the secondary pass. Resolve these against the reference store at run time and record the exact collection version used. Reactome is the conventional second collection for human but is not staged in this environment — use WikiPathways and GO BP instead and say so.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2",
+          "BiocParallel"
+        ],
+        "question": "Which of the 50 MSigDB hallmark gene sets are coordinately up or down in treated (psoriasis lesional) skin versus control, using the full ranked list of the 12,000 tested genes from the supplied DESeq2 treated-vs-control contrast?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0054@801e",
+            "R-0097@a38e",
+            "R-0098@d01b"
+          ],
+          "reason": "Human bulk RNA-seq with a completed DESeq2 contrast and a ranked-list question: fgsea preranked GSEA against MSigDB hallmark (R-0107, R-0048); for the disputed ranking metric (R-0108) the Wald `stat` side is chosen because it scales the effect by its standard error (R-0099). R-0098 names Reactome as the second human collection, but it is not staged here, so WikiPathways and GO BP serve as the follow-up per R-0048.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the ranked (preranked GSEA) method on all tested genes, never an over-representation test on a thresholded list (R-0045, R-0107)",
+          "rank_metric = stat (DESeq2 Wald statistic); do NOT rank by the unshrunken log2 fold change alone and do NOT rank by a signed p-value that ties at saturation (R-0099)",
+          "min_size = 15, max_size = 500, applied after intersecting each set with the tested genes (R-0047)",
+          "Universe = the tested genes in de_results.csv, not the whole genome or the whole annotation (R-0046)",
+          "collapse_redundant = true before reporting (R-0052)",
+          "Primary collection = MSigDB human hallmark; do not substitute a different collection for the primary pass (R-0048)",
+          "Gene identifiers in the ranked list and in the gene sets must be the same identifier space (HGNC symbols); if any mapping is performed, report the unmapped share and never mix spaces (R-0101)",
+          "Resolve the hallmark collection from the reference store at run time by what it is (human hallmark gene sets, symbols GMT) — do not hardcode assumptions about its contents beyond the 50 hallmark sets",
+          "Do not use KEGG; it is not served here (R-0097)"
+        ],
+        "description": "Rank every tested gene by the DESeq2 Wald statistic (the `stat` column), descending — this is the stated choice among the disputed ranking metrics: it is signed and scaled by the standard error, so it does not let a low-count gene with a large noisy fold change dominate the head of the list, and unlike a signed -log10 p it does not tie genes whose p-values saturate. Drop genes with NA statistic and report how many were dropped and why. Resolve duplicate gene symbols by keeping the entry with the largest absolute statistic, reporting the number collapsed. Run fgsea (fgseaMultilevel) against the human hallmark collection with minSize 15 and maxSize 500 applied after intersecting each set with the tested genes, BH adjustment, and a fixed seed. Report for every hallmark set: NES, p-value, padj, set size after intersection, and the leading-edge genes with their individual Wald statistics and log2 fold changes. Collapse significant sets whose leading edges overlap heavily (fgsea::collapsePathways) and mark which sets are one finding rather than several. Produce a NES bar plot of the significant sets ordered by NES, and an enrichment plot for the top 3 up and top 3 down sets. Then repeat the identical ranked test against human WikiPathways and human GO BP as a resolution pass, and report which specific pathways sit underneath each significant hallmark. Report the number of genes in the tested list that could not be matched to any set in the collection, and note that the analysis is on the ranked full list so the length/expression bias of an over-representation test does not apply.",
+        "acceptance_criteria": [
+          "fgsea run on the FULL ranked list of tested genes — no filtering by adjusted p-value or fold change before ranking",
+          "Ranking metric is the DESeq2 Wald statistic (`stat`), and the report says so explicitly alongside the alternatives that were not used",
+          "Complete hallmark result table written out: pathway, size after intersection with tested genes, ES, NES, pval, padj, leading-edge gene symbols",
+          "Gene set size window 15-500 applied after intersection with the tested genes and reported",
+          "Significant sets (padj < 0.05) collapsed for leading-edge redundancy, with the representative set per group named and the collapsed members listed",
+          "Leading-edge genes of each significant hallmark listed with their Wald statistic and log2 fold change; overlaps between the leading edges of reported sets marked",
+          "The hallmark collection's identity and version string recorded verbatim from the reference store",
+          "Secondary WikiPathways + GO BP ranked results reported for the significant hallmarks, or an explicit statement if those collections are unavailable",
+          "Number and share of tested genes unmapped to any gene set reported",
+          "Random seed fixed and recorded"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Hallmark pathway report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A null or near-null result is a legitimate outcome and must be reported as such rather than padded with nominally significant sets"
+        ],
+        "context": "Consumes the QC summary from T1S1 and the fgsea hallmark and follow-up tables from T2S1. This is the deliverable the user reads.",
+        "maxSteps": 200,
+        "packages": [
+          "rmarkdown",
+          "knitr",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "What is the reportable answer to 'which hallmark pathways change between treated (psoriasis lesional) and control skin', with the evidence, the caveats, and enough method detail to reproduce it?",
+        "grounding": {
+          "claims": [
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Enrichment report must state database/version, rank metric, universe and size window (R-0051), the method-dependence caveat (R-0055), the leading-edge genes per significant set (R-0105), and a reproducibility record (R-0086).",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Do not restate any pathway as a mechanism or a therapeutic implication beyond what the enrichment evidence supports",
+          "Report the number of significant genes in the supplied DE table alongside the enrichment result (R-0103)",
+          "Include the reproducibility record in the report itself, not as a separate note (R-0086)"
+        ],
+        "description": "Assemble a Markdown/HTML report that leads with the answer: the hallmark sets significant at BH-adjusted p < 0.05, split by direction of NES (up in treated/lesional vs up in control), with the representative set per collapsed redundancy group. For each reported set give NES, padj, set size, and the leading-edge genes with their Wald statistics and log2 fold changes, marking leading-edge overlap between reported sets. State the methods block in full: gene set database and its version string, ranking metric (DESeq2 Wald statistic) and the alternatives not chosen, the universe (the tested genes of de_results.csv), the size window (15-500 after intersection), the tool and its version, and the multiple-testing method (BH). Carry forward from T1S1 the number of genes at adjusted p < 0.05 in the supplied DE table, the sign convention of the contrast, the sample_01 depth observation, and the p-value histogram shape. State plainly that enrichment results are method-dependent — a different ranking metric or an over-representation test on the same data can give a different list — and that each pathway is a hypothesis for follow-up, not a demonstrated mechanism. Close with a reproducibility record: sessionInfo, package versions, the random seed, and the pinned gene set collection version.",
+        "acceptance_criteria": [
+          "Report leads with the significant hallmark sets by direction, not with methodology",
+          "Every reported set carries NES, padj, size, and its leading-edge genes with gene-level statistics",
+          "Methods block states database + version, ranking metric, universe, size window, tool version, and BH adjustment",
+          "The sign convention (which condition is the numerator of the contrast) is stated in words",
+          "Method-dependence of enrichment stated explicitly, and pathways framed as hypotheses",
+          "Reproducibility record present: sessionInfo, package versions, seed, collection version",
+          "If no hallmark set reaches padj < 0.05, the report says so directly and reports the top sets by nominal p with their padj, without upgrading them to findings"
+        ]
+      }
+    ],
+    "title": "Hallmark GSEA: psoriasis lesional vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is which hallmark pathways change between the treated (psoriasis lesional) and control skin samples, and the differential expression is already done: /data/inputs/results/de_results.csv holds a DESeq2 results table for the treated vs control contrast over 12,000 genes with base_mean, log2_fold_change, log2_fold_change SE, and the test statistic/p-values. The plan therefore does not re-run DE. It does three things.\n\nFirst (T1S1) a short integrity and QC pass on the supplied inputs, because the enrichment inherits every problem in the results table. The profile flags sample_01 with a library size about 4x below the median of the 12 samples in /data/inputs/counts/counts.csv; a blind VST PCA and sample-distance heatmap over the 12,000 x 12 matrix say whether that sample also sits off its group, and whether the 6 lesional and 6 control samples separate at all. Low depth alone is not a reason to drop a sample — the size factors account for depth — so the step reports and does not remove. The same step checks that the results table matches the counts (gene overlap, direction of log2_fold_change against group means for a few top genes) so we know the sign convention of the contrast is treated-over-control before any pathway is called up or down.\n\nSecond (T2S1) the actual answer: fgsea preranked GSEA of the full list of tested genes against the 50 MSigDB human hallmark sets (2026.1, HGNC symbols), ranked by the DESeq2 Wald statistic. The Wald statistic is a stated choice among the three defensible ranking metrics — it is signed and scaled by its own standard error, so a low-count gene with a large noisy fold change does not float to the top. The full ranked list is used, never a thresholded one; sets are restricted to 15-500 members after intersection with the tested genes; redundant significant sets are collapsed and leading-edge genes reported. WikiPathways human and GO BP are run as a secondary pass on the same ranking to resolve a hallmark hit to a specific pathway (Reactome is not staged here; WikiPathways and GO are).\n\nThird (T1S3) a report that states the collection and its version, the ranking metric, the universe, the size window, the number of genes that passed padj < 0.05 in the supplied table, the leading edge of each significant set with overlaps marked, and a reproducibility record. Enrichment results are method-dependent, so pathways are reported as hypotheses with their evidence, not as established mechanism."
+  },
+  "usage": {
+    "inputTokens": 192061,
+    "outputTokens": 7579,
+    "cacheCreationInputTokens": 115655,
+    "cacheReadInputTokens": 76370,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the DESeq2 Wald statistic against MSigDB Hallmark, follow-up on WikiPathways and GO",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              },
+              {
+                "name": "nperm_eps",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST, PCA on top 500 variable genes, sample distance heatmap, library size table",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "ntop",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Markdown report with leading-edge genes, collection version, rank metric, universe, size window, sessionInfo",
+            "package": "rmarkdown"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Hallmark GSEA: psoriasis lesional vs control",
+          "analytical_narrative": "The question is which hallmark pathways change between the treated (psoriasis lesional) and control skin samples, and the differential expression is already done: /data/inputs/results/de_results.csv holds a DESeq2 results table for the treated vs control contrast over 12,000 genes with base_mean, log2_fold_change, log2_fold_change SE, and the test statistic/p-values. The plan therefore does not re-run DE. It does three things.\n\nFirst (T1S1) a short integrity and QC pass on the supplied inputs, because the enrichment inherits every problem in the results table. The profile flags sample_01 with a library size about 4x below the median of the 12 samples in /data/inputs/counts/counts.csv; a blind VST PCA and sample-distance heatmap over the 12,000 x 12 matrix say whether that sample also sits off its group, and whether the 6 lesional and 6 control samples separate at all. Low depth alone is not a reason to drop a sample — the size factors account for depth — so the step reports and does not remove. The same step checks that the results table matches the counts (gene overlap, direction of log2_fold_change against group means for a few top genes) so we know the sign convention of the contrast is treated-over-control before any pathway is called up or down.\n\nSecond (T2S1) the actual answer: fgsea preranked GSEA of the full list of tested genes against the 50 MSigDB human hallmark sets (2026.1, HGNC symbols), ranked by the DESeq2 Wald statistic. The Wald statistic is a stated choice among the three defensible ranking metrics — it is signed and scaled by its own standard error, so a low-count gene with a large noisy fold change does not float to the top. The full ranked list is used, never a thresholded one; sets are restricted to 15-500 members after intersection with the tested genes; redundant significant sets are collapsed and leading-edge genes reported. WikiPathways human and GO BP are run as a secondary pass on the same ranking to resolve a hallmark hit to a specific pathway (Reactome is not staged here; WikiPathways and GO are).\n\nThird (T1S3) a report that states the collection and its version, the ranking metric, the universe, the size window, the number of genes that passed padj < 0.05 in the supplied table, the leading edge of each significant set with overlaps marked, and a reproducibility record. Enrichment results are method-dependent, so pathways are reported as hypotheses with their evidence, not as established mechanism.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Input integrity and sample-structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 treated (psoriasis lesional) and 6 control skin samples separate in expression space, does sample_01 (library size ~4x below median) behave as an outlier beyond its depth, and is the supplied de_results.csv consistent with counts.csv in gene identifiers and contrast direction?",
+              "context": "Inputs: /eval-full-32-with-enrichment-only-ranked-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, raw integer gene-level counts from Salmon, first column gene symbol), /eval-full-32-with-enrichment-only-ranked-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition), /eval-full-32-with-enrichment-only-ranked-1/data/inputs/results/de_results.csv (12,000 rows, DESeq2 results of the treated vs control contrast: gene, base_mean, log2_fold_change, log2_fold_change SE, stat, p-value, adjusted p-value). Differential expression is NOT to be re-run; this step only validates what the enrichment will consume.",
+              "description": "Build a DESeqDataSet from counts.csv and metadata.csv purely for QC (no differential test). Report per-sample library size and detected-gene count, confirming and quantifying the sample_01 depth anomaly. Apply the blind variance-stabilizing transformation, plot PCA on the 500 most variable genes coloured by condition and labelled by sample, and draw a Euclidean sample-distance heatmap. Separately, cross-check de_results.csv against counts.csv: fraction of gene identifiers shared, number of rows with NA p-value or NA adjusted p-value (DESeq2 sets these on Cook's-distance outliers and on independently filtered genes — report the two causes separately if distinguishable), the p-value histogram shape, and the count of genes at adjusted p < 0.05 (and at < 0.1). Verify the sign convention by taking the 5 genes with the largest positive and 5 with the largest negative log2_fold_change and comparing normalized group means between the two condition levels — state explicitly whether positive log2_fold_change means higher in treated/lesional. Write a short QC summary table and the figures to the step outputs.",
+              "acceptance_criteria": [
+                "Per-sample library sizes and detected-gene counts reported for all 12 samples, with sample_01's ratio to the median stated numerically",
+                "PCA (top 500 variable genes, blind VST) and sample-distance heatmap produced and coloured/labelled by condition and sample id",
+                "No sample is removed; if sample_01 is also a positional outlier on PCA, that is stated as an observation with its consequence for the enrichment, not acted on silently",
+                "Gene-identifier overlap between de_results.csv and counts.csv reported as a fraction, with the count of non-overlapping identifiers",
+                "Number of genes with adjusted p < 0.05 and < 0.1 reported, together with the number of NA p-values and NA adjusted p-values",
+                "Sign convention of log2_fold_change verified empirically against group means and stated in plain words (which condition is the numerator)",
+                "p-value histogram plotted and its shape described (flat/anti-conservative/irregular)"
+              ],
+              "constraints": [
+                "Do NOT re-run differential expression; the supplied de_results.csv is the authoritative DE result",
+                "Do NOT remove sample_01 or any sample — a library size far below the median is accounted for by the size factors and is not on its own a reason to drop a sample (R-0008, R-0030)",
+                "Use the blind VST (blind=TRUE) so the design does not influence the QC transform",
+                "Do not scale, transform, or pre-normalize the raw counts outside the DESeq2 size-factor machinery",
+                "Set and record a random seed; record sessionInfo"
+              ],
+              "caveats": [
+                "12 samples with 12,000 genes is small — a PCA on 12 points is easily dominated by one sample; do not over-interpret cluster structure",
+                "If the sign convention cannot be verified because sample-to-column mapping is ambiguous, stop and report that rather than guessing, since it inverts every up/down pathway call downstream",
+                "NA adjusted p-values are expected from independent filtering and from Cook's-distance outlier flagging at 6 replicates per group; they are not an error"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d",
+                  "R-0030@2248",
+                  "R-0083@12de",
+                  "R-0039@e17a"
+                ],
+                "reason": "Raw counts with a flagged low-depth sample: blind VST + PCA on top 500 variable genes + sample distance heatmap (R-0033), keep and report the low-depth sample rather than dropping it (R-0008, R-0030), inspect the p-value histogram and the NA/outlier genes of the supplied DESeq2 table (R-0083, R-0039)."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked hallmark GSEA on the Wald statistic",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark gene sets are coordinately up or down in treated (psoriasis lesional) skin versus control, using the full ranked list of the 12,000 tested genes from the supplied DESeq2 treated-vs-control contrast?",
+              "context": "Reads /eval-full-32-with-enrichment-only-ranked-1/data/inputs/results/de_results.csv — the DESeq2 results table of the treated vs control contrast, 12,000 genes with base_mean, log2_fold_change, its standard error, the Wald statistic, p-value and adjusted p-value; gene identifiers are HGNC symbols, matching the symbol space of the staged hallmark GMT. Required reference data: the human hallmark gene set collection (MSigDB hallmark, HGNC symbols, GMT), with the human WikiPathways and human GO Biological Process collections as the secondary pass. Resolve these against the reference store at run time and record the exact collection version used. Reactome is the conventional second collection for human but is not staged in this environment — use WikiPathways and GO BP instead and say so.",
+              "description": "Rank every tested gene by the DESeq2 Wald statistic (the `stat` column), descending — this is the stated choice among the disputed ranking metrics: it is signed and scaled by the standard error, so it does not let a low-count gene with a large noisy fold change dominate the head of the list, and unlike a signed -log10 p it does not tie genes whose p-values saturate. Drop genes with NA statistic and report how many were dropped and why. Resolve duplicate gene symbols by keeping the entry with the largest absolute statistic, reporting the number collapsed. Run fgsea (fgseaMultilevel) against the human hallmark collection with minSize 15 and maxSize 500 applied after intersecting each set with the tested genes, BH adjustment, and a fixed seed. Report for every hallmark set: NES, p-value, padj, set size after intersection, and the leading-edge genes with their individual Wald statistics and log2 fold changes. Collapse significant sets whose leading edges overlap heavily (fgsea::collapsePathways) and mark which sets are one finding rather than several. Produce a NES bar plot of the significant sets ordered by NES, and an enrichment plot for the top 3 up and top 3 down sets. Then repeat the identical ranked test against human WikiPathways and human GO BP as a resolution pass, and report which specific pathways sit underneath each significant hallmark. Report the number of genes in the tested list that could not be matched to any set in the collection, and note that the analysis is on the ranked full list so the length/expression bias of an over-representation test does not apply.",
+              "acceptance_criteria": [
+                "fgsea run on the FULL ranked list of tested genes — no filtering by adjusted p-value or fold change before ranking",
+                "Ranking metric is the DESeq2 Wald statistic (`stat`), and the report says so explicitly alongside the alternatives that were not used",
+                "Complete hallmark result table written out: pathway, size after intersection with tested genes, ES, NES, pval, padj, leading-edge gene symbols",
+                "Gene set size window 15-500 applied after intersection with the tested genes and reported",
+                "Significant sets (padj < 0.05) collapsed for leading-edge redundancy, with the representative set per group named and the collapsed members listed",
+                "Leading-edge genes of each significant hallmark listed with their Wald statistic and log2 fold change; overlaps between the leading edges of reported sets marked",
+                "The hallmark collection's identity and version string recorded verbatim from the reference store",
+                "Secondary WikiPathways + GO BP ranked results reported for the significant hallmarks, or an explicit statement if those collections are unavailable",
+                "Number and share of tested genes unmapped to any gene set reported",
+                "Random seed fixed and recorded"
+              ],
+              "constraints": [
+                "Use the ranked (preranked GSEA) method on all tested genes, never an over-representation test on a thresholded list (R-0045, R-0107)",
+                "rank_metric = stat (DESeq2 Wald statistic); do NOT rank by the unshrunken log2 fold change alone and do NOT rank by a signed p-value that ties at saturation (R-0099)",
+                "min_size = 15, max_size = 500, applied after intersecting each set with the tested genes (R-0047)",
+                "Universe = the tested genes in de_results.csv, not the whole genome or the whole annotation (R-0046)",
+                "collapse_redundant = true before reporting (R-0052)",
+                "Primary collection = MSigDB human hallmark; do not substitute a different collection for the primary pass (R-0048)",
+                "Gene identifiers in the ranked list and in the gene sets must be the same identifier space (HGNC symbols); if any mapping is performed, report the unmapped share and never mix spaces (R-0101)",
+                "Resolve the hallmark collection from the reference store at run time by what it is (human hallmark gene sets, symbols GMT) — do not hardcode assumptions about its contents beyond the 50 hallmark sets",
+                "Do not use KEGG; it is not served here (R-0097)"
+              ],
+              "caveats": [
+                "If fewer than about 50 genes pass adjusted p < 0.05 in the supplied table, that is not a reason to switch to an over-representation test — the ranked method is already the right one; state the size of the significant list in the report (R-0103)",
+                "Reactome is the conventional second human collection but is not staged in this environment; using WikiPathways and GO BP instead is a substitution that must be stated. If the hallmark collection itself is absent at run time, stop and report that rather than silently substituting GO or WikiPathways for the primary pass — the question asks specifically about hallmark pathways",
+                "Hallmark sets overlap (e.g. the several inflammatory/interferon sets share many genes); a block of significant sets driven by one leading edge is one finding",
+                "GSEA NES is a statement about coordinated rank position, not about pathway activity or causality"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2",
+                "BiocParallel"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0054@801e",
+                  "R-0097@a38e",
+                  "R-0098@d01b"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Human bulk RNA-seq with a completed DESeq2 contrast and a ranked-list question: fgsea preranked GSEA against MSigDB hallmark (R-0107, R-0048); for the disputed ranking metric (R-0108) the Wald `stat` side is chosen because it scales the effect by its standard error (R-0099). R-0098 names Reactome as the second human collection, but it is not staged here, so WikiPathways and GO BP serve as the follow-up per R-0048."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Hallmark pathway report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the reportable answer to 'which hallmark pathways change between treated (psoriasis lesional) and control skin', with the evidence, the caveats, and enough method detail to reproduce it?",
+              "context": "Consumes the QC summary from T1S1 and the fgsea hallmark and follow-up tables from T2S1. This is the deliverable the user reads.",
+              "description": "Assemble a Markdown/HTML report that leads with the answer: the hallmark sets significant at BH-adjusted p < 0.05, split by direction of NES (up in treated/lesional vs up in control), with the representative set per collapsed redundancy group. For each reported set give NES, padj, set size, and the leading-edge genes with their Wald statistics and log2 fold changes, marking leading-edge overlap between reported sets. State the methods block in full: gene set database and its version string, ranking metric (DESeq2 Wald statistic) and the alternatives not chosen, the universe (the tested genes of de_results.csv), the size window (15-500 after intersection), the tool and its version, and the multiple-testing method (BH). Carry forward from T1S1 the number of genes at adjusted p < 0.05 in the supplied DE table, the sign convention of the contrast, the sample_01 depth observation, and the p-value histogram shape. State plainly that enrichment results are method-dependent — a different ranking metric or an over-representation test on the same data can give a different list — and that each pathway is a hypothesis for follow-up, not a demonstrated mechanism. Close with a reproducibility record: sessionInfo, package versions, the random seed, and the pinned gene set collection version.",
+              "acceptance_criteria": [
+                "Report leads with the significant hallmark sets by direction, not with methodology",
+                "Every reported set carries NES, padj, size, and its leading-edge genes with gene-level statistics",
+                "Methods block states database + version, ranking metric, universe, size window, tool version, and BH adjustment",
+                "The sign convention (which condition is the numerator of the contrast) is stated in words",
+                "Method-dependence of enrichment stated explicitly, and pathways framed as hypotheses",
+                "Reproducibility record present: sessionInfo, package versions, seed, collection version",
+                "If no hallmark set reaches padj < 0.05, the report says so directly and reports the top sets by nominal p with their padj, without upgrading them to findings"
+              ],
+              "constraints": [
+                "Do not restate any pathway as a mechanism or a therapeutic implication beyond what the enrichment evidence supports",
+                "Report the number of significant genes in the supplied DE table alongside the enrichment result (R-0103)",
+                "Include the reproducibility record in the report itself, not as a separate note (R-0086)"
+              ],
+              "caveats": [
+                "A null or near-null result is a legitimate outcome and must be reported as such rather than padded with nominally significant sets"
+              ],
+              "packages": [
+                "rmarkdown",
+                "knitr",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Enrichment report must state database/version, rank metric, universe and size window (R-0051), the method-dependence caveat (R-0055), the leading-edge genes per significant set (R-0105), and a reproducibility record (R-0086)."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+  }
+}

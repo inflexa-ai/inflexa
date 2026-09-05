@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the condition:time interaction as the hypothesis and fits a DESeq2 full-vs-reduced LRT alongside per-coefficient Wald tests with apeglm, with explicit formula, reference levels, and reduced model; it wavers on which test is primary (Step 2 calls Wald central, Step 3 selects on LRT) and includes a confused 'two-group with 12 replicates' remark. QC covers PCA, distances, and library sizes colored by condition/time with an outlier flag, though the action policy for a flagged sample is only 'note it'. Filtering is minimal and justified, normalization is inside the model, and BH at a stated alpha with shrinkage is correct. Enrichment was not asked and the reference omits it; the plan adds ORA with a reasonable universe and size window but leaves the Reactome version unstated and justifies the method choice oddly. The report specification is thorough, including simple effects, diagnostics, versions, and design caveats."
+}

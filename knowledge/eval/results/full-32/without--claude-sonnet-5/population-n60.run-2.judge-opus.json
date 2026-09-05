@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "A DESeq2 negative-binomial GLM with ~condition is a valid, if slower, choice for a single-batch unpaired 60 vs 60 design, and the plan correctly refuses to invent a batch term; TMM/voom would scale better but this is defensible. QC covers library size, detection rate, PCA and clustering, but there is no sex check against XIST/Y genes, no explicit outlier policy beyond 'flag', and no search for hidden structure, which matters at n=120. Normalization is properly internal via size factors on raw counts, and apeglm shrinkage plus reporting SE and both MLE and shrunken LFC is the right instinct, but the effect-size threshold is applied post hoc as a |LFC|>=1 filter rather than tested (lfcThreshold/TREAT), and no confidence intervals are reported, so the 'large enough to matter' half is not formally inferential. The reference level is never stated, only the coefficient name lookup. Enrichment is the weakest part: ORA on two cutoff lists discards the moderated ranking that camera or preranked fgsea would exploit, though the universe is correctly the filtered gene set and collections are named and versioned; no gene-set size window is given. Reporting names design, thresholds and design caveats, but software versions and explicit counts of tested versus significant genes are only partially specified."
+}

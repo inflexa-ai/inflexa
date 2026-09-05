@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly reads the 2x2 layout as a factorial rather than a time course, treats time as a two-level factor, fits ~ condition + time + condition:time, and makes the single interaction Wald coefficient the primary test with both simple effects reported at the same alpha and ashr shrinkage — exactly the reference approach, with explicit reference levels for both factors and a stated route to the t1 simple effect. QC is design-specific (blind VST, PCA colored by condition and shaped by time, distance heatmap, library sizes, flag-not-remove outlier policy); the single-batch structure is acknowledged so the absence of a batch term is appropriate. Filtering (>=10 counts in >=3 samples, tied to the smallest cell) is minimal and justified, size factors are estimated inside DESeq2 with an explicit ban on pre-normalization, and BH at 0.05 with independent filtering, no post-hoc LFC filter, and NA accounting by cause are all specified. Enrichment was not asked for, but the added preranked fgsea is well specified (Wald stat on the full tested list, named human collections, 15-500 size window, per-contrast BH, seed, unmatched-symbol reporting), losing a little only for the vague \"Reactome current\" version and for extending scope beyond the question. The report section is complete on methods, versions, design, contrasts, thresholds, tested and significant counts, diagnostics, the honest power caveat on the interaction, and the missing tximport offsets."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly refuses to deduplicate non-UMI total RNA counts, explains the duplication as a library-type property, uses DESeq2 Wald on raw counts with default size factors under ~condition, and handles sample_01 with an explicit flag-plus-sensitivity policy. The QC lacks the per-sample rRNA, mitochondrial, and intronic fractions the reference uses to explain the duplication, and it never states an explicit low-count prefilter beyond DESeq2 independent filtering. BH at 0.05 is stated but no fold-change shrinkage (apeglm) is specified for the reported effect, and the reference level is only implied. Enrichment is added without being asked; it names collections and a ranking metric but omits versions and size windows, and the report section lists no software versions."
+}

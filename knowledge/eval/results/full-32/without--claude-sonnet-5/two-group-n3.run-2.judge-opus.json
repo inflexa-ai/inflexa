@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly matches the design: raw Salmon counts into DESeq2 with a negative-binomial Wald test, condition as the sole factor for an unpaired single-batch 3v3, size factors estimated inside the model, and no pre-normalized values or ComBat. QC precedes testing (library sizes, detected genes, PCA/clustering colored by condition, explicit outlier flagging) and the low-count filter (>=10 in at least 3 samples) is minimal and reported with retained gene counts. Multiple testing is BH at a stated alpha with apeglm/ashr shrinkage on the reported effect, and power limitations at n=3 are addressed honestly without lowering alpha, with leave-one-out and permutation stability checks as a reasonable, if optional, addition. Weaknesses: the design formula is described in prose rather than written explicitly and the reference level (control) is never set or stated, so contrast direction is implicit; enrichment names the collection and version, ranking metric, and the tested-gene universe but omits a gene set size window; and the report does not commit to recording package versions. The invented '7 samples vs 6 metadata rows' discrepancy is a minor distraction not grounded in the stated dataset."
+}

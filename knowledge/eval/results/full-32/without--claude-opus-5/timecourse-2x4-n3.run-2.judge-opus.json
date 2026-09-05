@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan targets exactly the right test: a DESeq2 LRT of ~condition + time + condition:time against ~condition + time, with time kept as a 4-level factor, t0 and control as explicit reference levels, resultsNames printed, and the correct warning that the reduced model must retain the condition main effect so a constant baseline shift is not called treatment-specific; per-timepoint interaction coefficients with named shrinkage (apeglm/ashr) localize the divergence, matching the reference. QC is thorough and design-specific (24-column vs 24-row reconciliation, condition x time cross-tab, library sizes, VST PCA colored by condition and shaped by time, distance heatmap, explicit no-silent-drop policy). The low-count filter (>=10 counts in >=3 samples, tied to smallest group size, before/after gene counts) is minimal and justified; normalization is left to DESeq2 internals with raw (rounded) counts and VST only for QC/clustering, which is correct but only implicitly stated rather than named as size-factor estimation. BH at stated alphas with independent filtering, p-value histogram inspection, and an explicit refusal to relax thresholds are strong; enrichment uses the tested-gene background, human-only collections, and a stated signed ranking metric, but lacks collection versions and a gene-set size window, and versions are not explicitly promised in the final report."
+}

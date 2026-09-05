@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits the paired design exactly: DESeq2 with ~ subject + condition as the primary model, limma-voom with the same blocking design as the cross-check, and an explicit statement that per-subject direction counts are descriptive because n=1 per subject precludes per-subject tests. QC (library sizes, blind VST PCA by subject and condition, distance heatmap) precedes the fit with a stated policy not to drop a sample of a pair; the filter (>=10 in >=5 samples) is minimal and justified by group size, size factors are estimated inside the model, the reference level and contrast direction are explicit, and BH at 0.05 with apeglm shrinkage and independent filtering is applied within results(). Enrichment uses the full ranked list on the stated Wald statistic with a named human Hallmark collection, a 15-500 size window, the tested genes as universe, and a recorded seed; the only softness is that collection versions are resolved at run time rather than fixed. The report specifies method, versions, design, thresholds, tested/significant counts and the 4-residual-df power caveat."
+}

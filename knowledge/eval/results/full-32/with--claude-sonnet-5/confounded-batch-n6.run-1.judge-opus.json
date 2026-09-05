@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound (B1 = all controls, B2 = all treated), explicitly refuses a batch term, ComBat-seq, SVA, or removeBatchEffect on the grounds of a rank-deficient model matrix, fits ~condition alone, and labels every table, plot, and pathway result as inseparable from batch, closing with a recommendation for a rebalanced follow-up design — exactly the reference behavior. QC is design-aware (blind VST PCA colored by both condition and batch to demonstrate the identical grouping, distance heatmap, library sizes), though it states outliers will be 'checked' without a stated policy for what happens if one is found. Filtering (>=10 counts in >=6 samples, justified by smallest group size), median-of-ratios normalization inside the model, explicit control reference level and named contrast, BH at alpha 0.05 with independent filtering and apeglm shrinkage are all correct and explicit. Enrichment is fully specified (full ranked list by Wald stat, tested-gene universe, named collections with versions, 15-500 size window, leading edge, confound caveat inherited), but running GSEA on a result that cannot be attributed to treatment adds interpretive risk even with the label; the final report section is thorough on methods, versions, design, thresholds, gene counts, and caveats."
+}

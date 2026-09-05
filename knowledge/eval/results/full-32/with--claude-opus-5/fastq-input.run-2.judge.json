@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 6
+  },
+  "rationale": "The planner reached the correct outcome for this data state: it recognized that raw paired-end FASTQs cannot be tested for differential expression without quantification, refused to invent a count matrix, and asked the right question — a count table or Salmon/kallisto quantifications, or a named quantifier plus a GRCh38 reference — and sensibly added strandedness. It fell slightly short of the reference by not asking for the annotation version (e.g. GENCODE release) and by not sketching the conditional downstream plan (DESeq2/edgeR, ~condition with control as reference, BH at 0.05, LFC shrinkage, and the low-power caveat of 3 vs 3). Because no matrix exists, the QC, filter, normalization, model, FDR, and report criteria are largely inapplicable and receive middling credit rather than zero; enrichment was correctly omitted."
+}

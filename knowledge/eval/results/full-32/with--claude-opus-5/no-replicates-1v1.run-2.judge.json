@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes that n=1 per group permits no dispersion estimate, runs no Wald/QLF/voom test, sets the control reference level explicitly, keeps median-of-ratios normalization inside DESeq2 with a minimal justified filter, and labels the |log2FC| cut as a ranking device rather than significance, while naming the replicated design needed for inference. QC is appropriately scaled to two samples with an explicit no-drop policy and a reasoned omission of PCA. The main departure from the reference is the preranked fgsea step: enrichment on an uncertainty-free fold-change ranking is of doubtful warrant, and although the plan labels the permutation p-values as non-inferential it still emits them, which the reference says a correct plan should not do; the enrichment specification itself (full list, stated metric, universe, size window, versioned collections) is otherwise sound. The report step is thorough and leads with the design limitation."
+}

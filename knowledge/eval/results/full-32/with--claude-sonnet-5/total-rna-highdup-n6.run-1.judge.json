@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses read de-duplication in a no-UMI total RNA library, keeps sample_01 pending multivariate evidence rather than dropping it on depth alone, and specifies DESeq2 Wald with ~condition, explicit control reference, a justified >=10-in->=6-samples filter, internal median-of-ratios/TMM normalization, apeglm shrinkage, and BH at 0.05 with independent filtering. Its main gap against the reference is that it does not explain the duplication for a rRNA-depleted library: no per-sample rRNA fraction, mitochondrial fraction, or intronic share, and no stated decision on whether to remove rRNA/mitochondrial genes before normalization if their share is large and uneven. Enrichment was not asked but is fully specified (Wald-stat ranking, full list, named/versioned collections, 15-500 window). The report section covers versions, design, thresholds, counts and the sample_01/duplication caveats, but inherits the missing library-type-specific QC metrics."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on ~condition with an explicit control reference level and a stated contrast direction, edgeR QL as a cross-check on the same filtered matrix, and a repeated, unsoftened power statement for n=3 that forbids loosening alpha. QC (library sizes, blind VST, PCA on top 500, distance heatmap, flag-only outlier policy, note that no batch column exists) precedes the test; the filter is minimal and tied to the smallest group size; normalization is median-of-ratios/TMM inside the model with an honest note that no transcript-length offset can be supplied because only gene-level counts were given. FDR is BH at alpha 0.05 with independent filtering, apeglm shrinkage on the single coefficient, no post hoc fold-change cut, and NA causes split by Cook's versus filtering. The enrichment section is exemplary for a non-model organism: it states plainly that no curated zebrafish collection exists, runs both a one-to-one ortholog route (mapping source named, mapped/dropped counts and retention percentage reported) and a native org.Dr.eg.db GO route with its thin-coverage caveat, ranks the full tested list by the Wald statistic with the metric justified, restricts the universe to tested genes, applies a 15-500 window after intersection, and records collection versions. Only minor deduction: the report requires the annotation source, release and identifier space but never commits to a specific Ensembl release number in the plan itself."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly recognizes RSEM expected counts, states that the tximport length-aware import cannot run without the genes.results files, rounds for DESeq2 as a stated deviation, and never substitutes TPM/FPKM; it loses a little for not explicitly requesting the missing files and for feeding rounded rather than raw expected counts to the edgeR cross-check. QC is thorough (blind VST, PCA, distance heatmap, library sizes and detected genes, explicit keep-by-default decision on sample_01), the filter (>=10 in >=6 samples) is minimal and justified, and the design (~condition, reference control, named contrast, apeglm, BH at 0.05 with independent filtering) is explicit. Normalization is only implicitly inside the model (size factors mentioned in passing; TMM for edgeR not stated). Enrichment was not asked for; it is added anyway with a mostly proper specification (tested-gene universe, Hallmark 2026.1, 15-500 window, Wald-stat ranked fgsea) but Reactome is left unversioned and the justification is muddled. The report section covers method, versions, design, thresholds, counts, and both caveats."
+}

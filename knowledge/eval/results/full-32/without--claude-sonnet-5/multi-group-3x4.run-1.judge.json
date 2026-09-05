@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan matches the reference on the core design: one DESeq2 fit on all twelve samples with ~condition and control as reference, an LRT against ~1 for the omnibus question, and two explicit Wald contrasts against control from the same fit, with a correct caveat not to read LRT fold changes as contrast effects. The low count filter (>=10 in at least 4 samples, tied to group size) is minimal and justified, and size factors are estimated inside the model on raw counts. Weaknesses: fold change shrinkage is labelled 'optional' rather than required, and the apeglm justification is muddled (coef-based apeglm works here since control is the reference); QC omits library sizes and has only a partial outlier policy. Enrichment was not asked for and is added with an explicit filtered-gene universe but no collection version, no set-size window, and an unresolved ORA-vs-GSEA choice; the report plan states thresholds and counts but never mentions software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 0,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 5
+  },
+  "rationale": "DESeq2 on raw counts with a single condition term and no batch term fits the unpaired single-batch 6v6 design, and the QC step is strong: library sizes for all samples, VST PCA/correlation, a pre-specified retain-unless-both-shallow-and-outlier rule (which would keep sample_01 at ~25% of median), and a sensitivity re-run. No low-count filter is mentioned anywhere. Size-factor normalization inside DESeq2 is stated, but the design formula and reference level are only implied, BH is not named, there is no fold-change shrinkage (apeglm), and the |log2FC|>1 cutoff is applied post hoc rather than via lfcThreshold. Enrichment correctly uses the mouse Hallmark collection with MGI symbols and fgsea on the full ranked list, but the ranking metric is only given as an example, no set-size window or collection version is stated, and the ORA universe is not explicitly defined; the report omits software versions."
+}

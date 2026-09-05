@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the condition-by-time interaction as the target and uses the DESeq2 LRT of ~condition+time+condition:time against ~condition+time as the primary omnibus test, with per-coefficient Wald/apeglm results as descriptive per-timepoint effects; reference levels, named contrasts, and the reduced model are all explicit. QC (blind VST PCA, distance heatmap, library sizes colored by condition and time, outlier flagging, and a check on the 24 vs 25 sample discrepancy) precedes modelling, the low-count filter (>=10 counts in at least the smallest group size) is minimal and justified, and normalization is left to median-of-ratios size factors inside the model with no pre-normalization. BH at alpha=0.05 with independent filtering passed into results(), selection on padj only, and apeglm shrinkage for reported effects are all correctly specified. The one weak spot is enrichment: ORA is defensible for an LRT-derived discrete gene list and the universe, size window, and collection version are stated, but the justification is hand-waved as a 'knowledge service permits' rule rather than statistical reasoning, and there is an identifier inconsistency (Entrez mapping against symbol-based GMTs); a minor internal contradiction also calls the Wald test 'the grounded method for a two-group comparison with 12 replicates per group,' which misdescribes this design."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses a batch term and any ComBat-seq/SVA/removeBatchEffect repair, fits ~condition with control as reference, and labels every output as confounded with a recommendation for a rebalanced follow-up, matching the reference. QC covers PCA, distances, and library sizes colored by condition and batch but states no concrete policy for handling an outlier or shallow sample. Filter, median-of-ratios normalization, BH at alpha 0.05, and apeglm shrinkage are all explicit and appropriate. Enrichment was not requested and running fgsea on a confounded contrast invites overinterpretation, though the plan fully specifies ranking metric, universe, collections with versions, size window, and propagates the caveat."
+}

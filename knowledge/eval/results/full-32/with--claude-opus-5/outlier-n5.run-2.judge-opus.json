@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference route closely: it characterizes sample_03 quantitatively (library size, detected genes, blind VST PCA, distance heatmap, Cook's flagging) before any test, keeps the sample in the primary DESeq2 Wald fit, and runs the exclusion, voomWithQualityWeights down-weighting, and edgeR QL robust refits as declared sensitivity analyses with an explicit gained/lost gene list — no silent removal, and the criterion for naming a primary fit is fixed in advance. Design handling is correct for 5v5 unpaired single batch: ~condition with explicit relevel of control, contrast named as factor/numerator/denominator, minimal >=10 in >=5 filter recomputed on the reduced matrix, median-of-ratios inside the model with an explicit prohibition on pre-normalization, BH at alpha 0.05 with independent filtering and apeglm shrinkage reported alongside unshrunken estimates. Enrichment is specified fully — full ranked list on the Wald statistic with the choice justified, tested-gene universe, 15-500 window applied after intersection, named collection with version and fallback, recorded seed, collapsePathways, and a stated ORA suppression rule — losing a point only because the Reactome collection is left unresolved until run time. The report step names versions, design, thresholds, tested and significant counts, both fits side by side, the DESeq2/edgeR intersection rather than the union, and the honest caveats about power and missing tximport length offsets."
+}

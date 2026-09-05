@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The statistical core is exactly right for the design: raw integers into DESeq2 with ~condition, control explicitly releveled, contrast written as the (condition, treated, control) triple with a stated sign convention, median-of-ratios size factors inside the model, a minimal and justified >=10-in->=3-samples filter, BH at alpha 0.05 with independent filtering, apeglm shrinkage for reporting but not for testing, and an edgeR QL cross-check on the identical filtered set reported as an intersection rather than a union; low power at 3 vs 3 is stated repeatedly without loosening alpha. QC is thorough and dataset-specific: integer/fractional check, per-sample depth and zero fractions, top-gene library share, liver marker identity, blind VST PCA and sample distances, with the small-n instability of PCA acknowledged. The main shortfall is the central concern: the plan does not run RSeQC infer_experiment or salmon libType A and never re-counts, instead declaring that no BAM, FASTQ or GTF is available and substituting matrix-level surrogates. It handles that honestly - naming the check that would settle it, stating what the surrogates can and cannot rule out, and carrying the caveat into the report - which is far better than silently trusting the counts, but it still leaves the strandedness question unresolved and the counts unverified against the strand setting actually used. Enrichment is well specified (full ranked list on the Wald statistic, tested-gene universe, 15-500 size window, named human collections with versions, seed, leading-edge collapse), with only a minor risk that a null gene-level result makes the multi-collection follow-up over-elaborate."
+}

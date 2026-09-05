@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits one DESeq2 model (~ condition) on all twelve samples, answers the omnibus question with an LRT against ~ 1 and the pairwise question with named Wald contrasts against an explicitly releveled control, with ashr shrinkage and BH within each contrast, matching the reference exactly; the edgeR QL check adds a like-for-like robustness comparison. QC is blind-VST PCA, distance heatmap and library sizes, coloured by condition with the absence of batch stated, and a flag-only outlier policy. The filter (>=10 in >=4 samples, smallest group) is minimal and justified, and normalization stays inside the model in both tools. Enrichment was not asked for; it is nonetheless specified correctly (full ranked list by Wald stat, tested-gene universe, MSigDB hallmark 2026.1 human, 15-500 window, seed), though the second collection is left as an 'and/or' to be resolved at run time. The report specification covers method, versions, design, thresholds, n tested/n DE per contrast, and the design caveats, and explicitly keeps LRT and pairwise counts distinct."
+}

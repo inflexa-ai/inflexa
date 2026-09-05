@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 2,
+    "normalization": 5,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly uses DESeq2 on raw counts for an unpaired single-batch 5v5 design and runs both fits with and without sample_03 with an explicit overlap comparison, but the exclusion in Step 3 has no pre-fixed criterion (MAD distance or technical failure) and no mention of DESeq2's Cook's outlier handling as the alternative route. QC covers VST PCA, distance heatmap, library size and gene detection, though coloring by condition and mapping/duplication metrics are not stated. No low-count prefilter is specified (only DESeq2 independent filtering), size-factor normalization and the reference level/contrast are implied rather than stated, and lfcShrink is absent despite BH at 0.05 being named. Enrichment was not asked for and is run anyway with an undecided ORA/GSEA choice, no collection version and no size window, though a ~12000-gene background is at least mentioned; report elements are reasonable but package versions are omitted."
+}

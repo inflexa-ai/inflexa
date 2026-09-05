@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 0,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the paired design and specifies DESeq2 with ~subject + condition, testing the condition coefficient, and explicitly rejects an unpaired comparison; the per-subject fold-change step is honestly labeled descriptive. Raw counts enter the model with size-factor normalization, and QC covers library sizes, PCA/correlation checked for pairing structure, and Cook's distance for outlier subjects, though the outlier policy is only to flag. No low-count filter is mentioned at all, BH is not named and no fold-change shrinkage is planned, and the optional |log2FC| threshold reads as post hoc. Enrichment names WikiPathways with an explicit profiled-gene universe but omits version and size window; the report lacks software versions and an explicit reference level."
+}

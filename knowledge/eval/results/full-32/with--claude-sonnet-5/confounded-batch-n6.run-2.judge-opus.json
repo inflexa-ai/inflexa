@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect confounding, refuses to fit a batch term (citing rank deficiency) and explicitly rules out ComBat-seq/removeBatchEffect/SVA, then proceeds with a condition-only model while labeling every result as confounded and recommending a deconfounded replication cohort — exactly the reference behavior. QC is dataset-specific (blind VST, PCA on top 500, distance heatmap, library sizes, colored by both condition and batch to demonstrate the aliasing), the filter (>=10 counts in >=6 samples, tied to the smaller group size) is minimal and justified, normalization is median-of-ratios inside DESeq2 with no pre-adjustment of counts, and the design/contrast/reference level are stated explicitly. Multiple testing is BH at alpha 0.05 with independent filtering, apeglm shrinkage for reported effects, and a p-value histogram check. The main weakness is the enrichment step: GSEA was not asked for and is of dubious value on a contrast that cannot be attributed to treatment; it is technically well-specified (full ranked list by Wald stat, named collections with versions, 15–500 size window, per-collection BH, caveat carried forward) but adds interpretive weight to an uninterpretable contrast. The final report is complete on method, versions, design, thresholds, gene counts, and design caveats."
+}

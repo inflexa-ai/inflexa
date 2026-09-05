@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely for a 3-vs-3 unpaired single-batch zebrafish design: DESeq2 Wald with ~condition, control explicitly releveled as reference, a minimal >=10 counts in >=3 samples filter tied to the smallest group size, median-of-ratios normalization inside the model, BH at alpha 0.05 with independent filtering and apeglm shrinkage, plus an explicit low-power caveat and separate reporting of Cook's-distance NAs. QC precedes testing with blind VST, PCA on top 500 genes colored by condition, a distance heatmap, library sizes, and a no-unilateral-drop policy; batch coloring is moot since the design is single-batch. Enrichment correctly states that no curated zebrafish collection exists, uses the full Wald-stat-ranked list with fgsea on human Hallmark after one-to-one babelgene ortholog mapping with mapped share and versions reported, a 15-500 size window, and a zebrafish-native GO cross-check; the only friction is invoking goseq (an ORA-style method) alongside a rule forbidding ORA on short significant lists, which is left slightly ambiguous. Reporting is thorough on versions, design, thresholds, tested/significant counts, ortholog loss, and reproducibility, though the Ensembl release is required to be named rather than fixed to a specific number."
+}

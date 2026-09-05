@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the duplication as an expected property of rRNA-depleted total RNA without UMIs, explicitly refuses deduplication or downsampling with a sound justification, and quantifies the actual drivers (rRNA, mitochondrial, top-N and cardiac structural gene fractions) per sample, which is exactly what the reference requires. QC is strong and dataset-specific: PCA, correlation heatmap, PC association with log library size, and a pre-specified, rule-based retain/drop decision for sample_01 plus a full leave-one-out influence loop. DESeq2 ~condition with an explicitly set reference level, counts >= 10 in at least 6 samples, median-of-ratios size factors reported next to raw depths, BH at 0.05 and apeglm shrinkage all match the reference; edgeR-QL and limma-voom serve as sensitivity checks rather than replacing the primary test. Enrichment is well specified: full ranked Wald statistic for fgsea, named human collections, 15-500 size window, symbol match rate, GO redundancy collapse, and an explicit tested-gene universe for the ORA. Minor gaps: the plan never states a policy for removing rRNA/MT genes from the matrix before normalization (it only flags them post hoc as possibly compositional), and package versions are named only for DESeq2, so reporting is slightly short of the reference on version and caveat completeness."
+}

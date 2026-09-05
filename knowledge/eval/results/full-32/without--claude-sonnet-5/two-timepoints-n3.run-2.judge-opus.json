@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 2,
+    "low_count_filter": 2,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly recognizes the 2x2 factorial, treats time as a two-level factor rather than a trend, fits ~condition + time + condition:time with explicit reference levels, and tests the interaction coefficient directly while also reporting the simple effects at t0 and t1 — this is exactly the right structure and it warns against reading main effects as interaction. However, there is no sample-structure QC step at all (no PCA, sample distances, or library size inspection, no outlier policy beyond DESeq2's default Cook's filtering), and no pre-filter on low counts is specified; normalization is only implicit in handing raw Salmon counts to DESeq2 rather than stated. BH at 0.05 is explicit, but apeglm/ashr shrinkage appears only in the package list and is never invoked in any acceptance criterion, so the reported fold changes are unshrunken. Enrichment is not warranted for this question and is included anyway; it is at least specified with the tested-gene universe and a named collection, but lacks a version and gene-set size window. Reporting covers design, thresholds, gene counts, and design caveats but omits software versions."
+}

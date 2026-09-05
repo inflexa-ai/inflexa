@@ -1,0 +1,330 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "tpm-input-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T18:46:40.261Z",
+  "elapsedMs": 80619,
+  "outcome": "plan_submitted",
+  "planId": "pln-32499f2c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "TPM QC, filtering and normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12,000 genes is well below a full human transcriptome, so the delivered table is very likely a pre-filtered subset — TPM values are then not renormalized to the subset and must not be described as canonical transcriptome-wide TPM",
+          "Quantile normalization assumes most genes are not differentially expressed; lesional psoriatic skin has a large, coherent inflammatory signature, so compare the normalized and unnormalized distributions and note any case where normalization visibly compresses a real global shift",
+          "A single batch is asserted in the metadata but PCA may still reveal unlabelled structure — report it rather than modelling it away"
+        ],
+        "context": "Only a TPM table was delivered — no raw counts, no Salmon quant directories. That rules out DESeq2/edgeR/voom downstream, so this step's job is to produce a clean, filtered, quantile-normalized log2(TPM+1) matrix that limma-trend can model, plus the QC evidence needed to interpret the DE result honestly. Design is 6 lesional vs 6 control, unpaired, single batch, human skin.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Are the 12 samples in tpm.csv comparable, does the TPM matrix behave as a full transcriptome-scale TPM table, and which of the 12,000 genes are expressed highly enough in psoriasis lesional or control skin to be testable?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_normalization",
+        "depends_on": [],
+        "constraints": [
+          "Do not round, scale, or otherwise convert TPM into pseudo-counts at any point",
+          "Do not drop any of the 12 samples; flag outliers only",
+          "Filtering threshold is TPM > 1 in at least 6 samples — state it explicitly in the output",
+          "Report the TPM column sums as a number, not as a pass/fail judgement"
+        ],
+        "description": "Load /eval-full-32-without-tpm-input-n6-2/data/inputs/abundance/tpm.csv (12,000 genes x 12 sample columns, first column gene symbol) and /eval-full-32-without-tpm-input-n6-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify sample identifiers match exactly between the two files and record the group sizes (expected 6 lesional, 6 control). Report per-sample TPM column sums: a full Salmon gene-level TPM table sums to ~1e6 per sample, so if the sums are far below that, state explicitly that the delivered matrix is a subset of the transcriptome and that all downstream normalization is relative to that subset. Handle duplicated gene symbols by collapsing to the row with the highest mean TPM (report how many were collapsed) and drop all-zero rows. Filter to genes with TPM > 1 in at least 6 samples (the size of the smaller group); report genes in and out. Build log2(TPM + 1), then apply quantile normalization across the 12 samples to remove residual composition skew, and save BOTH the unnormalized and quantile-normalized log matrices so the DE step can be run on the normalized one and sensitivity-checked on the other. Produce diagnostics: per-sample log-expression density and boxplots, PCA (PC1/PC2, with percent variance and samples coloured by condition), and a sample-sample Spearman correlation heatmap with hierarchical clustering. Flag any sample that separates from its own group or sits as a correlation outlier, but do NOT drop any sample — report it and let the DE step run on all 12.",
+        "acceptance_criteria": [
+          "Sample IDs in tpm.csv columns and metadata.csv rows are confirmed to match one-to-one; group sizes reported as 6 lesional and 6 control or the discrepancy is reported",
+          "Per-sample TPM column sums are reported numerically, with an explicit statement of whether they approximate 1e6 and what it means if they do not",
+          "Duplicate gene symbols collapsed and the count of collapsed symbols reported; number of genes retained by the TPM > 1 in >= 6 samples filter reported against the 12,000 input",
+          "Both log2(TPM+1) and the quantile-normalized log2(TPM+1) matrices are written to disk with genes as rows and the 12 samples as columns",
+          "PCA plot, per-sample distribution plot, and sample-sample correlation heatmap are produced; any outlier sample is named and described, and no sample is silently removed"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: lesional vs control (limma-trend)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6 the moderated t-test has limited power; a gene absent from the significant list is not evidence of no change",
+          "logFC on a log2(TPM+1) scale is a ratio of relative abundances, not of absolute counts — if the delivered table is a transcriptome subset, effect sizes are relative to that subset and should be described that way",
+          "A p-value histogram that is not the expected spike-plus-uniform shape means the fit is wrong and the gene list should not be reported as-is"
+        ],
+        "context": "6 vs 6, unpaired, single batch, human skin, condition column in metadata.csv. The input is TPM only, so a negative-binomial count model is not available and limma-trend on log2(TPM+1) is the defensible test. The canonical psoriasis markers serve as a pipeline sanity check, not as the analysis result.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "statmod",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "dplyr",
+          "data.table"
+        ],
+        "question": "Which of the filtered genes are differentially expressed between the 6 psoriasis lesional and the 6 control skin samples, and does the result recover the canonical psoriasis signature?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use limma with eBayes(trend=TRUE, robust=TRUE); voom and any count-based model are forbidden for this dataset",
+          "Multiple testing correction is Benjamini-Hochberg across all tested genes",
+          "Report the unfiltered result table, not only the significant subset",
+          "The canonical marker panel must be presented as a positive control, never as a discovery"
+        ],
+        "description": "Fit a linear model with limma on the quantile-normalized log2(TPM+1) matrix from T1S1 using design ~ 0 + condition and the contrast lesional - control, then call eBayes(fit, trend = TRUE, robust = TRUE). trend=TRUE is mandatory here: it fits the mean-variance trend that the log-TPM scale carries, which is what makes limma valid without counts. Do NOT use voom — it requires counts and library sizes that were not delivered. Write the full topTable for every tested gene with logFC, AveExpr, t, P.Value, adj.P.Val (Benjamini-Hochberg) and B, sorted by adjusted p-value. Define the primary significant set as adj.P.Val < 0.05 with |logFC| > 1 and report its size, the up and down split, and the top 30 in each direction. Also report counts at adj.P.Val < 0.05 with no fold-change cut and at adj.P.Val < 0.1, so the reader can see how sensitive the headline number is to the threshold. Produce a volcano plot (labelling the top genes by adjusted p-value), a p-value histogram (a spike at zero with a flat tail is what a real signal looks like; a U shape or a mid-range hump indicates a model problem and must be reported as such), and a heatmap of the top 50 genes across the 12 samples with the condition annotation. Run the identical contrast on the unnormalized log2(TPM+1) matrix as a sensitivity check and report the overlap of the significant sets — do not replace the primary result with it. Finally, as a labelled positive control and NOT a finding, extract the statistics for the canonical psoriasis genes DEFB4A, S100A7, S100A8, S100A9, S100A12, IL36G, IL36A, KRT6A, KRT6B, KRT16, KRT17, SERPINB3, SERPINB4, PI3, LCN2, CXCL9, CXCL10, CXCL11, IL17A, IL23A, IL19, CCL20 (reporting which of them are absent from the 12,000-gene matrix) and state whether they are up in lesional as published psoriasis transcriptomics would predict.",
+        "acceptance_criteria": [
+          "limma-trend is used with eBayes(trend=TRUE, robust=TRUE) on log2(TPM+1); no count-based model (DESeq2/edgeR/voom) and no pseudo-count rounding appears anywhere in the step",
+          "A complete result table for all tested genes is written with logFC, AveExpr, t, P.Value, adj.P.Val and B",
+          "Significant-gene counts are reported at adj.P.Val<0.05 with |logFC|>1, at adj.P.Val<0.05 unrestricted, and at adj.P.Val<0.1, with the up/down split for the primary set",
+          "Volcano plot, p-value histogram and top-50 heatmap are produced, and the shape of the p-value histogram is explicitly interpreted",
+          "Sensitivity check on the unnormalized matrix is run and the overlap with the primary significant set is reported as a number",
+          "The canonical psoriasis marker panel is reported as an explicitly labelled positive control, including which markers are absent from the matrix, with no claim of novelty attached to them",
+          "The written summary states that n=6 per group limits detection to large effects and that the TPM-only input precludes a count-based model"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment of the lesional signature",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "At n=6 per group the significant gene list may be too small for a meaningful over-representation test; if so, report the GSEA result as primary and say why",
+          "The delivered matrix is 12,000 genes and likely a transcriptome subset, so gene sets are only partially represented — report the fraction of each reported set's members present in the universe",
+          "GO-BP parent/child overlap produces blocks of correlated hits that must not be counted as independent findings"
+        ],
+        "context": "The gene identifier space in tpm.csv is gene symbols, and the staged human hallmark and GO gene sets use HGNC symbols, so they join directly. This step contextualizes the DE result; it does not add an independent claim. Psoriasis lesional skin is expected to show keratinocyte proliferation, IL-17/TNF-driven inflammation and interferon signatures — treat any such recovery as consistency with known biology, not as a discovery.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "ggplot2",
+          "dplyr",
+          "data.table"
+        ],
+        "question": "Which biological processes and hallmark states are coordinately shifted in psoriasis lesional versus control skin, given the limma-trend ranking?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use human gene sets only — the data is Homo sapiens skin",
+          "Background for over-representation is the T1S1 filtered gene universe, not the full genome",
+          "Recovery of known psoriasis biology must be framed as consistency with prior literature, not as a novel finding"
+        ],
+        "description": "Take the complete limma-trend result table from T1S2 and run a rank-based gene set enrichment (fgsea) on all tested genes ranked by the moderated t-statistic — using the full ranking rather than a thresholded list is important at n=6 per group, where the significant set may be small. Score against two reference collections of human gene sets: the hallmark collection (50 broad biological states) and the GO Biological Process collection, both of which are staged for Homo sapiens with HGNC gene symbols and match the gene-symbol identifier space of tpm.csv directly, so no ID conversion is required. Restrict sets to those with between 10 and 500 members present in the tested gene universe, and use the tested gene universe (the T1S1 filtered set) rather than the whole genome as background. Report the top enriched sets in each direction with NES, p-value and BH-adjusted p-value, and the leading-edge genes for the top sets. Because GO-BP is a nested hierarchy whose parent and child sets share most members, collapse redundant significant terms before reporting a count and say how the collapsing was done. Also run an over-representation test on the T1S2 primary significant set (adj.P.Val<0.05, |logFC|>1) against the same collections, separately for up and down genes, and report it alongside the GSEA — where the two disagree, say so. If either gene-set collection is not resolvable at run time, run the enrichment on whichever is available and state plainly which collection was missing; the DE result from T1S2 stands regardless.",
+        "acceptance_criteria": [
+          "fgsea run on the full T1S2 ranking by moderated t-statistic against human hallmark and GO-BP gene sets, with gene-set size bounded to 10-500 and the tested gene universe used as background",
+          "Enrichment tables written with NES, p-value, BH-adjusted p-value, set size and leading-edge genes, for both directions",
+          "Redundant nested GO-BP terms are collapsed before any count is reported, with the collapsing rule stated",
+          "An over-representation test on the up and down significant sets is reported alongside GSEA, and disagreement between the two methods is stated where it occurs",
+          "If a gene-set collection cannot be resolved, the step reports which one was missing and completes on the remainder rather than failing"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control DE from TPM (limma-trend)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a gene-level TPM matrix only (12,000 genes x 12 samples, /data/inputs/abundance/tpm.csv, first column gene symbol) with a 12-row metadata table giving condition (6 lesional vs 6 control, unpaired, single batch). No raw counts and no Salmon quant directories were delivered, so count-based negative-binomial models (DESeq2, edgeR) are NOT applicable — their dispersion estimation requires integer counts and library sizes, and rounding TPM into pseudo-counts fabricates a count scale that never existed and produces anticonservative p-values. The defensible route on TPM is a log-scale linear model with empirical Bayes moderation: log2(TPM+1) with limma-trend (eBayes(trend=TRUE)), which is designed for a log-CPM/log-TPM-like input where the mean-variance relationship is handled by a fitted trend rather than by observation weights derived from counts. voom is deliberately not used because it needs library sizes and counts.\n\nT1S1 does the QC and normalization that must precede any test: verify the TPM column sums (Salmon gene-level TPM should sum to ~1e6 per sample; deviation means the matrix was subset — 12,000 genes strongly suggests it was, which changes what 'TPM' means and must be reported), check for duplicated gene symbols and collapse them, filter to genes expressed above a low TPM floor in at least the size of the smaller group (n=6), optionally quantile-normalize log2(TPM+1) across samples to remove residual composition differences, and produce sample-level diagnostics (PCA, correlation heatmap, per-sample distributions) that reveal outliers or a hidden batch structure that the metadata does not name. T1S2 runs the DE contrast lesional vs control with limma-trend on the filtered matrix and reports the full result table with BH-adjusted p-values, plus an explicitly-labelled sanity check against the canonical psoriasis markers (DEFB4A, S100A7/A8/A9, IL36G, KRT6A/16/17, SERPINB3/4, CXCL9/10/11, IL17-axis genes) — these are not a hypothesis being tested but a positive control for whether the pipeline recovers known biology. T1S3 takes the ranked statistic and runs pathway enrichment against the staged human hallmark and GO-BP gene sets (confirmed present at /mnt/refs/managed/msigdb-*), which contextualizes the gene list without adding a claim.\n\nPower is the honest limitation: 6 vs 6 with a 12,000-gene search space detects only large effects, and the TPM-only input means the analysis is one step less rigorous than the same experiment with counts. Both facts must appear in the reported output rather than in a footnote."
+  },
+  "usage": {
+    "inputTokens": 91895,
+    "outputTokens": 5822,
+    "cacheCreationInputTokens": 39598,
+    "cacheReadInputTokens": 52273,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "limma",
+          "edgeR",
+          "DESeq2",
+          "pydeseq2",
+          "rnanorm",
+          "fgsea",
+          "clusterProfiler",
+          "statmod",
+          "sva"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control DE from TPM (limma-trend)",
+          "analytical_narrative": "The input is a gene-level TPM matrix only (12,000 genes x 12 samples, /data/inputs/abundance/tpm.csv, first column gene symbol) with a 12-row metadata table giving condition (6 lesional vs 6 control, unpaired, single batch). No raw counts and no Salmon quant directories were delivered, so count-based negative-binomial models (DESeq2, edgeR) are NOT applicable — their dispersion estimation requires integer counts and library sizes, and rounding TPM into pseudo-counts fabricates a count scale that never existed and produces anticonservative p-values. The defensible route on TPM is a log-scale linear model with empirical Bayes moderation: log2(TPM+1) with limma-trend (eBayes(trend=TRUE)), which is designed for a log-CPM/log-TPM-like input where the mean-variance relationship is handled by a fitted trend rather than by observation weights derived from counts. voom is deliberately not used because it needs library sizes and counts.\n\nT1S1 does the QC and normalization that must precede any test: verify the TPM column sums (Salmon gene-level TPM should sum to ~1e6 per sample; deviation means the matrix was subset — 12,000 genes strongly suggests it was, which changes what 'TPM' means and must be reported), check for duplicated gene symbols and collapse them, filter to genes expressed above a low TPM floor in at least the size of the smaller group (n=6), optionally quantile-normalize log2(TPM+1) across samples to remove residual composition differences, and produce sample-level diagnostics (PCA, correlation heatmap, per-sample distributions) that reveal outliers or a hidden batch structure that the metadata does not name. T1S2 runs the DE contrast lesional vs control with limma-trend on the filtered matrix and reports the full result table with BH-adjusted p-values, plus an explicitly-labelled sanity check against the canonical psoriasis markers (DEFB4A, S100A7/A8/A9, IL36G, KRT6A/16/17, SERPINB3/4, CXCL9/10/11, IL17-axis genes) — these are not a hypothesis being tested but a positive control for whether the pipeline recovers known biology. T1S3 takes the ranked statistic and runs pathway enrichment against the staged human hallmark and GO-BP gene sets (confirmed present at /mnt/refs/managed/msigdb-*), which contextualizes the gene list without adding a claim.\n\nPower is the honest limitation: 6 vs 6 with a 12,000-gene search space detects only large effects, and the TPM-only input means the analysis is one step less rigorous than the same experiment with counts. Both facts must appear in the reported output rather than in a footnote.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "TPM QC, filtering and normalization",
+              "track": "T1",
+              "step_type": "qc_normalization",
+              "question": "Are the 12 samples in tpm.csv comparable, does the TPM matrix behave as a full transcriptome-scale TPM table, and which of the 12,000 genes are expressed highly enough in psoriasis lesional or control skin to be testable?",
+              "description": "Load /eval-full-32-without-tpm-input-n6-2/data/inputs/abundance/tpm.csv (12,000 genes x 12 sample columns, first column gene symbol) and /eval-full-32-without-tpm-input-n6-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify sample identifiers match exactly between the two files and record the group sizes (expected 6 lesional, 6 control). Report per-sample TPM column sums: a full Salmon gene-level TPM table sums to ~1e6 per sample, so if the sums are far below that, state explicitly that the delivered matrix is a subset of the transcriptome and that all downstream normalization is relative to that subset. Handle duplicated gene symbols by collapsing to the row with the highest mean TPM (report how many were collapsed) and drop all-zero rows. Filter to genes with TPM > 1 in at least 6 samples (the size of the smaller group); report genes in and out. Build log2(TPM + 1), then apply quantile normalization across the 12 samples to remove residual composition skew, and save BOTH the unnormalized and quantile-normalized log matrices so the DE step can be run on the normalized one and sensitivity-checked on the other. Produce diagnostics: per-sample log-expression density and boxplots, PCA (PC1/PC2, with percent variance and samples coloured by condition), and a sample-sample Spearman correlation heatmap with hierarchical clustering. Flag any sample that separates from its own group or sits as a correlation outlier, but do NOT drop any sample — report it and let the DE step run on all 12.",
+              "context": "Only a TPM table was delivered — no raw counts, no Salmon quant directories. That rules out DESeq2/edgeR/voom downstream, so this step's job is to produce a clean, filtered, quantile-normalized log2(TPM+1) matrix that limma-trend can model, plus the QC evidence needed to interpret the DE result honestly. Design is 6 lesional vs 6 control, unpaired, single batch, human skin.",
+              "question_notes": "",
+              "acceptance_criteria": [
+                "Sample IDs in tpm.csv columns and metadata.csv rows are confirmed to match one-to-one; group sizes reported as 6 lesional and 6 control or the discrepancy is reported",
+                "Per-sample TPM column sums are reported numerically, with an explicit statement of whether they approximate 1e6 and what it means if they do not",
+                "Duplicate gene symbols collapsed and the count of collapsed symbols reported; number of genes retained by the TPM > 1 in >= 6 samples filter reported against the 12,000 input",
+                "Both log2(TPM+1) and the quantile-normalized log2(TPM+1) matrices are written to disk with genes as rows and the 12 samples as columns",
+                "PCA plot, per-sample distribution plot, and sample-sample correlation heatmap are produced; any outlier sample is named and described, and no sample is silently removed"
+              ],
+              "constraints": [
+                "Do not round, scale, or otherwise convert TPM into pseudo-counts at any point",
+                "Do not drop any of the 12 samples; flag outliers only",
+                "Filtering threshold is TPM > 1 in at least 6 samples — state it explicitly in the output",
+                "Report the TPM column sums as a number, not as a pass/fail judgement"
+              ],
+              "caveats": [
+                "12,000 genes is well below a full human transcriptome, so the delivered table is very likely a pre-filtered subset — TPM values are then not renormalized to the subset and must not be described as canonical transcriptome-wide TPM",
+                "Quantile normalization assumes most genes are not differentially expressed; lesional psoriatic skin has a large, coherent inflammatory signature, so compare the normalized and unnormalized distributions and note any case where normalization visibly compresses a real global shift",
+                "A single batch is asserted in the metadata but PCA may still reveal unlabelled structure — report it rather than modelling it away"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: lesional vs control (limma-trend)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the filtered genes are differentially expressed between the 6 psoriasis lesional and the 6 control skin samples, and does the result recover the canonical psoriasis signature?",
+              "description": "Fit a linear model with limma on the quantile-normalized log2(TPM+1) matrix from T1S1 using design ~ 0 + condition and the contrast lesional - control, then call eBayes(fit, trend = TRUE, robust = TRUE). trend=TRUE is mandatory here: it fits the mean-variance trend that the log-TPM scale carries, which is what makes limma valid without counts. Do NOT use voom — it requires counts and library sizes that were not delivered. Write the full topTable for every tested gene with logFC, AveExpr, t, P.Value, adj.P.Val (Benjamini-Hochberg) and B, sorted by adjusted p-value. Define the primary significant set as adj.P.Val < 0.05 with |logFC| > 1 and report its size, the up and down split, and the top 30 in each direction. Also report counts at adj.P.Val < 0.05 with no fold-change cut and at adj.P.Val < 0.1, so the reader can see how sensitive the headline number is to the threshold. Produce a volcano plot (labelling the top genes by adjusted p-value), a p-value histogram (a spike at zero with a flat tail is what a real signal looks like; a U shape or a mid-range hump indicates a model problem and must be reported as such), and a heatmap of the top 50 genes across the 12 samples with the condition annotation. Run the identical contrast on the unnormalized log2(TPM+1) matrix as a sensitivity check and report the overlap of the significant sets — do not replace the primary result with it. Finally, as a labelled positive control and NOT a finding, extract the statistics for the canonical psoriasis genes DEFB4A, S100A7, S100A8, S100A9, S100A12, IL36G, IL36A, KRT6A, KRT6B, KRT16, KRT17, SERPINB3, SERPINB4, PI3, LCN2, CXCL9, CXCL10, CXCL11, IL17A, IL23A, IL19, CCL20 (reporting which of them are absent from the 12,000-gene matrix) and state whether they are up in lesional as published psoriasis transcriptomics would predict.",
+              "context": "6 vs 6, unpaired, single batch, human skin, condition column in metadata.csv. The input is TPM only, so a negative-binomial count model is not available and limma-trend on log2(TPM+1) is the defensible test. The canonical psoriasis markers serve as a pipeline sanity check, not as the analysis result.",
+              "acceptance_criteria": [
+                "limma-trend is used with eBayes(trend=TRUE, robust=TRUE) on log2(TPM+1); no count-based model (DESeq2/edgeR/voom) and no pseudo-count rounding appears anywhere in the step",
+                "A complete result table for all tested genes is written with logFC, AveExpr, t, P.Value, adj.P.Val and B",
+                "Significant-gene counts are reported at adj.P.Val<0.05 with |logFC|>1, at adj.P.Val<0.05 unrestricted, and at adj.P.Val<0.1, with the up/down split for the primary set",
+                "Volcano plot, p-value histogram and top-50 heatmap are produced, and the shape of the p-value histogram is explicitly interpreted",
+                "Sensitivity check on the unnormalized matrix is run and the overlap with the primary significant set is reported as a number",
+                "The canonical psoriasis marker panel is reported as an explicitly labelled positive control, including which markers are absent from the matrix, with no claim of novelty attached to them",
+                "The written summary states that n=6 per group limits detection to large effects and that the TPM-only input precludes a count-based model"
+              ],
+              "constraints": [
+                "Use limma with eBayes(trend=TRUE, robust=TRUE); voom and any count-based model are forbidden for this dataset",
+                "Multiple testing correction is Benjamini-Hochberg across all tested genes",
+                "Report the unfiltered result table, not only the significant subset",
+                "The canonical marker panel must be presented as a positive control, never as a discovery"
+              ],
+              "caveats": [
+                "With 6 vs 6 the moderated t-test has limited power; a gene absent from the significant list is not evidence of no change",
+                "logFC on a log2(TPM+1) scale is a ratio of relative abundances, not of absolute counts — if the delivered table is a transcriptome subset, effect sizes are relative to that subset and should be described that way",
+                "A p-value histogram that is not the expected spike-plus-uniform shape means the fit is wrong and the gene list should not be reported as-is"
+              ],
+              "packages": [
+                "limma",
+                "statmod",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "dplyr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment of the lesional signature",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological processes and hallmark states are coordinately shifted in psoriasis lesional versus control skin, given the limma-trend ranking?",
+              "description": "Take the complete limma-trend result table from T1S2 and run a rank-based gene set enrichment (fgsea) on all tested genes ranked by the moderated t-statistic — using the full ranking rather than a thresholded list is important at n=6 per group, where the significant set may be small. Score against two reference collections of human gene sets: the hallmark collection (50 broad biological states) and the GO Biological Process collection, both of which are staged for Homo sapiens with HGNC gene symbols and match the gene-symbol identifier space of tpm.csv directly, so no ID conversion is required. Restrict sets to those with between 10 and 500 members present in the tested gene universe, and use the tested gene universe (the T1S1 filtered set) rather than the whole genome as background. Report the top enriched sets in each direction with NES, p-value and BH-adjusted p-value, and the leading-edge genes for the top sets. Because GO-BP is a nested hierarchy whose parent and child sets share most members, collapse redundant significant terms before reporting a count and say how the collapsing was done. Also run an over-representation test on the T1S2 primary significant set (adj.P.Val<0.05, |logFC|>1) against the same collections, separately for up and down genes, and report it alongside the GSEA — where the two disagree, say so. If either gene-set collection is not resolvable at run time, run the enrichment on whichever is available and state plainly which collection was missing; the DE result from T1S2 stands regardless.",
+              "context": "The gene identifier space in tpm.csv is gene symbols, and the staged human hallmark and GO gene sets use HGNC symbols, so they join directly. This step contextualizes the DE result; it does not add an independent claim. Psoriasis lesional skin is expected to show keratinocyte proliferation, IL-17/TNF-driven inflammation and interferon signatures — treat any such recovery as consistency with known biology, not as a discovery.",
+              "acceptance_criteria": [
+                "fgsea run on the full T1S2 ranking by moderated t-statistic against human hallmark and GO-BP gene sets, with gene-set size bounded to 10-500 and the tested gene universe used as background",
+                "Enrichment tables written with NES, p-value, BH-adjusted p-value, set size and leading-edge genes, for both directions",
+                "Redundant nested GO-BP terms are collapsed before any count is reported, with the collapsing rule stated",
+                "An over-representation test on the up and down significant sets is reported alongside GSEA, and disagreement between the two methods is stated where it occurs",
+                "If a gene-set collection cannot be resolved, the step reports which one was missing and completes on the remainder rather than failing"
+              ],
+              "constraints": [
+                "Use human gene sets only — the data is Homo sapiens skin",
+                "Background for over-representation is the T1S1 filtered gene universe, not the full genome",
+                "Recovery of known psoriasis biology must be framed as consistency with prior literature, not as a novel finding"
+              ],
+              "caveats": [
+                "At n=6 per group the significant gene list may be too small for a meaningful over-representation test; if so, report the GSEA result as primary and say why",
+                "The delivered matrix is 12,000 genes and likely a transcriptome subset, so gene sets are only partially represented — report the fraction of each reported set's members present in the universe",
+                "GO-BP parent/child overlap produces blocks of correlated hits that must not be counted as independent findings"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "msigdbr",
+                "ggplot2",
+                "dplyr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

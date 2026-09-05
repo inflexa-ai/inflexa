@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the QuantSeq 3' tag-seq structure and forbids TPM/FPKM, gene-length offsets, and length-bias correction, feeding raw integer counts into DESeq2 Wald with median-of-ratios size factors inside the model and an edgeR QL cross-check with TMM — exactly the reference method for 3 vs 3 unpaired, single batch. Design formula ~condition with control releveled and the direction of log2FoldChange stated is explicit, BH is applied at both 0.05 and 0.1 with apeglm/ashr shrinkage for the reported effects, and the power and confounded-batch caveats are stated repeatedly. QC (library sizes, size factors, dispersion, p-value histogram, VST PCA by condition, sample distance heatmap) is present and required to be reported, though it is folded into the DE step and offers no concrete action policy beyond naming a candidate outlier. The main shortfall is the low-count filter: it is described only as \"e.g. a minimum count in at least 3 samples\" with no numeric floor and no statement that a tag-seq library warrants a lower floor — in fact the caveat anticipates more genes dropping, the opposite of the reference guidance. GSEA on the full ranked list with a stated metric, named human collections, a 15–500 size window, mapping rate and GO redundancy collapsing is well specified, but collection versions and software versions are never required in the report."
+}

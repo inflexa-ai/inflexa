@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly matches the design: DESeq2 Wald on ~ sex + age + condition with sex as a factor and age as a continuous covariate entered in the model rather than regressed out, control set as the explicit reference, and no interaction fit for a simple two-group comparison. It falls short of the reference in two respects: age is not centered, and there is no explicit up-front tabulation of sex and age by group with a stated policy for a covariate confounded with condition (only a post-hoc note that age distribution be reported alongside PCA), which is the key risk in an age-unmatched design. QC is strong (blind VST, PCA on top 500 genes colored by condition/sex/age, distance heatmap, library sizes, outlier flagging) but omits the XIST/Y-gene sex verification. Filtering (>=10 counts in >=6 samples, justified by smallest group size), median-of-ratios normalization inside the model, BH at alpha 0.05 with independent filtering, and apeglm shrinkage on the condition coefficient are all correct and explicit, and the report step is thorough on versions, design, thresholds, gene counts, and design caveats. Enrichment was not requested and is arguably scope creep here, though the preranked fgsea is well specified (Wald stat metric, tested-gene universe, 15-500 size window, named collections, leading edge, ORA correctly declined for short lists)."
+}

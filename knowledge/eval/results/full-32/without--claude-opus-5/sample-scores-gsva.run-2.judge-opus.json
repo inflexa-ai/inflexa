@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly reads this as a per-sample scoring question and builds the right chain: DESeq2 size factors and VST to produce the continuous matrix GSVA requires, GSVA (with kcdf='Gaussian' correctly justified for VST input) plus ssGSEA as a concordance check over the 50 human hallmark sets, then limma lmFit/eBayes on the 50 x 12 score matrix with BH, and a row z-scored heatmap of all samples with a condition annotation bar alongside a significance-restricted version. Design specifics are handled rather than genericised: unpaired single batch means no blocking term and the plan explicitly refuses batch correction, the filter threshold (>=10 counts in >=6 samples) is tied to the smaller group size, and sample_01 has a concrete retain-by-default policy with size factor, PCA position and median inter-sample correlation reported before any drop decision. The gene-level DESeq2 step with apeglm shrinkage is a sensible grounding check, not a substitute for the score-level test, and the caveats about correlated hallmark sets and selecting rows on the same contrast used for display are the right honesty. Minor deductions: the MSigDB release version is never named (only 'hallmark collection' and the GSVA package version), and the |log2FC| > 1 criterion is applied as a post hoc filter on the DESeq2 table rather than as a lfcThreshold inside the test."
+}

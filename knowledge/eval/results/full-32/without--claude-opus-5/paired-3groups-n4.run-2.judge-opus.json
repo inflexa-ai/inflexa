@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the randomized-block structure, uses ~ subject + condition with an LRT against ~ subject as the omnibus 'responds to either treatment' test, and extracts all three pairwise Wald contrasts from the single fit rather than refitting subsets, with control set as reference and residual df stated. QC is concrete and design-aware (balance check, full-rank model matrix, library sizes, PCA raw and after subject-mean removal for display only, correlation heatmap for label swaps, explicit no-drop policy). Filtering uses filterByExpr on the stated design with before/after counts, and multiple testing is BH within contrast with apeglm/ashr shrinkage for ranking and no pre-FDR fold-change filter. Normalization is implicit in DESeq2 (size factors are never named explicitly), though the plan does firmly forbid feeding batch-corrected matrices into the model. Enrichment is well specified (ranked fgsea on shrunken LFC, named human collections, size window, FDR per collection, symbol-match fraction), and reporting requirements including gene counts, dispersion/p-value diagnostics, NA handling, and n=4 power caveats are unusually complete."
+}

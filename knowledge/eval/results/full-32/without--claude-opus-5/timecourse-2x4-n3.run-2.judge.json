@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 6,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the question as a condition:time interaction and specifies a DESeq2 LRT of ~condition + time + condition:time against ~condition + time with time as a 4-level factor, explicit reference levels, coefficient naming, BH at a stated alpha, and apeglm/ashr shrinkage of the interaction coefficients. QC is thorough (library sizes, VST PCA by condition and time, distance heatmap, cross-tab, no-silent-drop policy) and the filter (>=10 counts in >=3 samples, the smallest group) is minimal and justified. Normalization is only implicit in DESeq2 usage and never stated as size-factor normalization inside the model, and the enrichment step names collections and a tested-gene universe but omits collection versions and a set-size window. The report items cover design, thresholds, gene counts, and caveats but do not commit to recording package versions."
+}

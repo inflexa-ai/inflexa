@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 2,
+    "low_count_filter": 6,
+    "normalization": 4,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames the question as a 2x2 factorial with time as a two-level factor and tests the condition:time interaction in a full DESeq2 model, which matches the reference; simple effects are obtained by subsetting rather than by contrasts within the full model, which sacrifices shared dispersion estimation but is defensible. QC is named in the step title but no PCA, sample distances, library sizes, or outlier policy are specified, and normalization is never stated (only implicit in DESeq2). BH is implied by padj<0.05 but not named, and no fold change shrinkage is planned. Enrichment was not asked for and adds little, though the universe, named collection and version are explicit; the report lacks software versions and reference-level specification."
+}

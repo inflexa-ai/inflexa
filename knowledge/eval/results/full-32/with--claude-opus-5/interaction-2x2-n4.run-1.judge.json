@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction, fits ~ genotype + treatment + genotype:treatment in DESeq2 with explicit WT/vehicle reference levels, tests the interaction coefficient by Wald, extracts both simple effects (the KO effect as a composite contrast), applies ashr shrinkage, BH per contrast with alpha passed to results(), and adds an edgeR QL check on the same coefficient. QC is blind-VST PCA, distance heatmap and library sizes with a flag-don't-drop policy sized to n=4 per cell; the low-count filter (>=10 in >=4 samples) is minimal and tied to the smallest cell; counts enter raw with size factors/TMM inside the models. Enrichment is fgsea on the full ranked list by Wald stat with a 15-500 window, seed, tested-gene universe and named human collections, docking only a point for deferring collection versions to runtime rather than naming them. The report enumerates method, versions, design, contrasts, thresholds, tested/significant counts and an explicit interaction-power caveat."
+}

@@ -1,0 +1,267 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T17:12:48.965Z",
+  "elapsedMs": 32238,
+  "outcome": "plan_submitted",
+  "planId": "pln-efcf7c4e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, reconcile sample metadata, and count filtering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the counts.csv (12000 genes x 7 sample columns) and metadata.csv (6 rows) sample sets match, and what do library size, gene detection, and low-count filtering look like across the 3 treated vs 3 control samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports the exact sample column names in counts.csv and the exact sample IDs in metadata.csv, and explicitly reconciles the 7-column vs 6-row discrepancy (e.g., a gene-symbol first column miscounted as a sample, or an extra/unmatched sample) before proceeding",
+          "Produces per-sample library size (total counts), number of detected genes, and a PCA or hierarchical clustering plot colored by condition (treated vs control)",
+          "Applies and reports a low-count filter (e.g., counts >= 10 in at least 3 samples) with the number of genes retained for downstream DE testing",
+          "Flags any outlier sample or condition-independent clustering issue explicitly, given the very small n=3/n=3 design"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which of the ~12000 liver genes are significantly differentially expressed between drug-treated (n=3) and control (n=3) samples, using raw Salmon gene-level counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Runs DESeq2 (Wald test, default size-factor normalization) on the filtered count matrix from T1S1 with condition (treated vs control) as the sole design factor, given the single-batch unpaired design",
+          "Reports full DE results table: log2FoldChange, lfcSE, stat, pvalue, padj (BH) for every tested gene",
+          "Applies shrinkage (apeglm or ashr, both available) to log2FoldChange estimates and reports both raw and shrunken effect sizes",
+          "Explicitly reports the number of genes at padj < 0.05 and separately at a more lenient padj < 0.1, and states the achieved statistical power context for n=3 per group (e.g., only large, consistent effects are detectable; dispersion estimates are themselves imprecise with only 3 replicates)",
+          "Produces an MA plot and a volcano plot annotated with the top DE genes",
+          "Reports DESeq2 dispersion plot (gene-wise vs fitted vs MAP) to visually assess how much shrinkage was needed, which is directly informative of replicate-driven uncertainty"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Replicate-robustness assessment of the DE call set",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "How stable is the treated-vs-control DE gene list to the identity of the specific replicates, given only 3 samples per group?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical_robustness",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Performs leave-one-sample-out DESeq2 refits (dropping one sample at a time from the 6, i.e. 6 refits with 2-vs-3 or 3-vs-2 samples) and reports, for the padj<0.05 gene set from T1S2, what fraction of those genes remain significant (or retain concordant sign of log2FoldChange) across the leave-one-out refits",
+          "Performs a label-permutation null (permute treated/control labels across the 6 samples, all or a large sample of the C(6,3)=20 possible splits) and reports the empirical distribution of DE-gene counts under the null compared to the observed count from T1S2, to contextualize whether the observed DE signal exceeds what small-n label noise alone can produce",
+          "Explicitly states in output text that with n=3 per group, effect-size estimates carry wide confidence intervals and gene-level significance calls should be treated as a candidate list requiring independent validation, not a definitive result",
+          "Reports a stability score per gene (e.g., fraction of leave-one-out refits in which the gene remains padj<0.05) alongside the original DE table"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes against WikiPathways human gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among the genes differentially expressed between treated and control liver samples (padj<0.05 from T1S2), and how does that change when using the more permissive padj<0.1 list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the WikiPathways human GMT reference at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, parsing the '%'-delimited descriptor field to recover human-readable pathway names",
+          "Runs over-representation analysis (or GSEA-style ranked test using the DESeq2 stat or shrunken log2FoldChange as the ranking metric) separately for the padj<0.05 and padj<0.1 DE gene sets from T1S2, using all filtered/tested genes from T1S1 as the background universe",
+          "Reports enriched pathways with FDR-corrected p-values, gene overlap counts, and the specific overlapping gene symbols per pathway",
+          "Explicitly notes if the padj<0.05 list is too small for reliable enrichment testing (a real risk given n=3 per group) and falls back to reporting the padj<0.1 or ranked GSEA result as the primary enrichment output in that case"
+        ]
+      }
+    ],
+    "title": "Liver drug treatment DE analysis, n=3 vs n=3",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon-derived raw integer gene-level counts, 12000 genes x 7 samples) from human liver, comparing 3 drug-treated vs 3 control samples in an unpaired single-batch design, with a metadata table of 6 samples and 2 columns. The '7 samples' file count vs '6 x 2' metadata dimension is a discrepancy the first step must resolve (extra column/sample) before any modeling. Given only n=3 per group, the core deliverable is a standard DESeq2 negative-binomial DE analysis with explicit attention to power: QC of library sizes and dispersion behavior, a Wald test with BH-FDR correction, and an honest discussion of the statistical limits of a 3-vs-3 design (wide confidence intervals on fold changes, low power to detect small effects, sensitivity to outlier samples). Downstream, the resulting DE gene list is contextualized with pathway enrichment against WikiPathways human gene sets to give the DEGs biological interpretation, and a network-based robustness check (leave-one-out / label-permutation) is added specifically to quantify how much the DE gene list depends on individual replicates, which is the direct, data-driven answer to 'how confident can we be with three replicates per group'."
+  },
+  "usage": {
+    "inputTokens": 87159,
+    "outputTokens": 2902,
+    "cacheCreationInputTokens": 77993,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug treatment DE analysis, n=3 vs n=3",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon-derived raw integer gene-level counts, 12000 genes x 7 samples) from human liver, comparing 3 drug-treated vs 3 control samples in an unpaired single-batch design, with a metadata table of 6 samples and 2 columns. The '7 samples' file count vs '6 x 2' metadata dimension is a discrepancy the first step must resolve (extra column/sample) before any modeling. Given only n=3 per group, the core deliverable is a standard DESeq2 negative-binomial DE analysis with explicit attention to power: QC of library sizes and dispersion behavior, a Wald test with BH-FDR correction, and an honest discussion of the statistical limits of a 3-vs-3 design (wide confidence intervals on fold changes, low power to detect small effects, sensitivity to outlier samples). Downstream, the resulting DE gene list is contextualized with pathway enrichment against WikiPathways human gene sets to give the DEGs biological interpretation, and a network-based robustness check (leave-one-out / label-permutation) is added specifically to quantify how much the DE gene list depends on individual replicates, which is the direct, data-driven answer to 'how confident can we be with three replicates per group'.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, reconcile sample metadata, and count filtering",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the counts.csv (12000 genes x 7 sample columns) and metadata.csv (6 rows) sample sets match, and what do library size, gene detection, and low-count filtering look like across the 3 treated vs 3 control samples?",
+              "acceptance_criteria": [
+                "Reports the exact sample column names in counts.csv and the exact sample IDs in metadata.csv, and explicitly reconciles the 7-column vs 6-row discrepancy (e.g., a gene-symbol first column miscounted as a sample, or an extra/unmatched sample) before proceeding",
+                "Produces per-sample library size (total counts), number of detected genes, and a PCA or hierarchical clustering plot colored by condition (treated vs control)",
+                "Applies and reports a low-count filter (e.g., counts >= 10 in at least 3 samples) with the number of genes retained for downstream DE testing",
+                "Flags any outlier sample or condition-independent clustering issue explicitly, given the very small n=3/n=3 design"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the ~12000 liver genes are significantly differentially expressed between drug-treated (n=3) and control (n=3) samples, using raw Salmon gene-level counts?",
+              "acceptance_criteria": [
+                "Runs DESeq2 (Wald test, default size-factor normalization) on the filtered count matrix from T1S1 with condition (treated vs control) as the sole design factor, given the single-batch unpaired design",
+                "Reports full DE results table: log2FoldChange, lfcSE, stat, pvalue, padj (BH) for every tested gene",
+                "Applies shrinkage (apeglm or ashr, both available) to log2FoldChange estimates and reports both raw and shrunken effect sizes",
+                "Explicitly reports the number of genes at padj < 0.05 and separately at a more lenient padj < 0.1, and states the achieved statistical power context for n=3 per group (e.g., only large, consistent effects are detectable; dispersion estimates are themselves imprecise with only 3 replicates)",
+                "Produces an MA plot and a volcano plot annotated with the top DE genes",
+                "Reports DESeq2 dispersion plot (gene-wise vs fitted vs MAP) to visually assess how much shrinkage was needed, which is directly informative of replicate-driven uncertainty"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Replicate-robustness assessment of the DE call set",
+              "track": "T1",
+              "step_type": "statistical_robustness",
+              "question": "How stable is the treated-vs-control DE gene list to the identity of the specific replicates, given only 3 samples per group?",
+              "acceptance_criteria": [
+                "Performs leave-one-sample-out DESeq2 refits (dropping one sample at a time from the 6, i.e. 6 refits with 2-vs-3 or 3-vs-2 samples) and reports, for the padj<0.05 gene set from T1S2, what fraction of those genes remain significant (or retain concordant sign of log2FoldChange) across the leave-one-out refits",
+                "Performs a label-permutation null (permute treated/control labels across the 6 samples, all or a large sample of the C(6,3)=20 possible splits) and reports the empirical distribution of DE-gene counts under the null compared to the observed count from T1S2, to contextualize whether the observed DE signal exceeds what small-n label noise alone can produce",
+                "Explicitly states in output text that with n=3 per group, effect-size estimates carry wide confidence intervals and gene-level significance calls should be treated as a candidate list requiring independent validation, not a definitive result",
+                "Reports a stability score per gene (e.g., fraction of leave-one-out refits in which the gene remains padj<0.05) alongside the original DE table"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes against WikiPathways human gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among the genes differentially expressed between treated and control liver samples (padj<0.05 from T1S2), and how does that change when using the more permissive padj<0.1 list?",
+              "acceptance_criteria": [
+                "Uses the WikiPathways human GMT reference at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, parsing the '%'-delimited descriptor field to recover human-readable pathway names",
+                "Runs over-representation analysis (or GSEA-style ranked test using the DESeq2 stat or shrunken log2FoldChange as the ranking metric) separately for the padj<0.05 and padj<0.1 DE gene sets from T1S2, using all filtered/tested genes from T1S1 as the background universe",
+                "Reports enriched pathways with FDR-corrected p-values, gene overlap counts, and the specific overlapping gene symbols per pathway",
+                "Explicitly notes if the padj<0.05 list is too small for reliable enrichment testing (a real risk given n=3 per group) and falls back to reporting the padj<0.1 or ranked GSEA result as the primary enrichment output in that case"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

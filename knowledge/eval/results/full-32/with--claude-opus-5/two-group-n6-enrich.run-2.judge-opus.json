@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with apeglm shrinkage and BH at alpha 0.05 on an unpaired two-group design, with an edgeR QL cross-check and a stated sensitivity re-run excluding sample_01, correctly keeping it as primary. QC precedes testing with blind VST PCA, sample-distance heatmap, library sizes, detected genes and size factors, and an explicit keep-inspect-report policy for the shallow library, plus an explicit statement of where sample_01 lands. The low-count filter (>=10 counts in >=6 samples) is minimal and justified against the smallest group size, though the >=10 threshold is slightly stricter than the common CPM-based rule; normalization is correctly inside the model (median-of-ratios, TMM for edgeR) with explicit prohibition of pre-scaled counts. Enrichment is fgsea preranked on the full tested list ranked by the Wald statistic with the choice defended, Hallmark as the named primary collection with a 15-500 size window, tested-gene universe, seed, collapse of redundant sets and unmapped share; the GO follow-up is a reasonable extension though it adds redundancy risk. Reporting covers versions, design, contrast direction, thresholds, tested and significant counts, diagnostics, reproducibility record and honest caveats about power, the shallow library and missing length offsets."
+}

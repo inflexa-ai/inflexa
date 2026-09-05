@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as a genotype-by-treatment interaction, fits ~genotype + treatment + genotype:treatment with explicit reference levels (WT, vehicle), tests the interaction coefficient by Wald, and derives the two simple effects via list-based contrasts rather than refitting separate models — exactly the reference approach, with an honest statement about low power for a difference-of-differences at n=4/cell. QC is design-specific (blind VST, PCA on top 500 genes colored by genotype and shaped by treatment, distance heatmap, library sizes) with an explicit no-silent-exclusion policy; the filter (>=10 counts in >=4 samples, justified by smallest cell size) and normalization (median-of-ratios internal, no pre-normalized input) are both correct and reasoned. FDR is BH at alpha 0.05 within each contrast with independent filtering, p-value histograms, Cook's NA reporting, and appropriate shrinkage (apeglm for coefficients, ashr for linear-combination contrasts) with unshrunken values kept alongside. Enrichment, though not strictly required by the question, is well specified — preranked fgsea on the Wald stat, per contrast without pooling, named collections with versions, 15-500 size window, tested-gene universe, leading edge — with only the mild concern that GSEA on an interaction statistic is harder to interpret than the plan acknowledges. The final report covers method, versions, design, contrasts, thresholds, gene counts, diagnostics, and design caveats."
+}

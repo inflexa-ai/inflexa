@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 4,
+    "low_count_filter": 5,
+    "normalization": 5,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly recognizes that DE is already done and goes straight to preranked GSEA on the full gene list with an appropriate ranking metric (Wald stat or signed -log10 p, explicitly avoiding a shrunken LFC), which fits the design; the added threshold-based ORA is a deviation from best practice but is at least run against the 12,000 tested genes as universe rather than the whole genome, so it is defensible as a stated robustness check. Input QC is thin: it checks NA/duplicate symbols and rank-metric sanity but never confirms that no padj cutoff was applied upstream, never inspects the results table for completeness, and never mentions the shallow sample_01, which is a caveat inherited from the upstream DE. Upstream criteria (filtering, normalization, design formula) are appropriately not re-done, but the plan also does not state what it is assuming about them, so it gets only partial credit; the contrast direction is at least explicit via NES sign. Enrichment is well specified for collection and version and BH FDR, but it omits the gene-set size window (15-500), a fixed seed, and adaptive permutation counts, and the report does not name the fgsea/gseapy version or the design caveats."
+}

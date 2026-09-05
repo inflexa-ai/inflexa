@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 4,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly uses DESeq2 with ~ sex + age + condition on raw counts, condition as the last term and tested contrast, tabulates sex/age balance by group, and flags the limited df at n=6 per group; the unadjusted comparison model is a reasonable sensitivity check. It falls short on QC: no PCA or sample-distance plot colored by condition, sex, or age, no XIST/Y-linked sex check, and no explicit outlier or shallow-sample policy. Age is not centered, the reference level is only implicit, and the low-count filter is left as an unspecified 'e.g., minimum count threshold'. No fold-change shrinkage (apeglm) is mentioned and BH is not named, though padj < 0.05 is stated. Enrichment was not asked for; it is included with a named, versioned collection and FDR threshold, but without an explicit universe, size window, or GSEA ranking metric. Software versions are not requested in the report."
+}

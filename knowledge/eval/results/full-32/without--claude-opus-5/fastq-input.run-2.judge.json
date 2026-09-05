@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 1,
+    "low_count_filter": 1,
+    "normalization": 1,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 3
+  },
+  "rationale": "Stopping with a clarification is the correct outcome for unquantified FASTQ inputs, and the planner correctly identified the data state (6 paired-end samples, 3 vs 3, no counts) and offered the two valid routes (a count matrix or an index plus an aligner/pseudoaligner). It did not, however, name a specific quantifier (Salmon, kallisto, STAR+featureCounts) or ask which reference build and annotation version apply, which the reference expects. No downstream plan was stated at all, so QC, filtering, normalization, formula/contrast, and BH/shrinkage receive minimal credit; enrichment omission is trivially correct here. The report criterion gets partial credit only for the accurate design description embedded in the question."
+}

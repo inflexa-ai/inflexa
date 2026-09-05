@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 2,
+    "qc_present": 2,
+    "low_count_filter": 0,
+    "normalization": 8,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 2,
+    "report_completeness": 4
+  },
+  "rationale": "The plan correctly recognizes that n=1 per group precludes dispersion estimation, but then does exactly what the reference forbids: it runs edgeR exactTest with an assumed BCV and reports p-values and BH FDRs as the primary result, using FDR<0.05 to select genes for enrichment. Caveats do not make an invalid inferential test valid; the correct plan reports normalized counts and descriptive log2FC only, with no p-values, and names the replicated design needed for inference, which this plan never does. No low-count filter and no sample QC (library sizes) are stated. Normalization (TMM, median-of-ratios) is explicit and appropriate, and the report caveats are stated, but versions, tested/significant counts, and the required replicate number are absent; enrichment is unwarranted here and lacks a version and size window."
+}

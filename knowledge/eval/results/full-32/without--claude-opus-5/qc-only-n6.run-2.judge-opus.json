@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly reads the question as QC-only and stops before any differential test, explicitly forbidding DE, ranking, and enrichment, which is exactly what the reference requires. The QC content is complete and dataset-specific: library sizes with sample_01's ratio to the median and to the next-lowest sample, detected-gene counts at two thresholds, library complexity, VST (blind=TRUE, rlog fallback), PCA on top 500 variable genes colored by condition and labelled, a leave-sample_01-out PCA, PC-vs-log10-depth correlations, and a clustered Euclidean distance heatmap with own-group versus opposite-group distance splits. The filter (>=10 counts in >=6 samples, matched to group size, with surviving gene count reported) is minimal and justified, normalization is median-of-ratios size factors inside DESeq2 with no pre-normalized input, and the verdict rests jointly on depth, detection, complexity, embedding position, distance profile, and leverage rather than library size alone, with the 5v6 power cost named. Minor gaps: the reference level for ~condition is never fixed, and software versions are not named in the reporting requirements; FDR/shrinkage and enrichment are correctly absent given no test is run."
+}

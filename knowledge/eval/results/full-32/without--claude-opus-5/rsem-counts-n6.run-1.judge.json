@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats the matrix as RSEM expected counts, rounds them for DESeq2 with the rounding and the lost effective-length offset stated explicitly, and never substitutes TPM/FPKM; it loses a little for not asking for the genes.results files and for the slightly inaccurate claim that effective length is a per-sample-invariant constant. QC is thorough and design-specific (library sizes, vst PCA with PC1-vs-depth correlation, distance heatmap, explicit verdict on sample_01, kept as primary with a leave-one-out sensitivity run). Filtering, median-of-ratios normalization, ~condition with control as reference, BH at 0.05 and apeglm shrinkage are all explicit, but the |LFC|>1 cutoff is applied post hoc rather than via lfcThreshold in the test. Enrichment is well specified (full ranking, metric, hallmark/GO BP, 15-500 window, tested-gene universe) but no collection version is stated, and the report does not commit to recording package versions."
+}

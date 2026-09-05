@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the design precisely: DESeq2 negative-binomial Wald on raw Salmon counts with ~condition, chow as explicitly stated reference, no invented batch or covariate terms, and an acknowledgement that single-batch means batch and diet are inseparable. QC is exemplary and dataset-specific — library sizes, detected genes, median-of-ratios size factors, VST PCA and correlation heatmap, within-group correlation for sample_01 versus peers, and an evidence-based KEEP/EXCLUDE recommendation with the n=6 power cost acknowledged, plus a pre-registered drop-sample_01 sensitivity fit carried through to GSEA. Filtering (count >=10 in >=6 samples, tied to the smaller group size) is minimal and justified, normalization stays inside the model, and BH at 0.05 with apeglm shrinkage is correctly specified with no threshold shopping. Enrichment correctly uses the mouse MGI-symbol hallmark collection rather than human sets, fgsea preranked on the full list with the ranking statistic and tie rule stated, size window 15-500, symbol match fraction reported, and an explicit refusal to substitute human sets if the mouse collection is missing; only the MSigDB release version and software versions are left unstated."
+}

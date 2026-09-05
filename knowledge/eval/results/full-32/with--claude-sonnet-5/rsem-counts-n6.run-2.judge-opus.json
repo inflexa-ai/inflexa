@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the RSEM expected-count situation: it keeps the expected counts, rounds them for DESeq2, never substitutes TPM/FPKM, and states prominently that the effective-length offset is lost because genes.results were not delivered — but it accepts that loss rather than requesting the per-sample files, which the reference expects. QC is exemplary and dataset-specific: VST-blind PCA, distance heatmap, per-sample library size and detected genes, sample_01 explicitly flagged and retained pending a documented, evidence-based decision. The filter (>=10 counts in >=6 samples, tied to the smaller group size), the explicit control reference level and named treated-vs-control Wald contrast, BH at alpha 0.05 with independent filtering, and apeglm shrinkage all match the reference; normalization is left implicitly to DESeq2 size factors rather than named, a small gap. Enrichment was not requested by the user, but if run it is specified correctly (tested-gene universe for ORA, full Wald-statistic ranking for fgsea, named collections with versions and a 15-500 size window); the report step is thorough on versions, thresholds, counts, diagnostics, and the length-offset caveat."
+}

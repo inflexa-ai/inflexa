@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the design as paired with subject as a blocking term in ~subject + condition, sets control as the reference, names the contrast, and adds an edgeR QL robustness check. QC covers blind VST, PCA, sample distances colored by subject and condition, library sizes, and an explicit outlier flagging policy, though a policy for a shallow sample is only implicit. The filter is minimal and justified, normalization stays inside the model, BH at alpha 0.05 and apeglm shrinkage are stated explicitly with selection on padj only. Enrichment was not requested but is done properly with the full Wald-ranked list, stated metric, tested-gene universe, size window, and a named Hallmark version; the Reactome release is deferred rather than stated. The report step names design, thresholds, gene counts, versions, and the n=5 power caveat."
+}

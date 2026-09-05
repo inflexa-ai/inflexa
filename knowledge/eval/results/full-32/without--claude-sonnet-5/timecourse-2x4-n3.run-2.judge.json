@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The core method is exactly right: a DESeq2 LRT of ~condition + time + condition:time against ~condition + time with time as a four-level factor, built from raw counts with size factors inside the model. QC includes PCA/correlation and outlier flagging but states no explicit policy for handling an outlier or shallow library and omits library-size checks; the low-count filter is described as minimal but the rule is left unspecified. BH at padj < 0.05 is stated, but no lfcShrink or shrinkage is planned for the per-time-point fold changes that describe the significant genes, and reference levels are not named. Enrichment was not asked for; as added it names collections and the tested-gene universe but gives no version, size window, or ranking metric for the fgsea option, and the report lacks package versions."
+}

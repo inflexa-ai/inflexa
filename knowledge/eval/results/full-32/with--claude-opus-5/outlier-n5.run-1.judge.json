@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: it characterizes sample_03 with the metrics actually available (library size, detected genes, count concentration, within-group correlation, PCA/heatmap position), keeps it in the primary DESeq2 Wald fit with Cook's flagging, and runs the with/without fits plus voomWithQualityWeights and edgeR robust, reporting overlap and genes that flip status. The removal criterion is stated as a technical one to be judged in QC but is not fixed numerically in advance (e.g. a MAD threshold), which is a small gap against the reference. Filter (>=10 in >=5), in-model median-of-ratios/TMM normalization, explicit relevel and contrast, BH at 0.05 with apeglm and lfcThreshold-in-test are all correct and explicit. Enrichment was not asked for; it is nonetheless specified properly (full ranked list by Wald stat, named collections with recorded version, 15-500 window, seed, tested-gene universe for any ORA), so it is docked only for scope beyond the question and for recording rather than pinning a version up front."
+}

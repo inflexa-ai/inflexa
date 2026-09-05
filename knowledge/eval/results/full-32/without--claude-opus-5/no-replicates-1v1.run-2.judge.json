@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "Step 1 is the correct core: normalized counts, descriptive log2FC, explicit statement that no inference is possible, library sizes and filter counts reported. But Step 2 then does exactly what the reference forbids — an edgeR exactTest with assumed BCV producing nominal and BH-adjusted p-values and FDR<0.05 gene counts and a volcano plot — and heavy labelling does not change that these are p-values with no valid basis; feeding an already-normalized matrix into edgeR is also ambiguous. Step 3 runs GSEA/ORA on an unreplicated single-pair ranking, which the reference says should be omitted, and lacks a collection version, size window and explicit ORA universe. The plan does not name the minimum replicated design (2, preferably 3+ per group) and does not mention package versions; QC is reasonable for two samples but has no explicit outlier/shallow-sample policy."
+}

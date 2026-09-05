@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the data state — raw integer gene-level counts from STAR/featureCounts — and explicitly forbids tximport, length offsets and TPM/FPKM, sending the matrix straight into DESeq2 with median-of-ratios normalization inside the model and an edgeR/TMM concordance check as a legitimate robustness step. QC precedes inference (library sizes, size factors, VST PCA with percent variance, distance and correlation heatmaps) with a flag-don't-remove outlier policy and an honest note that a single batch means batch cannot be modelled; the filter (>=10 counts in >=3 samples, the smallest group size) is minimal and justified. The design ~condition with control as explicit reference, the treated-vs-control Wald contrast, BH at 0.05 (with 0.10 reported separately) and apeglm shrinkage for ranking are all stated correctly, and low power at n=3 is repeatedly acknowledged with an explicit refusal to relax thresholds if the result is null. Enrichment is defensible in a liver drug-treatment context and is done well — full ranked list, Wald statistic as the metric, 15–500 size window, per-collection BH, tested genes as ORA universe — but no collection versions are given, only names. Reporting is otherwise thorough on design, thresholds, tested and significant counts and caveats, though software versions are never mentioned."
+}

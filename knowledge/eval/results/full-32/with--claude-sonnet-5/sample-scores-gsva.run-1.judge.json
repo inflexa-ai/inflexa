@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan delivers what the question asks: GSVA (Gaussian kernel) on a VST matrix against MSigDB Hallmark 2026.1 with a 15-500 size window, a per-sample score table, a limma test on the scores with BH at 0.05, and a row-scaled clustered heatmap annotated by condition and by the sample_01 low-depth flag. QC is design-specific (blind VST PCA, distance heatmap, library-size table, explicit retain-by-default policy for sample_01), the filter is minimal and tied to group size, normalization stays inside DESeq2, and the design/contrast/reference level are explicit. The main deductions are for inserting a full gene-level DESeq2 DE pass that the question does not require (the reference notes this is a per-sample score question, not a gene-level test first) and a small internal inconsistency where step 1 mentions a 'design-aware transform used later for GSVA' while step 3 actually uses the blind VST."
+}

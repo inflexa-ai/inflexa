@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference design closely: raw Salmon counts into DESeq2 with ~sex + age + condition, control as reference, sex as factor and age as continuous, plus an explicit balance audit (age difference with CI and Wilcoxon, sex x condition Fisher, model matrix rank/condition number and residual df) that directly addresses the confounding risk before fitting; it correctly refuses to adjust counts before the model. QC is thorough (library size, detection, VST PCA with PC association tests against condition, sex and age, correlation clustering, flag-only outlier policy) but omits the XIST/Y-linked sex check, and age is never stated to be mean-centered. The filter (count >= 10 in >= 6 samples, tied to the smaller group size) is minimal and justified, normalization stays inside the model, and BH at 0.05 with apeglm (ashr fallback) on the condition coefficient is correct, though the |LFC| > 0.5 screen is applied post hoc rather than as an lfcThreshold in the test. Enrichment is well specified (fgsea on the shrunk-LFC ranking, human hallmark and GO-BP, 15-500 size window, tested-gene universe as ORA background) but no collection version is named; reporting is detailed on design, thresholds and caveats yet never commits to stating software versions."
+}

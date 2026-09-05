@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction in PyDESeq2 with a stated LRT fallback, and pairs it with within-genotype simple effects, though the stratified fits sacrifice pooled dispersion rather than using contrasts of the full model. QC covers library sizes and a PCA colored by both factors, but no explicit outlier or shallow-sample policy is given. The low-count filter is left as an unspecified total-count threshold with no justification, reference levels for the factors are never stated, and log fold-change shrinkage is absent despite reported effect sizes driving responder classification. Enrichment names collections and uses the filtered gene set as ORA background and a stated ranking metric, but omits versions and size windows; the report requirements cover significance counts and a nominal-threshold caveat but not software versions."
+}

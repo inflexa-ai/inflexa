@@ -1,0 +1,879 @@
+{
+  "campaign": "full-32",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "total-rna-highdup-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T18:57:05.684Z",
+  "elapsedMs": 135148,
+  "outcome": "plan_submitted",
+  "planId": "pln-9d4cb81c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and duplication/depth triage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A sample with a library size several times below the median must be kept through QC, inspected on the PCA and the distance heatmap, and removed only with a stated reason; the count model down-weights it through its size factor.",
+          "Do not remove duplicate reads without UMIs — the duplication rate follows the expression level, and removal deletes true signal. Report the rate per sample. A high duplication rate in a low-depth library indicates low complexity and makes that sample an outlier candidate with a stated reason.",
+          "Strandedness is unverified. It must normally be inferred from aligned reads (for example RSeQC infer_experiment) before the counts are trusted; only a summarised gene-level matrix is available here, so this cannot be done — record the limitation rather than assuming a setting.",
+          "The intronic share cannot be computed from a gene-level count matrix; report only what the matrix supports."
+        ],
+        "context": "rRNA-depleted total RNA libraries, no UMIs, duplication above 60 percent in most libraries. Duplication in RNA-seq follows expression level; deduplication without UMIs removes true signal. sample_01 has a library size roughly 4x below the median. DESeq2 size factors already account for depth.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 human heart samples separate by condition (treated vs control), and are sample_01 (about 4x below median library size) or any high-duplication library outliers that justify removal before the treated-vs-control test?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d",
+            "R-0076@5060",
+            "R-0078@3240",
+            "R-0079@6f8a"
+          ],
+          "reason": "Two-group count dataset with a low-depth sample and high duplication in a no-UMI total-RNA library: blind VST + PCA on top 500 genes + distance heatmap per R-0033, keep-and-report policies per R-0008 and R-0078; R-0079 strandedness inference is recorded as unattainable from a gene-level matrix.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)",
+          "qc_sample_structure: duplicate_policy = keep_without_umi_report_rate (doi:10.1038/srep25533)",
+          "qc_sample_structure: total_rna_qc = rrna_fraction, mito_fraction, intronic_share, computed only as far as a gene-level count matrix supports (doi:10.1186/1471-2164-15-419)",
+          "Do not remove any sample for low depth alone",
+          "Do not perform read deduplication"
+        ],
+        "description": "Load counts.csv (12,000 genes x 12 samples, gene symbol in column 1) and metadata.csv (12 rows, sample + condition). Verify sample IDs match between the two files and that the design is 6 treated vs 6 control. Build a DESeqDataSet, apply the blind variance-stabilizing transform, run PCA on the 500 most variable genes coloured by condition, and draw the Euclidean sample-distance heatmap. Produce a per-sample QC table: library size (total counts), number of detected genes, size factor, mitochondrial (MT-) count share, and any residual rRNA-gene share detectable from the gene symbols, plus the reported duplication rate where the metadata carries it. Flag sample_01 explicitly and state whether it sits with its condition group on the PCA and the distance heatmap. Emit a machine-readable decision: which samples (if any) to exclude from the DE model and the stated reason for each; the default is to exclude none.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv are confirmed to match one-to-one and the 6 treated vs 6 control split is verified and stated",
+          "PCA on the top 500 variable genes (blind VST) and a sample-distance heatmap are produced, coloured by condition",
+          "A per-sample table reports library size, detected genes, size factor, MT share, and duplication rate where available, with sample_01 explicitly annotated",
+          "No deduplication is performed and the report states why (no UMIs)",
+          "An explicit include/exclude decision per sample is emitted with a stated reason for any exclusion; depth alone is not accepted as a reason",
+          "The report states that strandedness could not be verified from a gene-level count matrix and that rRNA/intronic fractions were only approximated from gene symbols"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test, treated vs control, with apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A wrong reference level silently reverses every fold change without an error — set it explicitly rather than relying on alphabetical order.",
+          "With 6 replicates per group DESeq2 sets p and padj to NA for Cook's-flagged genes instead of replacing the count; do not confuse these NAs with independent-filter NAs.",
+          "Rank genes and draw plots on the shrunken log2 fold change; the unshrunken estimate of a low-count gene is large and noisy. Keep the unshrunken value and its standard error in the table.",
+          "The Salmon length offset that tximport would carry is unavailable here, so a gene whose isoform usage shifts between treated and control can be mis-called."
+        ],
+        "context": "12,000 genes x 12 samples of raw integer gene-level Salmon counts from human heart; 6 treated vs 6 control, unpaired, single batch. No transcript-level Salmon output and no tximport length offsets are available, only the summarised gene-level matrix.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Which genes differ in expression between treated and control human heart samples, at BH-adjusted p < 0.05?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "Raw counts, fixed-effects two-group design, 6 replicates per group: DESeq2 Wald with apeglm shrinkage and BH + independent filtering per R-0001/R-0009/R-0010; R-0018 length offsets cannot be honoured because only gene-level counts exist, and that is stated in the step.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_count = 10, min_samples = 6 (smallest group size) (doi:10.12688/f1000research.7035.1; vignette:DESeq2/1.52.0#pre-filtering)",
+          "normalize: median-of-ratios size factors inside the model; do not pre-scale, pre-normalize or transform counts before the fit (doi:10.1186/s13059-014-0550-8)",
+          "model_design: reference_level set explicitly to the control level; contrast named as factor, numerator, denominator (vignette:DESeq2/1.52.0#note-on-factor-levels, #contrasts)",
+          "differential_expression: test = Wald; count_outlier_policy = flag_and_report_na (doi:10.1186/s13059-014-0550-8)",
+          "shrink_lfc: lfc_shrink = apeglm on the condition coefficient (doi:10.1093/bioinformatics/bty895)",
+          "multiple_testing: adjustment = BH, alpha = 0.05 passed to results(), independent_filtering = true, select genes by padj not by raw p or fold change alone (doi:10.1111/j.2517-6161.1995.tb02031.x; doi:10.1073/pnas.0914005107)",
+          "multiple_testing: inspect the p-value histogram before the adjustment (doi:10.3390/ht7030023)",
+          "Do not apply a post-hoc fold-change filter; if an effect-size threshold is wanted, pass lfcThreshold inside results() and lfcShrink()"
+        ],
+        "description": "Build the DESeqDataSet from counts.csv and metadata.csv, honouring the include/exclude decision from T1S1. Pre-filter minimally: keep genes with at least 10 counts in at least 6 samples (the smallest group size). Set the condition factor with the control level explicitly as reference so that a positive log2 fold change means higher in treated. Fit ~ condition, run the Wald test, and extract results for the contrast (condition, treated, control) with alpha = 0.05 and independent filtering on. Plot the histogram of unadjusted p-values before interpreting the adjusted values and state its shape. Apply apeglm shrinkage to the condition coefficient and write a results table carrying, per gene: baseMean, unshrunken log2FoldChange, lfcSE, Wald stat, pvalue, padj, and shrunken log2FoldChange. Count and report separately (a) genes with NA p-values from the Cook's-distance count-outlier flag — with 6 replicates per cell DESeq2 flags rather than replaces — and (b) genes with NA padj from independent filtering. Also produce the MA plot and the dispersion plot. Save the full results table and a normalized-count matrix for downstream steps.",
+        "acceptance_criteria": [
+          "The pre-filter is exactly >= 10 counts in >= 6 samples and the number of genes retained out of 12,000 is reported",
+          "The control level is set explicitly as the factor reference and the contrast is named as (condition, treated, control) in the output",
+          "The p-value histogram is produced and its shape is described before any adjusted-p interpretation",
+          "The results table carries baseMean, log2FoldChange, lfcSE, stat, pvalue, padj and the apeglm-shrunken log2FoldChange per gene",
+          "The number of genes at padj < 0.05, the number of Cook's-outlier NA p-values, and the number of independent-filter NA padj values are each reported separately",
+          "MA plot and dispersion plot are produced",
+          "The report states that no average-transcript-length offset was applied because transcript-level Salmon output is unavailable, and names isoform-switching genes as the affected class"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood second method and overlap",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Disagreement between the two methods grows at low counts and low replicate numbers; a gene called by only one method is a weaker claim, not a contradiction."
+        ],
+        "context": "With 6 replicates per group the two tools agree on most genes but disagree at low counts; the overlap is the robustness check for this dataset.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma"
+        ],
+        "question": "Which treated-vs-control genes are called by both DESeq2 Wald and edgeR quasi-likelihood, and which by only one?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1",
+            "R-0026@762e"
+          ],
+          "reason": "edgeR quasi-likelihood is the named alternative to the DESeq2 Wald test at 2-11 replicates per group (R-0001); R-0042 makes the intersection of the two the high-confidence set.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the same counts, the same samples and the same design formula as T1S2",
+          "normalize: TMM scaling factors inside the edgeR model; do not pre-normalize the counts (doi:10.1186/s13059-014-0550-8)",
+          "Select by BH-adjusted p < 0.05 in both methods so the comparison is like-for-like"
+        ],
+        "description": "Run the edgeR quasi-likelihood F-test on the same raw counts, the same sample set decided in T1S1, and the same design ~ condition with control as reference. Use filterByExpr for the low-count filter, TMM normalisation factors inside the model, estimateDisp, glmQLFit and glmQLFTest on the treated-vs-control coefficient, with BH adjustment at FDR 0.05. Then compare against the DESeq2 result from T1S2: report the number of significant genes from each method, the size of the intersection, and the genes unique to each, naming the method for each unique set. Write the intersection as the high-confidence gene set and the method-unique genes as a secondary table. Do not report the union as the result.",
+        "acceptance_criteria": [
+          "edgeR QL runs on the identical sample set, design and reference level as T1S2",
+          "Significant-gene counts are reported for DESeq2, for edgeR, and for their intersection",
+          "A high-confidence intersection table and a secondary method-unique table (with the calling method named) are written",
+          "The union is not presented as the result"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked fgsea on the Wald statistic: hallmark then GO BP",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Fewer than about 50 significant genes makes an over-representation test powerless and threshold-dependent — the ranked test on the full list is the answer in that case.",
+          "Gene length and expression level bias enrichment on count data; the tested-genes universe removes only the detection part of that bias.",
+          "GO is a nested hierarchy, so parent and child sets share most members — expect blocks of correlated hits and collapse them before quoting a count.",
+          "If neither a hallmark nor a GO collection is resolvable at run time, report the enrichment as not performed and name the missing resource; do not substitute a different organism's collection."
+        ],
+        "context": "Human heart, treated vs control. Reference data needed: a human hallmark gene set collection and a human GO biological process collection, both as symbol-keyed gene sets. The environment stages MSigDB human hallmark (2026.1) and MSigDB human GO BP/CC/MF (2026.1). No Reactome C2 collection is staged, so GO BP takes the second-collection role; if a Reactome collection is present at run time, prefer it and state which was used. No KEGG collection is served.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which biological processes are coordinately shifted between treated and control human heart, in the full ranked list of tested genes?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0098@d01b",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0054@801e",
+            "R-0099@0a77",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0097@a38e"
+          ],
+          "reason": "Ranked-list enrichment after a DE test on human data: fgsea preranked on the full tested list against hallmark first per R-0107/R-0048; disputed rule R-0108 resolved in favour of the Wald statistic; R-0098's Reactome second pass is substituted by staged GO BP because no Reactome collection is provisioned.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "enrichment: gsea_input = full_ranked_list; never a thresholded list (doi:10.1073/pnas.0506580102)",
+          "enrichment: rank_metric = stat — the DESeq2 Wald statistic. This is the stated choice on the disputed ranking-metric rule: it is signed and scaled by its standard error, unlike the unshrunken fold change, and it does not saturate into ties like a signed p-value (rule:R-0108)",
+          "enrichment: min_size = 15, max_size = 500 applied after intersection with the tested genes (doi:10.1073/pnas.0506580102)",
+          "enrichment: universe = tested genes, never the whole genome or annotation (doi:10.1371/journal.pcbi.1009935)",
+          "enrichment: collapse_redundant = true (doi:10.1101/060012)",
+          "enrichment: gene_set_collection = human hallmark first; second collection = human GO BP, since no Reactome C2 collection is staged (doi:10.1016/j.cels.2015.12.004; doi:10.1038/s41596-018-0103-9)",
+          "enrichment: id_mapping — keep one identifier space between the ranked list and the sets; report the unmapped share if any conversion occurs (doi:10.1016/j.xinn.2021.100141)",
+          "Set an explicit random seed for the fgsea permutations and record it",
+          "Use the organism-matched human collections; a mouse or rat collection on this human heart data is a hard error"
+        ],
+        "description": "Take the full T1S2 results table — every tested gene, not a thresholded subset — and rank genes by the DESeq2 Wald statistic (the stat column). Run fgsea against a human hallmark gene set collection, then against a human GO biological process collection as the second pass; both are keyed on HGNC symbols, which matches the gene-symbol identifiers of counts.csv, so no ID conversion is required — if a conversion is nonetheless used, report the unmapped share and never mix identifier spaces. Restrict sets to 15-500 genes after intersecting each set with the tested genes. Adjust with BH. Collapse redundant significant sets into groups and report one representative per group with its leading-edge genes and each member's gene-level statistic; mark leading-edge overlap between reported sets. Keep the full table as a supplement. If fewer than about 50 genes reach padj < 0.05 in T1S2, do not run an over-representation test on that short list — the preranked test on the full list is the result — and state the size of the significant list. Set and record a random seed for the permutations.",
+        "acceptance_criteria": [
+          "fgsea runs on the full ranked list of tested genes from T1S2, ranked by the Wald stat — no threshold applied before the test",
+          "The hallmark pass and the GO BP second pass both report set name, NES, p, BH-adjusted p, set size and leading-edge genes",
+          "The gene set size window 15-500 is applied after intersection with the tested genes and is stated in the output",
+          "Redundant significant sets are collapsed and one representative per group is reported, with leading-edge overlap marked",
+          "The collection name and version, the rank metric (Wald stat), the universe (tested genes), the size window and the permutation seed are all recorded",
+          "If the identifier space is converted, the unmapped share is reported; otherwise the step states that symbols were used directly",
+          "If fewer than 50 genes pass padj < 0.05, no over-representation test is run and the size of the significant list is stated"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Consolidated treated-vs-control report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not present a pathway hit as a proven mechanism; a gene set is a hypothesis for follow-up.",
+          "Do not quote the union of DESeq2 and edgeR calls as the headline number."
+        ],
+        "context": "Consolidation only — no new statistical inference is performed in this step.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "knitr"
+        ],
+        "question": "What is the reportable answer to 'which genes differ between treated and control', with its thresholds, diagnostics, caveats and reproducibility record?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Reporting content and the reproducibility record follow the returned report-step rules R-0041, R-0085, R-0087, R-0105 and R-0086; the two-method overlap is reported per R-0042.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+          "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE; rank_genes_by = shrunken_log2FoldChange (doi:10.1093/bioinformatics/bty895)",
+          "report: robustness = overlap of the two methods, intersection as the high-confidence set (doi:10.1261/rna.053959.115)",
+          "report: leading_edge per significant set (doi:10.1073/pnas.0506580102)",
+          "report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)",
+          "report: enrichment_caveat = method dependence (doi:10.1093/bib/bbz158)",
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version (doi:10.1371/journal.pcbi.1003285)",
+          "Perform no new statistical test in this step"
+        ],
+        "description": "Assemble one report from T1S1, T1S2, T1S3 and T2S1. State the method and every package version, the design formula ~ condition, the reference level and the contrast (condition, treated, control), the thresholds (BH padj < 0.05), the number of genes tested after filtering out of 12,000, and the number of DE genes. Include the QC figures (PCA, sample-distance heatmap, per-sample library size / detected genes / duplication rate table with sample_01 annotated), the fit diagnostics (MA plot, dispersion plot, p-value histogram), and the gene table ranked by the shrunken log2 fold change and carrying the unshrunken log2FoldChange and lfcSE beside it. Report the DESeq2/edgeR overlap with the intersection as the high-confidence set. For enrichment, report the collection and its version, the rank metric, the universe, the size window, and the leading-edge genes of each significant set, and state explicitly that enrichment results depend on the method chosen and are hypotheses for follow-up. Close with a reproducibility record: sessionInfo, all package versions, the permutation seed, and the gene set collection version. State the standing limitations plainly: strandedness unverified, no transcript-length offset, high duplication retained by design without UMIs, and sample_01's low depth.",
+        "acceptance_criteria": [
+          "Method, package versions, design formula, reference level, contrast, thresholds, number of tested genes and number of DE genes all appear before the gene tables",
+          "MA plot, dispersion plot and p-value histogram are included as fit diagnostics",
+          "The gene table carries log2FoldChange, shrunken log2FoldChange and lfcSE, and is ranked by the shrunken value",
+          "The DESeq2/edgeR significant-gene counts and their intersection are reported, with the intersection named as the high-confidence set",
+          "Enrichment reporting names the database and version, the rank metric, the universe, the size window, and the leading-edge genes per significant set, with an explicit method-dependence caveat",
+          "A reproducibility record with sessionInfo, package versions, the seed and the collection version is stored with the results",
+          "The four standing limitations (unverified strandedness, no length offset, retained duplication without UMIs, sample_01 depth) are stated in the report"
+        ]
+      }
+    ],
+    "title": "Heart treated vs control: DE + hallmark GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000 x 12 raw integer gene-level count matrix from Salmon (counts.csv, gene symbols in the first column) with a 12 x 2 sample table (metadata.csv) giving one condition per sample: 6 treated vs 6 control human heart samples, unpaired, single batch. The research question is a straightforward two-group differential expression contrast, so the plan is a single DESeq2 track with an enrichment branch.\n\nTwo data caveats shape the QC step rather than the model. (1) The libraries are rRNA-depleted total RNA without UMIs, and QC reports duplication above 60 percent in most libraries. Duplication in RNA-seq tracks expression level; without UMIs, deduplication deletes true signal and does not improve DE. So no deduplication is planned — the duplication rate is reported per sample beside library size and detected genes, and only a library that is simultaneously low-depth and unusually duplicated is treated as a low-complexity outlier candidate, with a stated reason. (2) sample_01 has a library size about 4x below the median. DESeq2 size factors already down-weight depth, so the sample is kept through QC and inspected on the PCA and the sample-distance heatmap; removal would require a stated reason beyond depth, and the DE step runs on all 12 samples unless T1S1 documents such a reason.\n\nTwo further total-RNA caveats are recorded honestly rather than papered over. Strandedness is unverified and cannot be inferred here — that requires aligned reads, and only a gene-level count matrix is provided. Likewise the rRNA / mitochondrial / intronic fractions that a total-RNA QC normally reports can only be approximated from the count matrix itself (mitochondrial MT- gene share, residual rRNA-gene share); the step computes what the matrix supports and states explicitly what it cannot verify. These are reported limitations of the DE call, not blockers.\n\nModelling: minimal pre-filter (>= 10 counts in >= 6 samples, the smallest group size), median-of-ratios normalisation inside the model, design ~ condition with control set explicitly as the reference level so a positive log2FC means higher in treated, DESeq2 Wald test, apeglm shrinkage for ranking and plots, BH with independent filtering at alpha 0.05. With 6 per group DESeq2 flags count outliers by Cook's distance and returns NA p-values rather than replacing counts; those genes are counted and reported separately from independent-filter NAs. Because Salmon transcript-level output and the tximport length offsets are not available (only a summarised gene-level matrix), the model runs on the matrix as given and the report states that no average-transcript-length offset was carried — isoform-switching genes may therefore be mis-called. edgeR quasi-likelihood on the same counts and design gives a second method; the intersection is the high-confidence set, and method-unique calls are reported as secondary.\n\nEnrichment runs preranked fgsea on the full tested list ranked by the DESeq2 Wald statistic (the stated choice on the disputed ranking-metric rule: it is signed and scaled by its standard error, which the unshrunken fold change is not, and it does not saturate into ties the way a signed p-value does), against the staged MSigDB human hallmark collection, with GO BP as the second collection since no Reactome C2 collection is staged here. Set-size window 15-500 after intersection with the tested genes, redundant sets collapsed, leading-edge genes reported."
+  },
+  "usage": {
+    "inputTokens": 211608,
+    "outputTokens": 11524,
+    "cacheCreationInputTokens": 135251,
+    "cacheReadInputTokens": 76321,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "library_type": "total",
+        "quality_flags": [
+          "low_depth_sample",
+          "high_duplication"
+        ],
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R",
+        "strandedness": "unknown",
+        "interaction": false
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "library_type": "total",
+        "strandedness": "unknown",
+        "quality_flags": [
+          "low_depth_sample",
+          "high_duplication"
+        ],
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: blind VST, PCA on top 500 variable genes, sample distance heatmap, library size and detected-gene table",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "duplicate_policy",
+                "value": "keep_without_umi_report_rate"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least 6 samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors inside DESeq2",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition with control as explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition,treated,control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha 0.05, p-value histogram inspected",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "edgeR quasi-likelihood F-test as second method for overlap",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the DESeq2 Wald statistic against MSigDB Hallmark, then GO BP",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Consolidated report: fit diagnostics, gene tables with shrunken and unshrunken LFC, method overlap, leading edge, session info",
+            "parameters": [
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot,dispersion_plot"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Heart treated vs control: DE + hallmark GSEA",
+          "analytical_narrative": "The input is a 12,000 x 12 raw integer gene-level count matrix from Salmon (counts.csv, gene symbols in the first column) with a 12 x 2 sample table (metadata.csv) giving one condition per sample: 6 treated vs 6 control human heart samples, unpaired, single batch. The research question is a straightforward two-group differential expression contrast, so the plan is a single DESeq2 track with an enrichment branch.\n\nTwo data caveats shape the QC step rather than the model. (1) The libraries are rRNA-depleted total RNA without UMIs, and QC reports duplication above 60 percent in most libraries. Duplication in RNA-seq tracks expression level; without UMIs, deduplication deletes true signal and does not improve DE. So no deduplication is planned — the duplication rate is reported per sample beside library size and detected genes, and only a library that is simultaneously low-depth and unusually duplicated is treated as a low-complexity outlier candidate, with a stated reason. (2) sample_01 has a library size about 4x below the median. DESeq2 size factors already down-weight depth, so the sample is kept through QC and inspected on the PCA and the sample-distance heatmap; removal would require a stated reason beyond depth, and the DE step runs on all 12 samples unless T1S1 documents such a reason.\n\nTwo further total-RNA caveats are recorded honestly rather than papered over. Strandedness is unverified and cannot be inferred here — that requires aligned reads, and only a gene-level count matrix is provided. Likewise the rRNA / mitochondrial / intronic fractions that a total-RNA QC normally reports can only be approximated from the count matrix itself (mitochondrial MT- gene share, residual rRNA-gene share); the step computes what the matrix supports and states explicitly what it cannot verify. These are reported limitations of the DE call, not blockers.\n\nModelling: minimal pre-filter (>= 10 counts in >= 6 samples, the smallest group size), median-of-ratios normalisation inside the model, design ~ condition with control set explicitly as the reference level so a positive log2FC means higher in treated, DESeq2 Wald test, apeglm shrinkage for ranking and plots, BH with independent filtering at alpha 0.05. With 6 per group DESeq2 flags count outliers by Cook's distance and returns NA p-values rather than replacing counts; those genes are counted and reported separately from independent-filter NAs. Because Salmon transcript-level output and the tximport length offsets are not available (only a summarised gene-level matrix), the model runs on the matrix as given and the report states that no average-transcript-length offset was carried — isoform-switching genes may therefore be mis-called. edgeR quasi-likelihood on the same counts and design gives a second method; the intersection is the high-confidence set, and method-unique calls are reported as secondary.\n\nEnrichment runs preranked fgsea on the full tested list ranked by the DESeq2 Wald statistic (the stated choice on the disputed ranking-metric rule: it is signed and scaled by its standard error, which the unshrunken fold change is not, and it does not saturate into ties the way a signed p-value does), against the staged MSigDB human hallmark collection, with GO BP as the second collection since no Reactome C2 collection is staged here. Set-size window 15-500 after intersection with the tested genes, redundant sets collapsed, leading-edge genes reported.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and duplication/depth triage",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 human heart samples separate by condition (treated vs control), and are sample_01 (about 4x below median library size) or any high-duplication library outliers that justify removal before the treated-vs-control test?",
+              "description": "Load counts.csv (12,000 genes x 12 samples, gene symbol in column 1) and metadata.csv (12 rows, sample + condition). Verify sample IDs match between the two files and that the design is 6 treated vs 6 control. Build a DESeqDataSet, apply the blind variance-stabilizing transform, run PCA on the 500 most variable genes coloured by condition, and draw the Euclidean sample-distance heatmap. Produce a per-sample QC table: library size (total counts), number of detected genes, size factor, mitochondrial (MT-) count share, and any residual rRNA-gene share detectable from the gene symbols, plus the reported duplication rate where the metadata carries it. Flag sample_01 explicitly and state whether it sits with its condition group on the PCA and the distance heatmap. Emit a machine-readable decision: which samples (if any) to exclude from the DE model and the stated reason for each; the default is to exclude none.",
+              "context": "rRNA-depleted total RNA libraries, no UMIs, duplication above 60 percent in most libraries. Duplication in RNA-seq follows expression level; deduplication without UMIs removes true signal. sample_01 has a library size roughly 4x below the median. DESeq2 size factors already account for depth.",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv are confirmed to match one-to-one and the 6 treated vs 6 control split is verified and stated",
+                "PCA on the top 500 variable genes (blind VST) and a sample-distance heatmap are produced, coloured by condition",
+                "A per-sample table reports library size, detected genes, size factor, MT share, and duplication rate where available, with sample_01 explicitly annotated",
+                "No deduplication is performed and the report states why (no UMIs)",
+                "An explicit include/exclude decision per sample is emitted with a stated reason for any exclusion; depth alone is not accepted as a reason",
+                "The report states that strandedness could not be verified from a gene-level count matrix and that rRNA/intronic fractions were only approximated from gene symbols"
+              ],
+              "constraints": [
+                "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+                "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)",
+                "qc_sample_structure: duplicate_policy = keep_without_umi_report_rate (doi:10.1038/srep25533)",
+                "qc_sample_structure: total_rna_qc = rrna_fraction, mito_fraction, intronic_share, computed only as far as a gene-level count matrix supports (doi:10.1186/1471-2164-15-419)",
+                "Do not remove any sample for low depth alone",
+                "Do not perform read deduplication"
+              ],
+              "caveats": [
+                "A sample with a library size several times below the median must be kept through QC, inspected on the PCA and the distance heatmap, and removed only with a stated reason; the count model down-weights it through its size factor.",
+                "Do not remove duplicate reads without UMIs — the duplication rate follows the expression level, and removal deletes true signal. Report the rate per sample. A high duplication rate in a low-depth library indicates low complexity and makes that sample an outlier candidate with a stated reason.",
+                "Strandedness is unverified. It must normally be inferred from aligned reads (for example RSeQC infer_experiment) before the counts are trusted; only a summarised gene-level matrix is available here, so this cannot be done — record the limitation rather than assuming a setting.",
+                "The intronic share cannot be computed from a gene-level count matrix; report only what the matrix supports."
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d",
+                  "R-0076@5060",
+                  "R-0078@3240",
+                  "R-0079@6f8a"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Two-group count dataset with a low-depth sample and high duplication in a no-UMI total-RNA library: blind VST + PCA on top 500 genes + distance heatmap per R-0033, keep-and-report policies per R-0008 and R-0078; R-0079 strandedness inference is recorded as unattainable from a gene-level matrix."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test, treated vs control, with apeglm shrinkage",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ in expression between treated and control human heart samples, at BH-adjusted p < 0.05?",
+              "description": "Build the DESeqDataSet from counts.csv and metadata.csv, honouring the include/exclude decision from T1S1. Pre-filter minimally: keep genes with at least 10 counts in at least 6 samples (the smallest group size). Set the condition factor with the control level explicitly as reference so that a positive log2 fold change means higher in treated. Fit ~ condition, run the Wald test, and extract results for the contrast (condition, treated, control) with alpha = 0.05 and independent filtering on. Plot the histogram of unadjusted p-values before interpreting the adjusted values and state its shape. Apply apeglm shrinkage to the condition coefficient and write a results table carrying, per gene: baseMean, unshrunken log2FoldChange, lfcSE, Wald stat, pvalue, padj, and shrunken log2FoldChange. Count and report separately (a) genes with NA p-values from the Cook's-distance count-outlier flag — with 6 replicates per cell DESeq2 flags rather than replaces — and (b) genes with NA padj from independent filtering. Also produce the MA plot and the dispersion plot. Save the full results table and a normalized-count matrix for downstream steps.",
+              "context": "12,000 genes x 12 samples of raw integer gene-level Salmon counts from human heart; 6 treated vs 6 control, unpaired, single batch. No transcript-level Salmon output and no tximport length offsets are available, only the summarised gene-level matrix.",
+              "acceptance_criteria": [
+                "The pre-filter is exactly >= 10 counts in >= 6 samples and the number of genes retained out of 12,000 is reported",
+                "The control level is set explicitly as the factor reference and the contrast is named as (condition, treated, control) in the output",
+                "The p-value histogram is produced and its shape is described before any adjusted-p interpretation",
+                "The results table carries baseMean, log2FoldChange, lfcSE, stat, pvalue, padj and the apeglm-shrunken log2FoldChange per gene",
+                "The number of genes at padj < 0.05, the number of Cook's-outlier NA p-values, and the number of independent-filter NA padj values are each reported separately",
+                "MA plot and dispersion plot are produced",
+                "The report states that no average-transcript-length offset was applied because transcript-level Salmon output is unavailable, and names isoform-switching genes as the affected class"
+              ],
+              "constraints": [
+                "filter_low_counts: min_count = 10, min_samples = 6 (smallest group size) (doi:10.12688/f1000research.7035.1; vignette:DESeq2/1.52.0#pre-filtering)",
+                "normalize: median-of-ratios size factors inside the model; do not pre-scale, pre-normalize or transform counts before the fit (doi:10.1186/s13059-014-0550-8)",
+                "model_design: reference_level set explicitly to the control level; contrast named as factor, numerator, denominator (vignette:DESeq2/1.52.0#note-on-factor-levels, #contrasts)",
+                "differential_expression: test = Wald; count_outlier_policy = flag_and_report_na (doi:10.1186/s13059-014-0550-8)",
+                "shrink_lfc: lfc_shrink = apeglm on the condition coefficient (doi:10.1093/bioinformatics/bty895)",
+                "multiple_testing: adjustment = BH, alpha = 0.05 passed to results(), independent_filtering = true, select genes by padj not by raw p or fold change alone (doi:10.1111/j.2517-6161.1995.tb02031.x; doi:10.1073/pnas.0914005107)",
+                "multiple_testing: inspect the p-value histogram before the adjustment (doi:10.3390/ht7030023)",
+                "Do not apply a post-hoc fold-change filter; if an effect-size threshold is wanted, pass lfcThreshold inside results() and lfcShrink()"
+              ],
+              "caveats": [
+                "A wrong reference level silently reverses every fold change without an error — set it explicitly rather than relying on alphabetical order.",
+                "With 6 replicates per group DESeq2 sets p and padj to NA for Cook's-flagged genes instead of replacing the count; do not confuse these NAs with independent-filter NAs.",
+                "Rank genes and draw plots on the shrunken log2 fold change; the unshrunken estimate of a low-count gene is large and noisy. Keep the unshrunken value and its standard error in the table.",
+                "The Salmon length offset that tximport would carry is unavailable here, so a gene whose isoform usage shifts between treated and control can be mis-called."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Raw counts, fixed-effects two-group design, 6 replicates per group: DESeq2 Wald with apeglm shrinkage and BH + independent filtering per R-0001/R-0009/R-0010; R-0018 length offsets cannot be honoured because only gene-level counts exist, and that is stated in the step."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood second method and overlap",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which treated-vs-control genes are called by both DESeq2 Wald and edgeR quasi-likelihood, and which by only one?",
+              "description": "Run the edgeR quasi-likelihood F-test on the same raw counts, the same sample set decided in T1S1, and the same design ~ condition with control as reference. Use filterByExpr for the low-count filter, TMM normalisation factors inside the model, estimateDisp, glmQLFit and glmQLFTest on the treated-vs-control coefficient, with BH adjustment at FDR 0.05. Then compare against the DESeq2 result from T1S2: report the number of significant genes from each method, the size of the intersection, and the genes unique to each, naming the method for each unique set. Write the intersection as the high-confidence gene set and the method-unique genes as a secondary table. Do not report the union as the result.",
+              "context": "With 6 replicates per group the two tools agree on most genes but disagree at low counts; the overlap is the robustness check for this dataset.",
+              "acceptance_criteria": [
+                "edgeR QL runs on the identical sample set, design and reference level as T1S2",
+                "Significant-gene counts are reported for DESeq2, for edgeR, and for their intersection",
+                "A high-confidence intersection table and a secondary method-unique table (with the calling method named) are written",
+                "The union is not presented as the result"
+              ],
+              "constraints": [
+                "Use the same counts, the same samples and the same design formula as T1S2",
+                "normalize: TMM scaling factors inside the edgeR model; do not pre-normalize the counts (doi:10.1186/s13059-014-0550-8)",
+                "Select by BH-adjusted p < 0.05 in both methods so the comparison is like-for-like"
+              ],
+              "caveats": [
+                "Disagreement between the two methods grows at low counts and low replicate numbers; a gene called by only one method is a weaker claim, not a contradiction."
+              ],
+              "packages": [
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1",
+                  "R-0026@762e"
+                ],
+                "reason": "edgeR quasi-likelihood is the named alternative to the DESeq2 Wald test at 2-11 replicates per group (R-0001); R-0042 makes the intersection of the two the high-confidence set."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked fgsea on the Wald statistic: hallmark then GO BP",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes are coordinately shifted between treated and control human heart, in the full ranked list of tested genes?",
+              "description": "Take the full T1S2 results table — every tested gene, not a thresholded subset — and rank genes by the DESeq2 Wald statistic (the stat column). Run fgsea against a human hallmark gene set collection, then against a human GO biological process collection as the second pass; both are keyed on HGNC symbols, which matches the gene-symbol identifiers of counts.csv, so no ID conversion is required — if a conversion is nonetheless used, report the unmapped share and never mix identifier spaces. Restrict sets to 15-500 genes after intersecting each set with the tested genes. Adjust with BH. Collapse redundant significant sets into groups and report one representative per group with its leading-edge genes and each member's gene-level statistic; mark leading-edge overlap between reported sets. Keep the full table as a supplement. If fewer than about 50 genes reach padj < 0.05 in T1S2, do not run an over-representation test on that short list — the preranked test on the full list is the result — and state the size of the significant list. Set and record a random seed for the permutations.",
+              "context": "Human heart, treated vs control. Reference data needed: a human hallmark gene set collection and a human GO biological process collection, both as symbol-keyed gene sets. The environment stages MSigDB human hallmark (2026.1) and MSigDB human GO BP/CC/MF (2026.1). No Reactome C2 collection is staged, so GO BP takes the second-collection role; if a Reactome collection is present at run time, prefer it and state which was used. No KEGG collection is served.",
+              "acceptance_criteria": [
+                "fgsea runs on the full ranked list of tested genes from T1S2, ranked by the Wald stat — no threshold applied before the test",
+                "The hallmark pass and the GO BP second pass both report set name, NES, p, BH-adjusted p, set size and leading-edge genes",
+                "The gene set size window 15-500 is applied after intersection with the tested genes and is stated in the output",
+                "Redundant significant sets are collapsed and one representative per group is reported, with leading-edge overlap marked",
+                "The collection name and version, the rank metric (Wald stat), the universe (tested genes), the size window and the permutation seed are all recorded",
+                "If the identifier space is converted, the unmapped share is reported; otherwise the step states that symbols were used directly",
+                "If fewer than 50 genes pass padj < 0.05, no over-representation test is run and the size of the significant list is stated"
+              ],
+              "constraints": [
+                "enrichment: gsea_input = full_ranked_list; never a thresholded list (doi:10.1073/pnas.0506580102)",
+                "enrichment: rank_metric = stat — the DESeq2 Wald statistic. This is the stated choice on the disputed ranking-metric rule: it is signed and scaled by its standard error, unlike the unshrunken fold change, and it does not saturate into ties like a signed p-value (rule:R-0108)",
+                "enrichment: min_size = 15, max_size = 500 applied after intersection with the tested genes (doi:10.1073/pnas.0506580102)",
+                "enrichment: universe = tested genes, never the whole genome or annotation (doi:10.1371/journal.pcbi.1009935)",
+                "enrichment: collapse_redundant = true (doi:10.1101/060012)",
+                "enrichment: gene_set_collection = human hallmark first; second collection = human GO BP, since no Reactome C2 collection is staged (doi:10.1016/j.cels.2015.12.004; doi:10.1038/s41596-018-0103-9)",
+                "enrichment: id_mapping — keep one identifier space between the ranked list and the sets; report the unmapped share if any conversion occurs (doi:10.1016/j.xinn.2021.100141)",
+                "Set an explicit random seed for the fgsea permutations and record it",
+                "Use the organism-matched human collections; a mouse or rat collection on this human heart data is a hard error"
+              ],
+              "caveats": [
+                "Fewer than about 50 significant genes makes an over-representation test powerless and threshold-dependent — the ranked test on the full list is the answer in that case.",
+                "Gene length and expression level bias enrichment on count data; the tested-genes universe removes only the detection part of that bias.",
+                "GO is a nested hierarchy, so parent and child sets share most members — expect blocks of correlated hits and collapse them before quoting a count.",
+                "If neither a hallmark nor a GO collection is resolvable at run time, report the enrichment as not performed and name the missing resource; do not substitute a different organism's collection."
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0098@d01b",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0054@801e",
+                  "R-0099@0a77",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0097@a38e"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Ranked-list enrichment after a DE test on human data: fgsea preranked on the full tested list against hallmark first per R-0107/R-0048; disputed rule R-0108 resolved in favour of the Wald statistic; R-0098's Reactome second pass is substituted by staged GO BP because no Reactome collection is provisioned."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Consolidated treated-vs-control report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the reportable answer to 'which genes differ between treated and control', with its thresholds, diagnostics, caveats and reproducibility record?",
+              "description": "Assemble one report from T1S1, T1S2, T1S3 and T2S1. State the method and every package version, the design formula ~ condition, the reference level and the contrast (condition, treated, control), the thresholds (BH padj < 0.05), the number of genes tested after filtering out of 12,000, and the number of DE genes. Include the QC figures (PCA, sample-distance heatmap, per-sample library size / detected genes / duplication rate table with sample_01 annotated), the fit diagnostics (MA plot, dispersion plot, p-value histogram), and the gene table ranked by the shrunken log2 fold change and carrying the unshrunken log2FoldChange and lfcSE beside it. Report the DESeq2/edgeR overlap with the intersection as the high-confidence set. For enrichment, report the collection and its version, the rank metric, the universe, the size window, and the leading-edge genes of each significant set, and state explicitly that enrichment results depend on the method chosen and are hypotheses for follow-up. Close with a reproducibility record: sessionInfo, all package versions, the permutation seed, and the gene set collection version. State the standing limitations plainly: strandedness unverified, no transcript-length offset, high duplication retained by design without UMIs, and sample_01's low depth.",
+              "context": "Consolidation only — no new statistical inference is performed in this step.",
+              "acceptance_criteria": [
+                "Method, package versions, design formula, reference level, contrast, thresholds, number of tested genes and number of DE genes all appear before the gene tables",
+                "MA plot, dispersion plot and p-value histogram are included as fit diagnostics",
+                "The gene table carries log2FoldChange, shrunken log2FoldChange and lfcSE, and is ranked by the shrunken value",
+                "The DESeq2/edgeR significant-gene counts and their intersection are reported, with the intersection named as the high-confidence set",
+                "Enrichment reporting names the database and version, the rank metric, the universe, the size window, and the leading-edge genes per significant set, with an explicit method-dependence caveat",
+                "A reproducibility record with sessionInfo, package versions, the seed and the collection version is stored with the results",
+                "The four standing limitations (unverified strandedness, no length offset, retained duplication without UMIs, sample_01 depth) are stated in the report"
+              ],
+              "constraints": [
+                "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+                "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+                "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE; rank_genes_by = shrunken_log2FoldChange (doi:10.1093/bioinformatics/bty895)",
+                "report: robustness = overlap of the two methods, intersection as the high-confidence set (doi:10.1261/rna.053959.115)",
+                "report: leading_edge per significant set (doi:10.1073/pnas.0506580102)",
+                "report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)",
+                "report: enrichment_caveat = method dependence (doi:10.1093/bib/bbz158)",
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version (doi:10.1371/journal.pcbi.1003285)",
+                "Perform no new statistical test in this step"
+              ],
+              "caveats": [
+                "Do not present a pathway hit as a proven mechanism; a gene set is a hypothesis for follow-up.",
+                "Do not quote the union of DESeq2 and edgeR calls as the headline number."
+              ],
+              "packages": [
+                "ggplot2",
+                "knitr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Reporting content and the reproducibility record follow the returned report-step rules R-0041, R-0085, R-0087, R-0105 and R-0086; the two-method overlap is reported per R-0042."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+  }
+}

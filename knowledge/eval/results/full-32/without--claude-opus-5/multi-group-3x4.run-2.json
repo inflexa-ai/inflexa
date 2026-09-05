@@ -1,0 +1,424 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "multi-group-3x4",
+  "run": 2,
+  "startedAt": "2026-09-05T18:16:45.232Z",
+  "elapsedMs": 84420,
+  "outcome": "plan_submitted",
+  "planId": "pln-483554b2",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 fit and omnibus LRT across three groups",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=4 per group is modest; dispersion estimates are shrunk heavily and marginal genes will be unstable — do not present borderline padj as established",
+          "If PCA shows a sample sitting away from its own group, report it as a candidate outlier but do not drop it without stating the effect on the result",
+          "A flat or anti-conservative LRT p-value histogram indicates a model or filtering problem and must be reported, not ignored",
+          "12,000 genes is fewer than a full transcriptome — the input is already partially filtered, so absolute significant-gene counts are not comparable to whole-genome studies"
+        ],
+        "context": "Raw integer gene-level counts from Salmon, human liver, one factor with three balanced levels of 4 replicates, unpaired, single batch. The LRT (full ~condition vs reduced ~1) is the statistically correct answer to 'differ across the three groups at all' — it is one test per gene rather than a union of pairwise calls, so it carries one multiple-testing burden instead of three. Fitting once here also means T1S2 draws its Wald contrasts from a shared dispersion estimate.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Which of the 12,000 genes differ in expression across the three groups (control, treated_a, treated_b) taken together, and do the 12 liver samples separate by condition?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Set control as the reference level of condition explicitly; do not rely on alphabetical ordering",
+          "Use test=\"LRT\" with reduced=~1 for the across-group test — do not substitute a union of pairwise Wald calls",
+          "Apply the low-count filter before DESeq() and report genes in vs genes retained",
+          "Persist the fitted DESeqDataSet (or its equivalent) so T1S2 can extract Wald contrasts without re-fitting",
+          "Report the number of LRT-significant genes at both padj<0.05 and padj<0.1",
+          "Save the VST matrix for downstream heatmap and clustering use"
+        ],
+        "description": "Load /eval-full-32-without-multi-group-3x4-2/data/inputs/counts/counts.csv (12,000 genes x 12 samples, first column gene symbol) and /eval-full-32-without-multi-group-3x4-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify sample identity and ordering between the two files and fail loudly on any mismatch. Build a DESeq2 DESeqDataSet with design ~condition, condition releveled so that control is the reference. Filter to genes with sufficient counts (e.g. >=10 counts in at least 4 samples, the smallest group size) and report how many genes remain of 12,000. Run DESeq() with test=\"LRT\" and reduced=~1 to get the omnibus across-group test. Output: (a) the full LRT results table sorted by padj with baseMean, LRT stat, pvalue, padj and per-group normalized mean expression; (b) the count of genes at padj<0.05 and padj<0.1; (c) VST-transformed matrix; (d) PCA of VST coloured by condition with percent variance on each axis; (e) sample-to-sample distance heatmap; (f) dispersion-estimate plot and size factors per sample; (g) p-value histogram for the LRT.",
+        "acceptance_criteria": [
+          "All 12 samples from metadata.csv are matched to columns of counts.csv with no unmatched or reordered samples",
+          "A gene-level LRT results table is written covering every retained gene, with padj present",
+          "Counts of LRT-significant genes at padj<0.05 and padj<0.1 are stated explicitly",
+          "PCA, sample-distance heatmap, dispersion plot and LRT p-value histogram are produced",
+          "The fitted object and VST matrix are persisted for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Wald contrasts: treated_a vs control, treated_b vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A gene can be LRT-significant with no individual contrast reaching padj<0.05 (effect spread across groups) and the reverse can also occur — report both discrepancy classes rather than treating the LRT as a filter",
+          "With n=4 per arm, shrunken fold changes for low-count genes will be pulled substantially toward zero; do not read shrinkage as absence of effect",
+          "If either treatment yields near-zero significant genes, report that as the finding — do not relax thresholds to manufacture a list"
+        ],
+        "context": "The second half of the research question asks specifically what each treatment does relative to control, which is a pairwise Wald contrast rather than the omnibus test. Drawing both contrasts from the single dispersion fit of T1S1 is what makes treated_a and treated_b directly comparable; re-fitting each pair on 8 samples in isolation would give each contrast its own dispersion estimate and is explicitly not wanted here. treated_a vs treated_b is reported as a secondary contrast because it is the direct arm-versus-arm comparison the design supports.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which genes does treated_a change relative to control, and which does treated_b change relative to control, and how do the two treatment arms differ from each other?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Reuse the T1S1 fit — do not subset the data to two groups and re-run DESeq2 per contrast",
+          "Apply BH correction independently within each contrast and state that the three contrasts are not jointly corrected",
+          "Report both shrunken and unshrunken log2FoldChange; use shrunken values only for ranking and plots, never for the significance call",
+          "Use the same gene filter as T1S1 so all tables cover the identical gene universe",
+          "Explicitly state the direction convention (positive log2FC = higher in the treatment arm)"
+        ],
+        "description": "Using the DESeq2 fit persisted by T1S1 (shared size factors and dispersions; re-fit with the default Wald test on the same filtered dataset if the LRT fit cannot be reused for contrast extraction), extract three Wald contrasts: treated_a vs control, treated_b vs control, and treated_a vs treated_b. For each contrast write a full results table (baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) with BH correction applied independently per contrast, plus an apeglm- or ashr-shrunken log2FoldChange column used for ranking and plotting only (report the unshrunken LFC alongside it). Report per contrast: number of genes at padj<0.05, split by direction, and at padj<0.05 combined with |log2FC|>1. Produce a volcano plot and an MA plot per contrast, and top-25 up and top-25 down gene tables. Finally cross-tabulate each treatment-vs-control contrast against the T1S1 LRT-significant set: how many LRT hits are recovered by each contrast, and how many contrast hits fall outside the LRT set.",
+        "acceptance_criteria": [
+          "Three complete results tables are written: treated_a_vs_control, treated_b_vs_control, treated_a_vs_treated_b",
+          "Per-contrast significant-gene counts at padj<0.05 are reported and broken down by up/down direction",
+          "Volcano and MA plots exist for each of the three contrasts",
+          "A cross-tabulation of each treatment-vs-control contrast against the T1S1 LRT-significant gene set is reported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Shared vs arm-specific response comparison",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "'Arm-specific' at a fixed padj cut is partly a power artefact — a gene just above threshold in one arm is not evidence of specificity; note effect sizes alongside the classification",
+          "Discordant genes with small fold changes in both arms are usually noise; require a minimum effect size before calling a gene genuinely opposite",
+          "Selecting genes by the LRT and then displaying them in a heatmap is circular — the heatmap illustrates the selected set, it does not validate it"
+        ],
+        "context": "Three separate tables do not by themselves answer whether the two treatments do the same thing. This step is the comparative read: the log2FC-vs-log2FC correlation and the concordance classes are what distinguish 'two doses of one mechanism' from 'two different mechanisms', which is the interpretive payload of a 3-group design.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "dplyr",
+          "ComplexHeatmap",
+          "ComplexUpset",
+          "pheatmap"
+        ],
+        "question": "Which genes respond to both treatments in the same direction, which are specific to treated_a or treated_b, and which move in opposite directions between the two arms?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Classify only over the gene universe retained by the T1S1 filter",
+          "Use padj<0.05 as the primary significance threshold and state it; if a class is empty, report zero rather than lowering the threshold",
+          "Row-scale the heatmap on VST values, not on raw counts",
+          "Report both Pearson and Spearman for the log2FC-vs-log2FC comparison, computed over LRT-significant genes, and state n"
+        ],
+        "description": "Combine the three contrast tables from T1S2 with the LRT set from T1S1. Produce: (a) a Venn/UpSet of significant genes (padj<0.05) across treated_a_vs_control and treated_b_vs_control; (b) a classification of every LRT-significant gene into shared-concordant (significant in both arms, same sign), treated_a-specific, treated_b-specific, and discordant (opposite signs), with counts and the gene lists; (c) a scatter of treated_a log2FC against treated_b log2FC over LRT-significant genes with the Pearson and Spearman correlation and the identity line, quantifying how similar the two treatment responses are overall; (d) a heatmap of VST values (row-scaled) for the top LRT-significant genes across all 12 samples with samples annotated by condition and clustered. Write the four classified gene lists as separate files for downstream use.",
+        "acceptance_criteria": [
+          "Counts and gene lists exist for shared-concordant, treated_a-specific, treated_b-specific and discordant classes",
+          "The treated_a vs treated_b log2FC scatter is produced with correlation coefficients and n reported",
+          "A row-scaled VST heatmap of LRT-significant genes across all 12 samples with condition annotation is produced",
+          "Classified gene lists are written to files usable by the enrichment step"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of each treatment response",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only 12,000 genes as input the ranking is already a filtered universe; enrichment p-values are conditional on that filter and should be described as such",
+          "GO-BP hits arrive as correlated nested blocks — a raw count of significant terms overstates the number of independent findings",
+          "Enrichment on a small or empty significant list is uninformative; if a contrast has few hits, run GSEA on the full ranking and say the ORA was not interpretable",
+          "A significant hallmark set is a coordinated expression shift, not evidence of pathway activation or of a mechanism"
+        ],
+        "context": "Both required collections are present in the environment as human symbol GMTs: MSigDB hallmark (50 sets) and MSigDB GO biological process (~7,500 sets), matching the human organism of this dataset. Gene identifiers in counts.csv are gene symbols, so they join to these collections without mapping. GO-BP sets are heavily nested and share members, so significant hits arrive in correlated blocks.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "dplyr",
+          "ggplot2",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological processes and hallmark programs are coordinately shifted by treated_a and by treated_b relative to control in liver, and are the two arms enriched for the same programs?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use human gene set collections only — the mouse and rat pathway resources staged in this environment must not be used",
+          "Use the T1S1-retained gene universe (not all 12,000 input rows, not the whole genome) as the ORA background",
+          "Rank on the full contrast table, not on a pre-thresholded significant subset, for GSEA",
+          "Set a random seed for the GSEA permutation step and report it",
+          "Collapse redundant GO-BP terms (shared leading edge / parent-child) before reporting a term count",
+          "If a gene set collection cannot be resolved at run time, report which one is missing and continue with the collections that are available"
+        ],
+        "description": "Run gene set enrichment on the human liver contrasts from T1S2. (1) GSEA on a signed ranking (shrunken log2FoldChange, or -log10(p) * sign(log2FC)) for treated_a_vs_control and treated_b_vs_control separately, against human hallmark gene sets and human GO biological-process gene sets — both are needed and both use HGNC gene symbols, which match the row identifiers of counts.csv directly, so no ID conversion is required (report the fraction of ranked genes that match each collection). (2) Over-representation analysis on the T1S1 LRT-significant set and on the shared-concordant / arm-specific gene lists from T1S3, using the T1S1-retained gene universe as the background — not the whole genome. Report normalized enrichment scores with BH-adjusted p-values, leading-edge genes for the top sets, and a side-by-side comparison of hallmark NES between the two arms. Interpret in liver terms (xenobiotic/drug metabolism, lipid and bile-acid metabolism, inflammatory response) but report what the data show, not what liver treatment studies typically show.",
+        "acceptance_criteria": [
+          "GSEA results with NES and BH-adjusted p-values are reported for both treated_a_vs_control and treated_b_vs_control against hallmark and GO-BP",
+          "The fraction of ranked genes matching each gene set collection is reported",
+          "ORA results on the LRT-significant set and the T1S3 concordance classes use the retained-gene background, stated explicitly",
+          "A side-by-side hallmark NES comparison between the two treatment arms is produced",
+          "Leading-edge genes are listed for the top enriched sets"
+        ]
+      }
+    ],
+    "title": "Liver RNA-seq: omnibus LRT + treated_a/treated_b vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are raw Salmon gene-level counts (12,000 genes x 12 liver samples, gene symbols in the first column) with a single unpaired factor `condition` holding three balanced levels (control, treated_a, treated_b; n=4 each), one batch. The research question has two distinct halves and they need two distinct statistical objects, so the plan keeps them separate rather than conflating them.\n\nT1S1 builds one DESeq2 object over all 12 samples with ~condition and control as the reference level, applies a low-count filter, and runs the size-factor/dispersion fit once. From that single fit it takes the likelihood-ratio test (full ~condition vs reduced ~1), which is the correct omnibus answer to 'which genes differ across the three groups at all' — an ANOVA-like test that does not privilege any one contrast. It also emits VST values, PCA and sample-distance diagnostics so that group separation, dispersion behaviour and any outlying replicate are visible before contrasts are interpreted. With n=4 per group the study is modestly powered; the step must report dispersion and PCA honestly rather than assume the design is clean.\n\nT1S2 reuses the same fitted model for the two Wald contrasts the question names — treated_a vs control and treated_b vs control — with apeglm/ashr LFC shrinkage for ranking, and independent BH correction per contrast. This is deliberately not a re-fit: contrasts drawn from the shared dispersion estimate are what makes the two treatment arms comparable to each other. It also cross-tabulates each contrast against the LRT gene set, since a gene can be LRT-significant without being significant in either individual contrast (and vice versa), and reports the treated_a vs treated_b contrast as a secondary output so the two arms can be compared directly.\n\nT1S3 turns the three contrasts into a comparative view: overlap of the significant sets, direction concordance (shared response vs arm-specific vs opposite-direction genes), and a heatmap of LRT-significant genes clustered across all 12 samples. This is what answers 'which genes does each treatment change' at the level of biology rather than three separate tables.\n\nT2S1 takes the shrunken, signed ranking from each contrast into GSEA against the staged human hallmark and GO-BP collections (HGNC symbols, matching the gene-symbol row names — no ID mapping needed), plus over-representation on the LRT-significant set. Liver is the tissue, so metabolic, xenobiotic and inflammatory hallmark sets are the expected axes; the step must report the actual result, not the expected one. Pathway work is downstream and optional to the core question — if a collection is missing at run time the step reports which one and proceeds with what is present."
+  },
+  "usage": {
+    "inputTokens": 92538,
+    "outputTokens": 6205,
+    "cacheCreationInputTokens": 74366,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "pydeseq2",
+          "EnhancedVolcano",
+          "ComplexHeatmap",
+          "pheatmap",
+          "org.Hs.eg.db",
+          "decoupleR",
+          "GSVA"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver RNA-seq: omnibus LRT + treated_a/treated_b vs control",
+          "analytical_narrative": "The data are raw Salmon gene-level counts (12,000 genes x 12 liver samples, gene symbols in the first column) with a single unpaired factor `condition` holding three balanced levels (control, treated_a, treated_b; n=4 each), one batch. The research question has two distinct halves and they need two distinct statistical objects, so the plan keeps them separate rather than conflating them.\n\nT1S1 builds one DESeq2 object over all 12 samples with ~condition and control as the reference level, applies a low-count filter, and runs the size-factor/dispersion fit once. From that single fit it takes the likelihood-ratio test (full ~condition vs reduced ~1), which is the correct omnibus answer to 'which genes differ across the three groups at all' — an ANOVA-like test that does not privilege any one contrast. It also emits VST values, PCA and sample-distance diagnostics so that group separation, dispersion behaviour and any outlying replicate are visible before contrasts are interpreted. With n=4 per group the study is modestly powered; the step must report dispersion and PCA honestly rather than assume the design is clean.\n\nT1S2 reuses the same fitted model for the two Wald contrasts the question names — treated_a vs control and treated_b vs control — with apeglm/ashr LFC shrinkage for ranking, and independent BH correction per contrast. This is deliberately not a re-fit: contrasts drawn from the shared dispersion estimate are what makes the two treatment arms comparable to each other. It also cross-tabulates each contrast against the LRT gene set, since a gene can be LRT-significant without being significant in either individual contrast (and vice versa), and reports the treated_a vs treated_b contrast as a secondary output so the two arms can be compared directly.\n\nT1S3 turns the three contrasts into a comparative view: overlap of the significant sets, direction concordance (shared response vs arm-specific vs opposite-direction genes), and a heatmap of LRT-significant genes clustered across all 12 samples. This is what answers 'which genes does each treatment change' at the level of biology rather than three separate tables.\n\nT2S1 takes the shrunken, signed ranking from each contrast into GSEA against the staged human hallmark and GO-BP collections (HGNC symbols, matching the gene-symbol row names — no ID mapping needed), plus over-representation on the LRT-significant set. Liver is the tissue, so metabolic, xenobiotic and inflammatory hallmark sets are the expected axes; the step must report the actual result, not the expected one. Pathway work is downstream and optional to the core question — if a collection is missing at run time the step reports which one and proceeds with what is present.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 fit and omnibus LRT across three groups",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes differ in expression across the three groups (control, treated_a, treated_b) taken together, and do the 12 liver samples separate by condition?",
+              "description": "Load /eval-full-32-without-multi-group-3x4-2/data/inputs/counts/counts.csv (12,000 genes x 12 samples, first column gene symbol) and /eval-full-32-without-multi-group-3x4-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify sample identity and ordering between the two files and fail loudly on any mismatch. Build a DESeq2 DESeqDataSet with design ~condition, condition releveled so that control is the reference. Filter to genes with sufficient counts (e.g. >=10 counts in at least 4 samples, the smallest group size) and report how many genes remain of 12,000. Run DESeq() with test=\"LRT\" and reduced=~1 to get the omnibus across-group test. Output: (a) the full LRT results table sorted by padj with baseMean, LRT stat, pvalue, padj and per-group normalized mean expression; (b) the count of genes at padj<0.05 and padj<0.1; (c) VST-transformed matrix; (d) PCA of VST coloured by condition with percent variance on each axis; (e) sample-to-sample distance heatmap; (f) dispersion-estimate plot and size factors per sample; (g) p-value histogram for the LRT.",
+              "context": "Raw integer gene-level counts from Salmon, human liver, one factor with three balanced levels of 4 replicates, unpaired, single batch. The LRT (full ~condition vs reduced ~1) is the statistically correct answer to 'differ across the three groups at all' — it is one test per gene rather than a union of pairwise calls, so it carries one multiple-testing burden instead of three. Fitting once here also means T1S2 draws its Wald contrasts from a shared dispersion estimate.",
+              "constraints": [
+                "Set control as the reference level of condition explicitly; do not rely on alphabetical ordering",
+                "Use test=\"LRT\" with reduced=~1 for the across-group test — do not substitute a union of pairwise Wald calls",
+                "Apply the low-count filter before DESeq() and report genes in vs genes retained",
+                "Persist the fitted DESeqDataSet (or its equivalent) so T1S2 can extract Wald contrasts without re-fitting",
+                "Report the number of LRT-significant genes at both padj<0.05 and padj<0.1",
+                "Save the VST matrix for downstream heatmap and clustering use"
+              ],
+              "acceptance_criteria": [
+                "All 12 samples from metadata.csv are matched to columns of counts.csv with no unmatched or reordered samples",
+                "A gene-level LRT results table is written covering every retained gene, with padj present",
+                "Counts of LRT-significant genes at padj<0.05 and padj<0.1 are stated explicitly",
+                "PCA, sample-distance heatmap, dispersion plot and LRT p-value histogram are produced",
+                "The fitted object and VST matrix are persisted for downstream steps"
+              ],
+              "caveats": [
+                "n=4 per group is modest; dispersion estimates are shrunk heavily and marginal genes will be unstable — do not present borderline padj as established",
+                "If PCA shows a sample sitting away from its own group, report it as a candidate outlier but do not drop it without stating the effect on the result",
+                "A flat or anti-conservative LRT p-value histogram indicates a model or filtering problem and must be reported, not ignored",
+                "12,000 genes is fewer than a full transcriptome — the input is already partially filtered, so absolute significant-gene counts are not comparable to whole-genome studies"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Wald contrasts: treated_a vs control, treated_b vs control",
+              "question": "Which genes does treated_a change relative to control, and which does treated_b change relative to control, and how do the two treatment arms differ from each other?",
+              "description": "Using the DESeq2 fit persisted by T1S1 (shared size factors and dispersions; re-fit with the default Wald test on the same filtered dataset if the LRT fit cannot be reused for contrast extraction), extract three Wald contrasts: treated_a vs control, treated_b vs control, and treated_a vs treated_b. For each contrast write a full results table (baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) with BH correction applied independently per contrast, plus an apeglm- or ashr-shrunken log2FoldChange column used for ranking and plotting only (report the unshrunken LFC alongside it). Report per contrast: number of genes at padj<0.05, split by direction, and at padj<0.05 combined with |log2FC|>1. Produce a volcano plot and an MA plot per contrast, and top-25 up and top-25 down gene tables. Finally cross-tabulate each treatment-vs-control contrast against the T1S1 LRT-significant set: how many LRT hits are recovered by each contrast, and how many contrast hits fall outside the LRT set.",
+              "track": "T1",
+              "step_type": "analysis",
+              "context": "The second half of the research question asks specifically what each treatment does relative to control, which is a pairwise Wald contrast rather than the omnibus test. Drawing both contrasts from the single dispersion fit of T1S1 is what makes treated_a and treated_b directly comparable; re-fitting each pair on 8 samples in isolation would give each contrast its own dispersion estimate and is explicitly not wanted here. treated_a vs treated_b is reported as a secondary contrast because it is the direct arm-versus-arm comparison the design supports.",
+              "constraints": [
+                "Reuse the T1S1 fit — do not subset the data to two groups and re-run DESeq2 per contrast",
+                "Apply BH correction independently within each contrast and state that the three contrasts are not jointly corrected",
+                "Report both shrunken and unshrunken log2FoldChange; use shrunken values only for ranking and plots, never for the significance call",
+                "Use the same gene filter as T1S1 so all tables cover the identical gene universe",
+                "Explicitly state the direction convention (positive log2FC = higher in the treatment arm)"
+              ],
+              "acceptance_criteria": [
+                "Three complete results tables are written: treated_a_vs_control, treated_b_vs_control, treated_a_vs_treated_b",
+                "Per-contrast significant-gene counts at padj<0.05 are reported and broken down by up/down direction",
+                "Volcano and MA plots exist for each of the three contrasts",
+                "A cross-tabulation of each treatment-vs-control contrast against the T1S1 LRT-significant gene set is reported"
+              ],
+              "caveats": [
+                "A gene can be LRT-significant with no individual contrast reaching padj<0.05 (effect spread across groups) and the reverse can also occur — report both discrepancy classes rather than treating the LRT as a filter",
+                "With n=4 per arm, shrunken fold changes for low-count genes will be pulled substantially toward zero; do not read shrinkage as absence of effect",
+                "If either treatment yields near-zero significant genes, report that as the finding — do not relax thresholds to manufacture a list"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "ggplot2",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Shared vs arm-specific response comparison",
+              "question": "Which genes respond to both treatments in the same direction, which are specific to treated_a or treated_b, and which move in opposite directions between the two arms?",
+              "description": "Combine the three contrast tables from T1S2 with the LRT set from T1S1. Produce: (a) a Venn/UpSet of significant genes (padj<0.05) across treated_a_vs_control and treated_b_vs_control; (b) a classification of every LRT-significant gene into shared-concordant (significant in both arms, same sign), treated_a-specific, treated_b-specific, and discordant (opposite signs), with counts and the gene lists; (c) a scatter of treated_a log2FC against treated_b log2FC over LRT-significant genes with the Pearson and Spearman correlation and the identity line, quantifying how similar the two treatment responses are overall; (d) a heatmap of VST values (row-scaled) for the top LRT-significant genes across all 12 samples with samples annotated by condition and clustered. Write the four classified gene lists as separate files for downstream use.",
+              "track": "T1",
+              "step_type": "analysis",
+              "context": "Three separate tables do not by themselves answer whether the two treatments do the same thing. This step is the comparative read: the log2FC-vs-log2FC correlation and the concordance classes are what distinguish 'two doses of one mechanism' from 'two different mechanisms', which is the interpretive payload of a 3-group design.",
+              "constraints": [
+                "Classify only over the gene universe retained by the T1S1 filter",
+                "Use padj<0.05 as the primary significance threshold and state it; if a class is empty, report zero rather than lowering the threshold",
+                "Row-scale the heatmap on VST values, not on raw counts",
+                "Report both Pearson and Spearman for the log2FC-vs-log2FC comparison, computed over LRT-significant genes, and state n"
+              ],
+              "acceptance_criteria": [
+                "Counts and gene lists exist for shared-concordant, treated_a-specific, treated_b-specific and discordant classes",
+                "The treated_a vs treated_b log2FC scatter is produced with correlation coefficients and n reported",
+                "A row-scaled VST heatmap of LRT-significant genes across all 12 samples with condition annotation is produced",
+                "Classified gene lists are written to files usable by the enrichment step"
+              ],
+              "caveats": [
+                "'Arm-specific' at a fixed padj cut is partly a power artefact — a gene just above threshold in one arm is not evidence of specificity; note effect sizes alongside the classification",
+                "Discordant genes with small fold changes in both arms are usually noise; require a minimum effect size before calling a gene genuinely opposite",
+                "Selecting genes by the LRT and then displaying them in a heatmap is circular — the heatmap illustrates the selected set, it does not validate it"
+              ],
+              "packages": [
+                "ggplot2",
+                "dplyr",
+                "ComplexHeatmap",
+                "ComplexUpset",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of each treatment response",
+              "question": "Which biological processes and hallmark programs are coordinately shifted by treated_a and by treated_b relative to control in liver, and are the two arms enriched for the same programs?",
+              "description": "Run gene set enrichment on the human liver contrasts from T1S2. (1) GSEA on a signed ranking (shrunken log2FoldChange, or -log10(p) * sign(log2FC)) for treated_a_vs_control and treated_b_vs_control separately, against human hallmark gene sets and human GO biological-process gene sets — both are needed and both use HGNC gene symbols, which match the row identifiers of counts.csv directly, so no ID conversion is required (report the fraction of ranked genes that match each collection). (2) Over-representation analysis on the T1S1 LRT-significant set and on the shared-concordant / arm-specific gene lists from T1S3, using the T1S1-retained gene universe as the background — not the whole genome. Report normalized enrichment scores with BH-adjusted p-values, leading-edge genes for the top sets, and a side-by-side comparison of hallmark NES between the two arms. Interpret in liver terms (xenobiotic/drug metabolism, lipid and bile-acid metabolism, inflammatory response) but report what the data show, not what liver treatment studies typically show.",
+              "track": "T2",
+              "step_type": "enrichment",
+              "context": "Both required collections are present in the environment as human symbol GMTs: MSigDB hallmark (50 sets) and MSigDB GO biological process (~7,500 sets), matching the human organism of this dataset. Gene identifiers in counts.csv are gene symbols, so they join to these collections without mapping. GO-BP sets are heavily nested and share members, so significant hits arrive in correlated blocks.",
+              "constraints": [
+                "Use human gene set collections only — the mouse and rat pathway resources staged in this environment must not be used",
+                "Use the T1S1-retained gene universe (not all 12,000 input rows, not the whole genome) as the ORA background",
+                "Rank on the full contrast table, not on a pre-thresholded significant subset, for GSEA",
+                "Set a random seed for the GSEA permutation step and report it",
+                "Collapse redundant GO-BP terms (shared leading edge / parent-child) before reporting a term count",
+                "If a gene set collection cannot be resolved at run time, report which one is missing and continue with the collections that are available"
+              ],
+              "acceptance_criteria": [
+                "GSEA results with NES and BH-adjusted p-values are reported for both treated_a_vs_control and treated_b_vs_control against hallmark and GO-BP",
+                "The fraction of ranked genes matching each gene set collection is reported",
+                "ORA results on the LRT-significant set and the T1S3 concordance classes use the retained-gene background, stated explicitly",
+                "A side-by-side hallmark NES comparison between the two treatment arms is produced",
+                "Leading-edge genes are listed for the top enriched sets"
+              ],
+              "caveats": [
+                "With only 12,000 genes as input the ranking is already a filtered universe; enrichment p-values are conditional on that filter and should be described as such",
+                "GO-BP hits arrive as correlated nested blocks — a raw count of significant terms overstates the number of independent findings",
+                "Enrichment on a small or empty significant list is uninformative; if a contrast has few hits, run GSEA on the full ranking and say the ORA was not interpretable",
+                "A significant hallmark set is a coordinated expression shift, not evidence of pathway activation or of a mechanism"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "dplyr",
+                "ggplot2",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

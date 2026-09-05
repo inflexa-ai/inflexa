@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 4,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the question as a genotype:treatment interaction and specifies a full-factorial PyDESeq2 NB GLM (~genotype + treatment + genotype:treatment) with the interaction Wald test plus within-genotype simple effects, all in Python, which matches the reference. QC is thin: only library sizes and metadata alignment, with no PCA or sample-distance check and no stated policy beyond 'flag' for an outlier. The filter is described in acceptable minimal terms but thresholds are left as examples; normalization is implied by fitting raw counts in PyDESeq2 but size factors are never mentioned, and reference levels for the factors are not stated. BH at 0.05 is given but there is no fold-change shrinkage; the enrichment step names WikiPathways but omits the universe, version, and size window; the report lacks software versions though it does promise tested/significant counts and design caveats."
+}

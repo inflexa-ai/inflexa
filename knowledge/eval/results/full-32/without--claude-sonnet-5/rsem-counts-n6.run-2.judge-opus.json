@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the data as RSEM expected counts, states that the missing genes.results files make a tximport length offset impossible, rounds for DESeq2 rather than substituting TPM/FPKM, and fits an unpaired ~condition Wald model with median-of-ratios normalization inside the model — all dataset-specific and appropriate; it stops short of the reference's step of requesting the per-sample files. QC is strong and specific: library sizes with sample_01's ratio to the median, PCA and correlation heatmap colored by condition, no removal at QC, plus a well-designed leave-one-out sensitivity analysis that quantifies dependence on the shallow sample. Weaknesses: the low-count filter is only 'genes with very low counts across all 12 samples' with no threshold or justification, and the ORA branch names no universe, no collection version, and no gene-set size window (the preranked GSEA with the Wald statistic is properly specified). FDR is handled via padj<0.05 with apeglm shrinkage, though BH is never named explicitly, and the report covers design, thresholds, up/down counts, and the length-offset and depth caveats but not software versions."
+}

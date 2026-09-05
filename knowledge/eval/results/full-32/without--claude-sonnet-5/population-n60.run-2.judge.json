@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly uses a count GLM on raw counts with size factors inside the model, an explicit ~condition design without a phantom batch term, BH at 0.05, and apeglm shrinkage reported beside the MLE, which fits the 60 vs 60 single-batch unpaired design even if limma-voom would be the reference choice at this size. Its weaknesses are that the effect-size threshold is applied post hoc to the shrunken estimate rather than tested (no lfcThreshold/TREAT, no confidence intervals), the low-count rule is left as a vague example rather than a justified filterByExpr-style rule, QC lacks a sex check, an explicit outlier policy, and any search for hidden structure, and enrichment uses over-representation on cutoff lists instead of a ranked camera/fgsea test despite naming the collection version and universe. The report specification lists thresholds and tables but not software versions or explicit counts of tested versus significant genes."
+}

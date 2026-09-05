@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: a PyDESeq2 negative-binomial fit with ~genotype + treatment + genotype:treatment, an explicit Wald test on the interaction coefficient, and both within-genotype simple effects obtained by releveling so each is a single coefficient amenable to native shrinkage — a legitimate and Python-only route, with the n=4 power caveat on the difference-of-differences stated repeatedly. QC (blind VST, PCA on top 500 variable genes, sample-distance heatmap, library sizes, flag-don't-drop policy, explicit note that no batch field exists), the minimal filter tied to the smallest cell size, internal median-of-ratios with no pre-normalization, BH at alpha 0.05 with independent filtering per contrast, shrunken and unshrunken LFCs, and Cook's-flag NA accounting are all specified concretely rather than generically. Minor deductions: the plan does not state a fallback if the installed PyDESeq2 version cannot express the formula-based interaction or the needed contrast, and the enrichment on an interaction Wald ranking is biologically slippery even though the metric, universe, size window, collections, versions and leading-edge reporting are all correctly specified. The report step names versions, design, reference levels, thresholds, tested/significant counts, WT-vs-KO overlap comparison, and the design's limits."
+}

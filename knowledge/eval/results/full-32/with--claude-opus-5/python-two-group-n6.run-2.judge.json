@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every axis: PyDESeq2 Wald test on ~condition with control as the explicit reference, median-of-ratios size factors inside the model with no pre-normalization, a minimal >=10-in->=6 filter tied to the smallest group, BH at 0.05 with apeglm-style shrinkage retained alongside unshrunken estimates, and a keep-inspect-report policy for sample_01 backed by a sensitivity fit rather than a silent drop. QC is complete (library sizes, blind VST PCA coloured by condition, distance heatmap) and precedes the model. Enrichment uses gseapy prerank on the full tested list ranked by the Wald statistic, names MSigDB Hallmark 2026.1, applies the 15-500 window after intersection, and records a fixed seed; the report section lists method, versions, design, thresholds, tested/significant counts and design caveats. The only reservation is the hand-rolled voom-style robustness arm, which adds complexity and implementation risk, though the plan sensibly mandates declaring failure rather than approximating."
+}

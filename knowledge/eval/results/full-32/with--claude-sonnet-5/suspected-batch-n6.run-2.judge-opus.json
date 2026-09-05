@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes that the two six-sample PCA clusters cross condition and are therefore estimable, and it takes the reference route: svaseq-style SV estimation with ~condition as full and ~1 as null, SVs entered as covariates on raw filtered counts with an explicit control reference level, and an explicit refusal to feed batch-corrected counts into DESeq2. It loses points for never asking the analyst for the unrecorded variable (extraction date, lane, RIN) before resorting to surrogate variables, for checking SV correlation against the cluster label and library size but not against condition itself, and for elevating a data-derived k-means cluster label to a fixed-effect covariate in a co-primary sensitivity model, which is mild double-dipping and is presented as potentially better than the SVA estimate rather than as a diagnostic. QC, the minimal 10-counts-in-6-samples filter tied to group size, median-of-ratios inside the model, apeglm shrinkage with BH at alpha=0.05 set in results(), and the p-value histogram diagnostic are all correct and explicit. Enrichment was not requested and is arguably unwarranted here, but it is executed properly (full ranked list by Wald stat, named collections, 15–500 size window, BH, leading edge, versions in the report), and the reporting step is essentially complete."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 2,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly routes raw STAR/featureCounts integer counts straight into DESeq2 with ~condition, explicitly rejects pre-normalization and length correction, applies apeglm/ashr shrinkage, uses padj < 0.05, and flags the n=3 power limitation. However, the 'QC' in Step 1 amounts only to checking sample-name order; there is no PCA, sample-distance, or library-size check, and no outlier policy. The low-count filter is left as an unspecified 'stated threshold' with no justification, the reference level is not set explicitly, and package versions are not requested in the report. Enrichment was not asked for and is added anyway; it does name a universe and collections but leaves the ranking metric ambiguous and omits collection versions and a gene-set size window."
+}

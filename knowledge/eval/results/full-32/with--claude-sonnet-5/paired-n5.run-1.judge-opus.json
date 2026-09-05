@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses DESeq2 with ~subject + condition, explicitly blocking on subject and testing the condition coefficient within subject, with an edgeR QL cross-check on the same design — exactly the reference approach for a 5-pair paired design. QC precedes the test (blind VST, PCA on top 500, sample-distance heatmap colored by subject and condition, library sizes) with an explicit outlier-flagging policy, though the policy is 'flag for review' rather than a fully pre-specified action. The filter (>=10 counts in >=5 samples) is minimal and justified by the smallest group size; normalization is left to median-of-ratios inside the model with an explicit ban on pre-scaling; BH at alpha=0.05 with apeglm shrinkage of the condition coefficient and separate reporting of Cook's vs independent-filtering NAs is correct. Enrichment is optional here but well specified (full ranked list by Wald stat, tested-gene universe, Hallmark v2026.1 plus Reactome, 15-500 size window, leading-edge collapse); minor deduction because using shrunken LFC or a signed metric is arguably better and the Reactome release is left unnamed. The final report covers method, versions, design, contrast direction, thresholds, tested/significant counts, diagnostics, and the n=5 power caveat."
+}

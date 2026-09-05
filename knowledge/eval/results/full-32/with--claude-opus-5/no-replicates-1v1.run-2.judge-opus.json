@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that a 1-vs-1 design supports no dispersion estimate and therefore no inferential test, explicitly forbids DESeq/edgeR/limma calls, emits normalized counts and descriptive log2 fold changes only, labels the |log2FC|>=1 cut as a ranking device rather than significance, and names the replicated design (>=3, preferably 5-6 per group with Wald + apeglm + BH at 0.05) that would license inference. QC is design-aware: library sizes, detection, duplicate-symbol handling, blind VST scatter, log-ratio MA and histogram, correlations, and an explicit statement that PCA and sample-distance clustering are degenerate at n=2 rather than drawing them uninformatively. Filtering (>=10 counts in >=1 sample, smallest group size 1) and median-of-ratios size factors inside DESeq2 with no pre-scaling are both justified, and the reference level and contrast direction are set explicitly and printed. The main weakness is the enrichment step: with a fold change from a single pair of libraries carrying no uncertainty, preranked fgsea with permutation p-values is not really warranted, and reporting padj at all — even relabelled 'non-inferential' — reintroduces the appearance of a test the design cannot support, though the universe, size window, collection version, seed and collapse are all specified correctly. The report section is thorough and forecloses the 'top fold changes = DE list' misreading, with n_de stated as not determinable."
+}

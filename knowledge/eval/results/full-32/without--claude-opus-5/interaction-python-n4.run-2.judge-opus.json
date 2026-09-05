@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats this as an interaction question, fits ~genotype + treatment + genotype:treatment in PyDESeq2 with explicit WT/vehicle reference levels and a stated sign convention for the interaction coefficient, adds an LRT against the additive reduced model, and derives all four simple effects from the same fit rather than from subset models — with an explicit disclaimer against difference-of-significance reasoning, which is exactly the trap in a 2x2. QC is design-aware (balance cross-tab, library sizes, PCA on PC1-PC4 colored by genotype/treatment/condition, correlation heatmap, flag-don't-drop outlier policy, plus a KO-target sanity check), normalization is size factors inside the model with VST used only for visualization, and BH is applied at stated alphas with LFC shrinkage conditioned on availability. Weaknesses: the low-count filter says 'a minimum count in at least 4 samples' without naming the count threshold; the plan never states the PyDESeq2 fallback the reference asks for if the installed version cannot express the interaction formula or a contrast (it assumes LRT and shrinkage support); enrichment names collections and organism and sets the ORA universe to tested genes but omits a gene-set size window and any version pinning; and software versions are not required anywhere in the reporting. All steps are Python, as constrained."
+}

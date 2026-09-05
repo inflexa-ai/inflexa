@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 4,
+    "low_count_filter": 6,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the question as a genotype x treatment interaction, fits a single full factorial negative binomial GLM in PyDESeq2 with ~genotype + treatment + genotype:treatment, extracts the interaction Wald term, and adds the within-genotype simple effects, which matches the reference and stays in Python; it loses points only for not anticipating the PyDESeq2 interaction/contrast limitation or naming a group-factor fallback, and for never stating reference levels. QC is thin: library sizes and a sample-count reconciliation are named, but there is no PCA or sample-distance structure check colored by condition and no stated outlier policy beyond 'flag'. The filter is minimal and its retained-gene count is reported, though the criterion is left as an unresolved 'e.g.'. Normalization is only implicit in feeding raw counts to PyDESeq2 — size factors are never named — and BH at padj < 0.05 is stated but LFC shrinkage for the reported effects is absent. Enrichment names a collection (WikiPathways human) and FDR reporting and sensibly splits WT-specific vs KO-specific lists, but omits an explicit ORA universe, a collection version, and a gene-set size window; the report is otherwise complete apart from software versions."
+}

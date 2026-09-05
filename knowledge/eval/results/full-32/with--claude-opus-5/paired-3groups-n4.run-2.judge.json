@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: subject as a fixed blocking term in both full (~ subject + condition) and reduced (~ subject) models, a DESeq2 LRT as the omnibus test, then three factor/numerator/denominator Wald contrasts with ashr shrinkage and BH at alpha 0.05 passed into results(), plus an edgeR QL cross-check on the same design. QC precedes the test with blind VST PCA colored by condition and identified by subject, sample-distance heatmap and library sizes, though the policy for what to do with an outlier sample is only implicit (call it out, not a stated action). The low-count filter (>=10 counts in >=4 samples, smallest group) is minimal and justified, and normalization is median-of-ratios/TMM inside the model with no pre-scaling. Enrichment was not requested but is specified correctly (full ranked list by Wald statistic, tested-gene universe, named human collections with versions, 15-500 window, seed); the report step names method, versions, design, thresholds, tested/significant counts, per-contrast FDR scope and the n=4 power caveat."
+}

@@ -1,0 +1,933 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "rsem-counts-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T18:15:13.365Z",
+  "elapsedMs": 434166,
+  "outcome": "plan_submitted",
+  "planId": "pln-cc66ccce",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library size and clustering QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap",
+          "readr",
+          "tibble"
+        ],
+        "question": "What are the per-sample library sizes and sample-sample relationships in the 12-sample (6 treated vs 6 control) colon RSEM count matrix, and how anomalous is sample_01's known ~4x-below-median depth relative to clustering by condition?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Table of raw library size (column sums) per sample from counts.csv, with sample_01's ratio to the median library size explicitly computed and reported",
+          "PCA plot (on log2(CPM+1) or vst-like transform of the 12000x12 matrix) colored by condition (treated/control) from metadata.csv, showing whether sample_01 is an outlier on PC1/PC2",
+          "Sample-sample correlation heatmap (12x12) identifying whether sample_01 correlates poorly with its assigned condition group",
+          "A written QC flag list naming sample_01 as low-depth, without removing any sample from the matrix at this stage"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Primary DESeq2 differential expression (all 12 samples)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2",
+          "readr",
+          "tibble"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control colon samples using all 12 samples, given RSEM expected counts and an unpaired single-batch design?",
+        "grounding": {
+          "claims": [],
+          "reason": "DESeq2 (Love/Huber/Anders 2014, PMID 25516281) is the standard moderated count-based DE method for RNA-seq; rounding non-integer RSEM expected counts before DESeqDataSetFromMatrix is the documented workaround when per-sample effective-length data (needed for tximport's length-scaled offsets, Soneson/Love/Robinson 2015) is unavailable, as is the case here.",
+          "status": "grounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "RSEM expected counts (non-integer, from counts.csv) rounded to nearest integer per gene per sample before building the DESeqDataSet, with this workaround explicitly stated in the output because the per-sample genes.results effective-length files were not delivered so no length-offset (tximport-style) correction is possible",
+          "DESeqDataSet built with design ~ condition (treated vs control) from metadata.csv, unpaired, no batch term (single batch), after filtering genes with very low counts across all 12 samples",
+          "DESeq() run with default median-of-ratios size-factor normalization (chosen because it is more robust than simple total-count scaling to the one low-depth sample) and a Wald test contrast of treated vs control",
+          "Full results table (gene, baseMean, log2FoldChange, lfcSE, pvalue, padj) reported for all tested genes, with log2FoldChange shrunk via apeglm",
+          "Significant gene list at padj < 0.05 reported with counts of up- and down-regulated genes",
+          "Volcano plot (EnhancedVolcano) and MA plot produced; heatmap of the top 30-50 DE genes on vst-transformed values annotated by condition"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Sensitivity analysis excluding shallow sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "readr"
+        ],
+        "question": "How much does the treated-vs-control DE gene list and effect-size estimates from T2S1 depend on the inclusion of sample_01, whose library size is ~4x below the median?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "robustness_check",
+        "depends_on": [
+          "T1S1",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Identical DESeq2 pipeline (same rounding, same low-count filter, same design formula, same shrinkage) rerun on the 11 remaining samples with sample_01 removed, using the group assignment for sample_01 read from metadata.csv to report the resulting group sizes",
+          "Overlap (Jaccard/percent shared) between the padj<0.05 significant gene sets of the 12-sample (T2S1) and 11-sample analyses reported",
+          "Correlation (Spearman or Pearson) of log2FoldChange and of -log10(pvalue) across genes shared between the two analyses reported, with a scatter plot",
+          "A table of genes whose significance call (padj<0.05 vs not) flips between the two analyses, flagged as sample_01-dependent findings",
+          "Explicit statement of whether the overall treated-vs-control signal is robust to sample_01 or substantially driven by it"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment of the treated-vs-control signature",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "ggplot2",
+          "readr",
+          "tibble"
+        ],
+        "question": "Which biological pathways (WikiPathways human, MSigDB hallmark human) are enriched among genes ranked by the treated-vs-control DESeq2 test statistic, and do the top pathways depend on genes flagged as sample_01-sensitive?",
+        "grounding": {
+          "claims": [],
+          "reason": "fgsea (Korotkevich/Sukhov/Sergushichev 2016) is the standard fast preranked GSEA implementation available in the environment; WikiPathways human and MSigDB hallmark human gene sets are organism-matched references confirmed present under /mnt/refs.",
+          "status": "grounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "acceptance_criteria": [
+          "Preranked GSEA (fgsea) run on the full T2S1 gene list ranked by DESeq2 Wald statistic against the human WikiPathways gene sets and the MSigDB human hallmark gene sets (organism confirmed as human/9606, matching both reference sets); if either reference is unavailable at run time, the step reports the gap and proceeds with whichever is present",
+          "Complementary over-representation analysis (clusterProfiler enricher) run on the padj<0.05 significant gene subset from T2S1 against the same two collections",
+          "Output table per collection: pathway name, NES (for GSEA) or gene ratio (for ORA), pvalue, padj, and leading-edge/overlap genes",
+          "Top enriched pathways cross-checked against the sample_01-sensitive gene table from T2S2, flagging any pathway whose leading-edge genes are dominated by sample_01-dependent genes",
+          "Dot plot or bar plot of top enriched pathways per collection"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "STRING PPI subnetwork of significant DE genes",
+        "agent": "network-agent",
+        "track": "T4",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "readr",
+          "dplyr",
+          "data.table"
+        ],
+        "question": "Do the padj<0.05 treated-vs-control DE genes form a connected, high-confidence protein-protein interaction subnetwork, and which genes act as hubs within it?",
+        "grounding": {
+          "claims": [],
+          "reason": "STRING v12.0 human network (9606.protein.links/info) is the organism-matched interaction reference confirmed present; combined_score >= 700 is the dataset's documented conventional high-confidence cutoff.",
+          "status": "grounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "STRING human protein.info (preferred_name to STRING id mapping) joined onto STRING human protein.links, filtered to combined_score >= 700 (the documented high-confidence cutoff), restricted to edges where both endpoints map to a gene symbol in the padj<0.05 significant gene list from T2S1",
+          "Symmetric duplicate edges (STRING lists each edge twice) collapsed to an undirected edge list before any counting",
+          "Node degree computed for each DE gene present in the filtered subnetwork; top hub genes reported ranked by degree",
+          "Connected components of the subnetwork identified; size and membership of the largest connected component reported",
+          "Hub/module genes annotated with their up/down direction and log2FoldChange from T2S1",
+          "If the significant gene list from T2S1 is empty or the STRING reference is unavailable, the step reports that explicitly instead of fabricating a network"
+        ]
+      }
+    ],
+    "title": "Colon RSEM bulk RNA-seq: treated vs control DE + robustness + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are RSEM gene-level expected counts (non-integer) for 12000 genes across 12 human colon samples, 6 treated vs 6 control, unpaired, single batch; the per-sample genes.results files carrying effective gene lengths were not delivered, so a tximport-style length-offset correction cannot be built and the standard DESeq2 workaround (round expected counts to integers, model with DESeqDataSetFromMatrix) is used instead. Sample_01 has a library size ~4x below the median, a real confound for a 6-vs-6 design, so the plan first characterizes library size and clustering structure (step 1), runs the primary DESeq2 contrast on all 12 samples using median-of-ratios normalization which is robust to one low-depth outlier (step 2), and then explicitly quantifies how much the DE call depends on sample_01 by rerunning the identical pipeline with it excluded and comparing gene lists and effect sizes (step 3) — this directly answers whether 'which genes differ' is a stable answer or an artifact of one shallow sample. The resulting DE gene list is then interpreted functionally with preranked/ORA enrichment against organism-matched human pathway gene sets (step 4) and structurally via a STRING human PPI subnetwork restricted to the significant genes to surface hub/interconnected genes (step 5), both cross-checked against the sensitivity-analysis flags from step 3."
+  },
+  "usage": {
+    "inputTokens": 5230246,
+    "outputTokens": 17577,
+    "cacheCreationInputTokens": 328221,
+    "cacheReadInputTokens": 4901183,
+    "reasoningTokens": 6860
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene length effective length transcript length human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathways",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "tximport",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler",
+          "limma",
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING human protein interaction"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "interaction-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi-human"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM expected counts differential expression DESeq2 gene length bias",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport RSEM count matrix without length offset differential expression bias",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM gene expected counts RNA-seq differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM RNA-seq quantification",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "library size outlier RNA-seq sample exclusion differential expression quality control",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression RNA-seq count data",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "21816040"
+        ],
+        "maxAuthors": 2,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 rounding non-integer RSEM expected counts without effective length normalization",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 rounding RSEM expected counts gene length normalization",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 rounding RSEM expected counts gene length normalization",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 rounding RSEM expected counts gene length normalization",
+        "limit": 5
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "handling non-integer RSEM expected counts with DESeqDataSetFromMatrix, rounding counts"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/mikelove/deseq2",
+        "query": "DESeqDataSetFromMatrix rounding non-integer counts from RSEM tximport"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DRIMSeq",
+          "sva",
+          "RUVSeq",
+          "apeglm",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "GSEABase",
+          "org.Hs.eg.db",
+          "clusterProfiler",
+          "enrichplot"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "network-agent-tools"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "STRINGdb"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggplot2",
+          "readr",
+          "tibble"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "stringr",
+          "matrixStats"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gtools",
+          "openxlsx"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "openxlsx2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph"
+        ],
+        "language": "r"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "igraph"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "visNetwork"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "surrogate outlier low library size RNA-seq differential expression sensitivity analysis exclude sample",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq sequencing depth outlier sample quality control PCA",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "colon RNA-seq treated control differential expression pathway enrichment",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "colon treatment RNA-seq RSEM 6 vs 6",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "colon treated control gene expression",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "colon treatment n6 vs n6 gene expression RSEM expected counts",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "colon 12 samples treated control 6 vs 6 RNA-seq",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "RSEM gene counts treated vs control colon tissue drug",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "colon epithelial treatment response gene expression",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 non-integer counts round warning length scaledTPM",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport RNA-seq differential expression transcript-level estimates bias correction Soneson",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "tximport differential expression transcript abundance import bias correction Soneson Love Robinson",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "26925227"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "gene set enrichment analysis fgsea preranked method",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "RNA-seq outlier sample sensitivity analysis differential expression low sequencing depth",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "RSEM DESeq2 pipeline gene counts differential expression",
+        "language": "R",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "RSEM DESeq2 differential expression pipeline",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "rsem to deseq2 gene results",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "nf-core rnaseq DESeq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeqDataSetFromMatrix round non-integer RSEM expected counts",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "gene set enrichment fgsea colon treatment RNA-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "STRING PPI network hub gene analysis differential expression",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "sensitivity analysis exclude low library size sample RNA-seq DESeq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "low sequencing depth impact differential expression statistical power",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "DESeq2 size factor estimation robustness outlier sample",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "fgsea preranked gene set enrichment algorithm",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "fgsea preranked gene set enrichment algorithm",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "STRING database protein-protein interaction network functional association",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "STRING database protein-protein interaction network functional association",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "STRING database protein-protein interaction network functional association",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "protein protein interaction hub gene network module detection differential expression",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "STRINGdb R package hub gene network analysis differential expression",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "STRING protein links igraph network module",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "fgsea msigdb hallmark enrichment analysis R",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "EnhancedVolcano volcano plot differential expression",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "colon organoid drug treatment RNA-seq differential expression DESeq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Colon RSEM bulk RNA-seq: treated vs control DE + robustness + pathways",
+          "analytical_narrative": "The data are RSEM gene-level expected counts (non-integer) for 12000 genes across 12 human colon samples, 6 treated vs 6 control, unpaired, single batch; the per-sample genes.results files carrying effective gene lengths were not delivered, so a tximport-style length-offset correction cannot be built and the standard DESeq2 workaround (round expected counts to integers, model with DESeqDataSetFromMatrix) is used instead. Sample_01 has a library size ~4x below the median, a real confound for a 6-vs-6 design, so the plan first characterizes library size and clustering structure (step 1), runs the primary DESeq2 contrast on all 12 samples using median-of-ratios normalization which is robust to one low-depth outlier (step 2), and then explicitly quantifies how much the DE call depends on sample_01 by rerunning the identical pipeline with it excluded and comparing gene lists and effect sizes (step 3) — this directly answers whether 'which genes differ' is a stable answer or an artifact of one shallow sample. The resulting DE gene list is then interpreted functionally with preranked/ORA enrichment against organism-matched human pathway gene sets (step 4) and structurally via a STRING human PPI subnetwork restricted to the significant genes to surface hub/interconnected genes (step 5), both cross-checked against the sensitivity-analysis flags from step 3.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library size and clustering QC",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "What are the per-sample library sizes and sample-sample relationships in the 12-sample (6 treated vs 6 control) colon RSEM count matrix, and how anomalous is sample_01's known ~4x-below-median depth relative to clustering by condition?",
+              "acceptance_criteria": [
+                "Table of raw library size (column sums) per sample from counts.csv, with sample_01's ratio to the median library size explicitly computed and reported",
+                "PCA plot (on log2(CPM+1) or vst-like transform of the 12000x12 matrix) colored by condition (treated/control) from metadata.csv, showing whether sample_01 is an outlier on PC1/PC2",
+                "Sample-sample correlation heatmap (12x12) identifying whether sample_01 correlates poorly with its assigned condition group",
+                "A written QC flag list naming sample_01 as low-depth, without removing any sample from the matrix at this stage"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap",
+                "readr",
+                "tibble"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Primary DESeq2 differential expression (all 12 samples)",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control colon samples using all 12 samples, given RSEM expected counts and an unpaired single-batch design?",
+              "acceptance_criteria": [
+                "RSEM expected counts (non-integer, from counts.csv) rounded to nearest integer per gene per sample before building the DESeqDataSet, with this workaround explicitly stated in the output because the per-sample genes.results effective-length files were not delivered so no length-offset (tximport-style) correction is possible",
+                "DESeqDataSet built with design ~ condition (treated vs control) from metadata.csv, unpaired, no batch term (single batch), after filtering genes with very low counts across all 12 samples",
+                "DESeq() run with default median-of-ratios size-factor normalization (chosen because it is more robust than simple total-count scaling to the one low-depth sample) and a Wald test contrast of treated vs control",
+                "Full results table (gene, baseMean, log2FoldChange, lfcSE, pvalue, padj) reported for all tested genes, with log2FoldChange shrunk via apeglm",
+                "Significant gene list at padj < 0.05 reported with counts of up- and down-regulated genes",
+                "Volcano plot (EnhancedVolcano) and MA plot produced; heatmap of the top 30-50 DE genes on vst-transformed values annotated by condition"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2",
+                "readr",
+                "tibble"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "DESeq2 (Love/Huber/Anders 2014, PMID 25516281) is the standard moderated count-based DE method for RNA-seq; rounding non-integer RSEM expected counts before DESeqDataSetFromMatrix is the documented workaround when per-sample effective-length data (needed for tximport's length-scaled offsets, Soneson/Love/Robinson 2015) is unavailable, as is the case here."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Sensitivity analysis excluding shallow sample_01",
+              "track": "T2",
+              "step_type": "robustness_check",
+              "question": "How much does the treated-vs-control DE gene list and effect-size estimates from T2S1 depend on the inclusion of sample_01, whose library size is ~4x below the median?",
+              "acceptance_criteria": [
+                "Identical DESeq2 pipeline (same rounding, same low-count filter, same design formula, same shrinkage) rerun on the 11 remaining samples with sample_01 removed, using the group assignment for sample_01 read from metadata.csv to report the resulting group sizes",
+                "Overlap (Jaccard/percent shared) between the padj<0.05 significant gene sets of the 12-sample (T2S1) and 11-sample analyses reported",
+                "Correlation (Spearman or Pearson) of log2FoldChange and of -log10(pvalue) across genes shared between the two analyses reported, with a scatter plot",
+                "A table of genes whose significance call (padj<0.05 vs not) flips between the two analyses, flagged as sample_01-dependent findings",
+                "Explicit statement of whether the overall treated-vs-control signal is robust to sample_01 or substantially driven by it"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment of the treated-vs-control signature",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which biological pathways (WikiPathways human, MSigDB hallmark human) are enriched among genes ranked by the treated-vs-control DESeq2 test statistic, and do the top pathways depend on genes flagged as sample_01-sensitive?",
+              "acceptance_criteria": [
+                "Preranked GSEA (fgsea) run on the full T2S1 gene list ranked by DESeq2 Wald statistic against the human WikiPathways gene sets and the MSigDB human hallmark gene sets (organism confirmed as human/9606, matching both reference sets); if either reference is unavailable at run time, the step reports the gap and proceeds with whichever is present",
+                "Complementary over-representation analysis (clusterProfiler enricher) run on the padj<0.05 significant gene subset from T2S1 against the same two collections",
+                "Output table per collection: pathway name, NES (for GSEA) or gene ratio (for ORA), pvalue, padj, and leading-edge/overlap genes",
+                "Top enriched pathways cross-checked against the sample_01-sensitive gene table from T2S2, flagging any pathway whose leading-edge genes are dominated by sample_01-dependent genes",
+                "Dot plot or bar plot of top enriched pathways per collection"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "ggplot2",
+                "readr",
+                "tibble"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "fgsea (Korotkevich/Sukhov/Sergushichev 2016) is the standard fast preranked GSEA implementation available in the environment; WikiPathways human and MSigDB hallmark human gene sets are organism-matched references confirmed present under /mnt/refs."
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "STRING PPI subnetwork of significant DE genes",
+              "track": "T4",
+              "step_type": "network_analysis",
+              "question": "Do the padj<0.05 treated-vs-control DE genes form a connected, high-confidence protein-protein interaction subnetwork, and which genes act as hubs within it?",
+              "acceptance_criteria": [
+                "STRING human protein.info (preferred_name to STRING id mapping) joined onto STRING human protein.links, filtered to combined_score >= 700 (the documented high-confidence cutoff), restricted to edges where both endpoints map to a gene symbol in the padj<0.05 significant gene list from T2S1",
+                "Symmetric duplicate edges (STRING lists each edge twice) collapsed to an undirected edge list before any counting",
+                "Node degree computed for each DE gene present in the filtered subnetwork; top hub genes reported ranked by degree",
+                "Connected components of the subnetwork identified; size and membership of the largest connected component reported",
+                "Hub/module genes annotated with their up/down direction and log2FoldChange from T2S1",
+                "If the significant gene list from T2S1 is empty or the STRING reference is unavailable, the step reports that explicitly instead of fabricating a network"
+              ],
+              "packages": [
+                "igraph",
+                "readr",
+                "dplyr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "STRING v12.0 human network (9606.protein.links/info) is the organism-matched interaction reference confirmed present; combined_score >= 700 is the dataset's documented conventional high-confidence cutoff."
+              }
+            }
+          ],
+          "title_check": "n/a"
+        }
+      }
+    }
+  ]
+}

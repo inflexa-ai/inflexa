@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes that STAR/featureCounts gene-level integers enter DESeq2 directly, explicitly rejecting tximport, length correction, and CPM/TPM pre-scaling, and it fits ~condition with an explicitly set control reference and a stated (condition, treated, control) contrast appropriate for the unpaired single-batch 3v3 design. QC precedes testing with library sizes, detected genes, blind VST PCA on the top 500 variable genes, and a sample-distance heatmap, with a flag-not-drop outlier policy and an acknowledgment that PCA on six points is easy to over-read. The filter (>=10 counts in >=3 samples, justified as the smallest group size) is minimal and justified; normalization is median-of-ratios inside the model with TMM in the edgeR cross-check. BH at alpha 0.05 with independent filtering matched to alpha, apeglm shrinkage on the coefficient, no post-hoc LFC filter (with lfcThreshold named as the correct alternative), and separate reporting of independent-filtering vs Cook's NAs are all correct. Enrichment is preranked fgsea on the full tested list ranked by the Wald statistic with a named MSigDB version, symbol-keyed human sets, a 15-500 size window, collapsePathways, and a justified refusal of ORA — slightly beyond what a 3v3 DE question strictly warrants, but well specified; the report section names methods, versions, design, thresholds, tested and significant counts, diagnostics, and the power caveat.\"}"
+}

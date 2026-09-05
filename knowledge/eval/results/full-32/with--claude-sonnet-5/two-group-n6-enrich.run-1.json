@@ -1,0 +1,728 @@
+{
+  "campaign": "full-32",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-05T17:14:56.450Z",
+  "elapsedMs": 81242,
+  "outcome": "plan_submitted",
+  "planId": "pln-bac73e1f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (vst, PCA, distances, library sizes)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A sample with a library size far below the median is kept through QC and removed only with a stated reason, never by default"
+        ],
+        "context": "Raw integer gene-level Salmon counts, 12000 genes x 12 samples, unpaired 6v6 design, single batch. Caveat: sample_01 library size ~4x below median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 12 skin samples (6 AD_lesional, 6 Control) separate by condition on PCA, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group on the sample-distance heatmap and PCA?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC (vst blind, PCA top-500, sample distance heatmap) with explicit low-depth-sample inspection per R-0033@40bf and R-0008@440d",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "transform = vst_blind per DESeq2 vignette blind dispersion estimation guidance",
+          "n_top_genes = 500 for PCA",
+          "low_depth_policy = keep_inspect_report: do not silently drop sample_01"
+        ],
+        "description": "Load counts.csv (12000 genes x 12 samples) and metadata.csv, build a DESeqDataSet with design ~condition, run vst(blind=TRUE), compute PCA on the top 500 most variable genes, and a sample-to-sample Euclidean distance heatmap colored by condition. Report each sample's library size and detected-gene count in a table, flagging sample_01 explicitly. Do not remove any sample at this stage — this step only documents structure and depth so removal, if any, is a stated downstream judgment.",
+        "acceptance_criteria": [
+          "PCA plot and sample-distance heatmap produced, colored by condition",
+          "Library size / detected gene count table for all 12 samples with sample_01 flagged",
+          "No sample removed in this step; findings reported for a downstream judgment call"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: AD_lesional vs Control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not rank or plot on the unshrunken log2FC",
+          "Do not filter results by raw p-value or by fold change alone",
+          "With <7 replicates per cell DESeq2 sets outlier-flagged genes' p-values to NA rather than imputing — report these separately"
+        ],
+        "context": "12000 x 12 raw Salmon gene counts, unpaired 6v6, single batch, no covariates.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes are differentially expressed between AD_lesional and Control skin (12000 genes tested, 6 vs 6, DESeq2 Wald test, BH-adjusted p<0.05)?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm shrinkage, minimal pre-filter, explicit reference level per R-0001@9a17/R-0029@fa6d/R-0009@f54e",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=smallest group size (6)",
+          "normalization is internal to DESeq2 (median-of-ratios); no separate scaling of counts",
+          "reference_level explicit = Control; contrast_form = factor, numerator (AD_lesional), denominator (Control)",
+          "apeglm shrinkage for reported/ranked log2FC; unshrunken kept alongside",
+          "BH adjustment, alpha=0.05, independent filtering on"
+        ],
+        "description": "From the QC'd DESeqDataSet (design ~condition, condition releveled with Control as reference), pre-filter to genes with >=10 counts in at least 6 samples (the smallest group size), run DESeq() (median-of-ratios normalization internal to the model — no pre-normalization), extract results() with the named contrast condition_AD_lesional_vs_Control and alpha=0.05, apply apeglm shrinkage via lfcShrink for the reported/ranked log2FoldChange, and inspect the p-value histogram before trusting BH-adjusted values. Report genes with an NA p-value from Cook's-distance outlier flagging separately from those removed by independent filtering. sample_01's low depth is retained (down-weighted via its size factor) unless the QC step gave a stated reason to exclude it — state the decision taken.",
+        "acceptance_criteria": [
+          "DESeqDataSet built with explicit reference level Control; contrast named as condition, AD_lesional, Control",
+          "Pre-filter keeps genes with >=10 counts in >=6 samples",
+          "Wald test results with BH-adjusted p-values (independent filtering on, alpha=0.05) and apeglm-shrunken log2FC reported alongside unshrunken log2FC and lfcSE",
+          "p-value histogram inspected and reported; MA plot and dispersion plot produced",
+          "Number of genes tested, number DE at padj<0.05, and count of NA-flagged outlier genes reported",
+          "Explicit statement of whether/why sample_01 was kept or excluded"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood robustness check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Report the overlap, not the union, as the primary finding; disagreement between methods grows at low counts/low replicate numbers"
+        ],
+        "context": "Same 12000 x 12 raw count matrix and 6v6 unpaired design as T1S2, used here for a second, independent DE method as a robustness check.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Does an independent edgeR quasi-likelihood F-test on the same 6 vs 6 AD_lesional vs Control design agree with the DESeq2 Wald test call set?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1"
+          ],
+          "reason": "Second method (edgeR QL) for robustness at 6 replicates/group per R-0001@9a17, overlap reporting per R-0042@54e1",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "TMM normalization (edgeR default) takes the place of DESeq2 size factors",
+          "BH adjustment, alpha=0.05"
+        ],
+        "description": "On the same pre-filtered count matrix and design (~condition, Control as reference), fit a TMM-normalized edgeR quasi-likelihood negative binomial model and run glmQLFTest for the AD_lesional vs Control contrast with BH-adjusted p-values at 0.05. Report the number of significant genes from this method, the size of the intersection with the DESeq2 gene set from T1S2, and the genes unique to each method as a secondary list. Treat the intersection as the high-confidence DE set.",
+        "acceptance_criteria": [
+          "edgeR QLF test results table with BH-adjusted p-values at 0.05",
+          "Reported overlap (intersection) with DESeq2 DE gene set, plus method-unique gene lists",
+          "High-confidence set = intersection, stated explicitly"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "fgsea preranked GSEA: Hallmark and Reactome",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Gene symbols must not be mixed between identifier spaces; report any unmapped share",
+          "If fewer than ~50 genes are significant in the DE step, do not run an over-representation test — ranked GSEA on the full list is the method used here",
+          "Enrichment results are method-dependent; do not present as proven mechanism"
+        ],
+        "context": "Gene-symbol-indexed DESeq2 results table (12000 genes tested) from T1S2, Homo sapiens. MSigDB Hallmark human gene sets (50 sets, HGNC symbols, 2026.1 release) and Reactome human pathways (HGNC symbols, current release) are available as GMT files in the reference store.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "org.Hs.eg.db",
+          "data.table"
+        ],
+        "question": "Which MSigDB Hallmark pathways (and, secondarily, which Reactome pathways) are enriched between AD_lesional and Control skin, using the full ranked gene list from the DESeq2 Wald statistic?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "fgsea preranked GSEA on Wald statistic against Hallmark then Reactome per R-0098@d01b/R-0107@976c/R-0099@0a77; disputed ranking metric resolved to Wald stat per R-0108@409f",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "rank_metric = stat (DESeq2 Wald statistic), not unshrunken log2FC alone and not a signed p-value with ties",
+          "gene_set_collection = MSigDB Hallmark human (primary), Reactome human pathways (secondary)",
+          "min_size=15, max_size=500 applied after intersecting with tested genes",
+          "universe = tested genes only",
+          "collapse redundant significant sets before final report; keep full table as supplement"
+        ],
+        "description": "Take the full DESeq2 results table from T1S2 (all tested genes, no pre-filtering by significance), rank by the Wald statistic (stat column), and run fgsea against the MSigDB Hallmark human gene sets (50 sets) as the primary collection, restricting to sets with 15-500 member genes among the tested genes. Run a second pass against Reactome human pathways for mechanistic follow-up on any significant hallmark hit. Adjust p-values by BH within each collection. Collapse redundant/overlapping significant gene sets and report one representative per group, keeping the full table as a supplement. Report leading-edge genes for each significant set. State the ranking metric choice (Wald statistic) explicitly, and if fewer than ~50 genes pass padj<0.05 in T1S2, do not additionally run an over-representation test on that short list — the ranked method on the full list is the primary and sufficient method here.",
+        "acceptance_criteria": [
+          "fgsea run on full ranked gene list (Wald statistic) against Hallmark (50 sets, human, MSigDB 2026.1) with min/max set size 15-500",
+          "Second fgsea pass against Reactome human pathways for hits that overlap Hallmark findings",
+          "BH-adjusted enrichment p-values reported per collection with collection version stated",
+          "Redundant significant sets collapsed; leading-edge genes listed per significant set",
+          "Ranking metric (DESeq2 Wald stat) stated explicitly in the output"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Consolidated DE + enrichment report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is a synthesis/report step, not a new statistical test"
+        ],
+        "context": "Final synthesis step drawing on QC, DE (two methods), and enrichment (two collections) outputs from prior steps in this AD lesional vs control skin analysis.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the complete, reproducible summary of differentially expressed genes and enriched hallmark/Reactome pathways between AD_lesional and Control skin, including QC caveats about sample_01?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "No single rule covers report assembly; report fields drawn from multiple report-step claims returned by knowledge_recommend",
+          "status": "ungrounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "Report must state method-dependence of enrichment results and not treat one method's output as ground truth",
+          "Rank gene table by shrunken log2FoldChange, not unshrunken"
+        ],
+        "description": "Assemble a final report combining: (1) QC diagnostics from T1S1 including the sample_01 library-depth discussion and the decision taken about it; (2) the DESeq2 gene table (unshrunken log2FC, apeglm-shrunken log2FC, lfcSE, padj) with MA and dispersion plots, number tested, number DE at padj<0.05, NA-outlier count, and p-value histogram; (3) the DESeq2/edgeR overlap from T1S3 as the high-confidence gene set with method-unique genes listed separately; (4) the Hallmark and Reactome fgsea tables from T2S1 with leading-edge genes, collection versions, ranking metric, universe, and size window stated; (5) a full reproducibility record — package versions (DESeq2 1.52.0, apeglm 1.34.0, edgeR 4.10.3, fgsea 1.38.0), random seed used, MSigDB 2026.1 and Reactome current release identifiers, and session info.",
+        "acceptance_criteria": [
+          "Report includes QC section with explicit sample_01 handling decision and rationale",
+          "DE section reports method, design formula, contrast, thresholds, n tested, n DE, NA-outlier count",
+          "Enrichment section states database name+version, ranking metric, universe, and size window per collection",
+          "DESeq2 vs edgeR overlap reported as the high-confidence gene set",
+          "Full session info / package versions / seed / collection versions recorded"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control skin DE + hallmark pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "12 skin samples (6 AD lesional vs 6 control, unpaired, single batch, Salmon gene-level raw counts, 12000 genes) go through a QC pass that explicitly inspects sample_01's low library size (~4x below median) on PCA and sample-distance plots rather than silently dropping it, then a standard DESeq2 Wald-test pipeline (minimal pre-filter, median-of-ratios normalization built into the model, explicit Control reference level, apeglm-shrunken log2FC, BH-adjusted p-values with independent filtering) to call differentially expressed genes between AD_lesional and Control. A parallel edgeR quasi-likelihood F-test on the same design gives a robustness check; the DESeq2/edgeR overlap is reported as the high-confidence gene set. The DESeq2 Wald statistic ranks the full tested gene list for fgsea preranked GSEA against MSigDB Hallmark (primary) and Reactome (secondary, for mechanistic resolution of hallmark hits), with results collapsed for redundancy and leading-edge genes reported. A final report step consolidates QC diagnostics, DE tables, enrichment tables, and a full reproducibility record (session info, seed, package/collection versions)."
+  },
+  "usage": {
+    "inputTokens": 462303,
+    "outputTokens": 7633,
+    "cacheCreationInputTokens": 140315,
+    "cacheReadInputTokens": 321916,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db human gene identifier annotation"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "clusterProfiler",
+          "tximport",
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) + PCA + sample distance heatmap + library size table",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size (6)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "~condition, explicit reference level = Control, contrast AD_lesional vs Control",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on Wald stat, MSigDB Hallmark (primary) + Reactome (secondary)",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + enrichment report with QC, diagnostics, reproducibility record",
+            "package": "DESeq2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control skin DE + hallmark pathways",
+          "analytical_narrative": "12 skin samples (6 AD lesional vs 6 control, unpaired, single batch, Salmon gene-level raw counts, 12000 genes) go through a QC pass that explicitly inspects sample_01's low library size (~4x below median) on PCA and sample-distance plots rather than silently dropping it, then a standard DESeq2 Wald-test pipeline (minimal pre-filter, median-of-ratios normalization built into the model, explicit Control reference level, apeglm-shrunken log2FC, BH-adjusted p-values with independent filtering) to call differentially expressed genes between AD_lesional and Control. A parallel edgeR quasi-likelihood F-test on the same design gives a robustness check; the DESeq2/edgeR overlap is reported as the high-confidence gene set. The DESeq2 Wald statistic ranks the full tested gene list for fgsea preranked GSEA against MSigDB Hallmark (primary) and Reactome (secondary, for mechanistic resolution of hallmark hits), with results collapsed for redundancy and leading-edge genes reported. A final report step consolidates QC diagnostics, DE tables, enrichment tables, and a full reproducibility record (session info, seed, package/collection versions).",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (vst, PCA, distances, library sizes)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 skin samples (6 AD_lesional, 6 Control) separate by condition on PCA, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group on the sample-distance heatmap and PCA?",
+              "description": "Load counts.csv (12000 genes x 12 samples) and metadata.csv, build a DESeqDataSet with design ~condition, run vst(blind=TRUE), compute PCA on the top 500 most variable genes, and a sample-to-sample Euclidean distance heatmap colored by condition. Report each sample's library size and detected-gene count in a table, flagging sample_01 explicitly. Do not remove any sample at this stage — this step only documents structure and depth so removal, if any, is a stated downstream judgment.",
+              "acceptance_criteria": [
+                "PCA plot and sample-distance heatmap produced, colored by condition",
+                "Library size / detected gene count table for all 12 samples with sample_01 flagged",
+                "No sample removed in this step; findings reported for a downstream judgment call"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level Salmon counts, 12000 genes x 12 samples, unpaired 6v6 design, single batch. Caveat: sample_01 library size ~4x below median.",
+              "constraints": [
+                "transform = vst_blind per DESeq2 vignette blind dispersion estimation guidance",
+                "n_top_genes = 500 for PCA",
+                "low_depth_policy = keep_inspect_report: do not silently drop sample_01"
+              ],
+              "caveats": [
+                "A sample with a library size far below the median is kept through QC and removed only with a stated reason, never by default"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC (vst blind, PCA top-500, sample distance heatmap) with explicit low-depth-sample inspection per R-0033@40bf and R-0008@440d"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: AD_lesional vs Control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between AD_lesional and Control skin (12000 genes tested, 6 vs 6, DESeq2 Wald test, BH-adjusted p<0.05)?",
+              "description": "From the QC'd DESeqDataSet (design ~condition, condition releveled with Control as reference), pre-filter to genes with >=10 counts in at least 6 samples (the smallest group size), run DESeq() (median-of-ratios normalization internal to the model — no pre-normalization), extract results() with the named contrast condition_AD_lesional_vs_Control and alpha=0.05, apply apeglm shrinkage via lfcShrink for the reported/ranked log2FoldChange, and inspect the p-value histogram before trusting BH-adjusted values. Report genes with an NA p-value from Cook's-distance outlier flagging separately from those removed by independent filtering. sample_01's low depth is retained (down-weighted via its size factor) unless the QC step gave a stated reason to exclude it — state the decision taken.",
+              "acceptance_criteria": [
+                "DESeqDataSet built with explicit reference level Control; contrast named as condition, AD_lesional, Control",
+                "Pre-filter keeps genes with >=10 counts in >=6 samples",
+                "Wald test results with BH-adjusted p-values (independent filtering on, alpha=0.05) and apeglm-shrunken log2FC reported alongside unshrunken log2FC and lfcSE",
+                "p-value histogram inspected and reported; MA plot and dispersion plot produced",
+                "Number of genes tested, number DE at padj<0.05, and count of NA-flagged outlier genes reported",
+                "Explicit statement of whether/why sample_01 was kept or excluded"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 raw Salmon gene counts, unpaired 6v6, single batch, no covariates.",
+              "constraints": [
+                "min_count=10, min_samples=smallest group size (6)",
+                "normalization is internal to DESeq2 (median-of-ratios); no separate scaling of counts",
+                "reference_level explicit = Control; contrast_form = factor, numerator (AD_lesional), denominator (Control)",
+                "apeglm shrinkage for reported/ranked log2FC; unshrunken kept alongside",
+                "BH adjustment, alpha=0.05, independent filtering on"
+              ],
+              "caveats": [
+                "Do not rank or plot on the unshrunken log2FC",
+                "Do not filter results by raw p-value or by fold change alone",
+                "With <7 replicates per cell DESeq2 sets outlier-flagged genes' p-values to NA rather than imputing — report these separately"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "DESeq2 Wald test with apeglm shrinkage, minimal pre-filter, explicit reference level per R-0001@9a17/R-0029@fa6d/R-0009@f54e"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood robustness check",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Does an independent edgeR quasi-likelihood F-test on the same 6 vs 6 AD_lesional vs Control design agree with the DESeq2 Wald test call set?",
+              "description": "On the same pre-filtered count matrix and design (~condition, Control as reference), fit a TMM-normalized edgeR quasi-likelihood negative binomial model and run glmQLFTest for the AD_lesional vs Control contrast with BH-adjusted p-values at 0.05. Report the number of significant genes from this method, the size of the intersection with the DESeq2 gene set from T1S2, and the genes unique to each method as a secondary list. Treat the intersection as the high-confidence DE set.",
+              "acceptance_criteria": [
+                "edgeR QLF test results table with BH-adjusted p-values at 0.05",
+                "Reported overlap (intersection) with DESeq2 DE gene set, plus method-unique gene lists",
+                "High-confidence set = intersection, stated explicitly"
+              ],
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same 12000 x 12 raw count matrix and 6v6 unpaired design as T1S2, used here for a second, independent DE method as a robustness check.",
+              "constraints": [
+                "TMM normalization (edgeR default) takes the place of DESeq2 size factors",
+                "BH adjustment, alpha=0.05"
+              ],
+              "caveats": [
+                "Report the overlap, not the union, as the primary finding; disagreement between methods grows at low counts/low replicate numbers"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1"
+                ],
+                "reason": "Second method (edgeR QL) for robustness at 6 replicates/group per R-0001@9a17, overlap reporting per R-0042@54e1"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "fgsea preranked GSEA: Hallmark and Reactome",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark pathways (and, secondarily, which Reactome pathways) are enriched between AD_lesional and Control skin, using the full ranked gene list from the DESeq2 Wald statistic?",
+              "description": "Take the full DESeq2 results table from T1S2 (all tested genes, no pre-filtering by significance), rank by the Wald statistic (stat column), and run fgsea against the MSigDB Hallmark human gene sets (50 sets) as the primary collection, restricting to sets with 15-500 member genes among the tested genes. Run a second pass against Reactome human pathways for mechanistic follow-up on any significant hallmark hit. Adjust p-values by BH within each collection. Collapse redundant/overlapping significant gene sets and report one representative per group, keeping the full table as a supplement. Report leading-edge genes for each significant set. State the ranking metric choice (Wald statistic) explicitly, and if fewer than ~50 genes pass padj<0.05 in T1S2, do not additionally run an over-representation test on that short list — the ranked method on the full list is the primary and sufficient method here.",
+              "acceptance_criteria": [
+                "fgsea run on full ranked gene list (Wald statistic) against Hallmark (50 sets, human, MSigDB 2026.1) with min/max set size 15-500",
+                "Second fgsea pass against Reactome human pathways for hits that overlap Hallmark findings",
+                "BH-adjusted enrichment p-values reported per collection with collection version stated",
+                "Redundant significant sets collapsed; leading-edge genes listed per significant set",
+                "Ranking metric (DESeq2 Wald stat) stated explicitly in the output"
+              ],
+              "packages": [
+                "fgsea",
+                "org.Hs.eg.db",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Gene-symbol-indexed DESeq2 results table (12000 genes tested) from T1S2, Homo sapiens. MSigDB Hallmark human gene sets (50 sets, HGNC symbols, 2026.1 release) and Reactome human pathways (HGNC symbols, current release) are available as GMT files in the reference store.",
+              "constraints": [
+                "rank_metric = stat (DESeq2 Wald statistic), not unshrunken log2FC alone and not a signed p-value with ties",
+                "gene_set_collection = MSigDB Hallmark human (primary), Reactome human pathways (secondary)",
+                "min_size=15, max_size=500 applied after intersecting with tested genes",
+                "universe = tested genes only",
+                "collapse redundant significant sets before final report; keep full table as supplement"
+              ],
+              "caveats": [
+                "Gene symbols must not be mixed between identifier spaces; report any unmapped share",
+                "If fewer than ~50 genes are significant in the DE step, do not run an over-representation test — ranked GSEA on the full list is the method used here",
+                "Enrichment results are method-dependent; do not present as proven mechanism"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "fgsea preranked GSEA on Wald statistic against Hallmark then Reactome per R-0098@d01b/R-0107@976c/R-0099@0a77; disputed ranking metric resolved to Wald stat per R-0108@409f"
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Consolidated DE + enrichment report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the complete, reproducible summary of differentially expressed genes and enriched hallmark/Reactome pathways between AD_lesional and Control skin, including QC caveats about sample_01?",
+              "description": "Assemble a final report combining: (1) QC diagnostics from T1S1 including the sample_01 library-depth discussion and the decision taken about it; (2) the DESeq2 gene table (unshrunken log2FC, apeglm-shrunken log2FC, lfcSE, padj) with MA and dispersion plots, number tested, number DE at padj<0.05, NA-outlier count, and p-value histogram; (3) the DESeq2/edgeR overlap from T1S3 as the high-confidence gene set with method-unique genes listed separately; (4) the Hallmark and Reactome fgsea tables from T2S1 with leading-edge genes, collection versions, ranking metric, universe, and size window stated; (5) a full reproducibility record — package versions (DESeq2 1.52.0, apeglm 1.34.0, edgeR 4.10.3, fgsea 1.38.0), random seed used, MSigDB 2026.1 and Reactome current release identifiers, and session info.",
+              "acceptance_criteria": [
+                "Report includes QC section with explicit sample_01 handling decision and rationale",
+                "DE section reports method, design formula, contrast, thresholds, n tested, n DE, NA-outlier count",
+                "Enrichment section states database name+version, ranking metric, universe, and size window per collection",
+                "DESeq2 vs edgeR overlap reported as the high-confidence gene set",
+                "Full session info / package versions / seed / collection versions recorded"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final synthesis step drawing on QC, DE (two methods), and enrichment (two collections) outputs from prior steps in this AD lesional vs control skin analysis.",
+              "constraints": [
+                "Report must state method-dependence of enrichment results and not treat one method's output as ground truth",
+                "Rank gene table by shrunken log2FoldChange, not unshrunken"
+              ],
+              "caveats": [
+                "This is a synthesis/report step, not a new statistical test"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "No single rule covers report assembly; report fields drawn from multiple report-step claims returned by knowledge_recommend"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+  }
+}

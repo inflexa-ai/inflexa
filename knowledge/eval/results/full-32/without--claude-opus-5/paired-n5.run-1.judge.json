@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the paired design and fits ~subject + condition in DESeq2 (with control as reference and an explicit treated-vs-control contrast), backed by a limma-voom fixed-block sensitivity check and a per-subject fold-change decomposition that directly addresses the within-subject question; the unpaired model is correctly relegated to a design-value comparison. QC (library sizes, correlation heatmap, PCA coloured by subject/condition) precedes the test with a no-silent-exclusion policy, filterByExpr is used and reported, normalization stays inside the models, and BH at a pre-specified alpha with named apeglm/ashr shrinkage and no post hoc LFC filter is stated. Enrichment is added though not strictly warranted; it does rank the full list and uses the filtered set as ORA universe with named collections, but leaves the ranking metric as an either/or, omits collection versions, and states no gene-set size window. Reporting covers method, design, thresholds, gene counts and caveats, but does not commit to reporting package versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with a pre-specified ~ sex + age_centred + condition design, control as reference, age continuous and centred, BH at 0.05 with apeglm on the condition coefficient and no post-hoc LFC cutoff, plus an explicit balance/confounding diagnostic before modelling and PCA/sex-marker QC coloured by condition, sex and age. Normalization is only implicit via the DESeqDataSet (size factors are never named), and the outlier policy is to flag rather than state what T1S2 does with a flagged sample. Enrichment was not requested, but the added fgsea step is specified correctly (full ranking on the Wald statistic, human collections, 15-500 window, tested-gene universe for ORA, fixed seed) though no collection version is named. Reporting covers design, thresholds, tested/significant counts and design caveats, but does not commit to reporting software versions."
+}

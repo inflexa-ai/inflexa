@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan is correctly scoped to QC only: raw column-sum library sizes, detected genes, DESeq2 size factors, blind VST, PCA on the top 500 variable genes colored by condition, and a clustered Euclidean distance heatmap, with an explicit keep-unless-outlier verdict on sample_01 tied to PCA and distance evidence rather than depth alone. It explicitly refuses testing and enrichment, which matches the reference. The main gap is that no low count gene filter is stated before the VST and PCA, which the reference requires; the plan also omits a count distribution view and package versions, does not state the reference level of the implicit ~condition design, and does not frame an explicit recommendation for the later differential test beyond the removal verdict."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan builds the analysis around the genotype:treatment interaction with explicit reference levels (WT, vehicle), extracts both simple effects and the interaction as a list contrast, and adds an edgeR QL fit of the identical design as an independent check — exactly the reference approach, and clearly tailored to a 2x2 with 4 per cell rather than generic. QC on blind VST (PCA colored by genotype, treatment, and combined condition, distance heatmap, library sizes) precedes modelling with a no-drop policy and an honest note that unrecorded batch can only appear as unexplained variance. Filtering is minimal and justified (>=10 counts in >=4 samples = smallest group size) with independent filtering left to results(); normalization is median-of-ratios inside the model with TMM in the edgeR path and no pre-normalized input. BH at alpha 0.05 within contrast, ashr shrinkage correctly chosen because the KO simple effect is a sum of coefficients, p-value histograms inspected, and no post-hoc LFC filter. GSEA is preranked per contrast on the full list ranked by the Wald stat with an explicit size window, universe, collapse, seed and a named substitution for the unstaged Reactome; the only minor gaps are that collection versions are promised rather than pinned and the interaction-ranked GSEA is a somewhat unusual metric that the plan does not fully caveat."
+}

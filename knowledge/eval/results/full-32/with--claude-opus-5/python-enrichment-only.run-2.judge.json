@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses to refit a count model, ranks every tested gene by the DESeq2 Wald statistic with an explicit duplicate rule and NA accounting (though no tie rule), and runs gseapy prerank against a local human Hallmark GMT with a 15-500 window, >=1000 permutations, seed 42, BH at 0.05, and NES/q/leading-edge output; the ORA-on-significant-genes path is explicitly forbidden. The MSigDB version is to be recorded at run time rather than named in the plan, and there is no sample-structure QC (PCA/library sizes) despite counts and metadata being available, with sample_01 handled only as a written caveat. The DE-model criteria (filter, normalization, formula, shrinkage) are largely moot for an enrichment-only task; the plan handles their consequences sensibly (reporting DESeq2 NA classes, stating the contrast direction, justifying Wald over unshrunken LFC) without over-claiming. The report specification is thorough and reproducible."
+}

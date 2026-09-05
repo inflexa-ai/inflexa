@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 1,
+    "normalization": 9,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly recognizes log2(TPM+1) values are not counts, refuses DESeq2/edgeR, and forbids re-normalization or a second log, but it omits the value-range sanity check and never specifies trend=TRUE for limma-trend on non-voom log values. QC is limited to a PCA/MDS and p-value histogram with no distance heatmap and no stated outlier policy, and there is no low-expression filter at all (all 12000 genes are tested). The design is ~condition with no reference level or explicit contrast named, and the |logFC|>1 cutoff is applied post hoc rather than via treat. Enrichment is not warranted by the task; it is added with a named, versioned collection but no explicit universe or size window and a logFC-only ranking, and the report lacks package versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: DESeq2 Wald on raw Salmon gene counts with ~condition, explicit control reference level and the (condition, treated, control) triple, apeglm shrinkage, BH at alpha 0.05 with an explicit refusal to loosen alpha for low n, plus edgeR QL as an independent confirmation and a quantified power/MDE analysis that answers the second half of the question. QC precedes the model (blind VST, PCA on top 500 variable genes, distance heatmap, library sizes) with a stated no-drop-without-deliberation policy appropriate to n=3. The filter is minimal and justified (>=10 counts in >=3 samples, tied to the smallest group), normalization is median-of-ratios inside the model with an explicit prohibition on pre-normalizing, and the tximport length-offset limitation is honestly flagged. Enrichment is correctly ranked GSEA on the full tested list using the Wald statistic, with universe, size window, seed, BH across sets, collection version reporting and a stated Reactome-to-GO-BP substitution; minor deduction only because the leading-edge collapse and redundancy handling add complexity that could obscure the primary result. The report step is complete on method, versions, design, thresholds, tested/significant counts, diagnostics, reproducibility record, and places the power caveat before the gene tables."
+}

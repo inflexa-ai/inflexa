@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly picks a negative binomial Wald test for an unpaired 3v3 raw-count design and keeps normalization inside the model, but it declines to actually resolve the central concern: instead of running RSeQC infer_experiment.py or salmon libType A and re-counting with the correct -s setting, it substitutes an unvalidated count-matrix proxy (biotype/detection-rate heuristics) and then fits the model on the counts as delivered, which is the failure mode the reference calls out. Sample QC is well specified (library size, PCA on VST/log-CPM colored by group, correlation matrix, outlier policy), but no low-count filter is mentioned anywhere, and no apeglm or other LFC shrinkage is specified for the reported effect sizes; adding a secondary padj<0.1 list as a power concession also drifts from a single stated alpha. Enrichment names an organism-matched, versioned WikiPathways GMT and sensibly falls back to GSEA when the DE list is small, but no ORA universe, no gene-set size window, and no ranking metric are stated. Reporting covers design, thresholds, significant-gene counts, and the n=3 power and strandedness caveats, but omits software versions and cannot report the resolved strand setting."
+}

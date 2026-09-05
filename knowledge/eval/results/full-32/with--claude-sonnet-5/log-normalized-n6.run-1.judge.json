@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes the log2(TPM+1) values as non-count data, refuses DESeq2/edgeR/voim, and fits limma-trend (eBayes trend=TRUE) on the values as delivered with an explicit value-range check and no re-normalization, matching the reference. Design, reference level (control), and contrast (treated - control) are explicit, BH at 0.05 via topTable is stated, and the report names the transform, versions, tested/DE counts, and the 6v6 unpaired single-batch caveat. QC is present but the outlier policy stops at flagging, and the filter floor value is left unspecified. Enrichment was not asked for; the added GSEA is reasonably specified (full ranked list, moderated t, Hallmark with version, 15-500 window, tested-gene universe) but Reactome versioning is vague and the 'disputed rule' phrasing is odd, so it earns partial credit rather than the full mark for the reference's correct omission."
+}

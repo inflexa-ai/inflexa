@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that log2(TPM+1) values are not counts and applies limma-trend (eBayes trend=TRUE, robust=TRUE) to a single two-level factor with no blocking, matching the 6v6 unpaired single-batch design, and it explicitly refuses re-normalization while adding a value-range sanity check that names the raw-count and unlogged-TPM failure modes. QC on the log scale (PCA/MDS, distance heatmap, detected genes, colored by condition, outlier flagging) precedes the test, and the design/contrast is unambiguous with control set as the explicit reference and the contrast named 'treated - control'. The filter is label-independent and tied to the smaller group size, though the actual floor value is left unspecified ('a low floor'), and BH at 0.05 via topTable is stated with variance moderation standing in for shrinkage, which is appropriate for limma. The main deduction is the unrequested GSEA: the question asks only which genes differ, so a Hallmark+Reactome preranked run is scope creep, although if executed it is well specified (full ranked list, stated metric, universe intersection, 15-500 size window, collapsePathways, leading edges). The report section is thorough, naming method, versions, formula, contrast, thresholds, gene counts, and the n=6/6 unpaired single-batch caveat plus the delivered-transform provenance."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 2,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly rejects count models and fits limma-trend (lmFit + eBayes trend=TRUE, robust=TRUE) directly on the log2(TPM+1) matrix with an explicit no-re-normalization, no-back-transform constraint, and QC includes PCA and a correlation heatmap by condition with outlier flagging, though no explicit outlier policy and no explicit value-range check for hidden counts or a double log. No low-expression filter is stated at all, which is a clear gap. The design ~condition is stated but the reference level is only implied by 'treated vs control' logFC, and the |logFC|>=1 cut is applied post hoc rather than via treat. Enrichment was not asked and is arguably unwarranted; it names collections/versions and the ranking metric but omits an explicit ORA universe and size window. The report covers method, design, thresholds and power caveats but does not commit to package versions or explicit tested/significant gene counts."
+}

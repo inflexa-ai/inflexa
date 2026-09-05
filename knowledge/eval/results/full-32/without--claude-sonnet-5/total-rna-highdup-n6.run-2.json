@@ -1,0 +1,656 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "total-rna-highdup-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T18:01:47.599Z",
+  "elapsedMs": 343186,
+  "outcome": "plan_submitted",
+  "planId": "pln-3ed107d1",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and outlier characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Given the 12000x12 Salmon gene-count matrix for 6 treated vs 6 control heart samples, what is the library-size distribution, how does the low-depth sample_01 (~4x below median) behave relative to other samples, and which low-count genes should be filtered before differential expression?",
+        "grounding": {
+          "claims": [],
+          "reason": "Parekh et al. 2016 (Sci Rep, PMID 27156886) shows computational duplicate removal in non-UMI RNA-seq does not improve, and can worsen, differential expression power/FDR — used to justify not attempting deduplication on gene-level counts.",
+          "status": "grounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality-control",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports per-sample library size (total counts) and confirms sample_01's depth relative to the median",
+          "Produces a PCA and/or hierarchical clustering plot of samples colored by treated/control to show whether sample_01 is a global outlier or clusters normally with its condition group",
+          "Applies a low-count gene filter (e.g. edgeR filterByExpr or CPM-based threshold requiring expression in at least 6 samples) and reports genes retained out of the initial 12000",
+          "Documents the >60% duplication-rate QC flag as an acknowledged limitation of non-UMI total-RNA libraries at the gene-count level (cites that blind deduplication is not applied and is not recoverable from counts alone), without attempting any duplicate-removal transformation",
+          "Outputs a filtered count matrix and sample metadata table ready for DESeq2"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control, with sample_01 sensitivity analysis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Which genes are significantly differentially expressed between treated (n=6) and control (n=6) heart samples using an unpaired, single-batch design, and how robust is that gene list to excluding the low-depth outlier sample_01?",
+        "grounding": {
+          "claims": [],
+          "reason": "Standard DESeq2 two-group unpaired workflow (Love, Huber, Anders 2014, Genome Biology, PMID 25516281); no disputed rule applies.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential-expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Runs DESeq2 with design ~condition on the filtered count matrix from T1S1 using all 12 samples (median-of-ratios normalization, default Cook's-distance outlier handling and independent filtering)",
+          "Re-runs DESeq2 on the same design excluding sample_01 as a sensitivity check",
+          "Reports full result tables (baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) for both runs at padj < 0.05",
+          "Quantifies concordance between the two gene lists (e.g. overlap count, correlation of log2FC) and explicitly flags any genes whose significance depends on inclusion/exclusion of sample_01",
+          "States the primary (all-sample) result as the reported DE gene list, with the sensitivity analysis used only to annotate confidence, not to silently drop the sample"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Visualize differential expression results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "EnhancedVolcano",
+          "ComplexHeatmap",
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "What do the treated-vs-control DE results look like in volcano, MA, and top-gene heatmap form, and does the sample-level PCA separate treated from control samples?",
+        "grounding": {
+          "claims": [],
+          "reason": "Standard visualization of DESeq2 output; no method dispute to ground.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "visualization",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Produces a volcano plot (log2FoldChange vs -log10 padj) highlighting genes at padj < 0.05",
+          "Produces an MA plot from the primary DESeq2 result",
+          "Produces a heatmap of the top 30-50 DE genes (by padj) across all 12 samples annotated by condition",
+          "Produces a PCA plot of variance-stabilized counts colored by treated/control, annotating sample_01's position"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on treated vs control DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "gseapy"
+        ],
+        "question": "Which biological pathways are enriched among genes differentially expressed between treated and control heart samples, using WikiPathways and MSigDB Hallmark human gene sets?",
+        "grounding": {
+          "claims": [],
+          "reason": "Standard GSEA/ORA workflow against WikiPathways-human and MSigDB Hallmark-human GMTs confirmed present in the reference collection.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Runs GSEA (fgsea, ranked by DESeq2 stat/log2FC) and/or over-representation analysis on the padj<0.05 gene list from T1S2 against WikiPathways-human (HGNC symbols) and MSigDB Hallmark-human gene sets",
+          "Uses gene symbols directly from the counts matrix without additional ID mapping, since both reference gene sets are HGNC-symbol based",
+          "Reports enriched pathways with adjusted p-values (e.g. FDR<0.25 for GSEA, or FDR<0.05 for ORA) and normalized enrichment scores where applicable",
+          "If either reference gene set collection is unavailable at run time, reports that gap explicitly rather than silently skipping enrichment"
+        ]
+      }
+    ],
+    "title": "Heart treated vs control bulk RNA-seq DE + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are raw Salmon gene-level counts (12000 genes x 12 heart samples, 6 treated vs 6 control, unpaired, single batch, rRNA-depleted total RNA without UMIs). Two QC caveats drive the plan: (1) a >60% duplication rate in most libraries, which for non-UMI total-RNA-seq cannot be resolved into PCR vs natural duplicates at the read level, and — per Parekh et al. 2016 (Sci Rep, PMID 27156886) — blind computational deduplication does not improve accuracy for RNA-seq and can worsen power/FDR; since only gene-level Salmon counts are available (no BAMs/FASTQs), no duplicate-removal step is planned or possible, and this is documented as an acknowledged limitation rather than something to 'fix'. (2) sample_01 has a library size ~4x below the median, which needs explicit outlier characterization and a sensitivity analysis. The plan therefore: (a) profiles library size/complexity, filters low-count genes, and characterizes sample_01 via PCA/clustering; (b) runs DESeq2 treated-vs-control on the full filtered count matrix (which handles unequal library sizes via median-of-ratios normalization and offers Cook's-distance-based outlier moderation), plus a sensitivity re-run excluding sample_01 to test result robustness; (c) visualizes the primary DE results; (d) runs pathway enrichment (ORA/GSEA) on the DE gene list against WikiPathways-human and MSigDB Hallmark-human gene sets, which are present in the reference collection and match gene symbols already used in the counts matrix (no ID mapping needed)."
+  },
+  "usage": {
+    "inputTokens": 2566218,
+    "outputTokens": 10496,
+    "cacheCreationInputTokens": 236863,
+    "cacheReadInputTokens": 2328777,
+    "reasoningTokens": 2972
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "clusterProfiler",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq duplication rate ribosomal depletion differential expression bias",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PCR duplicates RNA-seq without UMI DESeq2 effect on differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "optical duplicates library complexity RNA-seq differential expression false positives",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq PCR duplication rate quality control impact gene expression quantification",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "duplicate reads RNA-Seq gene expression estimation bias",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "removing duplicate reads not recommended RNA-seq differential expression standard",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PCR duplicate removal RNA-seq differential expression without UMI recommendation",
+        "limit": 8
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PCR duplicate removal RNA-seq differential expression without UMI recommendation",
+        "limit": 8
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "salmon quasi-mapping quantification duplication rate rRNA depleted RNA sequencing best practices",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "library size normalization outlier sample RNA-seq differential expression sensitivity analysis",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression outlier detection Cook's distance",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Love Huber Anders moderated estimation fold change dispersion RNA-seq DESeq2",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "total RNA ribosomal depletion versus polyA RNA-seq differential gene expression heart tissue",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PCR duplicate removal RNA-seq differential expression bulk without UMI",
+        "limit": 8
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Parekh flaws duplication read counting Encode RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "the impact of amplification on differential expression analyses of RNA-seq data",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "flaws of read count duplication estimation RNA-seq Parekh",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "flaws of read count duplication estimation RNA-seq Parekh",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "duplication rate RNA-seq bulk non-UMI differential expression not recommended remove",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "duplication rate RNA-seq bulk non-UMI differential expression not recommended remove",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "The impact of amplification on differential expression analyses by RNA-seq Parekh Vangay",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "rRNA depletion total RNA library ribosomal RNA contamination duplication rate bulk RNA-seq QC",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "rRNA depletion total RNA library duplication rate bulk RNA-seq quality control",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "rRNA depletion total RNA duplication rate bulk RNA-seq quality control",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "rRNA depletion total RNA duplication rate bulk RNA-seq quality control",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "rRNA depletion total RNA duplication rate bulk RNA-seq quality control",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 outlier sample RNA-seq low library size cook's distance robust differential expression",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology hallmark human transcription factor regulon dorothea"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-go-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-go-human/2026.1"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "ComplexHeatmap",
+          "pheatmap",
+          "PCAtools"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "vsn"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb-go-human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "GSVA",
+          "gseapy",
+          "goseq"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "clusterProfiler",
+          "GO.db",
+          "AnnotationDbi"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb go human 2026"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Heart treated vs control bulk RNA-seq DE + pathways",
+          "analytical_narrative": "The data are raw Salmon gene-level counts (12000 genes x 12 heart samples, 6 treated vs 6 control, unpaired, single batch, rRNA-depleted total RNA without UMIs). Two QC caveats drive the plan: (1) a >60% duplication rate in most libraries, which for non-UMI total-RNA-seq cannot be resolved into PCR vs natural duplicates at the read level, and — per Parekh et al. 2016 (Sci Rep, PMID 27156886) — blind computational deduplication does not improve accuracy for RNA-seq and can worsen power/FDR; since only gene-level Salmon counts are available (no BAMs/FASTQs), no duplicate-removal step is planned or possible, and this is documented as an acknowledged limitation rather than something to 'fix'. (2) sample_01 has a library size ~4x below the median, which needs explicit outlier characterization and a sensitivity analysis. The plan therefore: (a) profiles library size/complexity, filters low-count genes, and characterizes sample_01 via PCA/clustering; (b) runs DESeq2 treated-vs-control on the full filtered count matrix (which handles unequal library sizes via median-of-ratios normalization and offers Cook's-distance-based outlier moderation), plus a sensitivity re-run excluding sample_01 to test result robustness; (c) visualizes the primary DE results; (d) runs pathway enrichment (ORA/GSEA) on the DE gene list against WikiPathways-human and MSigDB Hallmark-human gene sets, which are present in the reference collection and match gene symbols already used in the counts matrix (no ID mapping needed).",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and outlier characterization",
+              "track": "T1",
+              "step_type": "quality-control",
+              "question": "Given the 12000x12 Salmon gene-count matrix for 6 treated vs 6 control heart samples, what is the library-size distribution, how does the low-depth sample_01 (~4x below median) behave relative to other samples, and which low-count genes should be filtered before differential expression?",
+              "acceptance_criteria": [
+                "Reports per-sample library size (total counts) and confirms sample_01's depth relative to the median",
+                "Produces a PCA and/or hierarchical clustering plot of samples colored by treated/control to show whether sample_01 is a global outlier or clusters normally with its condition group",
+                "Applies a low-count gene filter (e.g. edgeR filterByExpr or CPM-based threshold requiring expression in at least 6 samples) and reports genes retained out of the initial 12000",
+                "Documents the >60% duplication-rate QC flag as an acknowledged limitation of non-UMI total-RNA libraries at the gene-count level (cites that blind deduplication is not applied and is not recoverable from counts alone), without attempting any duplicate-removal transformation",
+                "Outputs a filtered count matrix and sample metadata table ready for DESeq2"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Parekh et al. 2016 (Sci Rep, PMID 27156886) shows computational duplicate removal in non-UMI RNA-seq does not improve, and can worsen, differential expression power/FDR — used to justify not attempting deduplication on gene-level counts."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control, with sample_01 sensitivity analysis",
+              "track": "T1",
+              "step_type": "differential-expression",
+              "question": "Which genes are significantly differentially expressed between treated (n=6) and control (n=6) heart samples using an unpaired, single-batch design, and how robust is that gene list to excluding the low-depth outlier sample_01?",
+              "acceptance_criteria": [
+                "Runs DESeq2 with design ~condition on the filtered count matrix from T1S1 using all 12 samples (median-of-ratios normalization, default Cook's-distance outlier handling and independent filtering)",
+                "Re-runs DESeq2 on the same design excluding sample_01 as a sensitivity check",
+                "Reports full result tables (baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) for both runs at padj < 0.05",
+                "Quantifies concordance between the two gene lists (e.g. overlap count, correlation of log2FC) and explicitly flags any genes whose significance depends on inclusion/exclusion of sample_01",
+                "States the primary (all-sample) result as the reported DE gene list, with the sensitivity analysis used only to annotate confidence, not to silently drop the sample"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Standard DESeq2 two-group unpaired workflow (Love, Huber, Anders 2014, Genome Biology, PMID 25516281); no disputed rule applies."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Visualize differential expression results",
+              "track": "T1",
+              "step_type": "visualization",
+              "question": "What do the treated-vs-control DE results look like in volcano, MA, and top-gene heatmap form, and does the sample-level PCA separate treated from control samples?",
+              "acceptance_criteria": [
+                "Produces a volcano plot (log2FoldChange vs -log10 padj) highlighting genes at padj < 0.05",
+                "Produces an MA plot from the primary DESeq2 result",
+                "Produces a heatmap of the top 30-50 DE genes (by padj) across all 12 samples annotated by condition",
+                "Produces a PCA plot of variance-stabilized counts colored by treated/control, annotating sample_01's position"
+              ],
+              "packages": [
+                "EnhancedVolcano",
+                "ComplexHeatmap",
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Standard visualization of DESeq2 output; no method dispute to ground."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on treated vs control DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes differentially expressed between treated and control heart samples, using WikiPathways and MSigDB Hallmark human gene sets?",
+              "acceptance_criteria": [
+                "Runs GSEA (fgsea, ranked by DESeq2 stat/log2FC) and/or over-representation analysis on the padj<0.05 gene list from T1S2 against WikiPathways-human (HGNC symbols) and MSigDB Hallmark-human gene sets",
+                "Uses gene symbols directly from the counts matrix without additional ID mapping, since both reference gene sets are HGNC-symbol based",
+                "Reports enriched pathways with adjusted p-values (e.g. FDR<0.25 for GSEA, or FDR<0.05 for ORA) and normalized enrichment scores where applicable",
+                "If either reference gene set collection is unavailable at run time, reports that gap explicitly rather than silently skipping enrichment"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "gseapy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Standard GSEA/ORA workflow against WikiPathways-human and MSigDB Hallmark-human GMTs confirmed present in the reference collection."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 2,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The statistical core is exactly right: one DESeqDataSet with ~condition, control releveled as reference, a single DESeq() fit whose dispersions are shared by an LRT against ~1 for the omnibus question and two Wald contrasts against control for the pairwise question, with an explicit caveat that LRT log2FoldChange columns are not interpretable — this matches the reference precisely and avoids the subset-refitting error. Normalization is handled correctly inside the model with an explicit instruction not to pre-normalize, and the filter (count >=10 in at least 4 samples, justified as the smallest group size) is minimal and reasoned. The main failure is QC: only a dispersion plot is named, with no PCA, sample-distance heatmap, library-size inspection, or outlier/shallow-sample policy before the model. FDR is BH at 0.05 with ashr/apeglm shrinkage, but the |log2FC| >= 1 cut is applied post hoc rather than as an lfcThreshold in the test; enrichment was not warranted here and, where included, specifies a filtered-expressed background and WikiPathways by name but no collection version, no gene-set size window, and uses ORA on significance-thresholded lists rather than a ranked GSEA. Reporting names design, thresholds and significant-gene counts but omits software versions and a clear statement of the number of genes tested."
+}

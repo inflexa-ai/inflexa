@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 1,
+    "low_count_filter": 1,
+    "normalization": 1,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 4
+  },
+  "rationale": "The planner correctly recognized that the inputs are unquantified paired-end FASTQ with no count matrix, refused to invent one, audited the environment for quantifiers and indices, and asked precisely the questions the reference calls for (an existing count table, or a named quantifier plus matching genome/transcriptome index, with the GENCODE v50 annotation noted). This is the right stop and matches the reference outcome, so method_fits_design scores high. However, no downstream plan was stated at all: nothing on sample-structure QC, low-count filtering, in-model normalization, the ~treatment design and contrast with reference level, BH at 0.05 with LFC shrinkage, or the low-power caveat of three-vs-three that the reference says should follow once counts exist. Enrichment is not warranted here and its absence is not wrong, but nothing was affirmatively planned; the clarification message itself is clear about design and data state but is not an analysis report."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats STAR/featureCounts integers as gene-level counts entering DESeq2 directly, explicitly refusing tximport and length correction, with a justified minimal filter (>=10 in >=3, smallest group), size factors estimated inside the model, ~condition with control set as reference, contrast (condition, treated, control), BH at 0.05, apeglm shrinkage, and lfcThreshold inside results() rather than a post hoc cut. QC is thorough (library sizes, blind VST, PCA, distance heatmap, coloured by condition with the absent batch column noted) and has an outlier policy, though no explicit rule for a shallow library. Enrichment was not requested but is fully specified when included: full ranked list by Wald statistic, tested-gene universe, named collections with version, 15-500 size window, seed recorded; a small deduction for scope beyond the question. The report opens with the 3-vs-3 power caveat and records versions, design, thresholds, tested/significant counts and sessionInfo."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan identifies the perfect confound from the metadata itself, refuses ComBat-seq/SVA/removeBatchEffect, fits the only estimable model (~condition, control as reference), demonstrates the rank deficiency of ~batch + condition as documentation, and labels every output as the confounded treated+B2 vs control+B1 contrast while naming the design change needed for attribution — this matches the reference closely, though it proceeds rather than pausing to request a rebalanced design. QC is exemplary: library sizes, detection rates, duplicate-symbol handling, PCA and correlation clustering, with the explicit statement that the split cannot be attributed to either factor. Filtering (filterByExpr or ≥10 counts in ≥6 samples, with survivor count reported) and the count-native DESeq2/voom pipeline are appropriate, though normalization is implicit — size factors and TMM are never named, only VST/log-CPM for visualization. BH with apeglm/ashr shrinkage is correct, but the |LFC|>1 filter is applied post hoc rather than via lfcThreshold. Enrichment uses preranked GSEA on the full ranking with a stated metric, seed, and 15–500 size window, but no collection version is given, and running enrichment at all on an uninterpretable contrast adds interpretive risk even with the artefact-flagging screen; report completeness is strong on design, thresholds and caveats but omits software versions."
+}

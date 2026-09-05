@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly reads the design as a balanced 2x2 factorial rather than a time course, treats time as a two-level factor explicitly (noting time_hours cannot support a trend), fits ~condition + time + condition:time in one model, and makes the interaction coefficient the primary test with a matching LRT against the reduced model; simple effects are drawn from the same fit and the difference-of-significance fallacy is named. QC is concrete (cross-tab of cell counts, PCA with percent variance, distance heatmap, library sizes) with a sensible no-removal policy at n=3, and the filter (>=10 counts in >=3 samples, the smallest group size) is minimal and justified with retained-gene reporting. Normalization is inside the model with size factors reported and VST used only for QC, though the plan never explicitly forbids pre-normalized input. BH at 0.05/0.1 with apeglm-or-ashr shrinkage on the interaction coefficient is correct and stated up front. The GSEA track is not really warranted for a two-time-point interaction question, but if run it is done properly (ranking metric stated, universe restricted to the tested genes, named human collections with version and set count, 15-500 size window, fixed seed); reporting covers design, thresholds, gene counts and power caveats but does not commit to stating software versions."
+}

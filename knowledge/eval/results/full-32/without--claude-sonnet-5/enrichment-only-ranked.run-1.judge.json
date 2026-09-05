@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 5,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly consumes the existing DESeq2 table rather than redoing DE, runs preranked fgsea/gseapy on the full list with a stated signed metric (Wald stat or sign(LFC)*-log10 p), names the Hallmark collection, applies a 15-500 size window, BH on pathways, and reports match rate and direction. It loses credit for adding an ORA step on padj<0.05 genes, which the reference explicitly flags as inappropriate (even though it correctly uses the 12000-gene universe), for omitting a fixed seed and leading-edge reporting, and for never verifying that the input table is unfiltered. The design-side criteria (QC, filtering, normalization, formula) are largely moot since DE is supplied; the plan sensibly does not fabricate them but only notes the sample_01 caveat without any inspection. The report lacks fgsea and MSigDB version statements and a stated alpha for the GSEA pathway FDR."
+}

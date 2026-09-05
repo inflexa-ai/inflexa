@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: unpaired two-group ~condition with chow releveled as reference, DESeq2 Wald plus edgeR QL cross-check, apeglm shrinkage, BH at 0.05 with independent filtering, and any LFC threshold placed inside results(). QC keeps sample_01, inspects it on a blind-VST PCA and distance heatmap with library size and detected genes reported, and requires a non-depth reason to drop. The >=10 counts in >=6 samples filter is minimal and tied to the smallest group; size factors and TMM stay inside the models. Enrichment uses fgsea on the full Wald-ranked list against the mouse Hallmark collection with a named version, a 15-500 window, a seed, mapped-share reporting, and a babelgene ortholog fallback with mapping shares rather than a bare symbol-case map. The only weak point is the somewhat contrived justification tying the edgeR cross-check to missing tximport length offsets, which does not undermine an otherwise complete and design-specific plan."
+}

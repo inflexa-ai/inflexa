@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes the perfect confounding, refuses to fit batch or apply ComBat-seq/SVA/removeBatchEffect, runs a condition-only DESeq2 model, and labels every result as confounded with an explicit no-batch-effect assumption and a call for deconfounded replication, matching the reference. Design formula, reference level, contrast, median-of-ratios normalization, a group-size-justified filter, apeglm shrinkage, and BH at alpha 0.05 are all stated explicitly. QC covers PCA, distances, and library sizes colored by both factors but omits a stated policy for outliers or shallow samples. Enrichment was not requested and is of limited value on a confounded list, though its specification (full ranked list, Wald stat, named collections with version, 15-500 size window, caveat) is complete. The report step names everything required including versions, counts, and caveats."
+}

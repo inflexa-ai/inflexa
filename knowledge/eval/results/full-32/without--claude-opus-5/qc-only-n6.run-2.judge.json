@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly stays inside the QC question: library sizes with sample_01 quantified against the median and the next-lowest sample, blind VST on a DESeq2 object with ~condition, PCA on the top 500 variable genes colored by condition with PC-vs-depth correlations and a leave-one-out PCA, a clustered Euclidean distance heatmap with own-group versus opposite-group distances, and a criteria-first KEEP/KEEP WITH CAVEAT/EXCLUDE verdict that names the 5v6 power cost. Normalization is median-of-ratios inside DESeq2 with no pre-adjustment, and differential testing and enrichment are explicitly excluded. The low-count filter (>=10 in >=6 samples) is reasonable but its justification as the smallest group size is not stated, the reference level for condition is not set, and the report does not commit to stating package versions."
+}

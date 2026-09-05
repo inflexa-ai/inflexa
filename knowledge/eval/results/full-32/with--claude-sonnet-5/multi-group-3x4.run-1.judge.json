@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: one ~condition model fit on all twelve samples, DESeq2 LRT against ~1 for the any-difference question, two named Wald contrasts against an explicitly releveled control from the same fit, ashr shrinkage, BH at 0.05 within each contrast with alpha passed to results(), and a minimal filter (>=10 counts in >=4 samples) justified by group size with internal median-of-ratios normalization. QC is thorough but only 'flags' a deviant sample without stating a keep/drop policy, and the stated rationale for choosing ashr over apeglm is muddled (treated vs control is a single coefficient) though the choice itself is acceptable. Enrichment was not asked for and the plan adds it anyway; the Hallmark/Reactome collections, size window, and stat-based ranking are specified, but running preranked fgsea on the unsigned LRT statistic is not meaningful, Reactome is pinned only to 'current', and the Entrez mapping does not match the symbol-based Hallmark GMT. The report step is complete with design, thresholds, tested/significant counts, diagnostics, and reproducibility record."
+}

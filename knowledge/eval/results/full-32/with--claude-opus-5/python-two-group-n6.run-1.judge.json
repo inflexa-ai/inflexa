@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: PyDESeq2 Wald test on the unpaired 6 vs 6 single-batch design, ~condition with control as explicit reference and a named contrast, median-of-ratios inside the model, a minimal 10-in-6 prefilter, BH at 0.05 with shrunken LFC reported beside the unshrunken estimate and no post hoc fold-change cut. QC is complete and specific (library sizes, detected genes, blind VST PCA on 500 genes, distance heatmap, sample_01 kept with a stated keep/drop policy and a leave-one-out sensitivity fit). Enrichment uses gseapy prerank on the full Wald-ranked list against MSigDB Hallmark 2026.1 with the 15-500 window, tested-gene universe and a fixed seed, and the report section names every required element. Minor deductions: the plan asserts 'apeglm' shrinkage although PyDESeq2 provides only an apeglm-like normal-prior shrinkage, and the extra voom-style hand-rolled comparator adds complexity without being required by the design."
+}

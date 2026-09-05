@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference precisely: DESeq2 with ~subject + condition, an LRT against ~subject as the omnibus 'either treatment' test, and all three pairwise contrasts including A-vs-B pulled from the single 12-sample fit with ashr shrinkage and BH at stated alphas, explicitly rejecting subsetted refits and the union-of-lists fallacy. QC is thorough and design-specific (subject x condition cross-tab, PCA annotated by both factors, variancePartition, explicit no-drop policy), and filterByExpr is applied on the design. Normalization is implicit in DESeq2 rather than stated as size-factor estimation, and package versions are not explicitly required in the report. Enrichment was not asked for but is executed properly (full ranked universe, named MSigDB version, size window, ORA background); ranking by shrunken LFC rather than the test statistic is a defensible but weaker choice."
+}

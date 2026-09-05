@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly recognizes an unrecorded, orthogonal structure and keeps raw counts in DESeq2 with a nuisance term, but it makes the data-derived k=2 cluster label the primary covariate (fixing the dimension from the PCA rather than letting svaseq estimate it) and relegates SVA to a cross-check; it never asks the analyst for the unrecorded variable and does not check that surrogate variables are independent of condition. QC is a PCA with a contingency table but lacks library sizes, sample distances, or an outlier policy; the count filter is a vague example. BH at 0.05 is stated but no fold-change shrinkage is mentioned, and the reference level is not set. Enrichment is unresolved between ORA and GSEA, with no explicit universe, ranking metric, collection version, or size window; the report lacks package versions."
+}

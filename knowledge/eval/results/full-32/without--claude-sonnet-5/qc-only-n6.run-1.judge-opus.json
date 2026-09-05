@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly reads the question as pure QC and stops before any differential test, matching the reference: library sizes from raw column sums, DESeq2 median-of-ratios size factors with vst, a labeled PCA colored by condition, and a Euclidean distance heatmap with clustering, plus an explicit evidence-based verdict on sample_01 that refuses to drop it on depth alone and notes the 5-vs-6 imbalance consequence. Normalization is handled correctly inside the DESeq2 framework with raw counts reserved for depth reporting, and no pre-normalized values enter the transformation. The low-count filter is minimal and reported (count >=10 in at least a few samples, with the surviving gene count stated), though 'a few samples' is left slightly vague rather than tied to group size. No model formula, contrast, FDR, shrinkage, or enrichment is specified, which is the right call here since no test is requested; the design facts (unpaired, single batch, 6v6) are stated, so these criteria are credited for correct omission rather than penalized. Reporting is otherwise complete except that package versions are not named."
+}

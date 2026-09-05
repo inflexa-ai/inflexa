@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference design exactly: DESeq2 with ~subject + condition, an LRT against ~subject as the omnibus 'either treatment' test, and all three pairwise Wald contrasts drawn from the single 12-sample fit with shared dispersion, explicitly rejecting subsetted refits and the union-of-lists FDR fallacy. QC is thorough and design-aware (sample-name concordance, subject x condition cross-tab, library sizes, PCA/correlation colored by subject and condition, variancePartition, explicit no-drop policy), and filtering uses filterByExpr on the ~subject+condition design with in/out counts reported. FDR handling is exemplary: BH within contrast at stated alphas 0.05 and 0.1, ashr shrinkage chosen correctly because apeglm cannot handle the A-vs-B contrast, and no pre-FDR fold-change filtering. Normalization is implicit in the DESeq2/edgeR workflow and raw counts are kept (with rounding of Salmon estimates noted), but size factors/TMM are never named explicitly, which costs a couple of points. Enrichment is well specified (fgseaMultilevel on shrunken-LFC ranks over the full filtered universe, named human MSigDB collections with version, size window 10-500, per-collection BH, collapsePathways, ORA gated on list size with an explicit background); reporting names methods, design, thresholds, gene counts, and n=4 power caveats."
+}

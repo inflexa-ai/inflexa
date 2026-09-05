@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan matches the reference exactly: a DESeq2 LRT of ~condition+time+condition:time against ~condition+time on raw counts with size factors estimated inside the model, a justified minimal filter (>=10 in >=3 samples), and per-timepoint Wald contrasts from the same fit. QC includes VST PCA and correlation heatmap colored by condition/time but states no explicit policy for handling an outlier and omits library-size checks; coding time as an ordered factor risks polynomial contrasts that would complicate the resultsNames-based per-timepoint contrasts, and the reference level is never named. BH at 0.05 is stated but no fold-change shrinkage is planned for the reported per-timepoint effects. Enrichment uses the correct tested-gene universe but names no WikiPathways version or gene-set size window, and the report plan omits package versions."
+}

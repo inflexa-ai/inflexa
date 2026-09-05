@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly avoids refitting DE, ranks all tested genes, runs gseapy prerank against a local human Hallmark GMT with ≥1000 permutations and a fixed seed, and reports NES, FDR and leading edges per set, which matches the core of the reference. It deviates on the ranking metric (preferring shrunken log2FC rather than the Wald statistic or signed log p, which the reference specifies), gives only a vague 'deterministic' tie rule, uses a 10–500 set-size window instead of 15–500, and never names the MSigDB release version. The added ORA on padj-thresholded genes is framed as a sensitivity check rather than the primary readout, so it is not the disqualifying error the reference warns of, but it adds post hoc thresholds that contribute little. The shallow sample_01 is handled only as an inherited caveat, which is appropriate for an enrichment-only task but limits the QC score."
+}

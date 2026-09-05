@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on a ~condition model with control as explicit reference and a named contrast, a minimal justified filter (>=10 counts in >=3 samples), internal median-of-ratios normalization, BH at 0.05 with apeglm shrinkage, and an explicit low-power statement. QC covers PCA, distance heatmap and library sizes, but only flags an outlier without stating what is done with one. Enrichment takes the correct ortholog path (one-to-one babelgene mapping, mapping share reported, fgsea on Wald statistic, Hallmark with version, 15-500 window), though the babelgene/ortholog table version is not named. The report is thorough but never states the Ensembl release or the Danio rerio gene identifier space (ENSDARG vs symbol), which the reference requires, and the plan's reliance on 'gene symbols' from a Salmon/Ensembl quantification is slightly underspecified."
+}

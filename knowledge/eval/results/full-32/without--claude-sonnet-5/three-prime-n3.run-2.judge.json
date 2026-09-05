@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly matches the 3' tag-seq design: raw counts into DESeq2 Wald with median-of-ratios normalization, explicit refusal of any length correction or TPM/FPKM, design ~ condition with control as reference, BH at 0.05 and apeglm shrinkage, and a stated low-power caveat. The low-count filter uses the full-length default (>=10 in 3 samples) rather than the lower floor appropriate for a tag library with no length dependence, and gives no tag-seq-specific justification. QC is split awkwardly: library sizes are checked first, but the PCA/distance plot is placed after the model as an either/or sanity check without a stated outlier policy or coloring. Enrichment was not requested and is not warranted for a 3v3 'which genes differ' question; the added step names a versioned collection and a filtered universe but lacks a size window and leaves the ranking metric loosely specified. Package versions are named but not required in the report."
+}

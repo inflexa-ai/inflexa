@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the matrix as RSEM expected counts, states that the tximport type='rsem' effective-length offset is lost because genes.results were not delivered, rounds only for DESeq2, never substitutes TPM, and records the deviation in outputs; it stops just short of explicitly requesting the missing files. QC keeps sample_01 with an explicit non-depth-alone removal policy, PCA and distance heatmap on blind VST, and reports library size and detected genes. The filter (>=10 counts in >=6 samples) is minimal and tied to group size, normalization is in-model median-of-ratios with no pre-scaling, the design ~condition with explicit relevel and (condition, treated, control) contrast is correct, and BH at 0.05 with apeglm and lfcThreshold-in-test are all stated. Enrichment uses fgsea on the full Wald-ranked list with pinned Hallmark/Reactome versions, a 15-500 window, and a tested-gene universe for any ORA; the report acceptance list covers method, versions, design, thresholds, tested/significant counts, and both key caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies that TPM cannot feed a count model, uses limma with eBayes(trend=TRUE) on log2(TPM+1), explicitly forbids voom and pseudo-count rounding, and states the 0+condition design with the lesional-control contrast and BH at 0.05; it does not, however, formally request the raw counts or quant directories as the reference does. QC is thorough (PCA, correlation heatmap, distributions, column-sum check, flag-not-drop policy) and the TPM>1 in >=6 samples filter matches the smallest-group rule. Quantile normalization as the primary matrix is an added step the reference does not call for and is risky given the large coherent psoriasis signature, though the plan acknowledges this and keeps an unnormalized sensitivity run. The |logFC|>1 cut is applied post hoc rather than via treat(), and package versions are not explicitly requested in the report; enrichment is well specified (t-statistic ranking, 10-500 size window, filtered universe) but no collection version is named."
+}

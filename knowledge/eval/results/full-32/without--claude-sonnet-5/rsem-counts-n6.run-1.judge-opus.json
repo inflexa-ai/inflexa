@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the data as RSEM expected counts, states explicitly that rounding is the fallback because the genes.results effective-length files were not delivered, and never substitutes TPM/FPKM into the count model, though it does not request the missing files as the reference plan does. QC is solid and dataset-specific: library sizes, detected genes, PCA/correlation, and an explicit keep-plus-sensitivity-rerun policy for sample_01, with the observation that median-of-ratios size factors can be distorted by a shallow library. Weaknesses: no explicit low-count pre-filter (only DESeq2's independent filtering is named), no LFC shrinkage (apeglm/lfcShrink) for the reported effect sizes, and the reference level for condition is left implicit. The enrichment step names a versioned WikiPathways collection but does not specify an ORA universe, a gene-set size window, or a ranking metric for the GSEA alternative; reporting covers design, thresholds and caveats but omits software versions and explicit tested-gene counts."
+}

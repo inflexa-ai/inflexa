@@ -1,0 +1,571 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "strandedness-unknown-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T17:55:49.800Z",
+  "elapsedMs": 151647,
+  "outcome": "plan_submitted",
+  "planId": "pln-c06b01cc",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Strandedness-risk and count-integrity diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A flat abundance profile can also arise from degraded RNA or a globus 3'-bias protocol — do not attribute it to strandedness without saying the alternatives",
+          "Gene symbols in the count matrix may use older HGNC aliases; a missing marker may be a naming issue rather than a biological one",
+          "12,000 genes is fewer than a full annotation, so the matrix may already be pre-filtered — note this, as it affects the interpretation of the zero-fraction"
+        ],
+        "context": "Input: /eval-full-32-without-strandedness-unknown-n3-2/data/inputs/counts/counts.csv, raw integer gene-level counts from STAR/featureCounts, 12,000 rows (first column gene symbol) x 6 sample columns; /eval-full-32-without-strandedness-unknown-n3-2/data/inputs/metadata/metadata.csv, 6 rows x 2 columns mapping sample to condition (3 treated, 3 control). Homo sapiens, liver, drug treatment, unpaired, single batch. The library's strandedness was not recorded and the user explicitly doubts the counts.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Is the 12,000 x 6 featureCounts matrix consistent with a correctly-stranded count run of human liver RNA-seq, and if the strand setting was wrong, what does that do to the treated-vs-control comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Do not attempt to re-count, re-align, or download anything — no BAM/FASTQ exist in this dataset and the sandbox has no network",
+          "Do not transform or overwrite counts.csv; all diagnostics are read-only and the raw matrix is what downstream steps consume",
+          "Report absent gene symbols explicitly instead of imputing or substituting aliases without saying so",
+          "Frame the strandedness output as a risk assessment with stated evidence, never as a determination"
+        ],
+        "description": "Diagnose whether the raw gene-level counts in counts.csv show the signature of a mis-specified strandedness setting, and bound the consequences for the downstream contrast. Report: (a) total assigned counts per sample and the ratio max/min library size; (b) the number and fraction of the 12,000 genes with zero counts per sample and detected at >=10 counts; (c) the fraction of each library taken by the top 10, top 50 and top 500 genes; (d) the rank and CPM of canonical high-abundance human hepatocyte transcripts — ALB, APOA1, APOA2, APOB, SERPINA1, HP, FGA, FGB, FGG, TF, ORM1, CYP2E1, CYP3A4, HPX, AMBP — reporting which are present in the row index and which symbols are absent; (e) the count distribution shape per sample (log10 CPM density / quantiles). Interpret against the expected pattern: a human liver library counted with the correct strand setting is dominated by a handful of secreted hepatocyte transcripts (ALB alone commonly 5-15% of reads) and shows a steep abundance profile, whereas a reverse-stranded library counted as forward (or the converse) typically retains only a minority of assignable reads, flattens that profile and depresses the dominant markers relative to background. State plainly that strandedness cannot be definitively determined from a count matrix — that requires the BAM/FASTQ, which are not part of this dataset — so the output is a risk assessment, not a determination. State equally plainly that the strand setting was applied identically to all six samples in one counting run, so a uniform error attenuates power for every sample alike and does not by itself fabricate a treated-vs-control difference. Write a machine-readable verdict (strand_risk: low | elevated | high) plus the numbers behind it, for the DE steps to carry as a caveat.",
+        "acceptance_criteria": [
+          "Per-sample total counts, zero-fraction, detection at >=10 counts, and top-10/50/500 concentration are all reported in a table",
+          "Rank and CPM reported for each canonical hepatocyte marker queried, with absent symbols listed explicitly rather than silently dropped",
+          "Output states in words that strandedness cannot be proven from counts alone and names what would be needed (BAM/FASTQ or the featureCounts summary file)",
+          "Output states that the strand setting is common to all six samples and therefore attenuates power rather than creating a spurious group difference",
+          "A machine-readable strand_risk verdict (low/elevated/high) is written with the supporting statistics",
+          "Counts are confirmed to be non-negative integers; the number of genes and samples matches 12,000 x 6 and metadata sample IDs match count column names exactly (any mismatch reported, not silently reconciled)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Normalisation and sample-level QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 samples PCA is unstable and PC1 can be driven by one sample — read it alongside the correlation heatmap, not on its own",
+          "Apparent condition separation at n=3 can arise by chance; separation is not evidence of a real effect until the DE test says so"
+        ],
+        "context": "Same two input files as T1S1. Design: 3 treated vs 3 control, unpaired, single batch, so condition is the only design term — there is no batch or pairing variable to model. Carries forward the strand_risk verdict from T1S1 as a caveat on interpretation.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2",
+          "matrixStats"
+        ],
+        "question": "Do the 3 treated and 3 control liver samples separate on condition rather than on library depth, and is any of the six samples an outlier or a likely mislabel?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use condition as the only design factor — there is no batch, pairing, or covariate in the 6 x 2 metadata to model, and inventing one is not permitted",
+          "Use blind=TRUE VST for QC visualisation so the condition labels do not shape the QC picture",
+          "Do not perform batch correction; the design context states a single batch and with n=3 per arm there is nothing to correct against"
+        ],
+        "description": "Build a DESeq2 dataset from counts.csv and metadata.csv with condition as the sole design factor, apply median-of-ratios size-factor normalisation, and produce: size factors per sample against raw library size; a variance-stabilising transform (VST, blind=TRUE for QC); PCA on the top ~500 most variable genes with samples labelled by condition and PC1/PC2 variance explained; a sample-sample Spearman and Pearson correlation heatmap with hierarchical clustering; and a per-sample boxplot of VST values. Report whether the primary axis of variation tracks condition or tracks library size (correlate PC1 with log library size and report the coefficient), and flag any sample whose mean correlation to its own group is lower than to the other group — that is the mislabel signature. With n=3 per arm, state that a single outlier is not safely removable without destroying the design; recommend flagging over dropping and, if a sample is dropped, require the DE step to be reported both with and without it.",
+        "acceptance_criteria": [
+          "Size factors reported per sample alongside raw library size",
+          "VST PCA plot produced with condition labels and PC1/PC2 percent variance stated",
+          "Correlation of PC1 with log library size reported numerically, so depth-driven structure is distinguishable from condition-driven structure",
+          "Sample-sample correlation heatmap with clustering produced; every sample's within-group vs between-group mean correlation reported",
+          "Any outlier or suspected label swap is flagged explicitly with the evidence; no sample is dropped silently"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 vs 3, dispersion estimates lean heavily on the gene-wise-to-trend shrinkage; a genuinely hypervariable gene will be under-called",
+          "A short significant list is a legitimate outcome of an under-powered design, not a failed analysis — do not lower the threshold to manufacture hits",
+          "If the p-value histogram is not roughly uniform under the null with a spike near zero, say so: it points to unmodelled structure or a normalisation problem rather than to biology"
+        ],
+        "context": "12,000 genes x 6 samples, raw integer STAR/featureCounts counts. 3 treated vs 3 control, unpaired, single batch, human liver, drug treatment. n=3 per group is the minimum for a dispersion estimate; DESeq2's shared-dispersion shrinkage across genes is what makes it workable, and that dependence must be stated. Depends on the QC verdicts from T1S1 and T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which genes differ in expression between the 3 drug-treated and the 3 control human liver samples, at what effect size, and at what false discovery rate?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Fit on raw integer counts only — never feed DESeq2 CPM, TPM, VST or any pre-normalised matrix",
+          "Set the control condition as the factor reference explicitly rather than relying on alphabetical ordering",
+          "Report Benjamini-Hochberg adjusted p-values; do not present nominal p-values as significant results",
+          "Use shrunken log2 fold changes for all ranking and for the volcano labels",
+          "Do not drop a sample unless T1S2 flagged it, and if one is dropped report the analysis both with and without it"
+        ],
+        "description": "Run the primary differential expression analysis with DESeq2 on the raw integer counts from counts.csv, design ~condition, with the control level explicitly set as the reference so that a positive log2 fold change means higher in treated. Pre-filter to genes with a minimum count in at least 3 samples (the smallest group size) before fitting. Use the negative-binomial Wald test with DESeq2's default independent filtering and Benjamini-Hochberg FDR. Produce shrunken log2 fold changes with apeglm (fall back to ashr if the coefficient form prevents apeglm) and rank genes by the shrunken estimate, because at n=3 per arm the unshrunken LFC for low-count genes is unreliable and will otherwise dominate any top-N list. Deliver: the complete results table for all tested genes (gene symbol, baseMean, raw and shrunken log2FC, lfcSE, stat, pvalue, padj); the significant set at padj < 0.05 split into up and down in treated; an MA plot; a volcano plot labelling the strongest genes by shrunken effect; a p-value histogram as a sanity check on the null (a non-uniform or spiked histogram is itself a finding); and normalised counts for the top genes. If fewer than ~10 genes pass padj < 0.05, additionally report an explicitly labelled exploratory set (padj < 0.1, or nominal p < 0.01 with |shrunken log2FC| > 1) and state clearly that it is a trend list requiring validation, not a significant result. Report the number of genes tested after filtering and the number removed by independent filtering. Carry the T1S1 strand_risk verdict into the written interpretation: if risk is elevated or high, state that the strand setting is uniform across all six samples so the contrast remains internally valid but the analysis is under-powered and absolute expression levels should not be quoted.",
+        "acceptance_criteria": [
+          "Full DESeq2 results table written for all tested genes with both raw and shrunken log2 fold changes",
+          "Control confirmed as the reference level, with the direction of the log2 fold change stated in words in the output",
+          "Counts of significant genes at padj < 0.05 reported, split into up and down in treated",
+          "MA plot, volcano plot and p-value histogram all produced",
+          "Number of genes retained after pre-filtering and number removed by independent filtering both reported",
+          "If the padj < 0.05 set has fewer than ~10 genes, an exploratory set is reported and unambiguously labelled as a trend list, not a result",
+          "Written interpretation names the n=3-per-arm power limitation and the unresolved strandedness caveat from T1S1"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "edgeR quasi-likelihood cross-check and concordance",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The two methods share the negative-binomial assumption, so agreement rules out tool-specific artefacts but not a shared modelling failure",
+          "Different pre-filtering rules (filterByExpr vs a count threshold) change the tested gene universe — report the universe sizes so the overlap is interpretable"
+        ],
+        "context": "Same 12,000 x 6 raw count matrix and the same 3-treated-vs-3-control design as T1S3. TMM (edgeR) and median-of-ratios (DESeq2) are different normalisations, so agreement between them is also indirect evidence that no single normalisation assumption is driving the result — relevant given the user's doubt about the counts and the unrecorded strandedness.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "ggplot2",
+          "ComplexUpset"
+        ],
+        "question": "Does an independent negative-binomial method reproduce the DESeq2 treated-vs-control gene list, and which genes are method-dependent?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the same raw count matrix, the same sample set and the same reference level as T1S3 so the comparison is like-for-like",
+          "Use edgeR's quasi-likelihood pipeline (glmQLFit/glmQLFTest), not the classic exact test, so the small-sample false discovery control is comparable to DESeq2's",
+          "Do not present the intersection as the sole result — report all three categories and let the reader see the disagreement"
+        ],
+        "description": "Re-run the same treated-vs-control contrast with edgeR quasi-likelihood F-tests as an independent check on the DESeq2 result: filterByExpr with the group factor, TMM normalisation, estimateDisp, glmQLFit and glmQLFTest, BH adjustment. Then compare directly against T1S3: the number significant at FDR < 0.05 in each method, the size of the intersection, a Venn or upset summary, and the Spearman correlation of log2 fold changes across all commonly tested genes (which should be high — a low correlation is a red flag about the matrix itself, not about the methods). Produce a merged table with each gene's DESeq2 and edgeR statistics side by side and a concordance flag (both / DESeq2-only / edgeR-only). Genes significant in only one method are to be flagged and retained in the report, not discarded. Conclude with an explicit statement of how robust the answer to 'which genes differ' is to the choice of tool — the honest summary metric for an n=3 design.",
+        "acceptance_criteria": [
+          "edgeR QL results table written for all tested genes with logFC, F, PValue and FDR",
+          "Overlap between the DESeq2 and edgeR significant sets at FDR < 0.05 reported as counts and as a plot",
+          "Spearman correlation of log2 fold changes between the two methods reported across commonly tested genes",
+          "Merged side-by-side table produced with a both / DESeq2-only / edgeR-only concordance flag per gene",
+          "A written statement of how method-robust the differential gene list is, with the numbers supporting it"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the treated-vs-control signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO sets are nested and hits arrive in correlated blocks; an uncollapsed count massively overstates the number of independent findings",
+          "With n=3 per arm the ranking itself is noisy, so a modest NES with a borderline padj should be treated as a hypothesis",
+          "Liver bulk RNA-seq is dominated by hepatocyte transcripts; a shift in cell composition (immune infiltration, stellate activation) can masquerade as a pathway change in bulk data"
+        ],
+        "context": "Input is the complete ranked result from T1S3 over ~12,000 human gene symbols in liver under drug treatment. Human hallmark (50 sets) and GO BP (~7,500 sets) symbol GMT collections are present in the environment's reference store; the executing agent should resolve them by what they are rather than by a hard-coded path. GSEA on a ranked list is preferred over over-representation testing precisely because the significant gene list from an n=3 design may be too short to support ORA.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which biological processes and hallmark programmes are coordinately shifted in drug-treated versus control human liver, and do they include the xenobiotic-response pathways expected of a hepatic drug exposure?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the human gene set collections — the data is Homo sapiens; a mouse or rat collection would produce confident nonsense",
+          "Rank on all tested genes, not on the thresholded significant subset",
+          "Never quote a GSEA result as evidence of mechanism — enrichment says a set is coordinately shifted, not that a pathway is causally engaged",
+          "Report the enrichment result as inheriting every power and strandedness caveat from T1S1 and T1S3"
+        ],
+        "description": "Run rank-based gene set enrichment on the full DESeq2 treated-vs-control result from T1S3, ranking every tested gene by the shrunken log2 fold change (or by the signed Wald statistic, stating which was used) rather than thresholding into a list — the correct choice when the FDR<0.05 set may be small. Test against human hallmark gene sets and human GO Biological Process gene sets provisioned in this environment as symbol-keyed GMT collections (the count matrix is keyed on gene symbol, so no identifier conversion should be needed; report the fraction of ranked genes matching each collection's symbol space and note any large mismatch as an annotation-vintage problem). Use fgsea with multilevel/adaptive p-values, BH adjustment, and a minimum set size of 10 and maximum of 500. Report the top enriched sets in each direction with NES, padj and leading-edge genes, and collapse the redundant parent/child GO blocks before quoting any count of significant processes. Because the tissue is liver and the perturbation is a drug, comment explicitly on whether xenobiotic and drug metabolism, nuclear-receptor-driven responses (AhR, CAR, PXR, PPAR target programmes), bile acid metabolism, fatty acid metabolism, oxidative stress / reactive oxygen species, and inflammatory or acute-phase hallmarks appear — and say so plainly when they do not, since their absence is informative about the compound's hepatic effect. If either gene set collection is not resolvable at run time, report which was missing and proceed with whichever is available; if neither is, report the gap and stop this step without failing the DE conclusions from track T1.",
+        "acceptance_criteria": [
+          "A single unambiguous ranking metric is used across all tested genes and is named in the output",
+          "Enrichment run against human hallmark sets and, where resolvable, human GO Biological Process sets, with the reference actually used named in the output",
+          "Fraction of ranked gene symbols matching each gene set collection reported",
+          "Top enriched sets reported in both directions with NES, padj and leading-edge genes",
+          "Redundant GO parent/child sets collapsed before any count of significant processes is quoted",
+          "Explicit written comment on the presence or absence of xenobiotic/drug metabolism, nuclear-receptor, bile acid, fatty acid, oxidative stress and inflammatory/acute-phase signal",
+          "If a gene set collection is unavailable the step says which one and continues or stops cleanly without invalidating T1S3"
+        ]
+      }
+    ],
+    "title": "Liver drug-treated vs control DE with strandedness QC",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question has two parts and they must be answered in order. (1) The user doubts the counts because the library's strandedness was never recorded, so the strand setting used at featureCounts time is unknown; a wrong strand setting inflates or deflates counts gene-by-gene in a way that is systematic, not random, and can manufacture or destroy differential expression. (2) Only once the count matrix is judged usable does the treated-vs-control contrast mean anything.\n\nThe input is a single 12,000 x 7 CSV of raw integer gene-level counts from STAR/featureCounts (first column gene symbol, six sample columns) plus a 6 x 2 metadata table with one condition column: 3 treated vs 3 control, unpaired, single batch. This is a small, clean, minimal design — n=3 per arm is the floor for a negative-binomial fit and gives modest power, which the plan states rather than hides.\n\nT1S1 is the strandedness/count-sanity forensic step. Strandedness cannot be *proven* from a count matrix alone (that needs the BAMs or the raw FASTQs, which are not in this dataset), so the step is explicitly diagnostic and must say so. What it can do is bound the problem: total assigned counts per sample and their spread; the fraction of the library taken by the top genes; whether the highly expressed liver genes expected in any human liver RNA-seq (ALB, APOA1/APOA2, SERPINA1, HP, FGA/FGB/FGG, TF, APOB, CYP2E1, CYP3A4) sit at the top of the ranking or are anomalously low; the fraction of the 12,000 genes at zero; and the library-size-vs-detection relationship. The characteristic failure mode of a reverse-stranded library counted as forward (or vice versa) is a global collapse of assigned counts to a small fraction of the true total with an unusually flat, noise-dominated profile and depressed detection of exactly those dominant tissue markers — a signature this step can look for. Critically, whatever the strand setting was, it was the SAME for all six samples (one counting run, single batch), so a uniform strand error attenuates the signal-to-noise for every sample equally and does not by itself create a spurious treated-vs-control difference; it costs sensitivity, not validity of the contrast. That is the honest conclusion the step should reach, and it is why the DE analysis proceeds regardless — with a stated caveat rather than a blocked run.\n\nT1S2 does the sample-level QC that the same doubt demands: library-size normalisation, VST, PCA, sample-sample correlation and a hierarchical clustering, to check the three treated and three control samples separate on condition rather than on depth, and to catch an outlier or a swapped label before it drives the DE result.\n\nT1S3 is the actual answer: DESeq2 negative-binomial Wald test on the raw integer counts, treated vs control with control as reference, independent filtering, Benjamini-Hochberg FDR, and apeglm/ashr shrunken log2 fold changes so that the ranking is not dominated by low-count genes — the failure mode that matters most at n=3. It reports the full results table plus the significant set at FDR<0.05, and, when that set is small (a real possibility at this n), an explicitly labelled relaxed set so the user sees the trend without it being sold as significant.\n\nT1S4 cross-checks the DESeq2 result with edgeR quasi-likelihood on the same matrix. This is not padding: it is the cheapest available guard against a single-tool artefact in an n=3 design, and the overlap between the two significant sets is a direct, quantitative statement of how robust the answer is to the choice of method. Genes significant in one tool only are flagged rather than dropped.\n\nT2S1 puts the DE result in biological context with rank-based GSEA over the human hallmark and GO-BP collections staged in the environment, ranked by the shrunken statistic over all tested genes rather than a thresholded list — the appropriate choice when the significant set may be small. Because the tissue is liver and the condition is drug treatment, the step is directed to report explicitly on xenobiotic/drug metabolism, nuclear-receptor (AhR/CAR/PXR/PPAR) response, bile acid metabolism, oxidative stress and inflammatory hallmarks, since those are the pathways a hepatic drug response actually engages. If the gene sets are absent at run time the step reports the gap and the DE result still stands.\n\nEverything is small — 12,000 x 6 is a few megabytes — so resources are modest throughout."
+  },
+  "usage": {
+    "inputTokens": 626751,
+    "outputTokens": 9626,
+    "cacheCreationInputTokens": 96930,
+    "cacheReadInputTokens": 529677,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pydeseq2",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "sva",
+          "org.Hs.eg.db",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal-expression",
+        "limit": 20
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "strandedness misassignment featureCounts RNA-seq antisense wrong strand setting quality control",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "library strandedness inference RNA-seq quality control gene counts",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "detecting incorrect library strandedness setting in RNA-seq gene counts",
+        "limit": 8
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq strand specificity protocol effect on gene quantification antisense transcription",
+        "maxResults": 6
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "strand-specific RNA-seq quantification bias",
+        "maxResults": 6
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode",
+        "limit": 20
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver",
+        "limit": 20
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pharmacogenomics",
+        "limit": 20
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks",
+        "limit": 20
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treated vs control DE with strandedness QC",
+          "analytical_narrative": "The question has two parts and they must be answered in order. (1) The user doubts the counts because the library's strandedness was never recorded, so the strand setting used at featureCounts time is unknown; a wrong strand setting inflates or deflates counts gene-by-gene in a way that is systematic, not random, and can manufacture or destroy differential expression. (2) Only once the count matrix is judged usable does the treated-vs-control contrast mean anything.\n\nThe input is a single 12,000 x 7 CSV of raw integer gene-level counts from STAR/featureCounts (first column gene symbol, six sample columns) plus a 6 x 2 metadata table with one condition column: 3 treated vs 3 control, unpaired, single batch. This is a small, clean, minimal design — n=3 per arm is the floor for a negative-binomial fit and gives modest power, which the plan states rather than hides.\n\nT1S1 is the strandedness/count-sanity forensic step. Strandedness cannot be *proven* from a count matrix alone (that needs the BAMs or the raw FASTQs, which are not in this dataset), so the step is explicitly diagnostic and must say so. What it can do is bound the problem: total assigned counts per sample and their spread; the fraction of the library taken by the top genes; whether the highly expressed liver genes expected in any human liver RNA-seq (ALB, APOA1/APOA2, SERPINA1, HP, FGA/FGB/FGG, TF, APOB, CYP2E1, CYP3A4) sit at the top of the ranking or are anomalously low; the fraction of the 12,000 genes at zero; and the library-size-vs-detection relationship. The characteristic failure mode of a reverse-stranded library counted as forward (or vice versa) is a global collapse of assigned counts to a small fraction of the true total with an unusually flat, noise-dominated profile and depressed detection of exactly those dominant tissue markers — a signature this step can look for. Critically, whatever the strand setting was, it was the SAME for all six samples (one counting run, single batch), so a uniform strand error attenuates the signal-to-noise for every sample equally and does not by itself create a spurious treated-vs-control difference; it costs sensitivity, not validity of the contrast. That is the honest conclusion the step should reach, and it is why the DE analysis proceeds regardless — with a stated caveat rather than a blocked run.\n\nT1S2 does the sample-level QC that the same doubt demands: library-size normalisation, VST, PCA, sample-sample correlation and a hierarchical clustering, to check the three treated and three control samples separate on condition rather than on depth, and to catch an outlier or a swapped label before it drives the DE result.\n\nT1S3 is the actual answer: DESeq2 negative-binomial Wald test on the raw integer counts, treated vs control with control as reference, independent filtering, Benjamini-Hochberg FDR, and apeglm/ashr shrunken log2 fold changes so that the ranking is not dominated by low-count genes — the failure mode that matters most at n=3. It reports the full results table plus the significant set at FDR<0.05, and, when that set is small (a real possibility at this n), an explicitly labelled relaxed set so the user sees the trend without it being sold as significant.\n\nT1S4 cross-checks the DESeq2 result with edgeR quasi-likelihood on the same matrix. This is not padding: it is the cheapest available guard against a single-tool artefact in an n=3 design, and the overlap between the two significant sets is a direct, quantitative statement of how robust the answer is to the choice of method. Genes significant in one tool only are flagged rather than dropped.\n\nT2S1 puts the DE result in biological context with rank-based GSEA over the human hallmark and GO-BP collections staged in the environment, ranked by the shrunken statistic over all tested genes rather than a thresholded list — the appropriate choice when the significant set may be small. Because the tissue is liver and the condition is drug treatment, the step is directed to report explicitly on xenobiotic/drug metabolism, nuclear-receptor (AhR/CAR/PXR/PPAR) response, bile acid metabolism, oxidative stress and inflammatory hallmarks, since those are the pathways a hepatic drug response actually engages. If the gene sets are absent at run time the step reports the gap and the DE result still stands.\n\nEverything is small — 12,000 x 6 is a few megabytes — so resources are modest throughout.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Strandedness-risk and count-integrity diagnostics",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is the 12,000 x 6 featureCounts matrix consistent with a correctly-stranded count run of human liver RNA-seq, and if the strand setting was wrong, what does that do to the treated-vs-control comparison?",
+              "description": "Diagnose whether the raw gene-level counts in counts.csv show the signature of a mis-specified strandedness setting, and bound the consequences for the downstream contrast. Report: (a) total assigned counts per sample and the ratio max/min library size; (b) the number and fraction of the 12,000 genes with zero counts per sample and detected at >=10 counts; (c) the fraction of each library taken by the top 10, top 50 and top 500 genes; (d) the rank and CPM of canonical high-abundance human hepatocyte transcripts — ALB, APOA1, APOA2, APOB, SERPINA1, HP, FGA, FGB, FGG, TF, ORM1, CYP2E1, CYP3A4, HPX, AMBP — reporting which are present in the row index and which symbols are absent; (e) the count distribution shape per sample (log10 CPM density / quantiles). Interpret against the expected pattern: a human liver library counted with the correct strand setting is dominated by a handful of secreted hepatocyte transcripts (ALB alone commonly 5-15% of reads) and shows a steep abundance profile, whereas a reverse-stranded library counted as forward (or the converse) typically retains only a minority of assignable reads, flattens that profile and depresses the dominant markers relative to background. State plainly that strandedness cannot be definitively determined from a count matrix — that requires the BAM/FASTQ, which are not part of this dataset — so the output is a risk assessment, not a determination. State equally plainly that the strand setting was applied identically to all six samples in one counting run, so a uniform error attenuates power for every sample alike and does not by itself fabricate a treated-vs-control difference. Write a machine-readable verdict (strand_risk: low | elevated | high) plus the numbers behind it, for the DE steps to carry as a caveat.",
+              "context": "Input: /eval-full-32-without-strandedness-unknown-n3-2/data/inputs/counts/counts.csv, raw integer gene-level counts from STAR/featureCounts, 12,000 rows (first column gene symbol) x 6 sample columns; /eval-full-32-without-strandedness-unknown-n3-2/data/inputs/metadata/metadata.csv, 6 rows x 2 columns mapping sample to condition (3 treated, 3 control). Homo sapiens, liver, drug treatment, unpaired, single batch. The library's strandedness was not recorded and the user explicitly doubts the counts.",
+              "question_context": "",
+              "acceptance_criteria": [
+                "Per-sample total counts, zero-fraction, detection at >=10 counts, and top-10/50/500 concentration are all reported in a table",
+                "Rank and CPM reported for each canonical hepatocyte marker queried, with absent symbols listed explicitly rather than silently dropped",
+                "Output states in words that strandedness cannot be proven from counts alone and names what would be needed (BAM/FASTQ or the featureCounts summary file)",
+                "Output states that the strand setting is common to all six samples and therefore attenuates power rather than creating a spurious group difference",
+                "A machine-readable strand_risk verdict (low/elevated/high) is written with the supporting statistics",
+                "Counts are confirmed to be non-negative integers; the number of genes and samples matches 12,000 x 6 and metadata sample IDs match count column names exactly (any mismatch reported, not silently reconciled)"
+              ],
+              "constraints": [
+                "Do not attempt to re-count, re-align, or download anything — no BAM/FASTQ exist in this dataset and the sandbox has no network",
+                "Do not transform or overwrite counts.csv; all diagnostics are read-only and the raw matrix is what downstream steps consume",
+                "Report absent gene symbols explicitly instead of imputing or substituting aliases without saying so",
+                "Frame the strandedness output as a risk assessment with stated evidence, never as a determination"
+              ],
+              "caveats": [
+                "A flat abundance profile can also arise from degraded RNA or a globus 3'-bias protocol — do not attribute it to strandedness without saying the alternatives",
+                "Gene symbols in the count matrix may use older HGNC aliases; a missing marker may be a naming issue rather than a biological one",
+                "12,000 genes is fewer than a full annotation, so the matrix may already be pre-filtered — note this, as it affects the interpretation of the zero-fraction"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Normalisation and sample-level QC",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Do the 3 treated and 3 control liver samples separate on condition rather than on library depth, and is any of the six samples an outlier or a likely mislabel?",
+              "description": "Build a DESeq2 dataset from counts.csv and metadata.csv with condition as the sole design factor, apply median-of-ratios size-factor normalisation, and produce: size factors per sample against raw library size; a variance-stabilising transform (VST, blind=TRUE for QC); PCA on the top ~500 most variable genes with samples labelled by condition and PC1/PC2 variance explained; a sample-sample Spearman and Pearson correlation heatmap with hierarchical clustering; and a per-sample boxplot of VST values. Report whether the primary axis of variation tracks condition or tracks library size (correlate PC1 with log library size and report the coefficient), and flag any sample whose mean correlation to its own group is lower than to the other group — that is the mislabel signature. With n=3 per arm, state that a single outlier is not safely removable without destroying the design; recommend flagging over dropping and, if a sample is dropped, require the DE step to be reported both with and without it.",
+              "context": "Same two input files as T1S1. Design: 3 treated vs 3 control, unpaired, single batch, so condition is the only design term — there is no batch or pairing variable to model. Carries forward the strand_risk verdict from T1S1 as a caveat on interpretation.",
+              "acceptance_criteria": [
+                "Size factors reported per sample alongside raw library size",
+                "VST PCA plot produced with condition labels and PC1/PC2 percent variance stated",
+                "Correlation of PC1 with log library size reported numerically, so depth-driven structure is distinguishable from condition-driven structure",
+                "Sample-sample correlation heatmap with clustering produced; every sample's within-group vs between-group mean correlation reported",
+                "Any outlier or suspected label swap is flagged explicitly with the evidence; no sample is dropped silently"
+              ],
+              "constraints": [
+                "Use condition as the only design factor — there is no batch, pairing, or covariate in the 6 x 2 metadata to model, and inventing one is not permitted",
+                "Use blind=TRUE VST for QC visualisation so the condition labels do not shape the QC picture",
+                "Do not perform batch correction; the design context states a single batch and with n=3 per arm there is nothing to correct against"
+              ],
+              "caveats": [
+                "With 6 samples PCA is unstable and PC1 can be driven by one sample — read it alongside the correlation heatmap, not on its own",
+                "Apparent condition separation at n=3 can arise by chance; separation is not evidence of a real effect until the DE test says so"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes differ in expression between the 3 drug-treated and the 3 control human liver samples, at what effect size, and at what false discovery rate?",
+              "description": "Run the primary differential expression analysis with DESeq2 on the raw integer counts from counts.csv, design ~condition, with the control level explicitly set as the reference so that a positive log2 fold change means higher in treated. Pre-filter to genes with a minimum count in at least 3 samples (the smallest group size) before fitting. Use the negative-binomial Wald test with DESeq2's default independent filtering and Benjamini-Hochberg FDR. Produce shrunken log2 fold changes with apeglm (fall back to ashr if the coefficient form prevents apeglm) and rank genes by the shrunken estimate, because at n=3 per arm the unshrunken LFC for low-count genes is unreliable and will otherwise dominate any top-N list. Deliver: the complete results table for all tested genes (gene symbol, baseMean, raw and shrunken log2FC, lfcSE, stat, pvalue, padj); the significant set at padj < 0.05 split into up and down in treated; an MA plot; a volcano plot labelling the strongest genes by shrunken effect; a p-value histogram as a sanity check on the null (a non-uniform or spiked histogram is itself a finding); and normalised counts for the top genes. If fewer than ~10 genes pass padj < 0.05, additionally report an explicitly labelled exploratory set (padj < 0.1, or nominal p < 0.01 with |shrunken log2FC| > 1) and state clearly that it is a trend list requiring validation, not a significant result. Report the number of genes tested after filtering and the number removed by independent filtering. Carry the T1S1 strand_risk verdict into the written interpretation: if risk is elevated or high, state that the strand setting is uniform across all six samples so the contrast remains internally valid but the analysis is under-powered and absolute expression levels should not be quoted.",
+              "context": "12,000 genes x 6 samples, raw integer STAR/featureCounts counts. 3 treated vs 3 control, unpaired, single batch, human liver, drug treatment. n=3 per group is the minimum for a dispersion estimate; DESeq2's shared-dispersion shrinkage across genes is what makes it workable, and that dependence must be stated. Depends on the QC verdicts from T1S1 and T1S2.",
+              "acceptance_criteria": [
+                "Full DESeq2 results table written for all tested genes with both raw and shrunken log2 fold changes",
+                "Control confirmed as the reference level, with the direction of the log2 fold change stated in words in the output",
+                "Counts of significant genes at padj < 0.05 reported, split into up and down in treated",
+                "MA plot, volcano plot and p-value histogram all produced",
+                "Number of genes retained after pre-filtering and number removed by independent filtering both reported",
+                "If the padj < 0.05 set has fewer than ~10 genes, an exploratory set is reported and unambiguously labelled as a trend list, not a result",
+                "Written interpretation names the n=3-per-arm power limitation and the unresolved strandedness caveat from T1S1"
+              ],
+              "constraints": [
+                "Fit on raw integer counts only — never feed DESeq2 CPM, TPM, VST or any pre-normalised matrix",
+                "Set the control condition as the factor reference explicitly rather than relying on alphabetical ordering",
+                "Report Benjamini-Hochberg adjusted p-values; do not present nominal p-values as significant results",
+                "Use shrunken log2 fold changes for all ranking and for the volcano labels",
+                "Do not drop a sample unless T1S2 flagged it, and if one is dropped report the analysis both with and without it"
+              ],
+              "caveats": [
+                "With 3 vs 3, dispersion estimates lean heavily on the gene-wise-to-trend shrinkage; a genuinely hypervariable gene will be under-called",
+                "A short significant list is a legitimate outcome of an under-powered design, not a failed analysis — do not lower the threshold to manufacture hits",
+                "If the p-value histogram is not roughly uniform under the null with a spike near zero, say so: it points to unmodelled structure or a normalisation problem rather than to biology"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "edgeR quasi-likelihood cross-check and concordance",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Does an independent negative-binomial method reproduce the DESeq2 treated-vs-control gene list, and which genes are method-dependent?",
+              "description": "Re-run the same treated-vs-control contrast with edgeR quasi-likelihood F-tests as an independent check on the DESeq2 result: filterByExpr with the group factor, TMM normalisation, estimateDisp, glmQLFit and glmQLFTest, BH adjustment. Then compare directly against T1S3: the number significant at FDR < 0.05 in each method, the size of the intersection, a Venn or upset summary, and the Spearman correlation of log2 fold changes across all commonly tested genes (which should be high — a low correlation is a red flag about the matrix itself, not about the methods). Produce a merged table with each gene's DESeq2 and edgeR statistics side by side and a concordance flag (both / DESeq2-only / edgeR-only). Genes significant in only one method are to be flagged and retained in the report, not discarded. Conclude with an explicit statement of how robust the answer to 'which genes differ' is to the choice of tool — the honest summary metric for an n=3 design.",
+              "context": "Same 12,000 x 6 raw count matrix and the same 3-treated-vs-3-control design as T1S3. TMM (edgeR) and median-of-ratios (DESeq2) are different normalisations, so agreement between them is also indirect evidence that no single normalisation assumption is driving the result — relevant given the user's doubt about the counts and the unrecorded strandedness.",
+              "acceptance_criteria": [
+                "edgeR QL results table written for all tested genes with logFC, F, PValue and FDR",
+                "Overlap between the DESeq2 and edgeR significant sets at FDR < 0.05 reported as counts and as a plot",
+                "Spearman correlation of log2 fold changes between the two methods reported across commonly tested genes",
+                "Merged side-by-side table produced with a both / DESeq2-only / edgeR-only concordance flag per gene",
+                "A written statement of how method-robust the differential gene list is, with the numbers supporting it"
+              ],
+              "constraints": [
+                "Use the same raw count matrix, the same sample set and the same reference level as T1S3 so the comparison is like-for-like",
+                "Use edgeR's quasi-likelihood pipeline (glmQLFit/glmQLFTest), not the classic exact test, so the small-sample false discovery control is comparable to DESeq2's",
+                "Do not present the intersection as the sole result — report all three categories and let the reader see the disagreement"
+              ],
+              "caveats": [
+                "The two methods share the negative-binomial assumption, so agreement rules out tool-specific artefacts but not a shared modelling failure",
+                "Different pre-filtering rules (filterByExpr vs a count threshold) change the tested gene universe — report the universe sizes so the overlap is interpretable"
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "ggplot2",
+                "ComplexUpset"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the treated-vs-control signature",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes and hallmark programmes are coordinately shifted in drug-treated versus control human liver, and do they include the xenobiotic-response pathways expected of a hepatic drug exposure?",
+              "description": "Run rank-based gene set enrichment on the full DESeq2 treated-vs-control result from T1S3, ranking every tested gene by the shrunken log2 fold change (or by the signed Wald statistic, stating which was used) rather than thresholding into a list — the correct choice when the FDR<0.05 set may be small. Test against human hallmark gene sets and human GO Biological Process gene sets provisioned in this environment as symbol-keyed GMT collections (the count matrix is keyed on gene symbol, so no identifier conversion should be needed; report the fraction of ranked genes matching each collection's symbol space and note any large mismatch as an annotation-vintage problem). Use fgsea with multilevel/adaptive p-values, BH adjustment, and a minimum set size of 10 and maximum of 500. Report the top enriched sets in each direction with NES, padj and leading-edge genes, and collapse the redundant parent/child GO blocks before quoting any count of significant processes. Because the tissue is liver and the perturbation is a drug, comment explicitly on whether xenobiotic and drug metabolism, nuclear-receptor-driven responses (AhR, CAR, PXR, PPAR target programmes), bile acid metabolism, fatty acid metabolism, oxidative stress / reactive oxygen species, and inflammatory or acute-phase hallmarks appear — and say so plainly when they do not, since their absence is informative about the compound's hepatic effect. If either gene set collection is not resolvable at run time, report which was missing and proceed with whichever is available; if neither is, report the gap and stop this step without failing the DE conclusions from track T1.",
+              "context": "Input is the complete ranked result from T1S3 over ~12,000 human gene symbols in liver under drug treatment. Human hallmark (50 sets) and GO BP (~7,500 sets) symbol GMT collections are present in the environment's reference store; the executing agent should resolve them by what they are rather than by a hard-coded path. GSEA on a ranked list is preferred over over-representation testing precisely because the significant gene list from an n=3 design may be too short to support ORA.",
+              "acceptance_criteria": [
+                "A single unambiguous ranking metric is used across all tested genes and is named in the output",
+                "Enrichment run against human hallmark sets and, where resolvable, human GO Biological Process sets, with the reference actually used named in the output",
+                "Fraction of ranked gene symbols matching each gene set collection reported",
+                "Top enriched sets reported in both directions with NES, padj and leading-edge genes",
+                "Redundant GO parent/child sets collapsed before any count of significant processes is quoted",
+                "Explicit written comment on the presence or absence of xenobiotic/drug metabolism, nuclear-receptor, bile acid, fatty acid, oxidative stress and inflammatory/acute-phase signal",
+                "If a gene set collection is unavailable the step says which one and continues or stops cleanly without invalidating T1S3"
+              ],
+              "constraints": [
+                "Use the human gene set collections — the data is Homo sapiens; a mouse or rat collection would produce confident nonsense",
+                "Rank on all tested genes, not on the thresholded significant subset",
+                "Never quote a GSEA result as evidence of mechanism — enrichment says a set is coordinately shifted, not that a pathway is causally engaged",
+                "Report the enrichment result as inheriting every power and strandedness caveat from T1S1 and T1S3"
+              ],
+              "caveats": [
+                "GO sets are nested and hits arrive in correlated blocks; an uncollapsed count massively overstates the number of independent findings",
+                "With n=3 per arm the ranking itself is noisy, so a modest NES with a borderline padj should be treated as a hypothesis",
+                "Liver bulk RNA-seq is dominated by hepatocyte transcripts; a shift in cell composition (immune infiltration, stellate activation) can masquerade as a pathway change in bulk data"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core design: balanced batch enters as a covariate (~batch + condition) with control as the explicit reference level, raw counts go into DESeq2 (size factors) and edgeR (TMM) with no pre-adjustment, and BH at alpha 0.05 with apeglm shrinkage is stated. QC covers PCA, sample distances, and library sizes colored by both batch and condition, though the outlier/shallow-sample handling is limited to flagging without a stated action policy. The filter (>=10 counts in >=6 samples) is minimal and tied to group size. Enrichment was not asked and is not clearly warranted; the plan runs it anyway with a full ranked list available but chooses ORA on a discrete list by a self-imposed rule, though the universe, named collection/version, size window, and short-list caveat are all explicit. The report specifies method, versions, design, thresholds, n_tested and n_DE, with reasonable caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses de-duplication with the right reason (no UMIs, duplication tracks expression in deep total-RNA libraries) and keeps sample_01 unless it is a multivariate outlier, which matches the reference policy, and the DESeq2 Wald / edgeR QL, ~condition with control releveled, >=10 counts in >=6 samples filter, internal size factors, BH at 0.05 with apeglm are all explicit and appropriate for 6v6 unpaired single-batch data. The main gap is library-type specificity: it never reports rRNA fraction, mitochondrial fraction, or intronic share to actually explain the >60% duplication, and never considers whether high or uneven rRNA/MT content should be removed from the matrix before normalization — so the total-RNA aspect is acknowledged rhetorically but not operationalized in QC or in the size-factor step. Enrichment is well specified (Wald-stat ranking, named collections with versions, 15-500 size window, collapsePathways, leading edge, no pre-thresholding), though it goes beyond what the question asked. Reporting is thorough on versions, design, contrast, thresholds, tested/significant counts, and caveats."
+}

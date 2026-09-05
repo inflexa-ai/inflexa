@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes the 3' tag-seq library and states explicitly that raw counts go into DESeq2 Wald with no length offset, no tximport, and no TPM conversion, with median-of-ratios normalization inside the model, ~condition with control as reference, BH at 0.05, apeglm shrinkage, and a justified lowered filter of >=5 counts in >=3 samples with tested/significant counts reported. QC (blind VST PCA, distance heatmap, library sizes, colored by condition) precedes the test and outliers are flagged, though no concrete action policy for an outlier is given, and the strandedness check on a count matrix is somewhat vacuous. Enrichment was not requested; the plan adds it with a properly specified fgsea (Wald stat ranking, named collections and versions, 15-500 size window), but it also inserts a caveat that gene-level detection is 'biased by length,' which is incorrect for a 3' tag library and slightly undermines the otherwise correct reasoning. The report step is complete with versions, design, thresholds, counts, and the n=3 power caveat."
+}

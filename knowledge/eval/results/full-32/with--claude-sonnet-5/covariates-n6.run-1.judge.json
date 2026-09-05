@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan uses the correct DESeq2 Wald model ~ sex + age + condition with control as explicit reference, apeglm on the condition coefficient, BH at 0.05, median-of-ratios normalization inside the model, and a minimal justified filter (>=10 counts in >=6 samples). It falls short of the reference by not centering age, by deferring the sex/age-by-group balance tabulation to the final report rather than checking confounding before fitting, and by omitting the XIST/Y-linked sex check; the outlier policy is only 'flag'. Enrichment was not requested and is added as unasked scope, though when included it is specified reasonably (Wald-stat ranking, tested-gene universe, 15-500 window, versions recorded in the report). The report step is thorough, covering design, thresholds, NA accounting by cause, versions, and the unmatched-age caveat."
+}

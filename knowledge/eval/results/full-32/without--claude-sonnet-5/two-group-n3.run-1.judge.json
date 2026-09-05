@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly chooses DESeq2 Wald on raw Salmon counts with in-model size factors, a reasonable minimal filter (>=10 in >=3 samples), BH at 0.05 with apeglm/ashr shrinkage, and explicitly states the n=3 power limitation without lowering alpha; the LOO and permutation diagnostics are an acceptable extra given the coarse-null caveats are stated. QC includes PCA/sample distances and outlier flagging but omits library sizes and a concrete outlier/shallow-sample policy; the design formula is implied (condition as sole factor) but the reference level is never set explicitly. Enrichment was not warranted by the question and, though the collection and version are named, the plan omits an explicit ORA universe and set-size window, and the GSEA ranking metric is ambiguous (stat/log2FC). The report covers method, design, thresholds, counts, and caveats but does not commit to reporting package versions."
+}

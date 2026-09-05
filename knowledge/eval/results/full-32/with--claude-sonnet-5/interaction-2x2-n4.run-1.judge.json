@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as an interaction test, fits ~genotype + treatment + genotype:treatment with explicit WT/vehicle reference levels, tests genotypeKO.treatmentdrug by Wald, and extracts both simple effects (main-effect coefficient and list contrast), which matches the reference exactly. QC is blind VST/PCA/distances/library sizes with a flag-not-drop outlier policy; the filter (>=10 in >=4 samples, the smallest cell) is minimal and justified; normalization is median-of-ratios inside the model with VST explicitly excluded from testing; BH at alpha=0.05 with ashr shrinkage is stated. Enrichment was not requested but is well specified (full ranked list, Wald stat metric, Hallmark 2026.1 and Reactome, 15-500 window, per-contrast), though Reactome is only 'current' rather than a pinned version. The report step names method, versions, design, thresholds, gene counts, and the n=4/cell interaction power caveat."
+}

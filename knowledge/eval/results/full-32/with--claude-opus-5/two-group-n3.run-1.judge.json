@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: DESeq2 Wald on raw counts with ~condition, control as explicit reference, median-of-ratios inside the model, a minimal >=10-in->=3-samples filter, BH at 0.05 with apeglm shrinkage and padj-only selection, and an explicit statement that n=3 is underpowered without loosening or tightening alpha. QC (library sizes, blind VST, PCA on 500 genes, distance heatmap) precedes the test with a stated no-removal/flag policy suited to n=3, and the edgeR QL cross-check plus leave-one-out stability are correctly framed as descriptive robustness evidence. Enrichment is handled properly with a full ranked list, stated Wald-statistic metric, tested-gene universe, 15-500 window and seed, though the second collection and versions are only promised rather than fixed at plan time. The report specifies method, versions, design, thresholds, counts and design caveats, with the power statement placed first."
+}

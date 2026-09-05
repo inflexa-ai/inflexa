@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan fits the 6v6 unpaired single-batch design with pydeseq2 on raw counts, design ~condition, explicit size factors, and a well-specified QC step that characterizes sample_01 (library size, PCA on VST/log-CPM, correlation clustering, zero-count profile) before a documented keep-or-exclude decision with a sensitivity arm. It never mentions any low-count filter, does not state BH or apply log2FC shrinkage, and imposes a post hoc |log2FC|>1 cutoff instead of testing against a threshold. Enrichment correctly uses gseapy prerank on the full ranked list with a stated metric and the 50 Hallmark sets, but omits the MSigDB version, the 15-500 set-size window, and a fixed seed. The reference level for the contrast is not set explicitly, and package versions are not requested in the report, though thresholds, gene counts, and design caveats are."
+}

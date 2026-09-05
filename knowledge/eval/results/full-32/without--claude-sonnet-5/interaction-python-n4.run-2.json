@@ -1,0 +1,278 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-python-n4",
+  "run": 2,
+  "startedAt": "2026-09-05T18:42:48.721Z",
+  "elapsedMs": 34050,
+  "outcome": "plan_submitted",
+  "planId": "pln-38d65096",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and metadata alignment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Are the 17-sample counts matrix and 16-sample metadata table properly aligned, and which low-count genes should be filtered before modeling the WT/KO x vehicle/drug design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample ID column names in counts.csv are reconciled against the metadata.csv rows (16 x 4: genotype, treatment, condition, sample id) — report and resolve any mismatch (e.g., extra column, index column, or duplicate) explicitly rather than silently dropping/adding samples",
+          "Genes with near-zero counts across all 16 (or 17) samples are filtered (e.g., minimum total count or minimum samples with count > 0) and the number of genes retained out of the original ~12000 is reported",
+          "A clean counts matrix (genes x samples) and matching metadata data frame (genotype, treatment as categorical factors) are saved for downstream modeling",
+          "Library size / count distribution per sample is reported to flag any outlier sample before modeling"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Full factorial DESeq2 interaction model (genotype x treatment)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Using the full 2x2 design (genotype: WT vs KO, treatment: vehicle vs drug), which genes show a significant genotype x treatment interaction — i.e., where the drug's effect on expression differs between WT and KO hearts — and what are the drug-vs-vehicle effects within each genotype separately?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "pydeseq2 is fit on raw filtered counts with design ~genotype + treatment + genotype:treatment (or equivalent full-rank parameterization) on the 2x2 factorial data",
+          "The interaction term (genotype:treatment) is extracted as its own contrast with log2FoldChange, p-value, and BH-adjusted p-value (padj) per gene, and the number of genes significant at padj < 0.05 is reported",
+          "Simple-effect contrasts are additionally extracted: drug vs vehicle within WT only, and drug vs vehicle within KO only, so a gene's interaction can be interpreted as concordant, discordant, or genotype-specific",
+          "Results tables (interaction term + both simple effects, with gene symbols) are saved to disk as CSV for downstream enrichment and reporting",
+          "Any convergence warnings or genes dropped by pydeseq2's independent filtering are reported, not silently discarded"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment on genotype-dependent drug-response genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "What biological pathways are enriched among genes showing a significant genotype x treatment interaction (i.e., genes where the drug response differs between WT and KO heart)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Over-representation (or pre-ranked GSEA using the interaction log2FoldChange/stat as ranking metric) is run against a human pathway gene set collection for: (a) the interaction-significant gene list, and (b) separately for genes unique to the WT-only drug response and genes unique to the KO-only drug response, to distinguish genotype-specific mechanisms",
+          "The step confirms a human gene-set reference (WikiPathways Homo sapiens GMT) is present before running; if absent at execution time, the step reports the gap and skips rather than fabricating results",
+          "Enriched pathways are reported with adjusted p-values (BH/FDR) and reported per gene list, ranked by significance",
+          "Gene symbols in the DE result are matched to the pathway gene set's gene identifier space (HGNC symbols) without silent case-mismatch drops"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Interaction-focused summary and visualization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Overall, does the drug act differently in KO than in WT heart, and if so, in what direction and to what extent?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "reporting",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "A summary table classifies genes into: no drug response in either genotype, concordant response (same direction, no significant interaction), WT-specific response, KO-specific response, and discordant/opposite-direction response (significant interaction with opposite-sign simple effects)",
+          "Counts and proportions for each category are reported explicitly, grounded in the padj thresholds used in T1S2",
+          "A visualization (e.g., scatter of WT log2FC vs KO log2FC colored by interaction significance, or MA-style plot) is produced to show the pattern of genotype-dependent drug response",
+          "The final narrative explicitly answers whether the drug's transcriptional effect differs by genotype, citing the number of significant interaction genes out of genes tested, and states this is descriptive of transcriptional response only, not a claim about phenotypic/functional divergence unless corroborated by pathway results from T1S3"
+        ]
+      }
+    ],
+    "title": "Genotype x Drug Interaction DE in Heart RNA-seq",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The data is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 12000 genes x 16 samples plus 1 extra sample noted in counts file — verified during QC) from Salmon-derived raw counts. The research question — does the drug act differently in KO vs WT — is precisely a genotype x treatment interaction question, which requires a single full factorial DESeq2-style negative binomial GLM with an interaction term (~genotype + treatment + genotype:treatment) rather than two separate pairwise contrasts. Plan: (1) QC/filter counts and align metadata, (2) fit the full interaction model in pydeseq2 and extract the interaction term (the genes where the drug effect differs by genotype) plus the simple effects (drug-vs-vehicle within WT, drug-vs-vehicle within KO) for interpretation, (3) run pathway enrichment on the interaction-significant gene set using WikiPathways human gene sets to characterize what kind of genotype-dependent drug response is occurring, (4) summarize with an interaction-focused visualization (e.g., counts of concordant/discordant/genotype-specific responders) to directly answer whether the drug's transcriptional effect differs by genotype and how."
+  },
+  "usage": {
+    "inputTokens": 132924,
+    "outputTokens": 2791,
+    "cacheCreationInputTokens": 71343,
+    "cacheReadInputTokens": 61545,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "gseapy",
+          "statsmodels",
+          "scikit-learn",
+          "numpy",
+          "pandas"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Genotype x Drug Interaction DE in Heart RNA-seq",
+          "analytical_narrative": "The data is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 12000 genes x 16 samples plus 1 extra sample noted in counts file — verified during QC) from Salmon-derived raw counts. The research question — does the drug act differently in KO vs WT — is precisely a genotype x treatment interaction question, which requires a single full factorial DESeq2-style negative binomial GLM with an interaction term (~genotype + treatment + genotype:treatment) rather than two separate pairwise contrasts. Plan: (1) QC/filter counts and align metadata, (2) fit the full interaction model in pydeseq2 and extract the interaction term (the genes where the drug effect differs by genotype) plus the simple effects (drug-vs-vehicle within WT, drug-vs-vehicle within KO) for interpretation, (3) run pathway enrichment on the interaction-significant gene set using WikiPathways human gene sets to characterize what kind of genotype-dependent drug response is occurring, (4) summarize with an interaction-focused visualization (e.g., counts of concordant/discordant/genotype-specific responders) to directly answer whether the drug's transcriptional effect differs by genotype and how.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and metadata alignment",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Are the 17-sample counts matrix and 16-sample metadata table properly aligned, and which low-count genes should be filtered before modeling the WT/KO x vehicle/drug design?",
+              "acceptance_criteria": [
+                "Sample ID column names in counts.csv are reconciled against the metadata.csv rows (16 x 4: genotype, treatment, condition, sample id) — report and resolve any mismatch (e.g., extra column, index column, or duplicate) explicitly rather than silently dropping/adding samples",
+                "Genes with near-zero counts across all 16 (or 17) samples are filtered (e.g., minimum total count or minimum samples with count > 0) and the number of genes retained out of the original ~12000 is reported",
+                "A clean counts matrix (genes x samples) and matching metadata data frame (genotype, treatment as categorical factors) are saved for downstream modeling",
+                "Library size / count distribution per sample is reported to flag any outlier sample before modeling"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Full factorial DESeq2 interaction model (genotype x treatment)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using the full 2x2 design (genotype: WT vs KO, treatment: vehicle vs drug), which genes show a significant genotype x treatment interaction — i.e., where the drug's effect on expression differs between WT and KO hearts — and what are the drug-vs-vehicle effects within each genotype separately?",
+              "acceptance_criteria": [
+                "pydeseq2 is fit on raw filtered counts with design ~genotype + treatment + genotype:treatment (or equivalent full-rank parameterization) on the 2x2 factorial data",
+                "The interaction term (genotype:treatment) is extracted as its own contrast with log2FoldChange, p-value, and BH-adjusted p-value (padj) per gene, and the number of genes significant at padj < 0.05 is reported",
+                "Simple-effect contrasts are additionally extracted: drug vs vehicle within WT only, and drug vs vehicle within KO only, so a gene's interaction can be interpreted as concordant, discordant, or genotype-specific",
+                "Results tables (interaction term + both simple effects, with gene symbols) are saved to disk as CSV for downstream enrichment and reporting",
+                "Any convergence warnings or genes dropped by pydeseq2's independent filtering are reported, not silently discarded"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment on genotype-dependent drug-response genes",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "What biological pathways are enriched among genes showing a significant genotype x treatment interaction (i.e., genes where the drug response differs between WT and KO heart)?",
+              "acceptance_criteria": [
+                "Over-representation (or pre-ranked GSEA using the interaction log2FoldChange/stat as ranking metric) is run against a human pathway gene set collection for: (a) the interaction-significant gene list, and (b) separately for genes unique to the WT-only drug response and genes unique to the KO-only drug response, to distinguish genotype-specific mechanisms",
+                "The step confirms a human gene-set reference (WikiPathways Homo sapiens GMT) is present before running; if absent at execution time, the step reports the gap and skips rather than fabricating results",
+                "Enriched pathways are reported with adjusted p-values (BH/FDR) and reported per gene list, ranked by significance",
+                "Gene symbols in the DE result are matched to the pathway gene set's gene identifier space (HGNC symbols) without silent case-mismatch drops"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Interaction-focused summary and visualization",
+              "track": "T1",
+              "step_type": "reporting",
+              "question": "Overall, does the drug act differently in KO than in WT heart, and if so, in what direction and to what extent?",
+              "acceptance_criteria": [
+                "A summary table classifies genes into: no drug response in either genotype, concordant response (same direction, no significant interaction), WT-specific response, KO-specific response, and discordant/opposite-direction response (significant interaction with opposite-sign simple effects)",
+                "Counts and proportions for each category are reported explicitly, grounded in the padj thresholds used in T1S2",
+                "A visualization (e.g., scatter of WT log2FC vs KO log2FC colored by interaction significance, or MA-style plot) is produced to show the pattern of genotype-dependent drug response",
+                "The final narrative explicitly answers whether the drug's transcriptional effect differs by genotype, citing the number of significant interaction genes out of genes tested, and states this is descriptive of transcriptional response only, not a claim about phenotypic/functional divergence unless corroborated by pathway results from T1S3"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

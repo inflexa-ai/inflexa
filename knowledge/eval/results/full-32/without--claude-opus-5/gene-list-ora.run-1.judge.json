@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses to refit the count model, takes the supplied treated-vs-control DESeq2 table as the source, and audits its sign convention against per-group normalized counts, which is the right handling of a results-in-hand design. The ORA specification matches the reference on every point: universe restricted to non-NA-padj tested genes, GO Biological Process named with a human symbol source and version reported, hypergeometric test via clusterProfiler, BH at 0.05, 10-500 set size window with minimum overlap, redundancy collapse, and up/down lists tested separately alongside the pooled list with sizes reported. QC on library sizes and PCA with an explicit document-not-correct policy for sample_01 is present. Minor gaps: no mention of whether the supplied log2FC is shrunken before applying the |log2FC|>=1 cut, and the low-count filter and normalization criteria are only indirectly addressed (universe as independent-filtering survivors, VST for PCA) since no model is fit; software versions are only partly specified."
+}

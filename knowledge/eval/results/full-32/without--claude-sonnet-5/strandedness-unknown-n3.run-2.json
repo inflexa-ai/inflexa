@@ -1,0 +1,311 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "strandedness-unknown-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T17:44:37.269Z",
+  "elapsedMs": 34601,
+  "outcome": "plan_submitted",
+  "planId": "pln-a6ce0192",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and strandedness-risk diagnostic on raw counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Cannot recompute counts under a different strand assumption without raw reads; this step can only characterize risk from the count matrix itself, not resolve it",
+          "A global strandedness misassignment would depress counts similarly in both groups and is unlikely to create a spurious treated-vs-control DE signal unless confounded with group, which must be checked directly rather than assumed"
+        ],
+        "context": "Data profile states counts are raw integer STAR/featureCounts gene-level counts (12000 x 6) with strandedness not recorded, flagged explicitly by the user as a correctness concern. No FASTQ/BAM is available in this environment to re-run counting under alternate strand settings, so this step is a diagnostic/documentation step, not a fix.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Does the STAR/featureCounts count matrix (12000 genes x 6 samples, liver, drug treatment) show signs consistent with a strandedness/counting problem, and does any such signal correlate with treated-vs-control group rather than being uniform across samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not attempt to re-run featureCounts or download raw reads — no network access and no FASTQ/BAM inputs exist in this environment",
+          "State findings as diagnostic flags, not as a correction to the counts"
+        ],
+        "acceptance_criteria": [
+          "Reports total library size, number of genes with nonzero counts, and gene-detection rate per sample",
+          "Flags samples whose library size or detection rate deviates >2x from the median as possible mis-annotation/strand artifacts",
+          "Explicitly checks whether any QC anomaly is confounded with the treated/control grouping (would invalidate the DE comparison) versus distributed across both groups (a global caveat only)",
+          "Produces a written statement of confidence about whether the strandedness ambiguity is likely to bias the treated-vs-control comparison specifically, given that no raw BAM/FASTQ is available to re-count"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Sample-level QC: library size, PCA, correlation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only n=3 per group, PCA and correlation are descriptive, not a formal test — do not over-interpret separation or lack thereof as definitive"
+        ],
+        "context": "6-sample unpaired design (3 treated vs 3 control), single batch per metadata.csv. Use the raw counts.csv and metadata.csv directly.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "DESeq2"
+        ],
+        "question": "Do the 6 liver samples (3 treated, 3 control, unpaired, single batch) cluster by treatment on PCA, and are there outlier samples or unexpected correlation structure that would undermine the DE comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use variance-stabilizing or log-CPM transform for PCA, not raw counts"
+        ],
+        "acceptance_criteria": [
+          "PCA plot (or coordinates) of variance-stabilized/log-CPM counts colored by treated/control group",
+          "Sample-sample correlation matrix reported",
+          "Any outlier sample explicitly identified and its impact on downstream DE discussed"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group gives limited power; report this explicitly alongside any negative result",
+          "Strandedness of the library was not recorded — if T1S1 finds evidence of group-confounded strand artifact, that must be surfaced here as a limitation on interpretability, not silently ignored"
+        ],
+        "context": "Raw integer gene-level counts (12000 genes x 6 samples) from STAR/featureCounts, 3 treated vs 3 control, unpaired, single batch. Metadata.csv supplies condition labels per sample.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 12000 profiled genes are significantly differentially expressed between treated (n=3) and control (n=3) liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use raw counts as pyDESeq2 input (do not pre-normalize)",
+          "Do not drop the strandedness caveat from the reported output"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 Wald test run with condition (treated vs control) as the design formula on raw integer counts",
+          "Output table with log2FoldChange, p-value, and BH-adjusted p-value (padj) for all tested genes",
+          "Significant gene list defined at padj < 0.05 (report count) plus a secondary list at padj < 0.1 for sensitivity given n=3 per group",
+          "Results explicitly annotated with the QC/strandedness caveat from T1S1 so the output is not presented as unconditionally reliable"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes (WikiPathways, human)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment on a small DE list (n=3 vs n=3) may be underpowered; treat as hypothesis-generating",
+          "If T1S3 yields very few or zero significant genes, run GSEA on the full ranked gene list instead of ORA on a thresholded list, and state which was used"
+        ],
+        "context": "Human liver drug-treatment dataset; use the WikiPathways human gene sets available in the reference store (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt), parsing the '%'-delimited descriptor field to recover readable pathway names and HGNC symbol members.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Are the genes differentially expressed between treated and control liver samples enriched for specific WikiPathways biological pathways, consistent with a coherent drug-response signature rather than noise?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the human WikiPathways GMT specifically (organism-matched); do not substitute mouse or rat pathway sets"
+        ],
+        "acceptance_criteria": [
+          "Over-representation or GSEA-style enrichment run on the DE gene list (padj<0.05, and full ranked list for GSEA) against the human WikiPathways gene sets",
+          "Reports enriched pathways with adjusted p-values",
+          "Interprets whether enriched pathways are plausible liver drug-response biology (e.g., xenobiotic metabolism, lipid metabolism) versus generic/housekeeping terms, as a secondary check on data quality"
+        ]
+      }
+    ],
+    "title": "Liver treated-vs-control DE with strandedness QC",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The counts.csv (12000 genes x 6 samples) comes from STAR/featureCounts with unrecorded library strandedness, and the user explicitly flags uncertainty about whether the counts are correct. Before any differential expression is run, the plan first performs count-matrix QC and a strandedness diagnostic using biotype/gene-body composition proxies available from the counts themselves (e.g., ratio of sense-strand-annotated marker genes, rRNA/mitochondrial read fraction, library size and gene-detection consistency across samples) to flag whether the featureCounts run is plausible for the assumed (unstranded) setting versus showing signs of a stranded protocol counted as unstranded (which manifests as a systematic ~50% loss of assignable reads in antisense-heavy genes and depressed counts overall relative to detected gene complexity). Because we cannot re-run featureCounts with a different strand mode (no BAM/FASTQ available, only the final count matrix), this diagnostic step characterizes and documents the risk rather than fixing it, and downstream DE explicitly caveats that a strandedness misassignment would deflate counts globally/for antisense genes but is unlikely to created a spurious treated-vs-control difference unless strandedness correlates with treatment group (checked explicitly). Step 2 runs standard QC (library size, PCA, sample correlation) on the raw counts to confirm the 3v3 unpaired design behaves as expected and to catch outliers or batch structure despite the single-batch label. Step 3 runs DESeq2 (or pyDESeq2) differential expression between treated and control with Wald test and BH-FDR, the appropriate model for n=3 vs n=3 raw integer counts. Step 4 takes the resulting significant gene list and runs pathway enrichment against the human WikiPathways gene sets available in the reference store, giving biological context to the DE result and a second lens for judging whether it looks like real drug-treatment liver biology or noise/artifact."
+  },
+  "usage": {
+    "inputTokens": 43297,
+    "outputTokens": 3101,
+    "cacheCreationInputTokens": 34143,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated-vs-control DE with strandedness QC",
+          "analytical_narrative": "The counts.csv (12000 genes x 6 samples) comes from STAR/featureCounts with unrecorded library strandedness, and the user explicitly flags uncertainty about whether the counts are correct. Before any differential expression is run, the plan first performs count-matrix QC and a strandedness diagnostic using biotype/gene-body composition proxies available from the counts themselves (e.g., ratio of sense-strand-annotated marker genes, rRNA/mitochondrial read fraction, library size and gene-detection consistency across samples) to flag whether the featureCounts run is plausible for the assumed (unstranded) setting versus showing signs of a stranded protocol counted as unstranded (which manifests as a systematic ~50% loss of assignable reads in antisense-heavy genes and depressed counts overall relative to detected gene complexity). Because we cannot re-run featureCounts with a different strand mode (no BAM/FASTQ available, only the final count matrix), this diagnostic step characterizes and documents the risk rather than fixing it, and downstream DE explicitly caveats that a strandedness misassignment would deflate counts globally/for antisense genes but is unlikely to created a spurious treated-vs-control difference unless strandedness correlates with treatment group (checked explicitly). Step 2 runs standard QC (library size, PCA, sample correlation) on the raw counts to confirm the 3v3 unpaired design behaves as expected and to catch outliers or batch structure despite the single-batch label. Step 3 runs DESeq2 (or pyDESeq2) differential expression between treated and control with Wald test and BH-FDR, the appropriate model for n=3 vs n=3 raw integer counts. Step 4 takes the resulting significant gene list and runs pathway enrichment against the human WikiPathways gene sets available in the reference store, giving biological context to the DE result and a second lens for judging whether it looks like real drug-treatment liver biology or noise/artifact.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and strandedness-risk diagnostic on raw counts",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Does the STAR/featureCounts count matrix (12000 genes x 6 samples, liver, drug treatment) show signs consistent with a strandedness/counting problem, and does any such signal correlate with treated-vs-control group rather than being uniform across samples?",
+              "acceptance_criteria": [
+                "Reports total library size, number of genes with nonzero counts, and gene-detection rate per sample",
+                "Flags samples whose library size or detection rate deviates >2x from the median as possible mis-annotation/strand artifacts",
+                "Explicitly checks whether any QC anomaly is confounded with the treated/control grouping (would invalidate the DE comparison) versus distributed across both groups (a global caveat only)",
+                "Produces a written statement of confidence about whether the strandedness ambiguity is likely to bias the treated-vs-control comparison specifically, given that no raw BAM/FASTQ is available to re-count"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data profile states counts are raw integer STAR/featureCounts gene-level counts (12000 x 6) with strandedness not recorded, flagged explicitly by the user as a correctness concern. No FASTQ/BAM is available in this environment to re-run counting under alternate strand settings, so this step is a diagnostic/documentation step, not a fix.",
+              "caveats": [
+                "Cannot recompute counts under a different strand assumption without raw reads; this step can only characterize risk from the count matrix itself, not resolve it",
+                "A global strandedness misassignment would depress counts similarly in both groups and is unlikely to create a spurious treated-vs-control DE signal unless confounded with group, which must be checked directly rather than assumed"
+              ],
+              "constraints": [
+                "Do not attempt to re-run featureCounts or download raw reads — no network access and no FASTQ/BAM inputs exist in this environment",
+                "State findings as diagnostic flags, not as a correction to the counts"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Sample-level QC: library size, PCA, correlation",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 liver samples (3 treated, 3 control, unpaired, single batch) cluster by treatment on PCA, and are there outlier samples or unexpected correlation structure that would undermine the DE comparison?",
+              "acceptance_criteria": [
+                "PCA plot (or coordinates) of variance-stabilized/log-CPM counts colored by treated/control group",
+                "Sample-sample correlation matrix reported",
+                "Any outlier sample explicitly identified and its impact on downstream DE discussed"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "6-sample unpaired design (3 treated vs 3 control), single batch per metadata.csv. Use the raw counts.csv and metadata.csv directly.",
+              "caveats": [
+                "With only n=3 per group, PCA and correlation are descriptive, not a formal test — do not over-interpret separation or lack thereof as definitive"
+              ],
+              "constraints": [
+                "Use variance-stabilizing or log-CPM transform for PCA, not raw counts"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 profiled genes are significantly differentially expressed between treated (n=3) and control (n=3) liver samples?",
+              "acceptance_criteria": [
+                "DESeq2 Wald test run with condition (treated vs control) as the design formula on raw integer counts",
+                "Output table with log2FoldChange, p-value, and BH-adjusted p-value (padj) for all tested genes",
+                "Significant gene list defined at padj < 0.05 (report count) plus a secondary list at padj < 0.1 for sensitivity given n=3 per group",
+                "Results explicitly annotated with the QC/strandedness caveat from T1S1 so the output is not presented as unconditionally reliable"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts (12000 genes x 6 samples) from STAR/featureCounts, 3 treated vs 3 control, unpaired, single batch. Metadata.csv supplies condition labels per sample.",
+              "caveats": [
+                "n=3 per group gives limited power; report this explicitly alongside any negative result",
+                "Strandedness of the library was not recorded — if T1S1 finds evidence of group-confounded strand artifact, that must be surfaced here as a limitation on interpretability, not silently ignored"
+              ],
+              "constraints": [
+                "Use raw counts as pyDESeq2 input (do not pre-normalize)",
+                "Do not drop the strandedness caveat from the reported output"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes (WikiPathways, human)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Are the genes differentially expressed between treated and control liver samples enriched for specific WikiPathways biological pathways, consistent with a coherent drug-response signature rather than noise?",
+              "acceptance_criteria": [
+                "Over-representation or GSEA-style enrichment run on the DE gene list (padj<0.05, and full ranked list for GSEA) against the human WikiPathways gene sets",
+                "Reports enriched pathways with adjusted p-values",
+                "Interprets whether enriched pathways are plausible liver drug-response biology (e.g., xenobiotic metabolism, lipid metabolism) versus generic/housekeeping terms, as a secondary check on data quality"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Human liver drug-treatment dataset; use the WikiPathways human gene sets available in the reference store (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt), parsing the '%'-delimited descriptor field to recover readable pathway names and HGNC symbol members.",
+              "caveats": [
+                "Enrichment on a small DE list (n=3 vs n=3) may be underpowered; treat as hypothesis-generating",
+                "If T1S3 yields very few or zero significant genes, run GSEA on the full ranked gene list instead of ORA on a thresholded list, and state which was used"
+              ],
+              "constraints": [
+                "Use the human WikiPathways GMT specifically (organism-matched); do not substitute mouse or rat pathway sets"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

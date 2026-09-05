@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with edgeR QL cross-check on an unpaired two-group single-batch design, blind-VST PCA and distance heatmap with a flag-only outlier policy, a justified >=10-in-3 filter, median-of-ratios/TMM inside the model with the missing tximport length offset explicitly acknowledged, ~condition with control as reference and the contrast direction stated, BH at 0.05 with apeglm and no post-hoc fold-change cut. Enrichment correctly states that no zebrafish curated collection exists, uses one-to-one orthologs with mapped share reported, ranks the full list by the Wald statistic, names collections with versions and a 15-500 size window, and sets the ORA universe to tested genes; the only gap is that the ortholog table (babelgene) version is deferred to the reproducibility record rather than named in the plan. The report step covers method, versions, design, thresholds, gene counts, power caveat and annotation statement, though the Ensembl release number itself is left to be filled in at run time rather than named."
+}

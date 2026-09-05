@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, with explicit reference levels, a minimal justified filter (>=10 counts in >=3 samples), size factors inside the model, BH at alpha=0.05 with independent filtering matched to the cutoff, and apeglm/ashr shrinkage of per-time-point condition effects for reporting and clustering. QC is blind VST PCA by condition and time, sample distances, and library sizes with an outlier flagging policy. Enrichment was not asked for and the question is gene-level, so the added fgsea track is unwarranted scope; it is well specified (tested-gene universe, named collections and versions, 15-500 size window) but ranks on the unsigned LRT statistic, which discards direction and makes NES interpretation awkward. The report step is complete with versions, design, thresholds, counts, and the n=3/cell power caveat."
+}

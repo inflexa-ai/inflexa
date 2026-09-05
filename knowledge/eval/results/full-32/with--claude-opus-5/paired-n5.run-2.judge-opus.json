@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the complete balanced paired design and blocks on subject (~ subject + condition) in DESeq2 with a limma-voom cross-check on the same blocked design, and it honestly states that per-subject significance is untestable with one pair each, offering descriptive per-subject log ratios instead. QC precedes testing (library sizes, blind VST PCA colored by subject and condition, distance heatmap) with an explicit no-drop policy that protects the pairing. Filtering is minimal and justified (>=10 counts in >=5 samples), normalization is inside the model (median-of-ratios for DESeq2, TMM for voom) with no pre-scaling, the reference level and contrast direction are explicit, and BH at alpha 0.05 with apeglm shrinkage plus a p-value histogram check is specified. Enrichment is preranked fgsea on the full tested list with a stated Wald ranking metric, named human collections with versions, 15-500 size window, seed, and a rule against ORA on a short list; minor deduction only because the second collection is contingent on provisioning. The report section is thorough on versions, design, thresholds, tested/significant counts, diagnostics, reproducibility record, and the n=5 power caveat."
+}

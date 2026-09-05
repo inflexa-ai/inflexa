@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference approach closely: it gates the analysis on a cluster-by-condition cross-tabulation to confirm the hidden factor is not confounded with treatment, estimates surrogate variables with sva using the full model ~condition and an intercept-only null, caps k on degrees-of-freedom grounds rather than assuming two clusters, checks each SV against condition, cluster label and library size, and explicitly forbids ComBat/removeBatchEffect or any adjusted matrix entering the count model. QC is thorough and precedes the test, the filter is minimal and justified by the smallest group size, normalization stays inside DESeq2/edgeR, and the design formula, reference level and contrast direction are written out. FDR is BH at a stated alpha with alpha passed to results() and apeglm shrinkage for ranking; the conditional fdrtool fallback is a slightly unorthodox addition but is framed as a diagnostic response to a pathological histogram. Enrichment is well specified (full ranked list on the Wald statistic, tested-gene universe, named collections with release version, 15-500 size window, seed), and the report covers methods, versions, thresholds, tested and significant counts, method-agreement and design caveats. The only real gap against the reference is that the plan interrogates the metadata file for an explanatory column but never explicitly asks the analyst for the unrecorded variable (extraction date, lane) before falling back to SVA.\"}"
+}

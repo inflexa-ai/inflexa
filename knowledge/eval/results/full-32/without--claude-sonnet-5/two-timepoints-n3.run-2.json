@@ -1,0 +1,233 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-timepoints-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T17:45:41.017Z",
+  "elapsedMs": 31184,
+  "outcome": "plan_submitted",
+  "planId": "pln-dd6fb523",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 interaction model: condition x time",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per condition/time cell is small; interaction test has limited power to detect anything but moderate-to-large differences in treatment effect size between time points",
+          "Confirm metadata column names/values (condition, time, time_hours) and factor levels before fitting; a mislabeled reference level silently flips the sign of the interaction",
+          "Do not interpret significant main effects as evidence of interaction — only the explicit condition:time term (or a direct t1-vs-t0 fold-change difference contrast) answers the stated question"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano"
+        ],
+        "question": "In this 2x2 design (condition x time, 3 replicates per cell, 12 samples), does the treatment effect (condition) differ between time point t0 and t1 — tested as the condition:time interaction term in a DESeq2 model fit on raw Salmon gene counts?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts (12000 genes x 12 samples) and metadata (12 samples x condition/time/time_hours) are loaded and sample order/names are matched/verified between the two files before building the DESeqDataSet",
+          "A DESeqDataSet is built with design = ~condition + time + condition:time (condition and time coerced to factors with explicit reference levels)",
+          "DESeq() is run and results() extracts the interaction coefficient (condition:time term) with log2FoldChange, p-value and BH-adjusted p-value for all ~12000 genes",
+          "Simple/main effect contrasts are also extracted: treatment vs control at t0, and treatment vs control at t1 (via contrast or by relevelling / building the corresponding coefficient), each with full DESeq2 results tables",
+          "Output includes three results tables (interaction, t0 simple contrast, t1 simple contrast) as CSV, an MA/volcano plot for the interaction term, and a short text summary reporting the number of genes with significant interaction (padj < 0.05) and their overlap with genes significant at t0-only or t1-only",
+          "Independent filtering / outlier handling (Cook's distance) defaults from DESeq2 are left in place and reported, given n=3 per cell is on the low side"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Time-dependence summary of the treatment effect",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This step is descriptive/diagnostic on top of the DESeq2 interaction test, not an independent statistical test — do not treat the scatter-based counts as a substitute p-value"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Among genes with a significant treatment effect at t0 and/or t1, how does the direction and magnitude of the condition log2 fold change compare between the two time points, and how many genes show a statistically significant interaction (padj < 0.05 on condition:time)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical_summary",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Merges the interaction results table with the t0 and t1 simple-contrast tables from T1S1 on gene symbol",
+          "Produces a scatter plot of t0 log2FC vs t1 log2FC for the union of genes significant in either simple contrast or the interaction term, colored by interaction significance (padj<0.05)",
+          "Reports counts: genes DE only at t0, only at t1, at both time points with concordant direction, at both with discordant/opposite direction, and genes with significant interaction term",
+          "Produces a final CSV table (gene, log2FC_t0, log2FC_t1, delta_log2FC, interaction_padj, t0_padj, t1_padj) sorted by interaction significance",
+          "Text summary explicitly answers whether the treatment effect differs by time point, citing the number of interaction-significant genes and example top genes"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of time-dependent treatment-responsive genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "12000-gene background is smaller than a whole-genome background; use the actual tested gene universe (not a generic genome-wide default) as the enrichment background to avoid inflated significance",
+          "With modest gene-list sizes from an n=3-per-cell design, treat enrichment results as hypothesis-generating"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "What WikiPathways human pathways are enriched among genes showing a significant condition:time interaction (treatment effect differing by time point), and separately among genes DE only at t0 vs only at t1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the human WikiPathways gene set file available in the reference store (HGNC gene symbols) — if absent at run time, the step reports the gap and skips enrichment rather than substituting another species' gene sets",
+          "Runs over-representation or GSEA-style enrichment separately for: (1) interaction-significant genes (padj<0.05), (2) t0-only DE genes, (3) t1-only DE genes, each against the full expressed gene background (~12000 genes) from T1S1",
+          "Reports enriched pathways with adjusted p-value < 0.1 (or states none pass threshold) for each of the three gene sets, as a CSV plus barplot per set",
+          "Explicitly compares the top pathways between the t0-only and t1-only sets to characterize what biological processes differ in treatment response over time"
+        ]
+      }
+    ],
+    "title": "Treatment x time interaction DE analysis",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The design is a 2x2 factorial (condition x time) bulk RNA-seq experiment with 3 replicates per cell (12 samples, 12000 genes, single batch, raw Salmon counts). The research question — does the treatment effect differ between time points — is a classic condition:time interaction question, best answered with a single DESeq2 model containing both main effects and their interaction term, rather than separate pairwise contrasts at each time point. Step 1 builds the count matrix and metadata, fits ~condition*time in DESeq2, and extracts (a) the interaction term itself (the direct test of 'does the treatment effect differ by time'), and (b) the simple treatment-vs-control contrasts at t0 and at t1 for interpretability. Step 2 takes the interaction-significant genes (and the two simple contrasts) forward to WikiPathways enrichment to characterize what kind of biology the time-dependent treatment effect involves. Step 3 provides a diagnostic summary comparing the magnitude/direction of fold changes at t0 vs t1 for the union of DE genes, giving a concrete, plain answer to whether and how the treatment effect differs over time."
+  },
+  "usage": {
+    "inputTokens": 43241,
+    "outputTokens": 2649,
+    "cacheCreationInputTokens": 34087,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treatment x time interaction DE analysis",
+          "analytical_narrative": "The design is a 2x2 factorial (condition x time) bulk RNA-seq experiment with 3 replicates per cell (12 samples, 12000 genes, single batch, raw Salmon counts). The research question — does the treatment effect differ between time points — is a classic condition:time interaction question, best answered with a single DESeq2 model containing both main effects and their interaction term, rather than separate pairwise contrasts at each time point. Step 1 builds the count matrix and metadata, fits ~condition*time in DESeq2, and extracts (a) the interaction term itself (the direct test of 'does the treatment effect differ by time'), and (b) the simple treatment-vs-control contrasts at t0 and at t1 for interpretability. Step 2 takes the interaction-significant genes (and the two simple contrasts) forward to WikiPathways enrichment to characterize what kind of biology the time-dependent treatment effect involves. Step 3 provides a diagnostic summary comparing the magnitude/direction of fold changes at t0 vs t1 for the union of DE genes, giving a concrete, plain answer to whether and how the treatment effect differs over time.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 interaction model: condition x time",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "In this 2x2 design (condition x time, 3 replicates per cell, 12 samples), does the treatment effect (condition) differ between time point t0 and t1 — tested as the condition:time interaction term in a DESeq2 model fit on raw Salmon gene counts?",
+              "acceptance_criteria": [
+                "Counts (12000 genes x 12 samples) and metadata (12 samples x condition/time/time_hours) are loaded and sample order/names are matched/verified between the two files before building the DESeqDataSet",
+                "A DESeqDataSet is built with design = ~condition + time + condition:time (condition and time coerced to factors with explicit reference levels)",
+                "DESeq() is run and results() extracts the interaction coefficient (condition:time term) with log2FoldChange, p-value and BH-adjusted p-value for all ~12000 genes",
+                "Simple/main effect contrasts are also extracted: treatment vs control at t0, and treatment vs control at t1 (via contrast or by relevelling / building the corresponding coefficient), each with full DESeq2 results tables",
+                "Output includes three results tables (interaction, t0 simple contrast, t1 simple contrast) as CSV, an MA/volcano plot for the interaction term, and a short text summary reporting the number of genes with significant interaction (padj < 0.05) and their overlap with genes significant at t0-only or t1-only",
+                "Independent filtering / outlier handling (Cook's distance) defaults from DESeq2 are left in place and reported, given n=3 per cell is on the low side"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=3 per condition/time cell is small; interaction test has limited power to detect anything but moderate-to-large differences in treatment effect size between time points",
+                "Confirm metadata column names/values (condition, time, time_hours) and factor levels before fitting; a mislabeled reference level silently flips the sign of the interaction",
+                "Do not interpret significant main effects as evidence of interaction — only the explicit condition:time term (or a direct t1-vs-t0 fold-change difference contrast) answers the stated question"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Time-dependence summary of the treatment effect",
+              "track": "T1",
+              "step_type": "statistical_summary",
+              "question": "Among genes with a significant treatment effect at t0 and/or t1, how does the direction and magnitude of the condition log2 fold change compare between the two time points, and how many genes show a statistically significant interaction (padj < 0.05 on condition:time)?",
+              "acceptance_criteria": [
+                "Merges the interaction results table with the t0 and t1 simple-contrast tables from T1S1 on gene symbol",
+                "Produces a scatter plot of t0 log2FC vs t1 log2FC for the union of genes significant in either simple contrast or the interaction term, colored by interaction significance (padj<0.05)",
+                "Reports counts: genes DE only at t0, only at t1, at both time points with concordant direction, at both with discordant/opposite direction, and genes with significant interaction term",
+                "Produces a final CSV table (gene, log2FC_t0, log2FC_t1, delta_log2FC, interaction_padj, t0_padj, t1_padj) sorted by interaction significance",
+                "Text summary explicitly answers whether the treatment effect differs by time point, citing the number of interaction-significant genes and example top genes"
+              ],
+              "packages": [
+                "ggplot2",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "This step is descriptive/diagnostic on top of the DESeq2 interaction test, not an independent statistical test — do not treat the scatter-based counts as a substitute p-value"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of time-dependent treatment-responsive genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What WikiPathways human pathways are enriched among genes showing a significant condition:time interaction (treatment effect differing by time point), and separately among genes DE only at t0 vs only at t1?",
+              "acceptance_criteria": [
+                "Uses the human WikiPathways gene set file available in the reference store (HGNC gene symbols) — if absent at run time, the step reports the gap and skips enrichment rather than substituting another species' gene sets",
+                "Runs over-representation or GSEA-style enrichment separately for: (1) interaction-significant genes (padj<0.05), (2) t0-only DE genes, (3) t1-only DE genes, each against the full expressed gene background (~12000 genes) from T1S1",
+                "Reports enriched pathways with adjusted p-value < 0.1 (or states none pass threshold) for each of the three gene sets, as a CSV plus barplot per set",
+                "Explicitly compares the top pathways between the t0-only and t1-only sets to characterize what biological processes differ in treatment response over time"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "12000-gene background is smaller than a whole-genome background; use the actual tested gene universe (not a generic genome-wide default) as the enrichment background to avoid inflated significance",
+                "With modest gene-list sizes from an n=3-per-cell design, treat enrichment results as hypothesis-generating"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

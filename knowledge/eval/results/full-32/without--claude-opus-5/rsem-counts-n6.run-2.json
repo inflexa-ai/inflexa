@@ -1,0 +1,426 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "rsem-counts-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T18:43:48.771Z",
+  "elapsedMs": 89822,
+  "outcome": "plan_submitted",
+  "planId": "pln-bca43538",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library-depth QC and sample_01 outlier assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Low depth alone is not grounds for exclusion — a shallow library that still clusters with its group is usually usable and dropping it at n=6 is a real power loss",
+          "Conversely, if sample_01 both is shallow and sits apart from its group on PCA/correlation, it will inflate dispersion estimates and it should be flagged for exclusion",
+          "With 12,000 genes the matrix may already be pre-filtered; state whether low-count genes are present rather than assuming"
+        ],
+        "context": "Data profile: bulk RNA-seq, Homo sapiens, colon tissue, treatment design, 6 treated vs 6 control, unpaired, single batch. The profile flags that sample_01 has a library size about 4x below the median. The matrix holds RSEM expected counts (non-integer) and the per-sample genes.results files with effective lengths were not delivered. n=6 per arm is small — dropping a sample costs meaningful power, so the decision must be evidence-based rather than reflexive.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap",
+          "ComplexHeatmap",
+          "data.table"
+        ],
+        "question": "Is sample_01, whose library size is ~4x below the median, a technical outlier that should be excluded from the 6-treated vs 6-control comparison, or is it recoverable after normalization?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Do not modify or overwrite the input CSVs",
+          "Compute size factors and vst on the full 12-sample matrix before any exclusion, so the outlier assessment is not circular",
+          "Report the raw (non-integer) nature of the RSEM expected counts and do not round for the QC/vst step beyond what DESeq2 requires",
+          "Judge outlier status on multiple orthogonal criteria (depth, detection, correlation, PCA position), not on library size alone"
+        ],
+        "description": "Load /eval-full-32-without-rsem-counts-n6-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 sample columns, RSEM expected counts, non-integer) and /eval-full-32-without-rsem-counts-n6-2/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample IDs match between the two files and record the treated/control group sizes actually observed. Produce a QC report: per-sample total library size (sum of expected counts), number of genes with count > 0 and with count >= 10, the fraction of the library taken by the top 10 and top 50 genes, DESeq2 median-of-ratios size factors, an RLE (relative log expression) boxplot per sample, a PCA on variance-stabilized (vst) data coloured by condition and sized by library depth, and a sample-sample Spearman correlation heatmap. Quantify explicitly how far sample_01 sits from its group centroid relative to the other 5 samples in its arm (e.g. mean within-group correlation, PC1/PC2 distance) and report which condition sample_01 belongs to. Output a written keep/drop recommendation with the reasoning, plus a machine-readable flag file the DE step can read.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv are confirmed to match; the observed group sizes (expected 6 treated, 6 control) and sample_01's group assignment are stated",
+          "Per-sample library size, detected-gene count and DESeq2 size factor are reported as a table for all 12 samples, confirming or correcting the ~4x depth deficit of sample_01",
+          "PCA on vst-transformed data, a sample-sample correlation heatmap and an RLE plot are produced and saved",
+          "A quantitative statement of how anomalous sample_01 is relative to the other members of its condition group (distance to group centroid / mean within-group correlation) is given",
+          "An explicit keep-or-drop recommendation for sample_01 is written out with reasoning, and persisted in a form the DE step can consume"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 treated vs control, with sample_01 sensitivity analysis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per arm is modest: dispersion estimates are noisy and genes with padj just under 0.05 should be treated as provisional",
+          "Without effective-length offsets, fold changes are uncorrected for any treatment-driven shift in isoform length composition — a real, unquantifiable bias that must be reported, not glossed",
+          "If the two runs disagree substantially, the honest conclusion is that the result is depth-sensitive rather than that one list is correct",
+          "If the matrix is already pre-filtered to 12,000 genes, independent filtering will remove few additional genes — do not over-filter a small matrix"
+        ],
+        "context": "Design: 6 treated vs 6 control, unpaired, single batch, colon, human. Inputs are counts.csv (12,000 x 13, first column gene symbol) and metadata.csv (12 x 2, one condition column). The caveat that RSEM expected counts are not integers and that effective-length files are absent is the central methodological constraint; the shallow sample_01 is the central QC constraint.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "Which genes are differentially expressed between treated and control colon samples, and does that answer change when the shallow sample_01 is excluded?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Round RSEM expected counts to integers immediately before DESeq2 and never write the rounded matrix over the input",
+          "Do not use tximport — it is not installed and the required per-sample effective lengths were not delivered",
+          "Use design ~ condition with control as the reference level, so positive log2FC means up in treated",
+          "Run the sample_01-excluded sensitivity analysis unconditionally, even if T1S1 recommends keeping the sample",
+          "Report both shrunken and unshrunken log2 fold changes; use shrunken values only for ranking and plotting, and unshrunken with padj for the significance calls"
+        ],
+        "description": "Run the primary differential expression contrast treated vs control on the 12,000-gene RSEM matrix using DESeq2. Because the per-sample genes.results files with effective lengths were not delivered, no average-transcript-length offset can be supplied via tximport (which is also not installed here); instead round the RSEM expected counts to the nearest integer and model them directly, stating this substitution and its consequence in the output. Design is ~ condition, unpaired, single batch — no covariates to add. Filter to genes with a minimum count in at least the smaller group size (e.g. count >= 10 in >= 6 samples), fit the model, extract the treated-vs-control contrast with Benjamini-Hochberg FDR, and apply apeglm LFC shrinkage for ranking and visualization (keep unshrunken LFC in the output table too). Run the SAME model a second time with sample_01 excluded (n=11), regardless of what T1S1 recommended, as a sensitivity analysis. Report: full results table (gene symbol, baseMean, log2FC, lfcSE, shrunken log2FC, stat, pvalue, padj) for both runs; counts of genes at padj < 0.05 and |log2FC| > 1 for both; the overlap/Jaccard of the two significant sets and a scatter of log2FC full-vs-reduced; an MA plot and a volcano plot for the run designated primary by the T1S1 recommendation; and a normalized-count heatmap of the top ~50 significant genes. State clearly which run is primary and why.",
+        "acceptance_criteria": [
+          "A DESeq2 results table for treated vs control over all 12 samples is written to disk with gene symbol, baseMean, log2FoldChange, lfcSE, shrunken LFC, pvalue and BH-adjusted padj",
+          "A second results table from the identical model with sample_01 excluded is written to disk",
+          "The number of genes at padj < 0.05, and at padj < 0.05 with |log2FC| > 1, is reported for both runs, together with the overlap between the two significant gene sets",
+          "The rounding of non-integer RSEM expected counts is stated explicitly in the output, along with the fact that no effective-length offset was applied because genes.results files were not delivered",
+          "MA plot, volcano plot and a top-gene normalized-count heatmap are produced for the designated primary run",
+          "The primary run (12-sample or 11-sample) is named and justified against the T1S1 recommendation"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "limma-voom confirmation with quality weights",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "limma-voom is generally conservative at n=6 per group relative to DESeq2; a smaller hit list is expected and is not evidence of a problem",
+          "Quality weights derived from only 12 samples are themselves noisy",
+          "Concordance on statistics can be high while the thresholded gene lists differ substantially — report both views"
+        ],
+        "context": "The purpose is robustness, not a second opinion to cherry-pick from. DESeq2 on rounded expected counts and limma-voom with quality weights make different distributional assumptions and handle the low-depth sample differently (rounding + NB dispersion vs precision weighting), so agreement between them is meaningful evidence and disagreement localizes the fragility.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "edgeR",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Do the treated-vs-control hits survive an independent model that down-weights the shallow sample_01 instead of removing it?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the same rounded-integer count matrix and the same 12 samples as the T1S2 full run, so the only differences are the model and the weighting",
+          "Use voomWithQualityWeights rather than plain voom, so that sample_01 is down-weighted rather than dropped",
+          "Restrict the concordance statistics to genes tested by both methods after each method's own filtering, and state how many genes that is",
+          "Do not present the method with more hits as the better one — report both and their overlap"
+        ],
+        "description": "Cross-check the primary DESeq2 contrast with an orthogonal method on the same 12 samples. Build a DGEList from the rounded RSEM expected counts, apply filterByExpr on the condition grouping and TMM normalization, then run voomWithQualityWeights (design ~ condition) so that sample_01's lower depth and any elevated variance are handled by continuous down-weighting rather than exclusion. Fit with lmFit/eBayes and extract the treated-vs-control topTable with BH FDR. Report the fitted per-sample quality weights explicitly — they are a direct, independent read on how much the model trusts sample_01. Compare against the T1S2 primary result: number of significant genes at FDR < 0.05 in each, size of the overlap, rank correlation of the test statistics across all tested genes, and a labelled list of any genes significant in one method but not the other. Write a concordance summary stating whether the DE answer is method-robust.",
+        "acceptance_criteria": [
+          "A limma-voom topTable for treated vs control over all 12 samples is written to disk with logFC, AveExpr, t, P.Value and adj.P.Val",
+          "The per-sample voom quality weights are reported for all 12 samples, with sample_01's weight called out relative to the others",
+          "Concordance with the T1S2 primary DESeq2 result is quantified: significant-gene counts per method, overlap size, and Spearman correlation of test statistics over the commonly tested genes",
+          "Genes significant in only one of the two methods are listed",
+          "A one-paragraph verdict states whether the treated-vs-control signal is robust to the choice of method and to the handling of sample_01"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark and GO-BP enrichment of the treated-vs-control ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO-BP parent and child sets share most members, so an uncollapsed significant-set count is inflated and must not be reported as the headline",
+          "GSEA enrichment says a coordinated shift exists, not that a pathway is mechanistically engaged — keep the phrasing at that level",
+          "With n=6 per arm, few or no genes may reach FDR < 0.05, in which case GSEA on the ranked list is the only defensible enrichment read and ORA should be skipped rather than run on a handful of genes",
+          "A 12,000-gene matrix is smaller than a full transcriptome, so gene-set coverage is partial — report the match rate rather than assuming full overlap"
+        ],
+        "context": "Human colon bulk RNA-seq, treated vs control. The reference store holds MSigDB 2026.1 human hallmark sets and the human GO biological-process collection as symbol-keyed GMT files, matching the counts matrix's gene-symbol identifiers. If either collection is absent at run time, run the analysis on whichever human symbol-keyed pathway collection is available (the store also holds human WikiPathways and oncogenic signatures) and say which was used — the enrichment layer annotates the DE result and its loss would not invalidate the primary answer.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which biological processes and hallmark programs are coordinately shifted in treated versus control colon samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use human gene sets only — the data is Homo sapiens, colon; a mouse or rat collection would yield confident nonsense",
+          "Rank on the full DE result, not on a filtered significant subset",
+          "Use all genes that survived DE filtering as the ORA background, never the whole genome or the whole GMT universe",
+          "Set and report the fgsea random seed so the permutation p-values are reproducible",
+          "Report the resolved reference paths and collection versions actually used"
+        ],
+        "description": "Take the full ranked gene list from the T1S2 primary DESeq2 contrast — ranked by the shrunken log2 fold change or by sign(log2FC) * -log10(pvalue), stated explicitly — and run pre-ranked GSEA (fgsea) against human gene-set collections resolved from the environment's reference store: the human hallmark collection and the GO biological-process collection, both of which are keyed by HGNC gene symbols and therefore join directly to this matrix's gene-symbol row names with no ID conversion. Use the whole ranked list, not a thresholded subset, since n=6 per arm may leave few genes past an FDR cut. Report normalized enrichment scores, BH-adjusted p-values and leading-edge genes; produce a bar/dot plot of the significant sets and enrichment curves for the top few. Because GO-BP sets are a nested hierarchy with heavily overlapping membership, collapse redundant significant sets (e.g. by leading-edge Jaccard or fgsea's collapsePathways) before reporting a count, and report the collapsed count as the headline. Additionally run an over-representation test on the padj < 0.05 DE genes against the same collections, splitting up- and down-regulated genes and using all tested genes as the background — but only if at least ~15 genes pass; otherwise report that ORA was not run for lack of hits and rely on GSEA alone.",
+        "acceptance_criteria": [
+          "Pre-ranked GSEA is run on the complete ranked gene list from the T1S2 primary contrast against a human hallmark collection and a human GO biological-process collection resolved from the reference store, with the resolved collection names and versions recorded",
+          "Results tables with NES, nominal p, BH-adjusted p, set size and leading-edge genes are written for each collection",
+          "Redundant GO-BP sets are collapsed and both the raw and the collapsed count of significant sets are reported",
+          "A dot/bar plot of significant sets and enrichment curves for the leading hits are produced",
+          "Over-representation results for up- and down-regulated DE genes against the same collections are reported with all tested genes as background, or an explicit statement that too few genes passed FDR for ORA to be meaningful",
+          "The gene-symbol match rate between the counts matrix and each gene-set collection is reported"
+        ]
+      }
+    ],
+    "title": "Treated vs control colon RSEM DE + QC",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single RSEM gene-level expected-count matrix (12,000 gene symbols x 12 samples) plus a 12-row metadata table with one condition column: 6 treated vs 6 control, unpaired, single batch. Two facts from the profile drive the design. First, RSEM expected counts are non-integer and the per-sample genes.results files carrying effective lengths were NOT delivered, so the tximport 'lengthScaledTPM'/average-transcript-length offset route is unavailable — the defensible fallback is to round expected counts to integers and run a standard negative-binomial DE, documenting that no length offset could be applied and that the resulting fold changes are therefore not corrected for treatment-driven isoform-length shifts. (tximport is not installed in this sandbox in any case; DESeq2, edgeR and limma are.) Second, sample_01 has a library size ~4x below the median, which is a QC decision, not a cosmetic one: at n=6 per arm dropping it costs real power, and keeping it risks one low-depth sample dominating dispersion and clustering. T1S1 therefore quantifies the depth and outlier question explicitly (library sizes, detected-gene counts, PCA, sample-sample correlation, RLE) and returns a documented keep/drop recommendation rather than assuming one. T1S2 runs the primary DESeq2 contrast treated vs control on all 12 samples, and — regardless of the T1S1 recommendation — repeats the identical model with sample_01 excluded as a sensitivity analysis, reporting the overlap of the two hit lists so the reader can see how much of the answer rests on the shallow sample. T1S3 cross-checks the primary contrast with limma-voom (with quality weights, which explicitly down-weights a low-depth sample instead of removing it) to confirm the hits are not an artefact of one distributional assumption. T2S1 then takes the ranked DESeq2 statistic into GSEA against the staged human hallmark and GO-BP gene sets, which are present under /mnt/refs for Homo sapiens with HGNC symbols — matching the matrix's gene-symbol row names directly, no ID mapping needed. The 12,000-row matrix is small, so all steps are minutes of compute at modest memory."
+  },
+  "usage": {
+    "inputTokens": 92569,
+    "outputTokens": 6600,
+    "cacheCreationInputTokens": 74397,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "tximport",
+          "apeglm",
+          "ashr",
+          "ComplexHeatmap",
+          "EnhancedVolcano",
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "sva",
+          "pydeseq2",
+          "rnanorm"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control colon RSEM DE + QC",
+          "analytical_narrative": "The input is a single RSEM gene-level expected-count matrix (12,000 gene symbols x 12 samples) plus a 12-row metadata table with one condition column: 6 treated vs 6 control, unpaired, single batch. Two facts from the profile drive the design. First, RSEM expected counts are non-integer and the per-sample genes.results files carrying effective lengths were NOT delivered, so the tximport 'lengthScaledTPM'/average-transcript-length offset route is unavailable — the defensible fallback is to round expected counts to integers and run a standard negative-binomial DE, documenting that no length offset could be applied and that the resulting fold changes are therefore not corrected for treatment-driven isoform-length shifts. (tximport is not installed in this sandbox in any case; DESeq2, edgeR and limma are.) Second, sample_01 has a library size ~4x below the median, which is a QC decision, not a cosmetic one: at n=6 per arm dropping it costs real power, and keeping it risks one low-depth sample dominating dispersion and clustering. T1S1 therefore quantifies the depth and outlier question explicitly (library sizes, detected-gene counts, PCA, sample-sample correlation, RLE) and returns a documented keep/drop recommendation rather than assuming one. T1S2 runs the primary DESeq2 contrast treated vs control on all 12 samples, and — regardless of the T1S1 recommendation — repeats the identical model with sample_01 excluded as a sensitivity analysis, reporting the overlap of the two hit lists so the reader can see how much of the answer rests on the shallow sample. T1S3 cross-checks the primary contrast with limma-voom (with quality weights, which explicitly down-weights a low-depth sample instead of removing it) to confirm the hits are not an artefact of one distributional assumption. T2S1 then takes the ranked DESeq2 statistic into GSEA against the staged human hallmark and GO-BP gene sets, which are present under /mnt/refs for Homo sapiens with HGNC symbols — matching the matrix's gene-symbol row names directly, no ID mapping needed. The 12,000-row matrix is small, so all steps are minutes of compute at modest memory.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library-depth QC and sample_01 outlier assessment",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is sample_01, whose library size is ~4x below the median, a technical outlier that should be excluded from the 6-treated vs 6-control comparison, or is it recoverable after normalization?",
+              "description": "Load /eval-full-32-without-rsem-counts-n6-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 sample columns, RSEM expected counts, non-integer) and /eval-full-32-without-rsem-counts-n6-2/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample IDs match between the two files and record the treated/control group sizes actually observed. Produce a QC report: per-sample total library size (sum of expected counts), number of genes with count > 0 and with count >= 10, the fraction of the library taken by the top 10 and top 50 genes, DESeq2 median-of-ratios size factors, an RLE (relative log expression) boxplot per sample, a PCA on variance-stabilized (vst) data coloured by condition and sized by library depth, and a sample-sample Spearman correlation heatmap. Quantify explicitly how far sample_01 sits from its group centroid relative to the other 5 samples in its arm (e.g. mean within-group correlation, PC1/PC2 distance) and report which condition sample_01 belongs to. Output a written keep/drop recommendation with the reasoning, plus a machine-readable flag file the DE step can read.",
+              "context": "Data profile: bulk RNA-seq, Homo sapiens, colon tissue, treatment design, 6 treated vs 6 control, unpaired, single batch. The profile flags that sample_01 has a library size about 4x below the median. The matrix holds RSEM expected counts (non-integer) and the per-sample genes.results files with effective lengths were not delivered. n=6 per arm is small — dropping a sample costs meaningful power, so the decision must be evidence-based rather than reflexive.",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv are confirmed to match; the observed group sizes (expected 6 treated, 6 control) and sample_01's group assignment are stated",
+                "Per-sample library size, detected-gene count and DESeq2 size factor are reported as a table for all 12 samples, confirming or correcting the ~4x depth deficit of sample_01",
+                "PCA on vst-transformed data, a sample-sample correlation heatmap and an RLE plot are produced and saved",
+                "A quantitative statement of how anomalous sample_01 is relative to the other members of its condition group (distance to group centroid / mean within-group correlation) is given",
+                "An explicit keep-or-drop recommendation for sample_01 is written out with reasoning, and persisted in a form the DE step can consume"
+              ],
+              "constraints": [
+                "Do not modify or overwrite the input CSVs",
+                "Compute size factors and vst on the full 12-sample matrix before any exclusion, so the outlier assessment is not circular",
+                "Report the raw (non-integer) nature of the RSEM expected counts and do not round for the QC/vst step beyond what DESeq2 requires",
+                "Judge outlier status on multiple orthogonal criteria (depth, detection, correlation, PCA position), not on library size alone"
+              ],
+              "caveats": [
+                "Low depth alone is not grounds for exclusion — a shallow library that still clusters with its group is usually usable and dropping it at n=6 is a real power loss",
+                "Conversely, if sample_01 both is shallow and sits apart from its group on PCA/correlation, it will inflate dispersion estimates and it should be flagged for exclusion",
+                "With 12,000 genes the matrix may already be pre-filtered; state whether low-count genes are present rather than assuming"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap",
+                "ComplexHeatmap",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 treated vs control, with sample_01 sensitivity analysis",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated and control colon samples, and does that answer change when the shallow sample_01 is excluded?",
+              "description": "Run the primary differential expression contrast treated vs control on the 12,000-gene RSEM matrix using DESeq2. Because the per-sample genes.results files with effective lengths were not delivered, no average-transcript-length offset can be supplied via tximport (which is also not installed here); instead round the RSEM expected counts to the nearest integer and model them directly, stating this substitution and its consequence in the output. Design is ~ condition, unpaired, single batch — no covariates to add. Filter to genes with a minimum count in at least the smaller group size (e.g. count >= 10 in >= 6 samples), fit the model, extract the treated-vs-control contrast with Benjamini-Hochberg FDR, and apply apeglm LFC shrinkage for ranking and visualization (keep unshrunken LFC in the output table too). Run the SAME model a second time with sample_01 excluded (n=11), regardless of what T1S1 recommended, as a sensitivity analysis. Report: full results table (gene symbol, baseMean, log2FC, lfcSE, shrunken log2FC, stat, pvalue, padj) for both runs; counts of genes at padj < 0.05 and |log2FC| > 1 for both; the overlap/Jaccard of the two significant sets and a scatter of log2FC full-vs-reduced; an MA plot and a volcano plot for the run designated primary by the T1S1 recommendation; and a normalized-count heatmap of the top ~50 significant genes. State clearly which run is primary and why.",
+              "context": "Design: 6 treated vs 6 control, unpaired, single batch, colon, human. Inputs are counts.csv (12,000 x 13, first column gene symbol) and metadata.csv (12 x 2, one condition column). The caveat that RSEM expected counts are not integers and that effective-length files are absent is the central methodological constraint; the shallow sample_01 is the central QC constraint.",
+              "acceptance_criteria": [
+                "A DESeq2 results table for treated vs control over all 12 samples is written to disk with gene symbol, baseMean, log2FoldChange, lfcSE, shrunken LFC, pvalue and BH-adjusted padj",
+                "A second results table from the identical model with sample_01 excluded is written to disk",
+                "The number of genes at padj < 0.05, and at padj < 0.05 with |log2FC| > 1, is reported for both runs, together with the overlap between the two significant gene sets",
+                "The rounding of non-integer RSEM expected counts is stated explicitly in the output, along with the fact that no effective-length offset was applied because genes.results files were not delivered",
+                "MA plot, volcano plot and a top-gene normalized-count heatmap are produced for the designated primary run",
+                "The primary run (12-sample or 11-sample) is named and justified against the T1S1 recommendation"
+              ],
+              "constraints": [
+                "Round RSEM expected counts to integers immediately before DESeq2 and never write the rounded matrix over the input",
+                "Do not use tximport — it is not installed and the required per-sample effective lengths were not delivered",
+                "Use design ~ condition with control as the reference level, so positive log2FC means up in treated",
+                "Run the sample_01-excluded sensitivity analysis unconditionally, even if T1S1 recommends keeping the sample",
+                "Report both shrunken and unshrunken log2 fold changes; use shrunken values only for ranking and plotting, and unshrunken with padj for the significance calls"
+              ],
+              "caveats": [
+                "n=6 per arm is modest: dispersion estimates are noisy and genes with padj just under 0.05 should be treated as provisional",
+                "Without effective-length offsets, fold changes are uncorrected for any treatment-driven shift in isoform length composition — a real, unquantifiable bias that must be reported, not glossed",
+                "If the two runs disagree substantially, the honest conclusion is that the result is depth-sensitive rather than that one list is correct",
+                "If the matrix is already pre-filtered to 12,000 genes, independent filtering will remove few additional genes — do not over-filter a small matrix"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "data.table"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "limma-voom confirmation with quality weights",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Do the treated-vs-control hits survive an independent model that down-weights the shallow sample_01 instead of removing it?",
+              "description": "Cross-check the primary DESeq2 contrast with an orthogonal method on the same 12 samples. Build a DGEList from the rounded RSEM expected counts, apply filterByExpr on the condition grouping and TMM normalization, then run voomWithQualityWeights (design ~ condition) so that sample_01's lower depth and any elevated variance are handled by continuous down-weighting rather than exclusion. Fit with lmFit/eBayes and extract the treated-vs-control topTable with BH FDR. Report the fitted per-sample quality weights explicitly — they are a direct, independent read on how much the model trusts sample_01. Compare against the T1S2 primary result: number of significant genes at FDR < 0.05 in each, size of the overlap, rank correlation of the test statistics across all tested genes, and a labelled list of any genes significant in one method but not the other. Write a concordance summary stating whether the DE answer is method-robust.",
+              "context": "The purpose is robustness, not a second opinion to cherry-pick from. DESeq2 on rounded expected counts and limma-voom with quality weights make different distributional assumptions and handle the low-depth sample differently (rounding + NB dispersion vs precision weighting), so agreement between them is meaningful evidence and disagreement localizes the fragility.",
+              "acceptance_criteria": [
+                "A limma-voom topTable for treated vs control over all 12 samples is written to disk with logFC, AveExpr, t, P.Value and adj.P.Val",
+                "The per-sample voom quality weights are reported for all 12 samples, with sample_01's weight called out relative to the others",
+                "Concordance with the T1S2 primary DESeq2 result is quantified: significant-gene counts per method, overlap size, and Spearman correlation of test statistics over the commonly tested genes",
+                "Genes significant in only one of the two methods are listed",
+                "A one-paragraph verdict states whether the treated-vs-control signal is robust to the choice of method and to the handling of sample_01"
+              ],
+              "constraints": [
+                "Use the same rounded-integer count matrix and the same 12 samples as the T1S2 full run, so the only differences are the model and the weighting",
+                "Use voomWithQualityWeights rather than plain voom, so that sample_01 is down-weighted rather than dropped",
+                "Restrict the concordance statistics to genes tested by both methods after each method's own filtering, and state how many genes that is",
+                "Do not present the method with more hits as the better one — report both and their overlap"
+              ],
+              "caveats": [
+                "limma-voom is generally conservative at n=6 per group relative to DESeq2; a smaller hit list is expected and is not evidence of a problem",
+                "Quality weights derived from only 12 samples are themselves noisy",
+                "Concordance on statistics can be high while the thresholded gene lists differ substantially — report both views"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "packages": [
+                "limma",
+                "edgeR",
+                "ggplot2",
+                "data.table"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark and GO-BP enrichment of the treated-vs-control ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes and hallmark programs are coordinately shifted in treated versus control colon samples?",
+              "description": "Take the full ranked gene list from the T1S2 primary DESeq2 contrast — ranked by the shrunken log2 fold change or by sign(log2FC) * -log10(pvalue), stated explicitly — and run pre-ranked GSEA (fgsea) against human gene-set collections resolved from the environment's reference store: the human hallmark collection and the GO biological-process collection, both of which are keyed by HGNC gene symbols and therefore join directly to this matrix's gene-symbol row names with no ID conversion. Use the whole ranked list, not a thresholded subset, since n=6 per arm may leave few genes past an FDR cut. Report normalized enrichment scores, BH-adjusted p-values and leading-edge genes; produce a bar/dot plot of the significant sets and enrichment curves for the top few. Because GO-BP sets are a nested hierarchy with heavily overlapping membership, collapse redundant significant sets (e.g. by leading-edge Jaccard or fgsea's collapsePathways) before reporting a count, and report the collapsed count as the headline. Additionally run an over-representation test on the padj < 0.05 DE genes against the same collections, splitting up- and down-regulated genes and using all tested genes as the background — but only if at least ~15 genes pass; otherwise report that ORA was not run for lack of hits and rely on GSEA alone.",
+              "context": "Human colon bulk RNA-seq, treated vs control. The reference store holds MSigDB 2026.1 human hallmark sets and the human GO biological-process collection as symbol-keyed GMT files, matching the counts matrix's gene-symbol identifiers. If either collection is absent at run time, run the analysis on whichever human symbol-keyed pathway collection is available (the store also holds human WikiPathways and oncogenic signatures) and say which was used — the enrichment layer annotates the DE result and its loss would not invalidate the primary answer.",
+              "acceptance_criteria": [
+                "Pre-ranked GSEA is run on the complete ranked gene list from the T1S2 primary contrast against a human hallmark collection and a human GO biological-process collection resolved from the reference store, with the resolved collection names and versions recorded",
+                "Results tables with NES, nominal p, BH-adjusted p, set size and leading-edge genes are written for each collection",
+                "Redundant GO-BP sets are collapsed and both the raw and the collapsed count of significant sets are reported",
+                "A dot/bar plot of significant sets and enrichment curves for the leading hits are produced",
+                "Over-representation results for up- and down-regulated DE genes against the same collections are reported with all tested genes as background, or an explicit statement that too few genes passed FDR for ORA to be meaningful",
+                "The gene-symbol match rate between the counts matrix and each gene-set collection is reported"
+              ],
+              "constraints": [
+                "Use human gene sets only — the data is Homo sapiens, colon; a mouse or rat collection would yield confident nonsense",
+                "Rank on the full DE result, not on a filtered significant subset",
+                "Use all genes that survived DE filtering as the ORA background, never the whole genome or the whole GMT universe",
+                "Set and report the fgsea random seed so the permutation p-values are reproducible",
+                "Report the resolved reference paths and collection versions actually used"
+              ],
+              "caveats": [
+                "GO-BP parent and child sets share most members, so an uncollapsed significant-set count is inflated and must not be reported as the headline",
+                "GSEA enrichment says a coordinated shift exists, not that a pathway is mechanistically engaged — keep the phrasing at that level",
+                "With n=6 per arm, few or no genes may reach FDR < 0.05, in which case GSEA on the ranked list is the only defensible enrichment read and ORA should be skipped rather than run on a handful of genes",
+                "A 12,000-gene matrix is smaller than a full transcriptome, so gene-set coverage is partial — report the match rate rather than assuming full overlap"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "ggplot2",
+                "data.table"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

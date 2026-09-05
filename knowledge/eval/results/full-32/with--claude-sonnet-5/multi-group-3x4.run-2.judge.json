@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 6,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference: one DESeq2 fit of ~condition on all twelve samples, LRT against ~1 for the any-difference question, and two named Wald contrasts against an explicitly releveled control, with ashr shrinkage and BH at 0.05 kept separate per test and contrast identity carried on each table. QC (blind VST, PCA, distances, library sizes, flag-not-drop policy) and a justified >=10-in->=4 filter precede the model. Normalization is only implied by feeding raw counts to DESeq(); size factors are never named. The enrichment step was not requested and ranks the LRT list by an unsigned chi-square statistic, which is not a meaningful preranked GSEA input, and the plan misstates that apeglm does not apply to treated-vs-control coefficients (they are single coefficients); the report is otherwise thorough but does not explicitly enumerate design caveats."
+}

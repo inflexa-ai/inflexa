@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "DESeq2 Wald on raw counts with ~condition, chow as reference, median-of-ratios inside the model, and a justified 10-counts-in-6-samples filter fit the unpaired 6v6 single-batch design exactly; the QC step reports library sizes, size factors, PCA and correlation heatmap by condition with an explicit evidence-based keep/drop policy for sample_01 plus an auditable sensitivity run. Shrinkage and BH at 0.05 are present, but the plan reports unshrunken LFC as the effect size (shrunken only for ranking) and adds a post hoc |LFC|>=1 cut, which departs from thresholds-in-test and shrunken-reported-effect. Enrichment correctly uses the mouse Hallmark collection on the full ranked list with fgsea and reports per-set coverage, but uses minSize=10 rather than 15, leaves the ranking statistic as an either/or, and names no collection version. Reporting is thorough on design, thresholds, tested/significant counts and caveats, though software versions are not explicitly required in the report."
+}

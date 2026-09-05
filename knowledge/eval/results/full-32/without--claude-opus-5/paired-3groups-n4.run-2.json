@@ -1,0 +1,430 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "paired-3groups-n4",
+  "run": 2,
+  "startedAt": "2026-09-05T18:03:54.400Z",
+  "elapsedMs": 95091,
+  "outcome": "plan_submitted",
+  "planId": "pln-6d5daf89",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Paired design QC and filtering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12 samples total: PCA on 12 points is descriptive only, do not over-interpret component percentages",
+          "Salmon counts may be non-integer if they were not rounded upstream; round before constructing the DESeqDataSet and report if rounding was needed",
+          "A subject label swap would silently invalidate every paired contrast downstream, so the correlation check is not optional"
+        ],
+        "context": "Bulk RNA-seq, human blood, raw integer gene-level counts from Salmon, first column is gene symbol. 4 subjects x 3 conditions = 12 samples, single batch. Blood transcriptomes are dominated by between-subject differences in cell composition, so subject is expected to be the leading PC; that is not a problem for a paired model but must be documented. Gene identifiers are symbols already, so no ID mapping is needed.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Are the 12 blood RNA-seq libraries a clean, balanced 4-subject x 3-condition (control, treated_a, treated_b) block design, which genes survive expression filtering, and does subject identity dominate the variance structure?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the actual condition labels control, treated_a, treated_b and the actual subject labels from metadata.csv — do not invent group names",
+          "Set control as the reference level of condition",
+          "Filter with edgeR::filterByExpr on the ~ subject + condition design; do not use an arbitrary fixed CPM cutoff",
+          "Do not drop any sample without stating the evidence; with n=4 subjects, dropping one sample breaks a whole block",
+          "Subject-mean removal is for visualisation only — never feed the corrected matrix into the DE model"
+        ],
+        "description": "Load /eval-full-32-without-paired-3groups-n4-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw Salmon counts) and /eval-full-32-without-paired-3groups-n4-2/data/inputs/metadata/metadata.csv (12 rows: sample, subject, condition). Verify column-to-row correspondence by sample ID, confirm the design is complete and balanced (each of 4 subjects has exactly one control, one treated_a, one treated_b), and set condition's reference level to control. Build a DESeqDataSet with design ~ subject + condition and confirm the model matrix is full rank. Filter low-expression genes with edgeR::filterByExpr using that design (report genes in and genes retained). Compute VST (blind=TRUE) for visualisation; produce (a) library-size and count-distribution summaries, (b) PCA of VST coloured by condition and shaped by subject, (c) the same PCA after removing subject means (limma::removeBatchEffect with subject as the batch and condition preserved in the design) to expose the within-subject condition signal, (d) a sample-sample correlation heatmap. Save the filtered DESeqDataSet/count matrix and the sample table as artifacts for downstream steps.",
+        "acceptance_criteria": [
+          "Reports the exact sample count per condition and per subject and confirms the 4x3 balanced design, or names precisely which cell is missing/duplicated",
+          "Confirms the ~ subject + condition model matrix is full rank and reports its residual degrees of freedom (expected 6)",
+          "Reports number of genes before and after filterByExpr filtering",
+          "Produces PCA plots both raw and after subject-mean removal, and states in text whether subject or condition is the dominant source of variance",
+          "Flags any sample whose correlation or PCA position is inconsistent with its labelled subject (possible label swap), or states explicitly that none was found",
+          "Saves a filtered count matrix and validated sample table for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Paired DE: both treatments vs control and vs each other",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 4 subjects, a single influential subject can drive a hit; downstream inspection of per-subject counts is required before any gene is called a responder",
+          "If the p-value histograms are non-uniform under the null or dispersion estimation is unstable, say so rather than reporting the gene list at face value",
+          "Genes may end up with padj = NA from independent filtering or Cook's outlier flagging — report how many and why, do not silently drop them"
+        ],
+        "context": "n=4 per condition with subject blocking leaves 6 residual degrees of freedom — adequate for a paired design but thin for dispersion estimation, so DESeq2's shrinkage toward the trend is doing substantial work. The three-condition structure means the treated_b vs treated_a comparison must come from the same fitted model, not from a separate two-group refit, so that dispersions and the subject block are shared.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "dplyr"
+        ],
+        "question": "Within subject, which genes change under treated_a vs control, under treated_b vs control, and between treated_b and treated_a, and which genes respond to either treatment by an omnibus test of condition?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design must be ~ subject + condition — an unpaired ~ condition model is not acceptable for this data",
+          "Derive treated_b vs treated_a from the same DESeq2 fit via the contrast argument; do not subset to 8 samples and refit",
+          "Use BH FDR within each contrast; report the LRT as the omnibus test rather than presenting a union of two thresholded lists as if it were one test",
+          "Report shrunken LFCs for ranking and interpretation; do not rank by raw MLE fold change",
+          "Do not apply a fold-change filter before FDR correction"
+        ],
+        "description": "Fit DESeq2 on the filtered dataset from T1S1 with design ~ subject + condition (subject as a fixed blocking factor; the design is balanced and complete so fixed-effect blocking is exact and uses all 4 blocks). From the single fitted model extract three Wald contrasts: treated_a vs control, treated_b vs control, and treated_b vs treated_a. Additionally run the likelihood-ratio test of full ~ subject + condition against reduced ~ subject — this is the single omnibus 'responds to either treatment' test with one FDR correction, and it is the primary answer to the first half of the research question. For each Wald contrast produce both the MLE log2 fold change and an apeglm- or ashr-shrunken LFC (use lfcShrink with type='ashr' for the treated_b vs treated_a contrast since it is not a reference-level coefficient), Wald p, and BH-adjusted p. Report DE counts at padj < 0.05 and at padj < 0.10, plus counts additionally requiring |shrunken LFC| > 0.5. Emit per-contrast result tables (all genes, sorted by padj), MA plots, volcano plots, a p-value histogram per contrast, and the dispersion-estimate plot. Also emit the LRT result table and a heatmap of the top LRT genes on VST values with subject means removed for display.",
+        "acceptance_criteria": [
+          "Reports the exact design formula used and confirms subject was included as a blocking factor",
+          "Produces four result tables: treated_a_vs_control, treated_b_vs_control, treated_b_vs_treated_a, and the condition LRT",
+          "Each Wald table contains gene symbol, baseMean, MLE log2FC, shrunken log2FC, lfcSE, stat, pvalue, padj",
+          "Reports significant gene counts at padj<0.05 and padj<0.10 for every contrast, including reporting zero if that is the result",
+          "Produces p-value histograms and the dispersion plot, and comments on whether the null distribution looks well behaved",
+          "States the number of residual degrees of freedom and explicitly notes the low-power context of n=4"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Shared vs treatment-specific response reconciliation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Global LFC correlation between the two vs-control contrasts is inflated because both share the same control samples — state this rather than reading it as pure biological similarity",
+          "With n=4 the treated_b vs treated_a contrast is the least powered of the three and may yield no significant genes; that is a legitimate result meaning 'no detectable difference', not evidence of equivalence"
+        ],
+        "context": "This step answers the second half of the research question ('do the two treatments differ from each other'). The failure mode it exists to prevent is inferring a treatment difference from a Venn diagram of two separate contrasts; only the direct treated_b vs treated_a contrast tests that hypothesis. With 4 paired subjects, per-subject trajectory plots are the honest way to show whether a hit reflects a consistent shift or one outlying subject.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "tidyr",
+          "ggplot2",
+          "ggrepel",
+          "ComplexUpset",
+          "DESeq2"
+        ],
+        "question": "Which genes respond to both treated_a and treated_b in the same direction, which are specific to one treatment, and for which genes is the treated_b vs treated_a difference itself statistically supported rather than merely a difference in significance?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Never claim treated_a and treated_b differ for a gene on the basis of set-difference between the two vs-control lists alone",
+          "Restrict all comparisons to the common set of genes tested in all contrasts; report how many genes that is",
+          "If a class is empty, report it as empty rather than relaxing thresholds to populate it",
+          "Use the shrunken LFCs from T1S2 for the scatter and correlation"
+        ],
+        "description": "Take the four result tables from T1S2 and reconcile them. Classify each tested gene into: (1) shared responder — significant in both treated_a vs control and treated_b vs control at padj<0.05 with concordant sign; (2) treated_a-only and (3) treated_b-only — significant in one arm alone; (4) directly discordant — significant in the treated_b vs treated_a contrast. Then cross-tabulate (2)/(3) against (4) and state plainly how many nominally arm-specific genes actually have significant evidence of a between-treatment difference — the 'difference between significant and non-significant is not itself significant' check. Produce a scatter of shrunken LFC(treated_a vs control) against shrunken LFC(treated_b vs control) with the identity line, coloured by class, and the Pearson/Spearman correlation of the two effect-size vectors over all tested genes as a global measure of how similar the two treatments are. Produce a Venn/UpSet of the significant sets. For the top genes of each class (up to 20), plot per-subject normalized counts with subject-paired lines across control / treated_a / treated_b so consistency across the 4 subjects is visible. Emit a single annotated master table joining all three Wald contrasts and the LRT per gene, with the class label.",
+        "acceptance_criteria": [
+          "Master table with one row per tested gene carrying all three contrasts' shrunken LFC and padj, the LRT padj, and a class label",
+          "Explicit counts for shared, treated_a-only, treated_b-only, and directly-discordant genes",
+          "A stated cross-tabulation of arm-specific genes against the direct treated_b vs treated_a contrast, with the caveat that arm-specificity without a significant direct contrast is not evidence of a treatment difference",
+          "LFC-vs-LFC scatter plus the global correlation of the two treatment effect vectors, reported as a number",
+          "Per-subject paired trajectory plots for top genes in each class, showing all 4 subjects"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Ranked pathway enrichment for all three contrasts",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO BP sets are hierarchically nested, so significant hits arrive in correlated blocks — collapse redundant parent/child terms before reporting a count",
+          "Whole-blood signal is heavily influenced by leukocyte composition shifts; an enriched immune pathway may reflect cell-proportion change rather than per-cell regulation, and should be reported with that ambiguity stated",
+          "Leading-edge gene lists derived from a 12-sample study are hypothesis-generating only"
+        ],
+        "context": "The environment stages MSigDB human hallmark (50 sets), MSigDB human GO BP (7,538 sets) and human WikiPathways as HGNC-symbol GMTs; all match this dataset's organism (Homo sapiens) and identifier space (gene symbols). Ranked GSEA is chosen over over-representation testing because with 4 subjects per condition the padj<0.05 gene lists may be short or empty, and ORA on a short list has essentially no power, whereas a ranked test uses the whole 12,000-gene ordering.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2",
+          "dplyr",
+          "ComplexHeatmap"
+        ],
+        "question": "Which biological pathways move in blood under treated_a vs control and treated_b vs control, and which pathways separate treated_b from treated_a?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use human gene-set collections only — the store also holds mouse and rat GMTs and using them here would produce meaningless results",
+          "Rank by shrunken log2 fold change across ALL tested genes; do not pre-filter to significant genes",
+          "Apply FDR within each collection separately; do not pool hallmark and GO BP p-values into one correction",
+          "If a named collection is not resolvable in the environment at run time, proceed with those that are and state which was unavailable — hallmark alone is sufficient for the step to be informative",
+          "Split the WikiPathways descriptor field on '%' to recover readable set names"
+        ],
+        "description": "Run pre-ranked GSEA (fgsea, multilevel) separately on each of the three contrasts from T1S2, ranking all tested genes by the shrunken log2 fold change (break ties with the Wald statistic; do not rank by p-value alone, which discards direction). Test against human gene-set collections resolved from the environment's reference store: the MSigDB hallmark collection for human, the GO biological-process collection for human, and human WikiPathways. All three are HGNC-symbol GMTs and the count matrix is already keyed on gene symbols, so join directly and report the fraction of ranked genes matching each collection's symbol space. Use minSize 15, maxSize 500, BH FDR within each collection x contrast combination. Produce per-contrast enrichment tables (pathway, size, NES, pval, padj, leading-edge genes), the top-pathway NES bar plots, and a combined NES heatmap across the three contrasts so pathways shared by both treatments versus specific to one are visible at the pathway level. Additionally note whether any pathway significant in the treated_b vs treated_a ranking is consistent with the gene-level discordant class from T1S3.",
+        "acceptance_criteria": [
+          "Enrichment tables for each of the three contrasts against each collection, with NES, pval, BH padj and leading-edge genes",
+          "Reports the number and fraction of ranked genes that matched each collection's symbol space",
+          "A cross-contrast NES heatmap distinguishing pathways moving under both treatments from pathways moving under one",
+          "Explicitly reports collections or contrasts that returned no pathway at padj<0.05",
+          "Correctly attributes the human collections used and confirms the organism match to Homo sapiens"
+        ]
+      }
+    ],
+    "title": "Paired 3-condition blood RNA-seq: treated_a/treated_b vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are 12,000 gene-symbol rows x 12 blood RNA-seq libraries (Salmon raw counts, counts.csv) from 4 subjects, each contributing one control, one treated_a and one treated_b sample (metadata.csv: sample, subject, condition), single batch. The design is a complete randomized-block: subject is a nuisance factor with 4 levels, condition the factor of interest with 3 levels. The only correct analysis is a paired/blocked model — ~ subject + condition — which absorbs between-subject expression variation and leaves 12 - 4 - 2 = 6 residual degrees of freedom. Ignoring the subject block would waste most of the power in a 4-subject study; treating subject as random is unnecessary here because the design is balanced and every subject sees every condition, so fixed-effect blocking is exact.\n\nStep T1S1 builds the analysis objects: joins counts.csv to metadata.csv, verifies the 4x3 balance and that subject/condition are estimable together, filters low-count genes with edgeR::filterByExpr on the ~ subject + condition design, and produces a VST/log-CPM matrix plus PCA/correlation diagnostics before and after removing subject means. That diagnostic decides nothing statistically but shows whether subject dominates the variance (expected in blood) and whether any sample is an outlier or a mislabelled subject — a real risk in paired designs, where one swapped label destroys the pairing.\n\nStep T1S2 runs the DE model itself in DESeq2 with design ~ subject + condition, control as the reference level, and extracts the three contrasts the question asks for: treated_a vs control, treated_b vs control, and treated_b vs treated_a (the direct treatment-vs-treatment contrast, taken from the same fitted model rather than from a separate two-group refit, so the shrunken dispersions and the subject block are shared). It also runs the omnibus likelihood-ratio test of ~ subject + condition vs ~ subject, which answers 'responds to either treatment' as a single test with one FDR correction instead of a union of two thresholded lists. With n=4 per condition, dispersion estimation is thin; the step must report the number of genes passing filter, the dispersion fit, and independent-filtering behaviour, and must use apeglm/ashr shrunken LFCs for ranking rather than raw MLE fold changes.\n\nStep T1S3 reconciles the three contrasts: which genes are shared responders (significant in both treatment-vs-control contrasts and concordant in sign), which are private to one treatment, and — critically — which of the apparently 'private' genes actually have a significant treated_b vs treated_a difference. A gene significant in one arm and not the other is not evidence of a treatment difference; only the direct contrast tests that. This step enforces that distinction explicitly and produces the effect-size scatter and per-subject count plots that let a reader judge whether a hit is driven by one subject.\n\nStep T2S1 takes the three ranked gene lists into fgsea against the staged human MSigDB hallmark and GO:BP collections plus human WikiPathways, using the shrunken-LFC ranking rather than a cut list, because at n=4 the significant-gene lists may be too short for over-representation testing to have any power. It reports which pathways move under either treatment and which differ between them.\n\nThe question mentions treatments but supplies no PK, safety, outcome or compound data, so no translational, PK/PD or safety steps are warranted; adding them would be speculation."
+  },
+  "usage": {
+    "inputTokens": 91989,
+    "outputTokens": 6792,
+    "cacheCreationInputTokens": 73817,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler",
+          "variancePartition",
+          "apeglm",
+          "ashr",
+          "statmod"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired 3-condition blood RNA-seq: treated_a/treated_b vs control",
+          "analytical_narrative": "The data are 12,000 gene-symbol rows x 12 blood RNA-seq libraries (Salmon raw counts, counts.csv) from 4 subjects, each contributing one control, one treated_a and one treated_b sample (metadata.csv: sample, subject, condition), single batch. The design is a complete randomized-block: subject is a nuisance factor with 4 levels, condition the factor of interest with 3 levels. The only correct analysis is a paired/blocked model — ~ subject + condition — which absorbs between-subject expression variation and leaves 12 - 4 - 2 = 6 residual degrees of freedom. Ignoring the subject block would waste most of the power in a 4-subject study; treating subject as random is unnecessary here because the design is balanced and every subject sees every condition, so fixed-effect blocking is exact.\n\nStep T1S1 builds the analysis objects: joins counts.csv to metadata.csv, verifies the 4x3 balance and that subject/condition are estimable together, filters low-count genes with edgeR::filterByExpr on the ~ subject + condition design, and produces a VST/log-CPM matrix plus PCA/correlation diagnostics before and after removing subject means. That diagnostic decides nothing statistically but shows whether subject dominates the variance (expected in blood) and whether any sample is an outlier or a mislabelled subject — a real risk in paired designs, where one swapped label destroys the pairing.\n\nStep T1S2 runs the DE model itself in DESeq2 with design ~ subject + condition, control as the reference level, and extracts the three contrasts the question asks for: treated_a vs control, treated_b vs control, and treated_b vs treated_a (the direct treatment-vs-treatment contrast, taken from the same fitted model rather than from a separate two-group refit, so the shrunken dispersions and the subject block are shared). It also runs the omnibus likelihood-ratio test of ~ subject + condition vs ~ subject, which answers 'responds to either treatment' as a single test with one FDR correction instead of a union of two thresholded lists. With n=4 per condition, dispersion estimation is thin; the step must report the number of genes passing filter, the dispersion fit, and independent-filtering behaviour, and must use apeglm/ashr shrunken LFCs for ranking rather than raw MLE fold changes.\n\nStep T1S3 reconciles the three contrasts: which genes are shared responders (significant in both treatment-vs-control contrasts and concordant in sign), which are private to one treatment, and — critically — which of the apparently 'private' genes actually have a significant treated_b vs treated_a difference. A gene significant in one arm and not the other is not evidence of a treatment difference; only the direct contrast tests that. This step enforces that distinction explicitly and produces the effect-size scatter and per-subject count plots that let a reader judge whether a hit is driven by one subject.\n\nStep T2S1 takes the three ranked gene lists into fgsea against the staged human MSigDB hallmark and GO:BP collections plus human WikiPathways, using the shrunken-LFC ranking rather than a cut list, because at n=4 the significant-gene lists may be too short for over-representation testing to have any power. It reports which pathways move under either treatment and which differ between them.\n\nThe question mentions treatments but supplies no PK, safety, outcome or compound data, so no translational, PK/PD or safety steps are warranted; adding them would be speculation.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Paired design QC and filtering",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Are the 12 blood RNA-seq libraries a clean, balanced 4-subject x 3-condition (control, treated_a, treated_b) block design, which genes survive expression filtering, and does subject identity dominate the variance structure?",
+              "description": "Load /eval-full-32-without-paired-3groups-n4-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw Salmon counts) and /eval-full-32-without-paired-3groups-n4-2/data/inputs/metadata/metadata.csv (12 rows: sample, subject, condition). Verify column-to-row correspondence by sample ID, confirm the design is complete and balanced (each of 4 subjects has exactly one control, one treated_a, one treated_b), and set condition's reference level to control. Build a DESeqDataSet with design ~ subject + condition and confirm the model matrix is full rank. Filter low-expression genes with edgeR::filterByExpr using that design (report genes in and genes retained). Compute VST (blind=TRUE) for visualisation; produce (a) library-size and count-distribution summaries, (b) PCA of VST coloured by condition and shaped by subject, (c) the same PCA after removing subject means (limma::removeBatchEffect with subject as the batch and condition preserved in the design) to expose the within-subject condition signal, (d) a sample-sample correlation heatmap. Save the filtered DESeqDataSet/count matrix and the sample table as artifacts for downstream steps.",
+              "question_context": "",
+              "context": "Bulk RNA-seq, human blood, raw integer gene-level counts from Salmon, first column is gene symbol. 4 subjects x 3 conditions = 12 samples, single batch. Blood transcriptomes are dominated by between-subject differences in cell composition, so subject is expected to be the leading PC; that is not a problem for a paired model but must be documented. Gene identifiers are symbols already, so no ID mapping is needed.",
+              "acceptance_criteria": [
+                "Reports the exact sample count per condition and per subject and confirms the 4x3 balanced design, or names precisely which cell is missing/duplicated",
+                "Confirms the ~ subject + condition model matrix is full rank and reports its residual degrees of freedom (expected 6)",
+                "Reports number of genes before and after filterByExpr filtering",
+                "Produces PCA plots both raw and after subject-mean removal, and states in text whether subject or condition is the dominant source of variance",
+                "Flags any sample whose correlation or PCA position is inconsistent with its labelled subject (possible label swap), or states explicitly that none was found",
+                "Saves a filtered count matrix and validated sample table for downstream steps"
+              ],
+              "constraints": [
+                "Use the actual condition labels control, treated_a, treated_b and the actual subject labels from metadata.csv — do not invent group names",
+                "Set control as the reference level of condition",
+                "Filter with edgeR::filterByExpr on the ~ subject + condition design; do not use an arbitrary fixed CPM cutoff",
+                "Do not drop any sample without stating the evidence; with n=4 subjects, dropping one sample breaks a whole block",
+                "Subject-mean removal is for visualisation only — never feed the corrected matrix into the DE model"
+              ],
+              "caveats": [
+                "12 samples total: PCA on 12 points is descriptive only, do not over-interpret component percentages",
+                "Salmon counts may be non-integer if they were not rounded upstream; round before constructing the DESeqDataSet and report if rounding was needed",
+                "A subject label swap would silently invalidate every paired contrast downstream, so the correlation check is not optional"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Paired DE: both treatments vs control and vs each other",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Within subject, which genes change under treated_a vs control, under treated_b vs control, and between treated_b and treated_a, and which genes respond to either treatment by an omnibus test of condition?",
+              "description": "Fit DESeq2 on the filtered dataset from T1S1 with design ~ subject + condition (subject as a fixed blocking factor; the design is balanced and complete so fixed-effect blocking is exact and uses all 4 blocks). From the single fitted model extract three Wald contrasts: treated_a vs control, treated_b vs control, and treated_b vs treated_a. Additionally run the likelihood-ratio test of full ~ subject + condition against reduced ~ subject — this is the single omnibus 'responds to either treatment' test with one FDR correction, and it is the primary answer to the first half of the research question. For each Wald contrast produce both the MLE log2 fold change and an apeglm- or ashr-shrunken LFC (use lfcShrink with type='ashr' for the treated_b vs treated_a contrast since it is not a reference-level coefficient), Wald p, and BH-adjusted p. Report DE counts at padj < 0.05 and at padj < 0.10, plus counts additionally requiring |shrunken LFC| > 0.5. Emit per-contrast result tables (all genes, sorted by padj), MA plots, volcano plots, a p-value histogram per contrast, and the dispersion-estimate plot. Also emit the LRT result table and a heatmap of the top LRT genes on VST values with subject means removed for display.",
+              "question_context": "",
+              "context": "n=4 per condition with subject blocking leaves 6 residual degrees of freedom — adequate for a paired design but thin for dispersion estimation, so DESeq2's shrinkage toward the trend is doing substantial work. The three-condition structure means the treated_b vs treated_a comparison must come from the same fitted model, not from a separate two-group refit, so that dispersions and the subject block are shared.",
+              "acceptance_criteria": [
+                "Reports the exact design formula used and confirms subject was included as a blocking factor",
+                "Produces four result tables: treated_a_vs_control, treated_b_vs_control, treated_b_vs_treated_a, and the condition LRT",
+                "Each Wald table contains gene symbol, baseMean, MLE log2FC, shrunken log2FC, lfcSE, stat, pvalue, padj",
+                "Reports significant gene counts at padj<0.05 and padj<0.10 for every contrast, including reporting zero if that is the result",
+                "Produces p-value histograms and the dispersion plot, and comments on whether the null distribution looks well behaved",
+                "States the number of residual degrees of freedom and explicitly notes the low-power context of n=4"
+              ],
+              "constraints": [
+                "Design must be ~ subject + condition — an unpaired ~ condition model is not acceptable for this data",
+                "Derive treated_b vs treated_a from the same DESeq2 fit via the contrast argument; do not subset to 8 samples and refit",
+                "Use BH FDR within each contrast; report the LRT as the omnibus test rather than presenting a union of two thresholded lists as if it were one test",
+                "Report shrunken LFCs for ranking and interpretation; do not rank by raw MLE fold change",
+                "Do not apply a fold-change filter before FDR correction"
+              ],
+              "caveats": [
+                "With 4 subjects, a single influential subject can drive a hit; downstream inspection of per-subject counts is required before any gene is called a responder",
+                "If the p-value histograms are non-uniform under the null or dispersion estimation is unstable, say so rather than reporting the gene list at face value",
+                "Genes may end up with padj = NA from independent filtering or Cook's outlier flagging — report how many and why, do not silently drop them"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Shared vs treatment-specific response reconciliation",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes respond to both treated_a and treated_b in the same direction, which are specific to one treatment, and for which genes is the treated_b vs treated_a difference itself statistically supported rather than merely a difference in significance?",
+              "description": "Take the four result tables from T1S2 and reconcile them. Classify each tested gene into: (1) shared responder — significant in both treated_a vs control and treated_b vs control at padj<0.05 with concordant sign; (2) treated_a-only and (3) treated_b-only — significant in one arm alone; (4) directly discordant — significant in the treated_b vs treated_a contrast. Then cross-tabulate (2)/(3) against (4) and state plainly how many nominally arm-specific genes actually have significant evidence of a between-treatment difference — the 'difference between significant and non-significant is not itself significant' check. Produce a scatter of shrunken LFC(treated_a vs control) against shrunken LFC(treated_b vs control) with the identity line, coloured by class, and the Pearson/Spearman correlation of the two effect-size vectors over all tested genes as a global measure of how similar the two treatments are. Produce a Venn/UpSet of the significant sets. For the top genes of each class (up to 20), plot per-subject normalized counts with subject-paired lines across control / treated_a / treated_b so consistency across the 4 subjects is visible. Emit a single annotated master table joining all three Wald contrasts and the LRT per gene, with the class label.",
+              "question_context": "",
+              "context": "This step answers the second half of the research question ('do the two treatments differ from each other'). The failure mode it exists to prevent is inferring a treatment difference from a Venn diagram of two separate contrasts; only the direct treated_b vs treated_a contrast tests that hypothesis. With 4 paired subjects, per-subject trajectory plots are the honest way to show whether a hit reflects a consistent shift or one outlying subject.",
+              "acceptance_criteria": [
+                "Master table with one row per tested gene carrying all three contrasts' shrunken LFC and padj, the LRT padj, and a class label",
+                "Explicit counts for shared, treated_a-only, treated_b-only, and directly-discordant genes",
+                "A stated cross-tabulation of arm-specific genes against the direct treated_b vs treated_a contrast, with the caveat that arm-specificity without a significant direct contrast is not evidence of a treatment difference",
+                "LFC-vs-LFC scatter plus the global correlation of the two treatment effect vectors, reported as a number",
+                "Per-subject paired trajectory plots for top genes in each class, showing all 4 subjects"
+              ],
+              "constraints": [
+                "Never claim treated_a and treated_b differ for a gene on the basis of set-difference between the two vs-control lists alone",
+                "Restrict all comparisons to the common set of genes tested in all contrasts; report how many genes that is",
+                "If a class is empty, report it as empty rather than relaxing thresholds to populate it",
+                "Use the shrunken LFCs from T1S2 for the scatter and correlation"
+              ],
+              "caveats": [
+                "Global LFC correlation between the two vs-control contrasts is inflated because both share the same control samples — state this rather than reading it as pure biological similarity",
+                "With n=4 the treated_b vs treated_a contrast is the least powered of the three and may yield no significant genes; that is a legitimate result meaning 'no detectable difference', not evidence of equivalence"
+              ],
+              "packages": [
+                "dplyr",
+                "tidyr",
+                "ggplot2",
+                "ggrepel",
+                "ComplexUpset",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Ranked pathway enrichment for all three contrasts",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways move in blood under treated_a vs control and treated_b vs control, and which pathways separate treated_b from treated_a?",
+              "description": "Run pre-ranked GSEA (fgsea, multilevel) separately on each of the three contrasts from T1S2, ranking all tested genes by the shrunken log2 fold change (break ties with the Wald statistic; do not rank by p-value alone, which discards direction). Test against human gene-set collections resolved from the environment's reference store: the MSigDB hallmark collection for human, the GO biological-process collection for human, and human WikiPathways. All three are HGNC-symbol GMTs and the count matrix is already keyed on gene symbols, so join directly and report the fraction of ranked genes matching each collection's symbol space. Use minSize 15, maxSize 500, BH FDR within each collection x contrast combination. Produce per-contrast enrichment tables (pathway, size, NES, pval, padj, leading-edge genes), the top-pathway NES bar plots, and a combined NES heatmap across the three contrasts so pathways shared by both treatments versus specific to one are visible at the pathway level. Additionally note whether any pathway significant in the treated_b vs treated_a ranking is consistent with the gene-level discordant class from T1S3.",
+              "question_context": "",
+              "context": "The environment stages MSigDB human hallmark (50 sets), MSigDB human GO BP (7,538 sets) and human WikiPathways as HGNC-symbol GMTs; all match this dataset's organism (Homo sapiens) and identifier space (gene symbols). Ranked GSEA is chosen over over-representation testing because with 4 subjects per condition the padj<0.05 gene lists may be short or empty, and ORA on a short list has essentially no power, whereas a ranked test uses the whole 12,000-gene ordering.",
+              "acceptance_criteria": [
+                "Enrichment tables for each of the three contrasts against each collection, with NES, pval, BH padj and leading-edge genes",
+                "Reports the number and fraction of ranked genes that matched each collection's symbol space",
+                "A cross-contrast NES heatmap distinguishing pathways moving under both treatments from pathways moving under one",
+                "Explicitly reports collections or contrasts that returned no pathway at padj<0.05",
+                "Correctly attributes the human collections used and confirms the organism match to Homo sapiens"
+              ],
+              "constraints": [
+                "Use human gene-set collections only — the store also holds mouse and rat GMTs and using them here would produce meaningless results",
+                "Rank by shrunken log2 fold change across ALL tested genes; do not pre-filter to significant genes",
+                "Apply FDR within each collection separately; do not pool hallmark and GO BP p-values into one correction",
+                "If a named collection is not resolvable in the environment at run time, proceed with those that are and state which was unavailable — hallmark alone is sufficient for the step to be informative",
+                "Split the WikiPathways descriptor field on '%' to recover readable set names"
+              ],
+              "caveats": [
+                "GO BP sets are hierarchically nested, so significant hits arrive in correlated blocks — collapse redundant parent/child terms before reporting a count",
+                "Whole-blood signal is heavily influenced by leukocyte composition shifts; an enriched immune pathway may reflect cell-proportion change rather than per-cell regulation, and should be reported with that ambiguity stated",
+                "Leading-edge gene lists derived from a 12-sample study are hypothesis-generating only"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2",
+                "dplyr",
+                "ComplexHeatmap"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

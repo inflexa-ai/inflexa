@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats the unrecorded strandedness as a first-order threat and refuses to accept the counts uncritically, but it resolves the doubt only by count-matrix forensics (library concentration, hepatocyte marker ranks, zero fraction) and declares that BAM/FASTQ are unavailable, so it never runs the decisive check the reference requires (RSeQC infer_experiment.py or salmon libType A per sample, comparison with the -s setting used, and re-counting on disagreement); it also leans on the argument that a uniform strand error only costs power, which understates gene-specific distortion at antisense-overlapping loci. Everything downstream is sound and design-specific: DESeq2 Wald on raw integers with ~condition and control set explicitly as reference, median-of-ratios inside the model, TMM in the edgeR QL cross-check, no pre-normalised input, and a filter tied to the smallest group size. QC precedes the test with size factors, VST PCA, PC1-vs-depth correlation, correlation heatmap and an explicit flag-not-drop policy at n=3; BH at 0.05 with apeglm/ashr shrinkage for ranking, an exploratory list labelled as a trend rather than an alpha relaxation, and the n=3 power limit stated plainly. Enrichment is appropriately rank-based fgsea over all tested genes with a named metric, human hallmark and GO-BP, a 10-500 size window and redundancy collapsing, though no collection version is pinned; the report specifies methods, design, thresholds and gene counts but not software versions."
+}

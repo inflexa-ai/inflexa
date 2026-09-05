@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly reads the question as a per-sample scoring problem: GSVA on the blind VST matrix with the Gaussian kernel (explicitly rejecting Poisson on log-scale values), followed by limma moderated t-tests on the 50 x 12 score matrix under the same ~condition design with BH, plus a row-clustered heatmap annotated by condition — exactly matching the reference, and the gene-level DESeq2 pass is justified as supplying the universe and ranking metric rather than substituting for the score question. QC is concrete and dataset-specific: library sizes and detected genes per sample against the median, PCA on top 500 variable genes with percent variance, distance heatmap, and a stated keep-unless-concrete-failure policy for sample_01, with the rank-compression risk carried through to the score heatmap where its position must be reported. Filtering (>=10 counts in >=6 samples, tied to the smallest group), normalization (median-of-ratios inside the model, no pre-scaling), explicit control reference level and named contrast direction, apeglm shrinkage and BH at alpha 0.05 passed to results() are all handled correctly. Enrichment is well specified — hallmark symbols GMT with version 2026.1 resolved at run time, 15-500 window applied after intersection with tested genes, full ranked Wald-statistic list with a recorded seed, ORA correctly refused — with only a minor deduction for the Step 4 second-collection pass, which is annotation beyond what the question asks. The report requirements name versions, design, thresholds, tested and significant counts, seeds, the sample_01 decision, GSVA/fgsea disagreement, and the no-classifier ceiling."
+}

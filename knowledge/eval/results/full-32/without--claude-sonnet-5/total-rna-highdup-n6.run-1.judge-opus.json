@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly diagnoses the duplication flag as expected for non-UMI rRNA-depleted total RNA and explicitly refuses computational deduplication with a cited justification, and it keeps sample_01 with a transparent inclusion/exclusion sensitivity analysis rather than silent dropping — both match the reference. However the QC never reports the rRNA fraction, mitochondrial fraction, or intronic share per sample, which are the actual mechanistic explanations for the duplication in this library type and are partly computable from the gene-level matrix; it wrongly treats duplication as entirely external. There is no explicit low-count filter, only reliance on DESeq2 independent filtering, and no lfcShrink/apeglm shrinkage for the reported effect sizes, though BH at 0.05 is stated. Design formula ~condition with the treated-vs-control contrast is stated but the reference level is never explicitly set; normalization is correctly left inside the model. Enrichment is well specified (ranked list, stated metric, named collections, BH, direction) but lacks a gene-set size window and collection version, and the final report omits software versions."
+}

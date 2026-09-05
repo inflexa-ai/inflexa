@@ -1,0 +1,368 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "zebrafish-two-group-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T18:37:21.398Z",
+  "elapsedMs": 89847,
+  "outcome": "plan_submitted",
+  "planId": "pln-ed06f9f8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and DESeq2 treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 replicates per group, dispersion estimates are unstable and a single aberrant pool can dominate; inspect the PCA before interpreting any gene list.",
+          "Whole-larvae pools average across all tissues, so tissue-restricted responses are diluted and modest fold changes are expected.",
+          "Salmon gene-level counts may be non-integer if they were summarised from transcript estimates — the profile says integer, but round and report if any non-integer values are encountered rather than silently coercing.",
+          "Duplicate gene symbols in the first column must be resolved (e.g. keep the highest-mean entry) and the number of duplicates collapsed reported."
+        ],
+        "context": "Danio rerio whole-larvae bulk RNA-seq, drug exposure vs control, 3 pools per group, unpaired, single batch, gene-level Salmon counts on the Ensembl Danio rerio annotation. Because there is one factor and no batch or covariate in the metadata, ~condition is the complete design — do not invent covariates. n=3 per group is the minimum DESeq2 can estimate dispersion from with any reliability, so the QC output is not decoration: it is what tells the reader whether the DE call should be trusted at all.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "ashr",
+          "SummarizedExperiment"
+        ],
+        "question": "Which of the ~12,000 genes are differentially expressed between the 3 treated and the 3 control zebrafish larvae pools, and do the six samples separate cleanly by condition?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 on the raw integer counts — do NOT pre-normalize, CPM-transform, or log the matrix before DESeqDataSetFromMatrix.",
+          "Set the control level as the reference level of the condition factor explicitly (relevel), and state in the output which condition labels were found in metadata.csv and which was used as reference.",
+          "Use apeglm via lfcShrink for the shrunken log2FoldChange; keep BOTH the raw and shrunken LFC in the output table.",
+          "Use VST (not rlog) for the PCA and heatmaps, and state that VST values are for visualisation only, never for the hypothesis test.",
+          "Report the DEG count at padj<0.05 honestly, including if it is zero. Do not lower the FDR threshold to manufacture hits; if you additionally report a relaxed threshold, label it as exploratory.",
+          "Write the full unfiltered result table to disk — the downstream enrichment step needs the complete ranked list, not just significant genes.",
+          "State the n=3 vs n=3 power limitation explicitly in the step summary."
+        ],
+        "description": "Load /eval-full-32-without-zebrafish-two-group-n3-2/data/inputs/counts/counts.csv (12,000 genes x 6 sample columns, first column gene symbol, raw integer Salmon counts) and /eval-full-32-without-zebrafish-two-group-n3-2/data/inputs/metadata/metadata.csv (6 rows, sample + condition). Verify the sample column names of the count matrix match the metadata rows exactly and reorder to match; abort loudly on mismatch rather than assuming column order. Build a DESeq2 DESeqDataSet with design ~condition, releveling so the control group is the reference so that a positive log2FoldChange means up in treated. Report QC first: per-sample library size, DESeq2 size factors, fraction of zero-count genes per sample, VST-transformed PCA (PC1/PC2 with variance explained), and a sample-sample correlation/distance heatmap — these say whether the 3-vs-3 split is real or whether one pool is an outlier. Pre-filter to genes with a minimum count in at least 3 samples (the smallest group size) before testing. Run the Wald test, apply apeglm shrinkage to the condition coefficient for effect-size ranking, and write two tables: the full per-gene result (gene symbol, baseMean, raw and shrunken log2FoldChange, lfcSE, stat, pvalue, padj) sorted by padj, and the significant subset at padj < 0.05. Also produce a volcano plot, an MA plot, and a heatmap of VST values for the top ~40 genes by padj. Report the DEG count at padj<0.05 with no |LFC| cut and again with |shrunken LFC| > 1, and the dispersion-fit plot.",
+        "acceptance_criteria": [
+          "Sample names in counts.csv are confirmed matched to metadata.csv rows, and the two condition labels and group sizes (3 vs 3) are reported.",
+          "A full per-gene DESeq2 result table for all tested genes is written, containing gene symbol, baseMean, raw log2FoldChange, apeglm-shrunken log2FoldChange, pvalue and padj.",
+          "A significant-gene table at padj<0.05 is written (may be empty; empty is a valid reported outcome).",
+          "QC outputs exist: library sizes, size factors, VST PCA with variance explained, sample-distance heatmap, and dispersion plot.",
+          "Volcano plot, MA plot, and top-gene VST heatmap are produced.",
+          "The summary states the DEG count, the direction split (up vs down in treated), and the power caveat for n=3 per group."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "GO and pathway enrichment of the DE signal",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Zebrafish GO annotation is sparser and more inferred-from-electronic-annotation than human GO; a null result is partly an annotation-coverage statement, not purely a biological one.",
+          "With n=3 per group the DEG list may be short — GSEA on the ranked list is the more robust readout and should be given more weight than a thin ORA hit list.",
+          "Zebrafish has many ohnolog pairs (a/b paralogs from the teleost genome duplication); ortholog mapping to human is often many-to-one and inflates apparent pathway coverage. Report duplicates collapsed.",
+          "Nested GO terms produce blocks of correlated hits — a long significant-term list is not a long list of independent findings."
+        ],
+        "context": "Organism is Danio rerio. Native zebrafish GO annotation is the right primary resource because it needs no ortholog step; the pathway GMTs staged in this environment are human/mouse/rat only. clusterProfiler 4.20, DOSE, enrichplot, fgsea, GSEABase, GO.db, org.Dr.eg.db and rrvgo are all installed; msigdbr, gprofiler2 and topGO are NOT. There is no network access, so anything not already staged locally cannot be fetched.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Dr.eg.db",
+          "AnnotationDbi",
+          "GO.db",
+          "enrichplot",
+          "DOSE",
+          "fgsea",
+          "GSEABase",
+          "rrvgo",
+          "ggplot2"
+        ],
+        "question": "Which GO terms and pathways are enriched among the genes changed by drug exposure in zebrafish larvae, using the native Danio rerio annotation?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use ALL genes tested in T1S1 as the enrichment background universe for over-representation — never the full annotation or the whole genome.",
+          "Use the native Danio rerio annotation package for the primary GO analysis. Do not run zebrafish symbols against human or mouse gene sets without an explicit ortholog mapping step, and never by case-folding symbols.",
+          "Report the symbol-to-Entrez mapping rate, and for any cross-species tier the ortholog mapping rate and gene loss, as numbers in the output.",
+          "Report the ranking metric used for GSEA explicitly and use the same metric consistently.",
+          "Collapse redundant nested GO terms (e.g. via semantic-similarity reduction) before quoting a count of enriched terms.",
+          "If the padj<0.05 gene set from T1S1 is too small for over-representation to be meaningful (fewer than ~15 genes), say so and rely on the ranked GSEA rather than forcing an ORA result.",
+          "If no zebrafish pathway gene sets are present in the reference store, state that plainly as a limitation of this run rather than silently substituting a human resource."
+        ],
+        "description": "Take the full and the significant DESeq2 result tables from T1S1 and run enrichment in two clearly separated tiers.\n\nPrimary (native zebrafish, no cross-species assumption): map the zebrafish gene symbols to Entrez IDs using the Danio rerio organism annotation database available in this environment (org.Dr.eg.db is installed at Bioconductor 3.22) and report the mapping rate. Run (a) GO over-representation for BP, MF and CC on the padj<0.05 gene set, using ALL tested genes from T1S1 as the background universe — not the whole genome; and (b) GO GSEA on the complete gene list ranked by the shrunken log2FoldChange (or by -log10(p) signed by LFC, stated explicitly), which does not depend on a significance cut and is the analysis that still returns signal when the DEG count is small. Apply Benjamini-Hochberg, report q-values, and collapse the redundant nested GO hierarchy before reporting a term count (rrvgo is available for semantic-similarity reduction).\n\nSecondary (cross-species, explicitly labelled as weaker): the reference store here carries pathway GMTs for human, mouse and rat only — there is NO zebrafish pathway GMT staged, which the step must state. If a zebrafish-to-human ortholog mapping can be built from resources present in the sandbox, optionally project the ranked list onto human pathway gene sets (WikiPathways human, MSigDB hallmark, KEGG MEDICUS canonical pathways) and run GSEA there. Report the ortholog mapping rate and the number of genes lost. If no defensible ortholog mapping can be built offline, skip this tier and say so — do not substitute human gene symbols for zebrafish symbols by string matching alone, and do not report a human-pathway result without stating the mapping route and its coverage.\n\nOutputs: enrichment result tables per ontology/collection with gene ratios, q-values and the member genes driving each term; dot plots for the top terms; and a short interpretation naming which biological processes the drug exposure points to and how strongly the evidence supports each.",
+        "acceptance_criteria": [
+          "Primary GO results (BP, MF, CC) are produced against the native Danio rerio annotation, with the gene-symbol-to-Entrez mapping rate reported.",
+          "A ranked GSEA over the complete T1S1 gene list is produced and reported alongside the over-representation result.",
+          "The background universe is documented as the set of genes tested in T1S1, with its size stated.",
+          "Enrichment tables carry BH-adjusted q-values and the driver genes per term; redundant GO terms are collapsed before any term count is quoted.",
+          "Any cross-species pathway result is labelled as secondary and carries its ortholog mapping rate; if the mapping could not be built, its absence is stated.",
+          "The interpretation names concrete processes and separates well-supported from exploratory findings."
+        ]
+      }
+    ],
+    "title": "Zebrafish larvae treated vs control DE + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single 12,000-gene x 6-sample raw Salmon count matrix (counts.csv, gene symbols in column 1) with a 6-row metadata.csv carrying one condition column: 3 treated vs 3 control whole-larvae pools, unpaired, single batch. That design supports exactly one contrast (treated vs control) and nothing more — no covariates to model, no batch to remove, and n=3 per group means shrunken effect sizes and independent filtering matter more than any modelling sophistication. The plan is therefore deliberately short and linear.\n\nT1S1 does QC and the DESeq2 negative-binomial test on the raw integer counts: library sizes, size factors, VST-based PCA and sample correlation to confirm the two groups separate and that no replicate is an outlier (with n=3, a single bad pool dominates the dispersion estimate and this must be checked before, not after, the DE call). It runs the Wald test on ~design ~condition with control as reference, applies apeglm LFC shrinkage for ranking, and writes the full per-gene result table plus a filtered DEG list.\n\nT1S2 takes the DE result to pathways. The species is Danio rerio, and the reference census here holds pathway GMTs only for human, mouse and rat — there is no zebrafish GMT staged. The environment does, however, carry org.Dr.eg.db (Bioconductor 3.22), which gives native zebrafish GO annotation. So the primary enrichment is GO over-representation and GO GSEA against the native zebrafish annotation, which needs no ortholog mapping and no cross-species assumption. Human WikiPathways/KEGG-MEDICUS/Hallmark are used only as a clearly-labelled secondary readout via zebrafish->human ortholog mapping, and only if a defensible mapping can be built in-sandbox; the step must report the mapping rate and treat any pathway hit from that route as weaker evidence than the native GO result. If the ortholog route cannot be built without network access, the step reports that and the native GO result stands alone — the research question survives on GO.\n\nThe honest framing that both steps must carry: n=3 vs n=3 on 12,000 genes is a low-power design. It is adequate for a strong, coherent drug response and inadequate for confidently calling individual small-effect genes. If the DEG count is near zero at FDR 0.05, that is a reportable result, not a step failure, and the GSEA route (which uses the whole ranked list rather than a threshold) is the one that should still say something."
+  },
+  "usage": {
+    "inputTokens": 535699,
+    "outputTokens": 5902,
+    "cacheCreationInputTokens": 121500,
+    "cacheReadInputTokens": 414091,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "zebrafish"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Dr.eg.db",
+          "DESeq2",
+          "clusterProfiler",
+          "fgsea",
+          "gseapy",
+          "decoupler",
+          "babelgene",
+          "biomaRt",
+          "apeglm",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "limit": 60
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ortholog",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GO.db",
+          "AnnotationDbi",
+          "org.Dr.eg.db",
+          "clusterProfiler",
+          "msigdbr",
+          "rrvgo",
+          "pheatmap",
+          "ashr",
+          "IHW",
+          "vsn",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "danio",
+        "limit": 20
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gprofiler2",
+          "GOfuncR",
+          "topGO",
+          "goseq",
+          "enrichR",
+          "orthogene",
+          "homologene",
+          "pyensembl",
+          "mygene"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "babelgene",
+          "decoupleR",
+          "DOSE",
+          "enrichplot",
+          "GSEABase",
+          "fgsea",
+          "limma",
+          "edgeR",
+          "sva",
+          "PCAtools"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Zebrafish larvae treated vs control DE + pathways",
+          "analytical_narrative": "The input is a single 12,000-gene x 6-sample raw Salmon count matrix (counts.csv, gene symbols in column 1) with a 6-row metadata.csv carrying one condition column: 3 treated vs 3 control whole-larvae pools, unpaired, single batch. That design supports exactly one contrast (treated vs control) and nothing more — no covariates to model, no batch to remove, and n=3 per group means shrunken effect sizes and independent filtering matter more than any modelling sophistication. The plan is therefore deliberately short and linear.\n\nT1S1 does QC and the DESeq2 negative-binomial test on the raw integer counts: library sizes, size factors, VST-based PCA and sample correlation to confirm the two groups separate and that no replicate is an outlier (with n=3, a single bad pool dominates the dispersion estimate and this must be checked before, not after, the DE call). It runs the Wald test on ~design ~condition with control as reference, applies apeglm LFC shrinkage for ranking, and writes the full per-gene result table plus a filtered DEG list.\n\nT1S2 takes the DE result to pathways. The species is Danio rerio, and the reference census here holds pathway GMTs only for human, mouse and rat — there is no zebrafish GMT staged. The environment does, however, carry org.Dr.eg.db (Bioconductor 3.22), which gives native zebrafish GO annotation. So the primary enrichment is GO over-representation and GO GSEA against the native zebrafish annotation, which needs no ortholog mapping and no cross-species assumption. Human WikiPathways/KEGG-MEDICUS/Hallmark are used only as a clearly-labelled secondary readout via zebrafish->human ortholog mapping, and only if a defensible mapping can be built in-sandbox; the step must report the mapping rate and treat any pathway hit from that route as weaker evidence than the native GO result. If the ortholog route cannot be built without network access, the step reports that and the native GO result stands alone — the research question survives on GO.\n\nThe honest framing that both steps must carry: n=3 vs n=3 on 12,000 genes is a low-power design. It is adequate for a strong, coherent drug response and inadequate for confidently calling individual small-effect genes. If the DEG count is near zero at FDR 0.05, that is a reportable result, not a step failure, and the GSEA route (which uses the whole ranked list rather than a threshold) is the one that should still say something.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and DESeq2 treated vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the ~12,000 genes are differentially expressed between the 3 treated and the 3 control zebrafish larvae pools, and do the six samples separate cleanly by condition?",
+              "description": "Load /eval-full-32-without-zebrafish-two-group-n3-2/data/inputs/counts/counts.csv (12,000 genes x 6 sample columns, first column gene symbol, raw integer Salmon counts) and /eval-full-32-without-zebrafish-two-group-n3-2/data/inputs/metadata/metadata.csv (6 rows, sample + condition). Verify the sample column names of the count matrix match the metadata rows exactly and reorder to match; abort loudly on mismatch rather than assuming column order. Build a DESeq2 DESeqDataSet with design ~condition, releveling so the control group is the reference so that a positive log2FoldChange means up in treated. Report QC first: per-sample library size, DESeq2 size factors, fraction of zero-count genes per sample, VST-transformed PCA (PC1/PC2 with variance explained), and a sample-sample correlation/distance heatmap — these say whether the 3-vs-3 split is real or whether one pool is an outlier. Pre-filter to genes with a minimum count in at least 3 samples (the smallest group size) before testing. Run the Wald test, apply apeglm shrinkage to the condition coefficient for effect-size ranking, and write two tables: the full per-gene result (gene symbol, baseMean, raw and shrunken log2FoldChange, lfcSE, stat, pvalue, padj) sorted by padj, and the significant subset at padj < 0.05. Also produce a volcano plot, an MA plot, and a heatmap of VST values for the top ~40 genes by padj. Report the DEG count at padj<0.05 with no |LFC| cut and again with |shrunken LFC| > 1, and the dispersion-fit plot.",
+              "context": "Danio rerio whole-larvae bulk RNA-seq, drug exposure vs control, 3 pools per group, unpaired, single batch, gene-level Salmon counts on the Ensembl Danio rerio annotation. Because there is one factor and no batch or covariate in the metadata, ~condition is the complete design — do not invent covariates. n=3 per group is the minimum DESeq2 can estimate dispersion from with any reliability, so the QC output is not decoration: it is what tells the reader whether the DE call should be trusted at all.",
+              "constraints": [
+                "Use DESeq2 on the raw integer counts — do NOT pre-normalize, CPM-transform, or log the matrix before DESeqDataSetFromMatrix.",
+                "Set the control level as the reference level of the condition factor explicitly (relevel), and state in the output which condition labels were found in metadata.csv and which was used as reference.",
+                "Use apeglm via lfcShrink for the shrunken log2FoldChange; keep BOTH the raw and shrunken LFC in the output table.",
+                "Use VST (not rlog) for the PCA and heatmaps, and state that VST values are for visualisation only, never for the hypothesis test.",
+                "Report the DEG count at padj<0.05 honestly, including if it is zero. Do not lower the FDR threshold to manufacture hits; if you additionally report a relaxed threshold, label it as exploratory.",
+                "Write the full unfiltered result table to disk — the downstream enrichment step needs the complete ranked list, not just significant genes.",
+                "State the n=3 vs n=3 power limitation explicitly in the step summary."
+              ],
+              "acceptance_criteria": [
+                "Sample names in counts.csv are confirmed matched to metadata.csv rows, and the two condition labels and group sizes (3 vs 3) are reported.",
+                "A full per-gene DESeq2 result table for all tested genes is written, containing gene symbol, baseMean, raw log2FoldChange, apeglm-shrunken log2FoldChange, pvalue and padj.",
+                "A significant-gene table at padj<0.05 is written (may be empty; empty is a valid reported outcome).",
+                "QC outputs exist: library sizes, size factors, VST PCA with variance explained, sample-distance heatmap, and dispersion plot.",
+                "Volcano plot, MA plot, and top-gene VST heatmap are produced.",
+                "The summary states the DEG count, the direction split (up vs down in treated), and the power caveat for n=3 per group."
+              ],
+              "caveats": [
+                "With 3 replicates per group, dispersion estimates are unstable and a single aberrant pool can dominate; inspect the PCA before interpreting any gene list.",
+                "Whole-larvae pools average across all tissues, so tissue-restricted responses are diluted and modest fold changes are expected.",
+                "Salmon gene-level counts may be non-integer if they were summarised from transcript estimates — the profile says integer, but round and report if any non-integer values are encountered rather than silently coercing.",
+                "Duplicate gene symbols in the first column must be resolved (e.g. keep the highest-mean entry) and the number of duplicates collapsed reported."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "ashr",
+                "SummarizedExperiment"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "GO and pathway enrichment of the DE signal",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which GO terms and pathways are enriched among the genes changed by drug exposure in zebrafish larvae, using the native Danio rerio annotation?",
+              "description": "Take the full and the significant DESeq2 result tables from T1S1 and run enrichment in two clearly separated tiers.\n\nPrimary (native zebrafish, no cross-species assumption): map the zebrafish gene symbols to Entrez IDs using the Danio rerio organism annotation database available in this environment (org.Dr.eg.db is installed at Bioconductor 3.22) and report the mapping rate. Run (a) GO over-representation for BP, MF and CC on the padj<0.05 gene set, using ALL tested genes from T1S1 as the background universe — not the whole genome; and (b) GO GSEA on the complete gene list ranked by the shrunken log2FoldChange (or by -log10(p) signed by LFC, stated explicitly), which does not depend on a significance cut and is the analysis that still returns signal when the DEG count is small. Apply Benjamini-Hochberg, report q-values, and collapse the redundant nested GO hierarchy before reporting a term count (rrvgo is available for semantic-similarity reduction).\n\nSecondary (cross-species, explicitly labelled as weaker): the reference store here carries pathway GMTs for human, mouse and rat only — there is NO zebrafish pathway GMT staged, which the step must state. If a zebrafish-to-human ortholog mapping can be built from resources present in the sandbox, optionally project the ranked list onto human pathway gene sets (WikiPathways human, MSigDB hallmark, KEGG MEDICUS canonical pathways) and run GSEA there. Report the ortholog mapping rate and the number of genes lost. If no defensible ortholog mapping can be built offline, skip this tier and say so — do not substitute human gene symbols for zebrafish symbols by string matching alone, and do not report a human-pathway result without stating the mapping route and its coverage.\n\nOutputs: enrichment result tables per ontology/collection with gene ratios, q-values and the member genes driving each term; dot plots for the top terms; and a short interpretation naming which biological processes the drug exposure points to and how strongly the evidence supports each.",
+              "context": "Organism is Danio rerio. Native zebrafish GO annotation is the right primary resource because it needs no ortholog step; the pathway GMTs staged in this environment are human/mouse/rat only. clusterProfiler 4.20, DOSE, enrichplot, fgsea, GSEABase, GO.db, org.Dr.eg.db and rrvgo are all installed; msigdbr, gprofiler2 and topGO are NOT. There is no network access, so anything not already staged locally cannot be fetched.",
+              "constraints": [
+                "Use ALL genes tested in T1S1 as the enrichment background universe for over-representation — never the full annotation or the whole genome.",
+                "Use the native Danio rerio annotation package for the primary GO analysis. Do not run zebrafish symbols against human or mouse gene sets without an explicit ortholog mapping step, and never by case-folding symbols.",
+                "Report the symbol-to-Entrez mapping rate, and for any cross-species tier the ortholog mapping rate and gene loss, as numbers in the output.",
+                "Report the ranking metric used for GSEA explicitly and use the same metric consistently.",
+                "Collapse redundant nested GO terms (e.g. via semantic-similarity reduction) before quoting a count of enriched terms.",
+                "If the padj<0.05 gene set from T1S1 is too small for over-representation to be meaningful (fewer than ~15 genes), say so and rely on the ranked GSEA rather than forcing an ORA result.",
+                "If no zebrafish pathway gene sets are present in the reference store, state that plainly as a limitation of this run rather than silently substituting a human resource."
+              ],
+              "acceptance_criteria": [
+                "Primary GO results (BP, MF, CC) are produced against the native Danio rerio annotation, with the gene-symbol-to-Entrez mapping rate reported.",
+                "A ranked GSEA over the complete T1S1 gene list is produced and reported alongside the over-representation result.",
+                "The background universe is documented as the set of genes tested in T1S1, with its size stated.",
+                "Enrichment tables carry BH-adjusted q-values and the driver genes per term; redundant GO terms are collapsed before any term count is quoted.",
+                "Any cross-species pathway result is labelled as secondary and carries its ortholog mapping rate; if the mapping could not be built, its absence is stated.",
+                "The interpretation names concrete processes and separates well-supported from exploratory findings."
+              ],
+              "caveats": [
+                "Zebrafish GO annotation is sparser and more inferred-from-electronic-annotation than human GO; a null result is partly an annotation-coverage statement, not purely a biological one.",
+                "With n=3 per group the DEG list may be short — GSEA on the ranked list is the more robust readout and should be given more weight than a thin ORA hit list.",
+                "Zebrafish has many ohnolog pairs (a/b paralogs from the teleost genome duplication); ortholog mapping to human is often many-to-one and inflates apparent pathway coverage. Report duplicates collapsed.",
+                "Nested GO terms produce blocks of correlated hits — a long significant-term list is not a long list of independent findings."
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Dr.eg.db",
+                "AnnotationDbi",
+                "GO.db",
+                "enrichplot",
+                "DOSE",
+                "fgsea",
+                "GSEABase",
+                "rrvgo",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses to refit DESeq2, takes the significant set as padj<0.05 with a stated |LFC|>1 cutoff, uses the tested-gene table (NA padj removed) as the universe, names GO BP with clusterProfiler::enrichGO, applies BH at 0.05, and reduces redundancy with simplify while reporting gene ratio, adjusted p and member genes. It falls short of the reference in not stating a gene-set size window, not fixing an annotation version, and not declaring whether up and down genes are tested apart or pooled (it only counts them separately). Sample-level QC is limited to flagging sample_01 as an upstream caveat, which is defensible given only a results table is in hand but is not a stated policy beyond noting it. Report lacks package versions, though it does promise counts of dropped, mapped, and simplified items and the relevant caveats."
+}

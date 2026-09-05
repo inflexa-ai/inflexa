@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly refuses count models for log2(TPM+1) input and uses limma lmFit with eBayes(trend=TRUE, robust=TRUE) on the values as delivered, with an explicit value-range check and no second normalization, matching the reference. Design is ~condition with control releveled and the contrast named so positive logFC means higher in treated; BH at 0.05 via topTable with TREAT for the effect-size threshold inside the model. QC (PCA/MDS on top 500, distance heatmap, distributions) precedes the fit with a stated outlier policy, and the low-abundance filter is label-independent and justified though the floor is left to be derived rather than stated. Enrichment was not asked and the reference omits it; the plan adds it but specifies it soundly (full ranked list, stated metric, tested-gene universe, hallmark collection, 15-500 window), so it is not penalized heavily. The report step names the core-reported transform, the reason for no count model, versions, thresholds, counts, and the n=6 power caveat."
+}

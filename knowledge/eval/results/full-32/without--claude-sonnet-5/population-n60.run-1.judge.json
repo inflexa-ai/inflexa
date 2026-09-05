@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 Wald with ~condition on raw counts is a valid but slower choice for 60 vs 60 where limma-voom is the reference's preferred method; size-factor normalization inside the model and BH at 0.05 with apeglm shrinkage are stated correctly. QC covers library sizes, PCA colored by condition, an explicit outlier rule, and a metadata swap check, but omits the sex check and any hidden-structure search. No explicit low-count filter is stated (only DESeq2 independent filtering), the reference level is not named, and the |log2FC|>=1 cutoff is applied as post-hoc classification rather than as a threshold in the test (no lfcThreshold/TREAT, no CIs). Enrichment names collections and a tested-gene universe but leads with ORA on a cutoff list, ranks fgsea by shrunken LFC rather than the test statistic, and gives no versions or size window; the report lacks package versions."
+}

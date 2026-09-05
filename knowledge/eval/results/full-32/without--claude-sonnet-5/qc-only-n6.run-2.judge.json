@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 2,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly reads the question as QC-only for a 6v6 unpaired single-batch design: library sizes with median/IQR and detection rate, vst/rlog then PCA colored by condition, a Euclidean/Poisson distance heatmap with clustering, and a verdict on sample_01 that triangulates the three views rather than the depth alone, with an explicit no-DE constraint and a downstream recommendation. Normalization is size-factor based on the full matrix with no pre-normalized values. The main gap is that no low-count gene filter is stated before the transform and PCA, which the reference requires. The downstream recommendation does not name the design formula or reference level, package versions are not given, and the caveat about missing RIN/mapping rate is a good touch; enrichment and FDR are correctly absent."
+}

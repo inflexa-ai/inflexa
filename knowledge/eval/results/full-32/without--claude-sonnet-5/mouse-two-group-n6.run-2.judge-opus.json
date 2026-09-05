@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 0,
+    "normalization": 10,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly matches DESeq2 Wald on an unpaired 6v6 single-batch design with apeglm shrinkage and BH-adjusted p-values, and it explicitly forbids pre-normalization so median-of-ratios size factors operate inside the model. QC is strong and dataset-specific: library sizes reported, PCA/sample-distance on VST, and a documented sensitivity re-run rather than silent inclusion or removal of sample_01. However, no low-count pre-filter is mentioned at all, and the design formula is only described as 'condition (HFD vs chow)' without naming the reference level (chow) or the explicit contrast/results() call. Enrichment correctly uses mouse hallmark sets (MGI symbols) with fgsea preranked on the full 12000-gene list and a stated ranking statistic, but no set size window (15-500), no MSigDB version, and ORA lacks an explicit universe (only an overlap-percentage check). Reporting covers thresholds, decisions, and design caveats but omits package versions and explicit counts of tested vs significant genes."
+}

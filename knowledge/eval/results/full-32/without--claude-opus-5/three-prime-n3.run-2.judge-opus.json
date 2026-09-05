@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the QuantSeq 3' tag chemistry and forbids TPM/FPKM/RPKM and any gene-length offset, feeding raw counts directly into DESeq2 Wald with median-of-ratios size factors and an edgeR QL cross-check with TMM — exactly the right fit for an unpaired, single-batch 3-vs-3 design, with the power limitation stated. QC is thorough and precedes the test (library sizes, VST PCA with variance explained, sample-distance heatmap, dispersion plot) and has an explicit no-drop outlier policy appropriate at n=3. Design formula ~condition with control as reference and the contrast direction verified across frameworks is explicit; BH is applied at stated alphas with apeglm shrinkage for reported effects and independent filtering accounted for. The main weakness is the low-count filter: ~10 counts in at least 3 samples is a full-length-library default rather than the lower floor (~5) appropriate to tag counts, though the rule is justified and the retained gene count is reported. Enrichment is well specified (preranked fgsea, ranking metric stated, human hallmark and GO-BP, 15–500 size window, overlap reporting) but omits collection versions, and no software versions are promised in the report."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 2,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses a latent factor that is not confounded with condition, estimates it with sva (num.sv rather than assuming one) with condition in the model, and adds it to a DESeq2 design (~ SV1 + condition) without adjusting the count matrix, though it does not first ask the analyst for the unrecorded variable, does not specify svaseq or the null model, and hard-codes SV1 in the design rather than all estimated SVs. QC includes PCA colored by condition and cluster and library sizes but no outlier or shallow-sample policy; no low-count filter is stated beyond DESeq2 independent filtering; size factors are only implied. BH at 0.05 is stated but no lfcShrink is planned and the |log2FC|>1 cutoff is applied post hoc rather than in the test. Enrichment is included without a stated universe, collection version, size window, or ranking metric, and the report omits software versions."
+}

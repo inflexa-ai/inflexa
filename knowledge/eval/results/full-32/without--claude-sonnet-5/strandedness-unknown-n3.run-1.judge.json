@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly picks DESeq2 with ~condition for an unpaired 3 vs 3 single-batch design, but it fits the model on the counts as delivered: it declares strandedness unverifiable and substitutes count-matrix heuristics instead of requiring infer_experiment/salmon libType A on the alignments and re-counting with the correct -s, which the reference treats as mandatory before any test. QC is solid (library sizes, correlation heatmap, PCA by condition, >2x outlier flag), BH at 0.05 with apeglm shrinkage is stated, and raw counts go into the model, but no low count filter is specified and the reference level is not named. Enrichment was not asked for and is added anyway with no stated ORA universe, gene set version, or size window and a vague ranking metric. The report lists method, design, thresholds, significant gene counts, and the power caveat, but omits software versions."
+}

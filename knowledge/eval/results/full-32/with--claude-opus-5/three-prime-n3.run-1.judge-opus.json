@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the QuantSeq 3' tag library as length-independent and forbids tximport length offsets, TPM/FPKM, and any pre-scaling, sending raw featureCounts integers into DESeq2 Wald with median-of-ratios size factors inside the model and an edgeR QL/TMM cross-check on the identical filtered matrix, design and contrast. The low-count floor is explicitly lowered to 5 counts in >=3 samples with the 3'-tag rationale and a requirement to report genes retained out of 12,000. QC (library sizes, blind VST, PCA on top 500 variable genes, distance heatmap, no-drop policy with flagging) precedes the test; the design formula ~condition, explicit control reference level, contrast direction, BH at alpha 0.05 with independent filtering, apeglm shrinkage for ranking with unshrunken p-values, and Cook's outlier handling are all specified, as is the n=3 power caveat before any gene table. Enrichment is preranked fgsea on the full tested list ranked by the Wald statistic, ORA deliberately declined, with named human collections, version, size window 15-500 after intersection, seed and leading edge — only minor blemish is the boilerplate caveat that 'gene length ... biases enrichment testing', which is not really applicable to a 3'-tag ranked test, though no length correction is actually applied. The report step names methods, versions, formula, contrast, thresholds, tested and significant counts, diagnostics, overlap set, reproducibility record and the explicit statement that length-normalized units do not apply."
+}

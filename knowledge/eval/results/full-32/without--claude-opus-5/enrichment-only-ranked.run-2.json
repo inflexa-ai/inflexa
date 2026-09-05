@@ -1,0 +1,334 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "enrichment-only-ranked",
+  "run": 2,
+  "startedAt": "2026-09-05T18:13:47.747Z",
+  "elapsedMs": 78906,
+  "outcome": "plan_submitted",
+  "planId": "pln-f36ed132",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DE table QC and sample_01 outlier check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "sample_01's 4x-low depth may be benign after DESeq2 size-factor normalization, or may be the reason a subset of genes reach significance — state which the data support rather than assuming",
+          "Genes with NA padj are expected (DESeq2 independent filtering / outlier replacement) and are not evidence of a broken table, but they must be excluded from the ranking without silently dropping informative low-count genes from the reported counts",
+          "12,000 genes suggests the matrix is already filtered; do not apply a second aggressive expression filter that would shrink the GSEA universe"
+        ],
+        "context": "Human skin bulk RNA-seq, 6 psoriasis-lesional ('treated') vs 6 control, unpaired, single batch. The data profile flags that sample_01 has a library size roughly 4x below the median, which is the one known threat to the supplied contrast. With n=6 per group a single aberrant library can materially shift dispersion estimates and hence which genes reach significance, so the downstream hallmark result needs this checked and stated rather than assumed away.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "scipy",
+          "statsmodels"
+        ],
+        "question": "Is the supplied DESeq2 treated-vs-control results table (12,000 genes) a trustworthy ranking for GSEA, and does the low-depth sample_01 distort the lesional-vs-control separation?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Use the supplied de_results.csv as the contrast — do not recompute differential expression",
+          "Resolve duplicate gene symbols in the ranking by keeping the entry with the largest absolute ranking statistic, and report how many duplicates were collapsed",
+          "Report the direction convention of the contrast explicitly (positive log2_fold_change = higher in treated/lesional) and carry it forward in the output file header or a sidecar note",
+          "If de_results.csv lacks a test-statistic column, fall back to sign(log2_fold_change) * -log10(pvalue) and say so; do not silently rank on log2FC alone"
+        ],
+        "description": "Compact diagnostic of the supplied inputs before any enrichment. Load /eval-full-32-without-enrichment-only-ranked-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw Salmon counts), /eval-full-32-without-enrichment-only-ranked-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition), and /eval-full-32-without-enrichment-only-ranked-2/data/inputs/results/de_results.csv (12,000 x 8 DESeq2 table). Report: (a) per-sample library sizes with sample_01 called out explicitly and its ratio to the median; (b) a VST or log-CPM PCA coloured by condition (treated/lesional vs control) with sample_01 labelled, stating whether it separates by condition or by depth; (c) internal coherence of de_results.csv — the exact column names present, the p-value histogram shape, whether padj is a monotone BH transform of pvalue, the count of NA padj rows and whether they correspond to low base_mean (independent filtering), and the number of genes at padj<0.05 with |log2FC|>1; (d) overlap between the gene symbol column of de_results.csv and the first column of counts.csv. Emit a tidy, deduplicated, NA-free ranking table (gene symbol + ranking statistic) to be consumed by T1S2, choosing the signed Wald/test statistic column if the DE table carries one, otherwise sign(log2_fold_change) * -log10(pvalue), and stating which was used. Do NOT re-run DESeq2 — the contrast is supplied.",
+        "acceptance_criteria": [
+          "Per-sample library sizes reported, with sample_01's depth relative to the median stated numerically",
+          "PCA (VST or log-CPM) plot saved, coloured by condition with sample_01 labelled, and an explicit written verdict on whether sample_01 clusters with its condition group or as a depth-driven outlier",
+          "Exact column names of de_results.csv reported verbatim, plus p-value histogram, NA-padj count, and number of genes at padj<0.05 and |log2FC|>1",
+          "Gene-symbol overlap between de_results.csv and counts.csv reported as a count and a percentage",
+          "A single ranking table written to disk with one row per unique gene symbol, no NA ranking values, and the chosen ranking statistic named in the output",
+          "No re-running of DESeq2; the supplied contrast is used as given"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Hallmark GSEA on the ranked DE contrast",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6 samples, nominal p-values from a single pre-computed contrast are optimistic; hallmark sets that are significant only nominally (padj>0.05) must be described as suggestive, not established",
+          "Hallmark sets overlap in membership (inflammatory sets share many genes), so a block of co-significant inflammatory hallmarks is one signal, not several independent findings — say so when summarising",
+          "Leading-edge genes are the drivers of the score, not a validated gene list; do not present them as a signature",
+          "If T1S1 found sample_01 to be a condition-confounded outlier, carry that caveat into the interpretation of every NES here"
+        ],
+        "context": "This step answers the research question directly. Inputs: the ranking table from T1S1, and the human hallmark GMT (50 sets, HGNC symbols, MSigDB 2026.1) from the environment's pathway reference collection. Psoriasis lesional skin has strong prior expectation of inflammatory hallmark enrichment (TNFA_SIGNALING_VIA_NFKB, INTERFERON_GAMMA_RESPONSE, IL6_JAK_STAT3_SIGNALING, INFLAMMATORY_RESPONSE, plus proliferative sets such as E2F_TARGETS and G2M_CHECKPOINT from keratinocyte hyperproliferation). That prior is context for interpretation and a sanity check on the direction convention — it is NOT a target to reproduce, and hallmarks that do not come out significant must be reported as not significant.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "gseapy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are significantly enriched in psoriasis-lesional versus control skin, and in which direction?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the human hallmark GMT — never the mouse hallmark file staged in the same collection",
+          "Run GSEA on the full ranking of all genes; do not restrict the input to significant DE genes, which would convert this into an over-representation test",
+          "Report all 50 sets, not only the significant ones — absence of enrichment for an expected inflammatory hallmark is a reportable result",
+          "Apply Benjamini-Hochberg across the 50 sets and report both nominal and adjusted p-values",
+          "If the human hallmark gene sets cannot be resolved at run time, report that as the step outcome and do not substitute a different collection"
+        ],
+        "description": "Rank-based gene set enrichment analysis over the full 12,000-gene ranking produced by T1S1, against the human hallmark gene set collection (the 50 HALLMARK_* sets, HGNC gene symbols) resolved from the environment's reference store — the human file, matching the Homo sapiens skin data, not the mouse hallmark file that is staged alongside it. Use a permutation- or multilevel-based GSEA implementation (fgsea in R, or gseapy/blitzgsea prerank in Python) with a fixed random seed. Report ALL 50 hallmark sets in one table with: set name, size after intersection with the ranking universe, enrichment score, normalized enrichment score, nominal p-value, BH-adjusted p-value, and the leading-edge genes. Because there are only 50 sets, do not pre-filter the reported table — the complete ranked table is the deliverable. Produce (a) a barplot of NES for sets at padj<0.05 ordered by NES, (b) enrichment-score curves for the top 5 up and top 5 down sets, and (c) a leading-edge table listing, for each significant set, the leading-edge genes annotated with their log2_fold_change and padj from de_results.csv. State the direction convention in every figure caption: positive NES = enriched in treated/lesional skin. If the human hallmark collection cannot be resolved in the reference store at run time, stop and report that rather than substituting GO, oncogenic, or WikiPathways sets — the research question names hallmark specifically.",
+        "acceptance_criteria": [
+          "A complete results table for all 50 hallmark sets with NES, nominal p, BH-adjusted p, set size after universe intersection, and leading-edge genes",
+          "The organism-matched HUMAN hallmark collection is used, and the resolved reference is named in the output log",
+          "Random seed fixed and reported so the permutation p-values are reproducible",
+          "NES barplot for padj<0.05 sets and enrichment curves for the top 5 up and top 5 down sets saved as figures, each captioned with the direction convention (positive NES = up in treated/lesional)",
+          "Leading-edge genes for each significant set annotated with their per-gene log2_fold_change and padj from de_results.csv",
+          "Number of ranking genes matched into the hallmark universe reported, and any hallmark set whose post-intersection size falls below 15 genes flagged as underpowered"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Per-sample hallmark scores and robustness",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6, a rank-sum test has a floor on its p-value; a set can be robust and still not reach a small p",
+          "Leave-one-out is a fragility diagnostic, not a validation — a set surviving it is still a single-cohort finding",
+          "ssGSEA-type scores are relative within the sample set and are not comparable to scores computed on another cohort"
+        ],
+        "context": "T1S2 gives one enrichment statistic per hallmark from a single group-level contrast and cannot say whether the signal is uniform across the 6 lesional samples. Because the raw counts are supplied, per-sample scoring is available and is the cheapest meaningful robustness check for an n=6 vs n=6 design with one flagged low-depth library (sample_01). This step does not replace T1S2 — it qualifies which of its calls survive sample-level scrutiny.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "decoupler",
+          "matplotlib",
+          "seaborn",
+          "statsmodels"
+        ],
+        "question": "Are the significant hallmark enrichments consistent across all 6 lesional samples, or are they driven by a minority of samples (including the low-depth sample_01)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Normalize for library size before scoring so sample_01's low depth is not read as low pathway activity — state the normalization used",
+          "Use the same human hallmark collection resolved in T1S2, so scores and enrichment refer to identical gene sets",
+          "Report Wilcoxon results with n=6 per group as what they are: the minimum attainable p-value is bounded, so present effect sizes alongside p-values rather than p-values alone",
+          "Do not use the per-sample scores to define new significant hallmarks not tested in T1S2 without labelling that as exploratory"
+        ],
+        "description": "Per-sample hallmark activity scoring to test the robustness of the T1S2 result. From counts.csv, build a normalized expression matrix (VST or log-CPM with library-size normalization, so that sample_01's ~4x-lower depth does not dominate) and compute single-sample scores for the hallmark sets that reached padj<0.05 in T1S2 — using an installed single-sample method (decoupler's ssGSEA/AUCell/mean-z, GSVA, or singscore). Output: (a) a sample x hallmark score heatmap with samples annotated by condition and by library size; (b) per-hallmark score comparison between the 6 lesional and 6 control samples with a Wilcoxon rank-sum test and effect size, BH-adjusted across the tested sets; (c) an explicit leave-one-sample-out check on the hallmark sets that T1S2 called significant — recompute the group difference in per-sample scores 12 times, each dropping one sample, and report which sets change from significant to non-significant when any single sample is removed, calling out sample_01 specifically. Sets that fail leave-one-out must be labelled fragile in the summary.",
+        "acceptance_criteria": [
+          "Sample x hallmark score matrix computed for every hallmark set significant in T1S2 (and, if fewer than 5 were significant, for all 50), with the scoring method named",
+          "Heatmap saved with samples annotated by condition and library size, sample_01 identifiable",
+          "Per-hallmark lesional-vs-control Wilcoxon p-values with BH adjustment and an effect size reported in a table",
+          "Leave-one-out results reported for every T1S2-significant set, naming each set whose group difference loses significance when a single sample is dropped and identifying which sample",
+          "A written summary classifying each significant hallmark as robust or fragile with respect to single-sample removal"
+        ]
+      }
+    ],
+    "title": "Hallmark GSEA of psoriasis lesional vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question is narrow: which MSigDB hallmark pathways change between the treated (psoriasis lesional) and control skin samples. Differential expression is already done and supplied as /data/inputs/results/de_results.csv (12,000 genes x 8 columns, DESeq2 treated vs control), so no re-running of DESeq2 is planned. The primary work is therefore a rank-based hallmark GSEA (T1S2) on the full 12,000-gene ranking, using the staged human hallmark collection (MSigDB 2026.1, 50 HALLMARK_* sets, HGNC symbols) — the correct organism file, since the data are Homo sapiens skin.\n\nTwo things justify the small amount of work that precedes it. First, the DE table must be sanity-checked before it is trusted as a ranking: the profile flags that sample_01 has a library size ~4x below the median, which in a 6 vs 6 unpaired design is enough to distort dispersion estimates and shrunken fold changes if that sample is a control-side outlier. T1S1 therefore does a compact QC/consistency check — VST/CPM PCA and library-size summary from counts.csv against metadata.csv, plus verification that the supplied de_results.csv is internally coherent (p-value distribution, padj vs pvalue monotonicity, log2FC vs baseMean shape) and that its gene identifier space matches the counts. This is diagnostic, not a re-analysis, and its output is an explicit statement of whether the ranking is fit for GSEA and whether sample_01 drives it.\n\nSecond, GSEA on a single pre-computed contrast gives one number per hallmark set with no sample-level resolution. T1S3 complements it with per-sample single-sample scoring (ssGSEA/AUCell-style, from the same counts matrix) for the hallmark sets that came out significant, which shows whether a set's enrichment is consistent across all 6 lesional samples or driven by one or two — the single most common way a hallmark result from n=6 per group turns out to be fragile, and directly checkable here because the counts are supplied.\n\nThe ranking metric for T1S2 is the signed test statistic (or, failing that, sign(log2FC) * -log10(pvalue)), not log2FC alone, because with 12,000 genes and shrunken fold changes an unweighted log2FC ranking loses the precision information. Multiple testing is over 50 sets only, so BH-adjusted p-values will be reported for all 50 rather than a filtered subset — with 50 hallmarks the full table is the honest output. Directionality (NES sign) is reported explicitly with respect to the stated treated-vs-control contrast direction, since a sign error here silently inverts every biological conclusion."
+  },
+  "usage": {
+    "inputTokens": 91727,
+    "outputTokens": 5747,
+    "cacheCreationInputTokens": 73555,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "decoupler",
+          "gseapy",
+          "msigdbr",
+          "clusterProfiler",
+          "blitzgsea",
+          "GSEABase"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Hallmark GSEA of psoriasis lesional vs control",
+          "analytical_narrative": "The research question is narrow: which MSigDB hallmark pathways change between the treated (psoriasis lesional) and control skin samples. Differential expression is already done and supplied as /data/inputs/results/de_results.csv (12,000 genes x 8 columns, DESeq2 treated vs control), so no re-running of DESeq2 is planned. The primary work is therefore a rank-based hallmark GSEA (T1S2) on the full 12,000-gene ranking, using the staged human hallmark collection (MSigDB 2026.1, 50 HALLMARK_* sets, HGNC symbols) — the correct organism file, since the data are Homo sapiens skin.\n\nTwo things justify the small amount of work that precedes it. First, the DE table must be sanity-checked before it is trusted as a ranking: the profile flags that sample_01 has a library size ~4x below the median, which in a 6 vs 6 unpaired design is enough to distort dispersion estimates and shrunken fold changes if that sample is a control-side outlier. T1S1 therefore does a compact QC/consistency check — VST/CPM PCA and library-size summary from counts.csv against metadata.csv, plus verification that the supplied de_results.csv is internally coherent (p-value distribution, padj vs pvalue monotonicity, log2FC vs baseMean shape) and that its gene identifier space matches the counts. This is diagnostic, not a re-analysis, and its output is an explicit statement of whether the ranking is fit for GSEA and whether sample_01 drives it.\n\nSecond, GSEA on a single pre-computed contrast gives one number per hallmark set with no sample-level resolution. T1S3 complements it with per-sample single-sample scoring (ssGSEA/AUCell-style, from the same counts matrix) for the hallmark sets that came out significant, which shows whether a set's enrichment is consistent across all 6 lesional samples or driven by one or two — the single most common way a hallmark result from n=6 per group turns out to be fragile, and directly checkable here because the counts are supplied.\n\nThe ranking metric for T1S2 is the signed test statistic (or, failing that, sign(log2FC) * -log10(pvalue)), not log2FC alone, because with 12,000 genes and shrunken fold changes an unweighted log2FC ranking loses the precision information. Multiple testing is over 50 sets only, so BH-adjusted p-values will be reported for all 50 rather than a filtered subset — with 50 hallmarks the full table is the honest output. Directionality (NES sign) is reported explicitly with respect to the stated treated-vs-control contrast direction, since a sign error here silently inverts every biological conclusion.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DE table QC and sample_01 outlier check",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is the supplied DESeq2 treated-vs-control results table (12,000 genes) a trustworthy ranking for GSEA, and does the low-depth sample_01 distort the lesional-vs-control separation?",
+              "description": "Compact diagnostic of the supplied inputs before any enrichment. Load /eval-full-32-without-enrichment-only-ranked-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw Salmon counts), /eval-full-32-without-enrichment-only-ranked-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition), and /eval-full-32-without-enrichment-only-ranked-2/data/inputs/results/de_results.csv (12,000 x 8 DESeq2 table). Report: (a) per-sample library sizes with sample_01 called out explicitly and its ratio to the median; (b) a VST or log-CPM PCA coloured by condition (treated/lesional vs control) with sample_01 labelled, stating whether it separates by condition or by depth; (c) internal coherence of de_results.csv — the exact column names present, the p-value histogram shape, whether padj is a monotone BH transform of pvalue, the count of NA padj rows and whether they correspond to low base_mean (independent filtering), and the number of genes at padj<0.05 with |log2FC|>1; (d) overlap between the gene symbol column of de_results.csv and the first column of counts.csv. Emit a tidy, deduplicated, NA-free ranking table (gene symbol + ranking statistic) to be consumed by T1S2, choosing the signed Wald/test statistic column if the DE table carries one, otherwise sign(log2_fold_change) * -log10(pvalue), and stating which was used. Do NOT re-run DESeq2 — the contrast is supplied.",
+              "question_context": null,
+              "context": "Human skin bulk RNA-seq, 6 psoriasis-lesional ('treated') vs 6 control, unpaired, single batch. The data profile flags that sample_01 has a library size roughly 4x below the median, which is the one known threat to the supplied contrast. With n=6 per group a single aberrant library can materially shift dispersion estimates and hence which genes reach significance, so the downstream hallmark result needs this checked and stated rather than assumed away.",
+              "acceptance_criteria": [
+                "Per-sample library sizes reported, with sample_01's depth relative to the median stated numerically",
+                "PCA (VST or log-CPM) plot saved, coloured by condition with sample_01 labelled, and an explicit written verdict on whether sample_01 clusters with its condition group or as a depth-driven outlier",
+                "Exact column names of de_results.csv reported verbatim, plus p-value histogram, NA-padj count, and number of genes at padj<0.05 and |log2FC|>1",
+                "Gene-symbol overlap between de_results.csv and counts.csv reported as a count and a percentage",
+                "A single ranking table written to disk with one row per unique gene symbol, no NA ranking values, and the chosen ranking statistic named in the output",
+                "No re-running of DESeq2; the supplied contrast is used as given"
+              ],
+              "constraints": [
+                "Use the supplied de_results.csv as the contrast — do not recompute differential expression",
+                "Resolve duplicate gene symbols in the ranking by keeping the entry with the largest absolute ranking statistic, and report how many duplicates were collapsed",
+                "Report the direction convention of the contrast explicitly (positive log2_fold_change = higher in treated/lesional) and carry it forward in the output file header or a sidecar note",
+                "If de_results.csv lacks a test-statistic column, fall back to sign(log2_fold_change) * -log10(pvalue) and say so; do not silently rank on log2FC alone"
+              ],
+              "caveats": [
+                "sample_01's 4x-low depth may be benign after DESeq2 size-factor normalization, or may be the reason a subset of genes reach significance — state which the data support rather than assuming",
+                "Genes with NA padj are expected (DESeq2 independent filtering / outlier replacement) and are not evidence of a broken table, but they must be excluded from the ranking without silently dropping informative low-count genes from the reported counts",
+                "12,000 genes suggests the matrix is already filtered; do not apply a second aggressive expression filter that would shrink the GSEA universe"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "scipy",
+                "statsmodels"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Hallmark GSEA on the ranked DE contrast",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are significantly enriched in psoriasis-lesional versus control skin, and in which direction?",
+              "description": "Rank-based gene set enrichment analysis over the full 12,000-gene ranking produced by T1S1, against the human hallmark gene set collection (the 50 HALLMARK_* sets, HGNC gene symbols) resolved from the environment's reference store — the human file, matching the Homo sapiens skin data, not the mouse hallmark file that is staged alongside it. Use a permutation- or multilevel-based GSEA implementation (fgsea in R, or gseapy/blitzgsea prerank in Python) with a fixed random seed. Report ALL 50 hallmark sets in one table with: set name, size after intersection with the ranking universe, enrichment score, normalized enrichment score, nominal p-value, BH-adjusted p-value, and the leading-edge genes. Because there are only 50 sets, do not pre-filter the reported table — the complete ranked table is the deliverable. Produce (a) a barplot of NES for sets at padj<0.05 ordered by NES, (b) enrichment-score curves for the top 5 up and top 5 down sets, and (c) a leading-edge table listing, for each significant set, the leading-edge genes annotated with their log2_fold_change and padj from de_results.csv. State the direction convention in every figure caption: positive NES = enriched in treated/lesional skin. If the human hallmark collection cannot be resolved in the reference store at run time, stop and report that rather than substituting GO, oncogenic, or WikiPathways sets — the research question names hallmark specifically.",
+              "context": "This step answers the research question directly. Inputs: the ranking table from T1S1, and the human hallmark GMT (50 sets, HGNC symbols, MSigDB 2026.1) from the environment's pathway reference collection. Psoriasis lesional skin has strong prior expectation of inflammatory hallmark enrichment (TNFA_SIGNALING_VIA_NFKB, INTERFERON_GAMMA_RESPONSE, IL6_JAK_STAT3_SIGNALING, INFLAMMATORY_RESPONSE, plus proliferative sets such as E2F_TARGETS and G2M_CHECKPOINT from keratinocyte hyperproliferation). That prior is context for interpretation and a sanity check on the direction convention — it is NOT a target to reproduce, and hallmarks that do not come out significant must be reported as not significant.",
+              "acceptance_criteria": [
+                "A complete results table for all 50 hallmark sets with NES, nominal p, BH-adjusted p, set size after universe intersection, and leading-edge genes",
+                "The organism-matched HUMAN hallmark collection is used, and the resolved reference is named in the output log",
+                "Random seed fixed and reported so the permutation p-values are reproducible",
+                "NES barplot for padj<0.05 sets and enrichment curves for the top 5 up and top 5 down sets saved as figures, each captioned with the direction convention (positive NES = up in treated/lesional)",
+                "Leading-edge genes for each significant set annotated with their per-gene log2_fold_change and padj from de_results.csv",
+                "Number of ranking genes matched into the hallmark universe reported, and any hallmark set whose post-intersection size falls below 15 genes flagged as underpowered"
+              ],
+              "constraints": [
+                "Use the human hallmark GMT — never the mouse hallmark file staged in the same collection",
+                "Run GSEA on the full ranking of all genes; do not restrict the input to significant DE genes, which would convert this into an over-representation test",
+                "Report all 50 sets, not only the significant ones — absence of enrichment for an expected inflammatory hallmark is a reportable result",
+                "Apply Benjamini-Hochberg across the 50 sets and report both nominal and adjusted p-values",
+                "If the human hallmark gene sets cannot be resolved at run time, report that as the step outcome and do not substitute a different collection"
+              ],
+              "caveats": [
+                "With 6 vs 6 samples, nominal p-values from a single pre-computed contrast are optimistic; hallmark sets that are significant only nominally (padj>0.05) must be described as suggestive, not established",
+                "Hallmark sets overlap in membership (inflammatory sets share many genes), so a block of co-significant inflammatory hallmarks is one signal, not several independent findings — say so when summarising",
+                "Leading-edge genes are the drivers of the score, not a validated gene list; do not present them as a signature",
+                "If T1S1 found sample_01 to be a condition-confounded outlier, carry that caveat into the interpretation of every NES here"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "gseapy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Per-sample hallmark scores and robustness",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Are the significant hallmark enrichments consistent across all 6 lesional samples, or are they driven by a minority of samples (including the low-depth sample_01)?",
+              "description": "Per-sample hallmark activity scoring to test the robustness of the T1S2 result. From counts.csv, build a normalized expression matrix (VST or log-CPM with library-size normalization, so that sample_01's ~4x-lower depth does not dominate) and compute single-sample scores for the hallmark sets that reached padj<0.05 in T1S2 — using an installed single-sample method (decoupler's ssGSEA/AUCell/mean-z, GSVA, or singscore). Output: (a) a sample x hallmark score heatmap with samples annotated by condition and by library size; (b) per-hallmark score comparison between the 6 lesional and 6 control samples with a Wilcoxon rank-sum test and effect size, BH-adjusted across the tested sets; (c) an explicit leave-one-sample-out check on the hallmark sets that T1S2 called significant — recompute the group difference in per-sample scores 12 times, each dropping one sample, and report which sets change from significant to non-significant when any single sample is removed, calling out sample_01 specifically. Sets that fail leave-one-out must be labelled fragile in the summary.",
+              "context": "T1S2 gives one enrichment statistic per hallmark from a single group-level contrast and cannot say whether the signal is uniform across the 6 lesional samples. Because the raw counts are supplied, per-sample scoring is available and is the cheapest meaningful robustness check for an n=6 vs n=6 design with one flagged low-depth library (sample_01). This step does not replace T1S2 — it qualifies which of its calls survive sample-level scrutiny.",
+              "acceptance_criteria": [
+                "Sample x hallmark score matrix computed for every hallmark set significant in T1S2 (and, if fewer than 5 were significant, for all 50), with the scoring method named",
+                "Heatmap saved with samples annotated by condition and library size, sample_01 identifiable",
+                "Per-hallmark lesional-vs-control Wilcoxon p-values with BH adjustment and an effect size reported in a table",
+                "Leave-one-out results reported for every T1S2-significant set, naming each set whose group difference loses significance when a single sample is dropped and identifying which sample",
+                "A written summary classifying each significant hallmark as robust or fragile with respect to single-sample removal"
+              ],
+              "constraints": [
+                "Normalize for library size before scoring so sample_01's low depth is not read as low pathway activity — state the normalization used",
+                "Use the same human hallmark collection resolved in T1S2, so scores and enrichment refer to identical gene sets",
+                "Report Wilcoxon results with n=6 per group as what they are: the minimum attainable p-value is bounded, so present effect sizes alongside p-values rather than p-values alone",
+                "Do not use the per-sample scores to define new significant hallmarks not tested in T1S2 without labelling that as exploratory"
+              ],
+              "caveats": [
+                "With 6 vs 6, a rank-sum test has a floor on its p-value; a set can be robust and still not reach a small p",
+                "Leave-one-out is a fragility diagnostic, not a validation — a set surviving it is still a single-cohort finding",
+                "ssGSEA-type scores are relative within the sample set and are not comparable to scores computed on another cohort"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "decoupler",
+                "matplotlib",
+                "seaborn",
+                "statsmodels"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

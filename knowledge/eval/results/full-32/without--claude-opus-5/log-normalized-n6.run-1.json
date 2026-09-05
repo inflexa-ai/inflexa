@@ -1,0 +1,323 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "log-normalized-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T18:48:00.889Z",
+  "elapsedMs": 68464,
+  "outcome": "plan_submitted",
+  "planId": "pln-595e0ef8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "limma-trend DE: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group gives limited power; a small or empty FDR<0.05 list is a real result, not a failure, and must be reported as such rather than replaced by a raw-p-value list presented as significant",
+          "log2(TPM+1) compresses fold changes near zero expression, so large apparent logFCs among low-AveExpr genes deserve scepticism",
+          "If the metadata condition column uses labels other than 'treated'/'control', use the actual labels verbatim in all outputs"
+        ],
+        "context": "Files: /eval-full-32-without-log-normalized-n6-1/data/inputs/expression/log_expr.csv (12,000 x 13; first column is the gene identifier, remaining 12 columns are samples) and /eval-full-32-without-log-normalized-n6-1/data/inputs/metadata/metadata.csv (12 x 2; one row per sample with a condition column). Design: 6 treated vs 6 control, unpaired, single batch. The profile explicitly records that the matrix holds normalized log2 values, not counts.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "data.table"
+        ],
+        "question": "Which of the 12,000 genes differ in log2(TPM+1) expression between the 6 treated and 6 control muscle samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Treat the matrix as already normalized and already log2-transformed — do NOT re-log, do NOT run TPM/CPM normalization, do NOT convert to counts",
+          "Do NOT use DESeq2, edgeR, or voom on these values; count-based negative-binomial models are invalid for log2(TPM+1) input",
+          "The contrast must be treated minus control, and the direction must be stated explicitly in the output so a positive logFC unambiguously means higher in treated",
+          "Report logFC on the delivered log2 scale and state that, because values are log2(TPM+1), the fold change is approximate for low-expression genes",
+          "Write the full per-gene table to disk, not only the significant subset — downstream GSEA needs the complete ranking"
+        ],
+        "description": "Fit a per-gene linear model on the delivered log2(TPM+1) matrix (12,000 genes x 12 samples) with condition (treated vs control) as the only covariate, using limma's empirical-Bayes moderation with trend=TRUE and robust=TRUE — the documented route for continuous log-scale expression when no counts exist. Produce a full results table for every tested gene: gene ID, mean expression (AveExpr), log2 fold change (treated minus control, on the delivered log2 scale), moderated t, raw p, Benjamini-Hochberg FDR, and B statistic; plus a volcano plot, an MA-style plot of logFC vs AveExpr, and a heatmap of the top ~50 genes by FDR with samples annotated by condition. Before fitting, verify the matrix is genuinely log-scale (report min, max, and median of the value distribution; flag if max is large enough to suggest linear TPM) and drop low-expression / near-zero-variance genes using a stated, reported rule; report how many genes were dropped and how many were tested.",
+        "acceptance_criteria": [
+          "Sample IDs in log_expr.csv columns are matched to metadata.csv rows explicitly (not by position), and the number of matched samples is reported as 12 with the treated/control split confirmed as 6/6",
+          "Log-scale is verified numerically (min/max/median of the value distribution reported) and no log-transform is re-applied",
+          "Gene filtering rule is stated explicitly, with counts of genes dropped and genes tested reported",
+          "limma eBayes is called with trend=TRUE and robust=TRUE; the code does NOT call DESeq2, edgeR, voom, or any count-based normalization",
+          "A results table covering every tested gene is written with columns for gene ID, AveExpr, logFC, moderated t, raw p-value and BH-adjusted p-value, sorted by adjusted p",
+          "The number of genes at FDR<0.05 and at FDR<0.1 is reported, along with the count of those also passing |logFC|>1",
+          "Volcano plot, logFC-vs-AveExpr plot, and a top-gene heatmap are produced",
+          "The p-value histogram is inspected and reported; a non-uniform-in-the-wrong-direction shape (e.g. anti-conservative peak near 1) is flagged rather than ignored"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Sample-level QC: PCA and correlation structure",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With a single batch and no covariates beyond condition, a dominant PC1 unrelated to condition cannot be attributed to any recorded variable — report it as unexplained variance rather than inventing a cause"
+        ],
+        "context": "Same inputs as T1S1: /eval-full-32-without-log-normalized-n6-1/data/inputs/expression/log_expr.csv (12,000 x 13) and /eval-full-32-without-log-normalized-n6-1/data/inputs/metadata/metadata.csv (12 x 2). Design is single-batch, so no batch covariate exists to model; this step is the only check on whether an unmodelled nuisance axis is present.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "pheatmap",
+          "matrixStats",
+          "data.table"
+        ],
+        "question": "Does condition (treated vs control) separate the 12 muscle samples in unsupervised space, and is any single sample an outlier that could drive the DE result?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality-control",
+        "depends_on": [],
+        "constraints": [
+          "Do NOT remove any sample — this step diagnoses and reports only; sample exclusion is a decision for the analyst, not this step",
+          "Do NOT re-normalize or re-transform the matrix",
+          "If a sample is flagged as a potential outlier, state what its removal would plausibly do to the DE result without actually re-running the DE"
+        ],
+        "description": "Unsupervised structure check on the same log2(TPM+1) matrix, independent of the contrast: per-sample value distributions (boxplot/density) to confirm the core facility's normalization left samples comparably scaled; PCA on the top ~2,000 most variable genes with samples coloured by condition and PC1-PC4 variance explained reported; a sample-sample Spearman and Pearson correlation heatmap with hierarchical clustering; and a per-sample summary of missing/zero values. Report explicitly whether condition is the leading axis of variation or whether some other split dominates, and name any sample whose correlation to its own group is conspicuously lower than the rest.",
+        "acceptance_criteria": [
+          "Per-sample distribution summary reported for all 12 samples, confirming (or flagging) comparable scaling after the facility's normalization",
+          "PCA plot coloured by condition with percent variance explained for at least PC1 and PC2",
+          "Sample-sample correlation heatmap with clustering, for both Pearson and Spearman",
+          "An explicit written statement of whether condition is the dominant axis of variation, and identification of any candidate outlier sample by name",
+          "Zero/missing-value counts per sample reported"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GSEA and pathway enrichment of the treated-vs-control ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO biological-process sets overlap heavily; blocks of correlated significant terms are expected and must not be reported as independent discoveries",
+          "GSEA on a weakly-powered contrast can produce confident-looking NES values driven by a handful of leading-edge genes — inspect leading-edge size and report it",
+          "Hallmark sets are broad; a significant hallmark is a direction to investigate, not evidence of mechanistic engagement"
+        ],
+        "context": "Input is the full per-gene table written by T1S1 (all tested genes, with gene ID and moderated t). Organism is Homo sapiens (taxon 9606), tissue muscle. Human hallmark (50 sets) and human GO biological-process (~7,500 sets) collections are staged as symbol-based GMT files in the environment's pathway references; the human WikiPathways collection is also present as an optional third view.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which hallmark and GO biological-process gene sets are coordinately shifted between treated and control muscle, given the full moderated-t ranking from the limma-trend contrast?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Rank genes by the signed moderated t statistic from T1S1, not by logFC alone and not by p-value magnitude alone",
+          "Use the T1S1 tested-gene list as the ORA universe — never the full annotation background",
+          "Use human gene sets only; do not substitute mouse or rat collections",
+          "Report GSEA as the primary readout and ORA as secondary, given n=6 per group limits per-gene significance",
+          "If the human hallmark or GO gene-set resources are not present at run time, report which collection was missing and proceed with whichever staged human collection is available, stating the substitution; do not fail the step over an absent optional collection"
+        ],
+        "description": "Take the complete per-gene results table from T1S1 and run rank-based gene set enrichment (fgsea) on the full gene ranking, ranked by the moderated t statistic (signed, so direction is preserved), against human hallmark gene sets and human GO biological-process gene sets — both resolved from the environment's staged pathway references for Homo sapiens. Report normalized enrichment scores, p-values, BH-adjusted p-values, set size, and leading-edge genes for the top sets in both directions. Secondarily, if T1S1 yielded at least ~50 genes at FDR<0.05, also run over-representation analysis of that significant subset (split by direction) against the same collections using the tested-gene universe from T1S1 — not all annotated genes. Because GO-BP sets are hierarchically nested, collapse redundant parent/child hits before reporting a count of significant processes.",
+        "acceptance_criteria": [
+          "The fraction of T1S1 tested genes whose identifiers match the gene symbols in the staged human gene-set files is reported explicitly; if overlap is below ~50%, the step must state that the identifier spaces disagree and that the enrichment result is unreliable, rather than reporting enrichment as if valid",
+          "fgsea run on the full signed moderated-t ranking against human hallmark sets, with NES, p, BH-adjusted p, size and leading edge reported",
+          "fgsea also run against human GO biological-process sets, with nested/redundant sets collapsed before any count of significant processes is stated",
+          "Enrichment results written as a table and visualized (e.g. NES bar plot or dot plot for the top sets in each direction)",
+          "Over-representation analysis is run only if the T1S1 FDR<0.05 list has at least ~50 genes, and when run uses the T1S1 tested-gene set as the universe; if skipped, the reason and the actual DE gene count are stated",
+          "Species used for all gene sets is Homo sapiens, matching the data"
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle DE from log2 TPM (limma-trend)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000-gene x 12-sample matrix of log2(TPM+1) values (/data/inputs/expression/log_expr.csv) with a 12-row sample table (/data/inputs/metadata/metadata.csv) giving one condition column: 6 treated vs 6 control, unpaired, single batch. No counts were delivered, so the count-based negative-binomial route (DESeq2/edgeR) is not applicable — running it on log2 TPM would silently violate its distributional assumption. The correct method for continuous, already-log-transformed expression is a linear model per gene with empirical-Bayes moderation of the residual variance: limma with trend=TRUE (mean-variance trend fitted on the log scale) and robust=TRUE, which is limma's documented handling of log-CPM/log-TPM-like input when counts are unavailable. Step T1S1 does exactly that, after the two pieces of due diligence log-scale TPM demands: verifying the matrix really is on a log scale (max value, no negatives) and rather than assuming, and filtering out genes with near-zero expression/variance across all 12 samples, which otherwise inflate the trend fit and waste multiple-testing budget. T1S2 provides the unsupervised sanity check — PCA and sample correlation heatmap — that tells us whether condition is the dominant axis of variation or whether an outlier sample drives the DE list; it runs in parallel with T1S1 because it does not depend on the contrast. T2S1 takes the ranked result from T1S1 into gene-set space. With n=6 per group, per-gene power is limited, so the ranked-list method (GSEA on the full moderated-t ranking via fgsea) is the primary readout and over-representation of the FDR-significant subset is secondary and reported only if that subset is large enough to be meaningful. Human hallmark and GO-BP sets are staged under /mnt/refs and match the organism (Homo sapiens, taxon 9606). Note the tissue is muscle, so gene symbols are expected to be HGNC-compatible with the staged GMTs; the step must report the fraction of the 12,000 features that map, since a low overlap would indicate a non-symbol identifier space and invalidate the enrichment rather than just weaken it."
+  },
+  "usage": {
+    "inputTokens": 92163,
+    "outputTokens": 4854,
+    "cacheCreationInputTokens": 73991,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "limma",
+          "edgeR",
+          "DESeq2",
+          "statsmodels",
+          "sva",
+          "fgsea",
+          "clusterProfiler",
+          "gseapy",
+          "decoupleR",
+          "EnhancedVolcano",
+          "qvalue"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle DE from log2 TPM (limma-trend)",
+          "analytical_narrative": "The input is a 12,000-gene x 12-sample matrix of log2(TPM+1) values (/data/inputs/expression/log_expr.csv) with a 12-row sample table (/data/inputs/metadata/metadata.csv) giving one condition column: 6 treated vs 6 control, unpaired, single batch. No counts were delivered, so the count-based negative-binomial route (DESeq2/edgeR) is not applicable — running it on log2 TPM would silently violate its distributional assumption. The correct method for continuous, already-log-transformed expression is a linear model per gene with empirical-Bayes moderation of the residual variance: limma with trend=TRUE (mean-variance trend fitted on the log scale) and robust=TRUE, which is limma's documented handling of log-CPM/log-TPM-like input when counts are unavailable. Step T1S1 does exactly that, after the two pieces of due diligence log-scale TPM demands: verifying the matrix really is on a log scale (max value, no negatives) and rather than assuming, and filtering out genes with near-zero expression/variance across all 12 samples, which otherwise inflate the trend fit and waste multiple-testing budget. T1S2 provides the unsupervised sanity check — PCA and sample correlation heatmap — that tells us whether condition is the dominant axis of variation or whether an outlier sample drives the DE list; it runs in parallel with T1S1 because it does not depend on the contrast. T2S1 takes the ranked result from T1S1 into gene-set space. With n=6 per group, per-gene power is limited, so the ranked-list method (GSEA on the full moderated-t ranking via fgsea) is the primary readout and over-representation of the FDR-significant subset is secondary and reported only if that subset is large enough to be meaningful. Human hallmark and GO-BP sets are staged under /mnt/refs and match the organism (Homo sapiens, taxon 9606). Note the tissue is muscle, so gene symbols are expected to be HGNC-compatible with the staged GMTs; the step must report the fraction of the 12,000 features that map, since a low overlap would indicate a non-symbol identifier space and invalidate the enrichment rather than just weaken it.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "limma-trend DE: treated vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes differ in log2(TPM+1) expression between the 6 treated and 6 control muscle samples?",
+              "description": "Fit a per-gene linear model on the delivered log2(TPM+1) matrix (12,000 genes x 12 samples) with condition (treated vs control) as the only covariate, using limma's empirical-Bayes moderation with trend=TRUE and robust=TRUE — the documented route for continuous log-scale expression when no counts exist. Produce a full results table for every tested gene: gene ID, mean expression (AveExpr), log2 fold change (treated minus control, on the delivered log2 scale), moderated t, raw p, Benjamini-Hochberg FDR, and B statistic; plus a volcano plot, an MA-style plot of logFC vs AveExpr, and a heatmap of the top ~50 genes by FDR with samples annotated by condition. Before fitting, verify the matrix is genuinely log-scale (report min, max, and median of the value distribution; flag if max is large enough to suggest linear TPM) and drop low-expression / near-zero-variance genes using a stated, reported rule; report how many genes were dropped and how many were tested.",
+              "context": "Files: /eval-full-32-without-log-normalized-n6-1/data/inputs/expression/log_expr.csv (12,000 x 13; first column is the gene identifier, remaining 12 columns are samples) and /eval-full-32-without-log-normalized-n6-1/data/inputs/metadata/metadata.csv (12 x 2; one row per sample with a condition column). Design: 6 treated vs 6 control, unpaired, single batch. The profile explicitly records that the matrix holds normalized log2 values, not counts.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "Sample IDs in log_expr.csv columns are matched to metadata.csv rows explicitly (not by position), and the number of matched samples is reported as 12 with the treated/control split confirmed as 6/6",
+                "Log-scale is verified numerically (min/max/median of the value distribution reported) and no log-transform is re-applied",
+                "Gene filtering rule is stated explicitly, with counts of genes dropped and genes tested reported",
+                "limma eBayes is called with trend=TRUE and robust=TRUE; the code does NOT call DESeq2, edgeR, voom, or any count-based normalization",
+                "A results table covering every tested gene is written with columns for gene ID, AveExpr, logFC, moderated t, raw p-value and BH-adjusted p-value, sorted by adjusted p",
+                "The number of genes at FDR<0.05 and at FDR<0.1 is reported, along with the count of those also passing |logFC|>1",
+                "Volcano plot, logFC-vs-AveExpr plot, and a top-gene heatmap are produced",
+                "The p-value histogram is inspected and reported; a non-uniform-in-the-wrong-direction shape (e.g. anti-conservative peak near 1) is flagged rather than ignored"
+              ],
+              "constraints": [
+                "Treat the matrix as already normalized and already log2-transformed — do NOT re-log, do NOT run TPM/CPM normalization, do NOT convert to counts",
+                "Do NOT use DESeq2, edgeR, or voom on these values; count-based negative-binomial models are invalid for log2(TPM+1) input",
+                "The contrast must be treated minus control, and the direction must be stated explicitly in the output so a positive logFC unambiguously means higher in treated",
+                "Report logFC on the delivered log2 scale and state that, because values are log2(TPM+1), the fold change is approximate for low-expression genes",
+                "Write the full per-gene table to disk, not only the significant subset — downstream GSEA needs the complete ranking"
+              ],
+              "caveats": [
+                "n=6 per group gives limited power; a small or empty FDR<0.05 list is a real result, not a failure, and must be reported as such rather than replaced by a raw-p-value list presented as significant",
+                "log2(TPM+1) compresses fold changes near zero expression, so large apparent logFCs among low-AveExpr genes deserve scepticism",
+                "If the metadata condition column uses labels other than 'treated'/'control', use the actual labels verbatim in all outputs"
+              ],
+              "packages": [
+                "limma",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "track_note": null
+            },
+            {
+              "id": "T1S2",
+              "name": "Sample-level QC: PCA and correlation structure",
+              "track": "T1",
+              "step_type": "quality-control",
+              "question": "Does condition (treated vs control) separate the 12 muscle samples in unsupervised space, and is any single sample an outlier that could drive the DE result?",
+              "description": "Unsupervised structure check on the same log2(TPM+1) matrix, independent of the contrast: per-sample value distributions (boxplot/density) to confirm the core facility's normalization left samples comparably scaled; PCA on the top ~2,000 most variable genes with samples coloured by condition and PC1-PC4 variance explained reported; a sample-sample Spearman and Pearson correlation heatmap with hierarchical clustering; and a per-sample summary of missing/zero values. Report explicitly whether condition is the leading axis of variation or whether some other split dominates, and name any sample whose correlation to its own group is conspicuously lower than the rest.",
+              "context": "Same inputs as T1S1: /eval-full-32-without-log-normalized-n6-1/data/inputs/expression/log_expr.csv (12,000 x 13) and /eval-full-32-without-log-normalized-n6-1/data/inputs/metadata/metadata.csv (12 x 2). Design is single-batch, so no batch covariate exists to model; this step is the only check on whether an unmodelled nuisance axis is present.",
+              "acceptance_criteria": [
+                "Per-sample distribution summary reported for all 12 samples, confirming (or flagging) comparable scaling after the facility's normalization",
+                "PCA plot coloured by condition with percent variance explained for at least PC1 and PC2",
+                "Sample-sample correlation heatmap with clustering, for both Pearson and Spearman",
+                "An explicit written statement of whether condition is the dominant axis of variation, and identification of any candidate outlier sample by name",
+                "Zero/missing-value counts per sample reported"
+              ],
+              "constraints": [
+                "Do NOT remove any sample — this step diagnoses and reports only; sample exclusion is a decision for the analyst, not this step",
+                "Do NOT re-normalize or re-transform the matrix",
+                "If a sample is flagged as a potential outlier, state what its removal would plausibly do to the DE result without actually re-running the DE"
+              ],
+              "caveats": [
+                "With a single batch and no covariates beyond condition, a dominant PC1 unrelated to condition cannot be attributed to any recorded variable — report it as unexplained variance rather than inventing a cause"
+              ],
+              "packages": [
+                "ggplot2",
+                "pheatmap",
+                "matrixStats",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "track_note": null
+            },
+            {
+              "id": "T2S1",
+              "name": "GSEA and pathway enrichment of the treated-vs-control ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which hallmark and GO biological-process gene sets are coordinately shifted between treated and control muscle, given the full moderated-t ranking from the limma-trend contrast?",
+              "description": "Take the complete per-gene results table from T1S1 and run rank-based gene set enrichment (fgsea) on the full gene ranking, ranked by the moderated t statistic (signed, so direction is preserved), against human hallmark gene sets and human GO biological-process gene sets — both resolved from the environment's staged pathway references for Homo sapiens. Report normalized enrichment scores, p-values, BH-adjusted p-values, set size, and leading-edge genes for the top sets in both directions. Secondarily, if T1S1 yielded at least ~50 genes at FDR<0.05, also run over-representation analysis of that significant subset (split by direction) against the same collections using the tested-gene universe from T1S1 — not all annotated genes. Because GO-BP sets are hierarchically nested, collapse redundant parent/child hits before reporting a count of significant processes.",
+              "context": "Input is the full per-gene table written by T1S1 (all tested genes, with gene ID and moderated t). Organism is Homo sapiens (taxon 9606), tissue muscle. Human hallmark (50 sets) and human GO biological-process (~7,500 sets) collections are staged as symbol-based GMT files in the environment's pathway references; the human WikiPathways collection is also present as an optional third view.",
+              "acceptance_criteria": [
+                "The fraction of T1S1 tested genes whose identifiers match the gene symbols in the staged human gene-set files is reported explicitly; if overlap is below ~50%, the step must state that the identifier spaces disagree and that the enrichment result is unreliable, rather than reporting enrichment as if valid",
+                "fgsea run on the full signed moderated-t ranking against human hallmark sets, with NES, p, BH-adjusted p, size and leading edge reported",
+                "fgsea also run against human GO biological-process sets, with nested/redundant sets collapsed before any count of significant processes is stated",
+                "Enrichment results written as a table and visualized (e.g. NES bar plot or dot plot for the top sets in each direction)",
+                "Over-representation analysis is run only if the T1S1 FDR<0.05 list has at least ~50 genes, and when run uses the T1S1 tested-gene set as the universe; if skipped, the reason and the actual DE gene count are stated",
+                "Species used for all gene sets is Homo sapiens, matching the data"
+              ],
+              "constraints": [
+                "Rank genes by the signed moderated t statistic from T1S1, not by logFC alone and not by p-value magnitude alone",
+                "Use the T1S1 tested-gene list as the ORA universe — never the full annotation background",
+                "Use human gene sets only; do not substitute mouse or rat collections",
+                "Report GSEA as the primary readout and ORA as secondary, given n=6 per group limits per-gene significance",
+                "If the human hallmark or GO gene-set resources are not present at run time, report which collection was missing and proceed with whichever staged human collection is available, stating the substitution; do not fail the step over an absent optional collection"
+              ],
+              "caveats": [
+                "GO biological-process sets overlap heavily; blocks of correlated significant terms are expected and must not be reported as independent discoveries",
+                "GSEA on a weakly-powered contrast can produce confident-looking NES values driven by a handful of leading-edge genes — inspect leading-edge size and report it",
+                "Hallmark sets are broad; a significant hallmark is a direction to investigate, not evidence of mechanistic engagement"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "track_note": null
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

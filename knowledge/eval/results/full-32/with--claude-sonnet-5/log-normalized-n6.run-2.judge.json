@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly recognizes log2(TPM+1) values are not counts, rules out DESeq2/edgeR/voom, and fits limma-trend (lmFit, eBayes trend=TRUE, robust=TRUE) with control as explicit reference and a named treated-vs-control contrast, BH at 0.05 via topTable and no post hoc thresholds. It performs a value-range check (fractional, non-integer, log scale) and explicitly forbids re-transformation and re-normalization; QC (PCA/MDS, distance heatmap, detected-gene counts) precedes modeling, though the outlier handling is a flag rather than a stated policy, and the range check appears in Step 2 rather than before QC. The filter is label-independent and justified by the empirical low-expression mode with a minimum-samples rule. Enrichment was not requested and the reference omits it; the plan adds a properly specified fgsea (full ranked list, moderated t, Hallmark/Reactome named, 15-500 window, BH, leading edge), so it is executed well but beyond scope. The report names the transform, method, versions, thresholds, counts, and n=6/6 caveats."
+}

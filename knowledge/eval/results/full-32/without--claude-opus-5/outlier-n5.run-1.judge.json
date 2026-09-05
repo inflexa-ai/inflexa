@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference closely: it characterises sample_03 with library size, detected genes, correlation, RLE, Cook's distance and VST PCA/distance, refuses silent removal, pre-designates the full 10-sample DESeq2 fit as primary and reports the leave-one-out fit with robustness labels and the change in the significant set. Design ~condition with control as reference, identical prefilter (>=10 counts in >=5 samples) across both fits, raw counts into DESeq2, apeglm shrinkage and BH at 0.05 are all explicit. Enrichment was not requested; the added fgsea step is competently specified (full ranked list, human symbol collections, seed, match rate) but names no collection version, no set-size window, and leaves the ranking metric to be chosen at run time. The report lists methods, design, thresholds, counts and power caveats but does not commit to recording software versions."
+}

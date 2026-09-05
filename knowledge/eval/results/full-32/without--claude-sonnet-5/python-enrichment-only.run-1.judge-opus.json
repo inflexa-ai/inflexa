@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 2,
+    "low_count_filter": 5,
+    "normalization": 5,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly refuses to refit a count model and runs gseapy prerank on the full ranked list of all 12000 tested genes with a fixed seed, avoiding the classic error of an ORA on the padj-filtered subset, and it names a local hallmark GMT rather than the Enrichr web service. However the ranking metric is stated inconsistently (narrative says signed -log10(p) x log2FC, acceptance says sign(log2FC) * -log10(p)), no tie-breaking rule is given, and the gene set size window (15-500), the permutation count (>=1000), and the MSigDB release version are all missing. Upstream QC is entirely absent: the plan never inspects the DE input (p-value histogram, effect distribution) and never carries forward the sample_01 shallow-library caveat that could distort the very statistics being ranked. Filtering, normalization, and the design formula are inherited from the completed DESeq2 run and are only implicitly acknowledged; the contrast direction is stated and interpreted correctly, but the report plan omits software and collection versions, per-set leading-edge gene identities (only counts), and any design caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 Wald on raw counts with ~condition, explicit control reference, median-of-ratios inside the model, BH at 0.05 and apeglm/ashr shrinkage fit the 6v6 unpaired single-batch design well, and the shallow-sample policy (retain by default, adjudicate on VST-PCA/correlation/size factors, sensitivity re-run without sample_01) is exactly what the reference asks for. The low-count filter relies only on DESeq2 default independent filtering with no stated minimal prefilter, and the |LFC|>1 count is a post hoc threshold rather than a tested one. GSEA is preranked on the full list with the metric stated and hallmark sets named, but the MSigDB version is never specified, the minimum set size (10) is below the reference's 15 and no maximum is given. The report plan covers thresholds, tested/significant counts and caveats but never commits to reporting package or gene-set-database versions."
+}

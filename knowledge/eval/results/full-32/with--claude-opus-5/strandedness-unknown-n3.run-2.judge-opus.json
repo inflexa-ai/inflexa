@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan is unusually specific to this dataset: 3v3 unpaired single batch, ~condition with control set explicitly as reference, DESeq2 Wald plus an edgeR QL cross-check reported as an intersection, a minimal >=10-in->=3-samples filter tied to the smallest group size, size factors/TMM estimated inside the models with no pre-normalization, BH at 0.05 with independent filtering and apeglm shrinkage for ranking and reporting, and an explicit low-power statement that refuses to loosen alpha. QC (blind VST PCA on top-500 variable genes, sample-distance heatmap, library sizes, coloured by condition) precedes the test with a stated outlier policy that discourages dropping at n=3. On the central concern it falls short of the reference: it does not run RSeQC infer_experiment or a salmon libType=A check and does not re-count with the correct -s option, instead arguing (defensibly, and with the limitation stated up front and repeated as a caveat) that no BAM/FASTQ are available and substituting count-matrix proxy diagnostics; the argument that a uniform strand setting largely cancels in a two-group contrast is sound but the analysis still proceeds on counts as delivered. Enrichment is well specified (full ranked list, Wald statistic named as the metric, Hallmark then human-restricted Reactome with recorded release, 15-500 window applied after intersecting with the tested universe, seed, leading edge), and the report names methods, versions, design, contrast, thresholds, tested/significant counts, and design caveats."
+}

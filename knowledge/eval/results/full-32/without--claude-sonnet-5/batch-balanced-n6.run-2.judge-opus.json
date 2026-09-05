@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 3,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly matches the design: DESeq2 on raw counts with ~ batch + condition, batch retained regardless of PCA appearance, and no pre-adjustment of counts (ComBat-seq is correctly absent), which fits a balanced two-batch 6v6 layout. QC is concrete and design-aware — library sizes, detected genes, VST-based PCA colored by both condition and batch, explicit outlier flagging with a sensitivity-rerun policy rather than automatic exclusion. The main gap is the complete absence of any low-count filtering statement; only DESeq2's internal independent filtering is alluded to, and the claim that results will be exported for all 12000 genes suggests no pre-filter was considered. Normalization is implicit in the DESeq2 workflow but size factors/median-of-ratios are never named, and the contrast lacks an explicit reference-level statement (control as baseline) even though the formula and term order are right. FDR is set at padj<0.05 with a secondary 0.1 and apeglm shrinkage for reported effects, though BH is never named; enrichment is well specified with a versioned WikiPathways snapshot, a ranked-GSEA preference with the ranking metric, and background-coverage reporting, missing only a gene-set size window."
+}

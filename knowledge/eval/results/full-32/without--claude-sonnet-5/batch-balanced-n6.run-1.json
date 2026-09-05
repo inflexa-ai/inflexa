@@ -1,0 +1,193 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "batch-balanced-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T17:15:50.429Z",
+  "elapsedMs": 25515,
+  "outcome": "plan_submitted",
+  "planId": "pln-4caa385a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and batch-adjusted differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group, power is limited; treat nominal-but-not-adjusted-significant genes as suggestive only",
+          "Verify condition and batch are not perfectly collinear before fitting (should not be given 'balanced across conditions', but confirm from metadata.csv directly)"
+        ],
+        "context": "Files: /eval-full-32-without-batch-balanced-n6-1/data/inputs/counts/counts.csv (12000 x 13 CSV, raw salmon gene-level integer counts, first column gene symbol) and /eval-full-32-without-batch-balanced-n6-1/data/inputs/metadata/metadata.csv (12 x 3 CSV: sample, condition, batch). Design is 6 treated vs 6 control with two batches balanced across condition, so batch can be added as an adjustment covariate without confounding the condition contrast.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which genes are differentially expressed between treated and control kidney samples (n=6 vs n=6), after adjusting for the two known processing batches that are balanced across condition?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use raw integer counts directly with DESeq2 (do not pre-normalize with TPM/CPM before DESeq2)",
+          "Design formula must be ~ batch + condition, with condition as the last term so its coefficient is directly testable",
+          "Do not drop the batch term even if its effect looks small — the data context states batches are a known confound to control for"
+        ],
+        "acceptance_criteria": [
+          "Raw counts.csv (12000 genes x 12 samples, gene symbol column) and metadata.csv (12 samples x condition, batch) are loaded and sample identifiers are matched/aligned between the two files",
+          "Low-count genes are filtered (e.g. require count >= 10 in at least 6 samples) before modeling",
+          "DESeq2 is run with design ~ batch + condition on raw integer counts, with condition releveled so control is the reference",
+          "A PCA or sample-distance plot colored by both condition and batch is produced to visually confirm batch does not dominate over condition and that the balanced design holds in this data",
+          "Output table has log2FoldChange, p-value, and BH-adjusted p-value (padj) for every tested gene, ranked by padj, saved as CSV",
+          "Number of genes at padj < 0.05 is reported explicitly, along with the top up- and down-regulated genes by effect size"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pathway enrichment of treated vs control DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways coverage is smaller than larger pathway databases (KEGG/Reactome/MSigDB), so absence of a pathway hit does not mean the biology is absent — only that WikiPathways does not curate it",
+          "With n=6 per group, downstream enrichment inherits the discovery step's limited power"
+        ],
+        "context": "Reference: /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt — human WikiPathways gene sets (HGNC symbols), matching the gene-symbol identifiers used as the count matrix's row names. Input is the DE table produced in T1S1 for the treated-vs-control, batch-adjusted contrast.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "gseapy"
+        ],
+        "question": "Which biological pathways are enriched among genes differentially expressed between treated and control kidney samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Gene symbols in the DE table must match the HGNC symbols in the WikiPathways GMT; do not attempt ID conversion beyond simple symbol matching unless a mismatch is detected",
+          "If the pathway reference is unavailable at run time, report that pathway enrichment could not be performed rather than fabricating results"
+        ],
+        "acceptance_criteria": [
+          "Uses the DESeq2 results table from T1S1 (ranked gene list with padj and log2FoldChange)",
+          "Runs both an over-representation test on significant genes (padj < 0.05, if enough genes pass) and a rank-based GSEA using log2FoldChange or a signed statistic as the ranking metric, against WikiPathways human gene sets",
+          "Reports enriched pathways with adjusted p-values and leading-edge/member genes",
+          "Explicitly reports and handles the case of too few significant genes for ORC by falling back to GSEA-only results and stating so"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with batch adjustment",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq of human kidney tissue, 6 treated vs 6 control, raw salmon gene counts (12000 genes x 13 samples incl. header) with two known processing batches balanced across condition (metadata.csv: condition, batch). Because batch is balanced across condition, it can be included as a covariate in a standard negative-binomial GLM without confounding the condition effect. The plan: (1) QC and filter low-count genes on the raw counts, (2) run DESeq2 with design ~ batch + condition to get batch-adjusted treated-vs-control differential expression, including diagnostic checks (PCA/dispersion) that batch is not aliased with condition, (3) functional enrichment of the resulting DE gene list against WikiPathways human pathway gene sets to interpret which processes distinguish treated from control. This directly answers 'which genes differ between treated and control' while accounting for the batch structure explicitly noted in the data context."
+  },
+  "usage": {
+    "inputTokens": 87161,
+    "outputTokens": 2247,
+    "cacheCreationInputTokens": 68853,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with batch adjustment",
+          "analytical_narrative": "The dataset is bulk RNA-seq of human kidney tissue, 6 treated vs 6 control, raw salmon gene counts (12000 genes x 13 samples incl. header) with two known processing batches balanced across condition (metadata.csv: condition, batch). Because batch is balanced across condition, it can be included as a covariate in a standard negative-binomial GLM without confounding the condition effect. The plan: (1) QC and filter low-count genes on the raw counts, (2) run DESeq2 with design ~ batch + condition to get batch-adjusted treated-vs-control differential expression, including diagnostic checks (PCA/dispersion) that batch is not aliased with condition, (3) functional enrichment of the resulting DE gene list against WikiPathways human pathway gene sets to interpret which processes distinguish treated from control. This directly answers 'which genes differ between treated and control' while accounting for the batch structure explicitly noted in the data context.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and batch-adjusted differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control kidney samples (n=6 vs n=6), after adjusting for the two known processing batches that are balanced across condition?",
+              "acceptance_criteria": [
+                "Raw counts.csv (12000 genes x 12 samples, gene symbol column) and metadata.csv (12 samples x condition, batch) are loaded and sample identifiers are matched/aligned between the two files",
+                "Low-count genes are filtered (e.g. require count >= 10 in at least 6 samples) before modeling",
+                "DESeq2 is run with design ~ batch + condition on raw integer counts, with condition releveled so control is the reference",
+                "A PCA or sample-distance plot colored by both condition and batch is produced to visually confirm batch does not dominate over condition and that the balanced design holds in this data",
+                "Output table has log2FoldChange, p-value, and BH-adjusted p-value (padj) for every tested gene, ranked by padj, saved as CSV",
+                "Number of genes at padj < 0.05 is reported explicitly, along with the top up- and down-regulated genes by effect size"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Files: /eval-full-32-without-batch-balanced-n6-1/data/inputs/counts/counts.csv (12000 x 13 CSV, raw salmon gene-level integer counts, first column gene symbol) and /eval-full-32-without-batch-balanced-n6-1/data/inputs/metadata/metadata.csv (12 x 3 CSV: sample, condition, batch). Design is 6 treated vs 6 control with two batches balanced across condition, so batch can be added as an adjustment covariate without confounding the condition contrast.",
+              "constraints": [
+                "Use raw integer counts directly with DESeq2 (do not pre-normalize with TPM/CPM before DESeq2)",
+                "Design formula must be ~ batch + condition, with condition as the last term so its coefficient is directly testable",
+                "Do not drop the batch term even if its effect looks small — the data context states batches are a known confound to control for"
+              ],
+              "caveats": [
+                "With n=6 per group, power is limited; treat nominal-but-not-adjusted-significant genes as suggestive only",
+                "Verify condition and batch are not perfectly collinear before fitting (should not be given 'balanced across conditions', but confirm from metadata.csv directly)"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Pathway enrichment of treated vs control DE genes",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes differentially expressed between treated and control kidney samples?",
+              "acceptance_criteria": [
+                "Uses the DESeq2 results table from T1S1 (ranked gene list with padj and log2FoldChange)",
+                "Runs both an over-representation test on significant genes (padj < 0.05, if enough genes pass) and a rank-based GSEA using log2FoldChange or a signed statistic as the ranking metric, against WikiPathways human gene sets",
+                "Reports enriched pathways with adjusted p-values and leading-edge/member genes",
+                "Explicitly reports and handles the case of too few significant genes for ORC by falling back to GSEA-only results and stating so"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "gseapy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Reference: /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt — human WikiPathways gene sets (HGNC symbols), matching the gene-symbol identifiers used as the count matrix's row names. Input is the DE table produced in T1S1 for the treated-vs-control, batch-adjusted contrast.",
+              "constraints": [
+                "Gene symbols in the DE table must match the HGNC symbols in the WikiPathways GMT; do not attempt ID conversion beyond simple symbol matching unless a mismatch is detected",
+                "If the pathway reference is unavailable at run time, report that pathway enrichment could not be performed rather than fabricating results"
+              ],
+              "caveats": [
+                "WikiPathways coverage is smaller than larger pathway databases (KEGG/Reactome/MSigDB), so absence of a pathway hit does not mean the biology is absent — only that WikiPathways does not curate it",
+                "With n=6 per group, downstream enrichment inherits the discovery step's limited power"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

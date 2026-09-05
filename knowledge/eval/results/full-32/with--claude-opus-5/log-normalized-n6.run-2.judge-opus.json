@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that log2(TPM+1) values cannot enter a negative-binomial model and specifies limma-trend on the delivered values with trend=TRUE and robust=TRUE, an explicit range/scale sanity check before modelling, and an explicit prohibition on re-normalization, second log transforms, or pseudo-count back-transformation — exactly the reference behaviour. QC (identifier matching, distributions, detected genes, MDS/PCA on top 500 variable genes, distance heatmap, outlier flagging without silent dropping) precedes the fit on the log values. The design formula is stated with control set as the explicit reference and the sign convention named; BH at 0.05 (and 0.1 reported separately) with any fold-change requirement routed through treat() rather than post hoc, which is the right analogue of shrinkage in a limma workflow. Minor deductions: the expression floor is described procedurally ('low end of the distribution') rather than given as a concrete value, and enrichment was not requested by the task — though where included it is well specified (full ranked list, moderated-t metric justified, tested-gene universe, 15–500 size window, named collection with version, ORA correctly gated)."
+}

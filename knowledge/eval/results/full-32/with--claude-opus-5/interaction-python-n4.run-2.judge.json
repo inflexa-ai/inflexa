@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits the 2x2 interaction design exactly: one PyDESeq2 model with ~ genotype + treatment + genotype:treatment, explicit WT/vehicle references, the interaction coefficient as the primary test plus both within-genotype simple effects, a stated fallback to a four-level group factor with the interaction as a contrast of group coefficients, and an explicit prohibition on comparing two separate genotype-specific analyses. QC is design-blind VST PCA and distances coloured by both factors with a flag-but-do-not-drop policy, the filter (>=10 counts in >=4 samples, the smallest cell) is minimal and justified, and raw counts enter the model with median-of-ratios size factors estimated inside it. BH at alpha 0.05 with independent filtering and shrinkage are stated, but the plan names ashr, which PyDESeq2 0.5.4 does not implement (its lfc_shrink is apeglm-style and may not accept an arbitrary interaction contrast); the plan hedges this as a behavioural gap to report rather than confirming what shrinkage will actually be applied. Enrichment is properly specified (full Wald-ranked list, human Hallmark and species-filtered Reactome, 15-500 window, versions, seed, no ORA on a tiny interaction list) and the report records method, versions, formula, thresholds, tested/significant counts, NA breakdown and the n=4 power caveat."
+}

@@ -11,6 +11,10 @@ packages:
     biotools: deseq2
     version_range: ">=1.50"
     bioconductor: "3.23"
+  - name: pydeseq2
+    track: python
+    version_range: ">=0.5"
 templates:
   - tpl-deseq2-multigroup
   - tpl-deseq2-lrt-timecourse
+  - tpl-pydeseq2-multigroup

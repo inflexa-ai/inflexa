@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the 2x2 as a factorial with time as a two-level factor, fits ~condition*time in DESeq2, tests the interaction coefficient as the primary answer, and reports both simple effects with ashr shrinkage and BH at 0.05 with independent filtering, matching the reference. QC is a blinded VST PCA and distance heatmap with library sizes and a stated conservative outlier policy; the low-count filter is tied to the smallest group size. Normalization is implicit (raw counts into DESeq2) but the plan never explicitly names size-factor estimation inside the model. Enrichment was not asked for and the reference omits it; the plan adds a well-specified ORA (tested-gene universe, named collections, size window, small-list caveat), so it is competently done but not warranted, and concrete collection versions are deferred rather than stated. The report step covers method, versions, design, thresholds, counts, and the power caveat fully."
+}

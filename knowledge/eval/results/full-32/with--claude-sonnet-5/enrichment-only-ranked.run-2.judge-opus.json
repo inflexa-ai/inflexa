@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly recognizes that DE is already done and starts from the results table, ranking every tested gene by the DESeq2 Wald statistic rather than filtering on padj or using a shrunken LFC, which is exactly right for this task. The enrichment step is essentially reference-quality: named Hallmark collection with version, 15-500 size window after intersecting with the tested universe, fgseaMultilevel (adaptive permutation), recorded seed, BH at 0.05, leading edge, and collapsePathways for redundancy; the Reactome follow-up is a reasonable extra with a species filter. Sample-level QC is thin: the plan explicitly declines to re-examine sample_01 or inspect the raw counts (PCA, library sizes, sample distances), offering only a p-value histogram, so the shallow-library concern is inherited rather than checked even though counts were supplied. The DE-side criteria (filter, size-factor normalization, formula and reference level) are only referenced in passing as upstream properties; the plan asserts DESeq2 size factors handled depth but never states the design formula, reference level, or the tested/significant gene counts from the DE table. Reporting is otherwise strong on versions, seed, sessionInfo, universe, ranking metric, and method-dependence caveats."
+}

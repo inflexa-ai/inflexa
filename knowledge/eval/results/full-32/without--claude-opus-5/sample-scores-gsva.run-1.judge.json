@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames this as per-sample gene-set scoring rather than a gene-level DE test: counts are filtered with filterByExpr/CPM, VST-transformed (blind=TRUE), then scored with GSVA using the Gaussian kcdf over the MSigDB 2026.1 human Hallmark GMT with a stated size window and per-set overlap reporting. Sample QC (library sizes, PCA, correlation heatmap, sample_01 labelled) precedes scoring, sample_01 is kept and flagged with a stated policy, and its influence is re-examined on the score matrix via heatmap annotation, clustering and a leave-one-out sensitivity limma fit. The test is limma ~0+condition with an explicit inflamed - control contrast, BH across the 50 sets at FDR < 0.05, with a Wilcoxon cross-check and mean differences as effect sizes; the row-scaled heatmap with condition annotation is exactly the requested deliverable. Minor deductions for offering two alternative filter choices rather than committing, and for not explicitly requiring all package versions in the final report."
+}

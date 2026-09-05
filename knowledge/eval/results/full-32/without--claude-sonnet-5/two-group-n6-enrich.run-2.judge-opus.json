@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 5,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the design: DESeq2 negative-binomial GLM on raw counts for an unpaired 6-vs-6 single-batch comparison, explicitly refusing to add a nonexistent pairing term, with a well-handled shallow sample (quantified library sizes, VST PCA/correlation to separate depth from expression outlier status, retention by default plus a documented leave-one-out sensitivity re-fit with re-derived size factors). Normalization is correctly internal (median-of-ratios) and the low-depth caveat about artifactual global downregulation is well stated. Weaknesses: the low-count filter is only gestured at ('overall filtering threshold to be applied downstream') with no stated rule, leaning implicitly on independent filtering; the design formula and reference level are described in prose rather than written out as ~condition with control as reference. Enrichment is properly preranked fgsea on the full list with a named, versioned Hallmark GMT and a stated ranking statistic, but no set-size window (15-500) is given; the report specifies thresholds, packages and caveats but never commits to reporting software versions or the numbers of tested versus significant genes."
+}

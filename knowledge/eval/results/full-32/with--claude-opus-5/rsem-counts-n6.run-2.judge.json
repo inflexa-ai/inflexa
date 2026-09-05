@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the input as RSEM expected counts, names tximport type='rsem' with the length offset as the proper route, states that the offset is lost with the matrix alone, rounds only for DESeq2 with the deviation reported, and never substitutes TPM/FPKM; it asks for a re-run if the genes.results files appear. QC keeps sample_01, inspects it on PCA and distance heatmap with library size and detected genes reported, and adds a leave-one-out sensitivity refit. Design ~condition with explicit control reference and (condition, treated, control) contrast, median-of-ratios/TMM inside the models, a justified 10-in-6 prefilter, BH at 0.05 with apeglm shrinkage, and a full-ranked-list fgsea on the Wald statistic with a 15-500 window and named collections are all stated. Minor deductions: rounding is applied to the edgeR input unnecessarily, and collection versions are deferred to 'as staged' rather than named."
+}

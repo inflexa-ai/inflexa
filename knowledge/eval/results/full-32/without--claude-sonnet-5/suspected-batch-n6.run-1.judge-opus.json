@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 2,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses an unrecorded latent factor and reaches for SVA with condition in the model of interest, adding the estimated surrogate(s) to a DESeq2 design rather than pre-adjusting the count matrix with ComBat, and it lets num.sv choose the count instead of assuming one per PCA cluster; it loses points for never asking the analyst for the unrecorded variable, for not specifying the null model or svaseq/RUVSeq on counts, and for a fallback that regresses out a cluster label derived from the same data. QC is strong and dataset-specific (PCA colored by condition and by inferred cluster, library sizes, sex-proxy genes, cross-tabulation), but no outlier or shallow-sample policy is stated. A low-count pre-filter is entirely absent, and normalization is only implied ('normalized counts') rather than stated as size factors estimated inside the model. The contrast and formula are explicit and collinearity with condition is checked, but there is no lfcShrink and the |log2FC|>1 cut is applied post hoc rather than as a tested threshold. Enrichment names WikiPathways human but gives no version, no ORA universe, no gene-set size window, and no ranking metric for the GSEA fallback; the report omits package versions and the number of genes tested."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies that log2(TPM+1) is not count data, explicitly rules out DESeq2/edgeR/voom, and specifies limma-trend (lmFit, eBayes(trend=TRUE, robust=TRUE)) on the values as delivered, with an explicit scale sanity check (min/max/median/zero fraction/non-integer) and a hard prohibition on exponentiating, re-normalizing (no quantile/TMM/CPM) or coercing to pseudo-counts — exactly the reference behavior. QC is thorough and run on the log values (PCA, correlation heatmap, dendrogram, per-sample distributions, sample-metadata alignment, stated outlier policy), and the design/contrast is explicit (~0 + condition, treated - control, sign convention stated) with BH at 0.05 and 0.1 and honest handling of a possibly empty significant set. The filter is minimal and justified (expressed above a low log2 threshold in fewer than the smaller group size, plus zero-variance genes) though the numeric threshold is left as an 'e.g.' rather than fixed. Enrichment was not strictly warranted by the question but is well-specified (full ranked list, stated ranking metric, human-only hallmark/GO BP, 15-500 size window, mapping rate, seed, conditional ORA) and correctly framed as descriptive; the report plan names method, design, thresholds and caveats but does not commit to reporting package versions."
+}

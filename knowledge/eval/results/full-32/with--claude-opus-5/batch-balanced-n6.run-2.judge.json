@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan handles the balanced batch exactly as the reference does: ~ batch + condition as a fixed effect, explicit refusal to pre-correct counts, DESeq2 Wald with apeglm shrinkage and BH at alpha 0.05, plus an edgeR QL check on the identical design. QC precedes the model with blind VST PCA, distance heatmap, and library sizes annotated by both batch and condition, with an explicit flag-not-drop outlier policy. The filter (>=10 counts in >=6 samples) is tied to the smallest group size, size factors and TMM are estimated inside the models, and the reference level and contrast direction are stated. Enrichment is well specified (full Wald-ranked list, human hallmark and Reactome, 15-500 window after intersection, seed, collapse), only lacking a concrete collection version in the plan itself; the report section covers method, versions, design, thresholds, counts, and design caveats including the untestable batch-by-condition interaction."
+}

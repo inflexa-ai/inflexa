@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats QuantSeq counts as length-independent molecule counts, feeds raw counts into DESeq2 Wald (with edgeR QL as a cross-check), forbids TPM/FPKM and any length offset, and states the low-power caveat for 3 vs 3. Design ~condition with control releveled, median-of-ratios/TMM inside the models, BH at 0.05 with apeglm shrinkage are all explicit. The low-count filter states 'in at least 3 samples' and requires reporting the rule and gene count but leaves the count floor unspecified, and QC names an outlier check without a stated policy for handling one. Enrichment is not required by the question but is included with a full ranked list, named human collections, a size window, and redundancy collapsing, though collection versions are not stated; the report instructions omit an explicit requirement to record software versions."
+}

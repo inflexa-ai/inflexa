@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the design: DESeq2 Wald on raw counts with ~condition for an unpaired, single-batch 5v5, and it handles sample_03 by the reference's transparent route — characterize it first with library size, detected genes and centroid distance, then fit twice (n=10 primary, n=9 sensitivity) and report both lists with their intersection and the genes that change status, explicitly refusing silent removal. Filtering (>=10 counts in >= smallest group size, recomputed for the reduced cohort), median-of-ratios normalization inside the model with an explicit no-pre-normalization statement, control as stated reference, apeglm shrinkage, BH with independent filtering at alpha=0.05, and lfcThreshold-in-test guidance are all correct and explicit. The main shortfall against the reference is that the QC step never fixes a quantitative removal criterion in advance (no 3-MAD or equivalent rule, no defined mapping/duplication failure threshold), leaving 'clear technical failure' undefined; it also does not consider down-weighting alternatives such as limma-voom arrayWeights or edgeR robust dispersion, though DESeq2's Cook's outlier flagging is reported separately. Enrichment is not strictly required by the question but is executed well (Wald stat ranking, 15-500 size window, BH, collapse, pinned collections, unmapped share), and the report step names methods, versions, thresholds, tested and significant counts, and the sample-dependence caveat."
+}

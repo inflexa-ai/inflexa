@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the essentials: DESeq2 Wald on raw counts with ~sex + age + condition, control as reference, an explicit balance audit (age by group, sex x condition table, design-matrix rank) before the fit, no pre-adjustment of counts, a justified count>=10 in >=6 samples filter, BH at 0.05 with apeglm on the condition coefficient, and honest caveats on df and power. It omits centering age, which the reference calls out for intercept interpretability and fit stability, and the QC lacks the XIST/Y-linked sex check. The |LFC|>0.5 cut is applied post hoc rather than via lfcThreshold, and the enrichment step, which was not asked for, names collections and universe and size window well but does not pin a collection version; package versions are also not explicitly required in the report."
+}

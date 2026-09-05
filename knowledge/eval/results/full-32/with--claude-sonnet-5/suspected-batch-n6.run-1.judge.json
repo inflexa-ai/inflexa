@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the two-cluster structure as an unrecorded batch orthogonal to condition, refuses to adjust counts, estimates surrogate variables with condition as the factor of interest, and adds them as covariates to an explicit ~ SV + condition design with control as reference, followed by Wald with apeglm and BH at 0.05. It falls short of the reference by not asking the analyst for the missing variable (lane, extraction date) before resorting to SVA, not specifying the null model or svaseq, and checking SV correlation against the cluster split rather than against condition. Normalization is handled correctly by exclusion of adjusted counts but size factors/TMM are never named explicitly. The enrichment step was not requested but is executed properly (full ranked list by Wald statistic, named collections, size window), though the Reactome version is vague; the report section is thorough with versions, thresholds, counts and the suspected-batch caveat."
+}

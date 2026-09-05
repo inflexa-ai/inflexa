@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 6
+  },
+  "rationale": "The statistical core matches the design well: DESeq2 Wald on raw integer counts with ~condition only, justified by the stated single-batch unpaired 3v3 structure, with an explicit low-power caveat and a whole-larvae averaging caveat that is specific to this dataset. QC is present (vst PCA by condition, sample-distance heatmap, dispersion, MA, volcano) but omits library-size inspection and any stated policy for handling an outlier or shallow sample. The filter (counts >=10 in at least 3 samples) is minimal and tied to group size, normalization stays inside the model with vst used only for visualization, and apeglm shrinkage with an ashr fallback is specified, though BH is only implied by DESeq2 defaults rather than named and the |log2FC|>1 count is a post hoc add-on. Enrichment is handled correctly for a non-model organism: it explicitly notes no curated zebrafish collection exists, makes org.Dr.eg.db GO the primary result with the tested-gene background and stat-ranked GSEA, and uses an offline babelgene ortholog map with a reported mapping rate for the human WikiPathways/Hallmark proxy — but it does not state gene-set size windows, collection versions for WikiPathways/Hallmark, or the thin GO coverage caveat, and it collapses many-to-one mappings while claiming a 1:1 rate. Reporting is otherwise solid but never names the Ensembl release or resolves the identifier space (it assumes gene symbols for Salmon/Ensembl output), and package versions are given only for org.Dr.eg.db."
+}

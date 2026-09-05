@@ -1,0 +1,798 @@
+{
+  "campaign": "full-32",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "log-normalized-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T19:21:42.743Z",
+  "elapsedMs": 120298,
+  "outcome": "plan_submitted",
+  "planId": "pln-91d5fe88",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log2 expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group, a single outlier sample carries substantial leverage; flag it rather than removing it without stating the effect on the DE result",
+          "TPM-scale values are compositional across samples; a strong shift in a few highly expressed genes can move all other genes"
+        ],
+        "context": "Inputs: /eval-full-32-with-log-normalized-n6-2/data/inputs/expression/log_expr.csv, a 12,000 gene x 12 sample matrix of log2(TPM+1) values as delivered by the core facility (first column holds gene identifiers), and /eval-full-32-with-log-normalized-n6-2/data/inputs/metadata/metadata.csv, 12 rows x 2 columns with one row per sample and a condition column (treated / control). Single batch, unpaired.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Do the 12 human muscle samples separate by condition (6 treated vs 6 control), and is any sample an outlier, before any model is fitted?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2",
+            "R-0074@06b0"
+          ],
+          "reason": "Log-scale input: sample structure QC on the log values with PCA/MDS on 500 top-variable genes and sample distances, no re-transform, per R-0071@e4e2 and the value-range check of R-0074@06b0.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: use the values as delivered — they are already log2, do not apply log2(x+1) again (guide:limma/2026-05-19#data-exploration)",
+          "qc_sample_structure: n_top_genes = 500 for the MDS/PCA (guide:limma/2026-05-19#multidimensional-scaling-plots)",
+          "Do not apply a variance-stabilizing transformation from a count model — it expects raw counts",
+          "Report the value-range check before any modelling step"
+        ],
+        "description": "Load the log2 matrix and the sample table, confirm sample identifiers match exactly between the two files and reorder the matrix columns to the metadata order. Verify the value range is consistent with a log2 scale (roughly 0-20, fractional values present) and NOT an integer count table; report min, max, median and the fraction of exact zeros. Do not transform the values again and do not renormalize. Produce: per-sample boxplots/density of the log2 values, count of detected genes per sample (value above the chosen floor), PCA and limma plotMDS on the 500 most variable genes coloured by condition, and a sample-sample correlation/distance heatmap. State explicitly whether any sample fails to cluster with its group.",
+        "acceptance_criteria": [
+          "Sample identifiers in log_expr.csv columns and metadata.csv rows are confirmed to match 1:1 and the group sizes are reported as 6 treated and 6 control",
+          "Value-range check reported (min, max, median, fraction of exact zeros) with an explicit statement that the data is log2-scale and not counts",
+          "PCA/MDS on the top 500 variable genes and a sample-distance heatmap are produced, coloured by condition",
+          "Any sample not clustering with its condition group is named, with a recommendation to keep or flag it — no sample is silently dropped",
+          "No renormalization or additional log transform is applied to the delivered values"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma-trend differential expression, treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "6 vs 6 has power for moderate-to-large effects only; an empty or short significant list is a real outcome and must be reported as such rather than rescued by loosening thresholds",
+          "limma has no independent filtering step, so the low-expression filter must run before the fit for the BH adjustment to be over the tested genes only",
+          "log2(TPM+1) compresses low-expression genes and the +1 offset flattens their variance; the trend fit accommodates but does not remove this"
+        ],
+        "context": "The core facility delivered log2(TPM+1) values, not counts. DESeq2, edgeR and voom require raw integer counts and must not be used here, nor may the values be back-transformed into pseudo-counts. limma-trend on the log-scale values is the correct model. Design: ~ condition, unpaired, single batch, no covariates in the 12 x 2 metadata table.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes differ in expression between treated and control human muscle samples (6 vs 6), fitting limma-trend on the delivered log2(TPM+1) values?",
+        "grounding": {
+          "claims": [
+            "R-0075@4d16",
+            "R-0074@06b0",
+            "R-0036@9786",
+            "R-0019@251d",
+            "R-0093@4fa4",
+            "R-0037@e6d8",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "Delivered data is log2(TPM+1), so R-0019@251d mandates limma-trend and forbids count models; robust eBayes per R-0093@4fa4, mean-log-expression filter per R-0075@4d16, explicit control reference per R-0036@9786, BH via topTable per R-0044@1777.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: filter_statistic = mean_log_expression (guide:limma/2026-05-19#filtering)",
+          "filter_low_counts: min_samples = smallest_group_size, i.e. 6 (guide:limma/2026-05-19#filtering)",
+          "filter_low_counts: the floor must be set independently of the group labels",
+          "normalize: normalization = none_already_normalized — do not renormalize the delivered log2 values (guide:limma/2026-05-19#normalization)",
+          "model_design: reference_level set explicitly (control), never left to alphabetical order (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+          "model_design: contrast named as factor/numerator/denominator — condition, treated, control (vignette:DESeq2/1.52.0#contrasts)",
+          "differential_expression: trend = true (doi:10.1093/nar/gkv007)",
+          "differential_expression: robust = true (doi:10.1214/16-AOAS920)",
+          "multiple_testing: adjustment = BH (guide:limma/2026-05-19#statistics-for-differential-expression)",
+          "multiple_testing: filter_results_by = adjusted_pvalue, not raw p-value and not fold change alone (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "multiple_testing: any fold-change threshold is tested inside the model with treat(), not applied post hoc (doi:10.1093/bioinformatics/btp053)"
+        ],
+        "description": "Filter genes on mean log2 expression: choose a floor at the low end of the overall expression distribution, set from the data and independent of the group labels, and additionally require the gene to exceed that floor in at least 6 samples (the smallest group size). Report the floor, the number of genes in (12,000) and the number kept. Build the design matrix with condition as a factor whose reference level is set explicitly to control, so the contrast is treated - control and a positive logFC means higher in treated. Fit lmFit, then eBayes with trend=TRUE and robust=TRUE. Extract the full result table with topTable(number=Inf, adjust.method='BH') carrying gene id, logFC, AveExpr, moderated t, P.Value and adj.P.Val, and write it to disk as the complete ranked table for downstream enrichment. Report the number of genes at adj.P.Val < 0.05 and, separately, at < 0.1. If a minimum effect size is wanted, obtain it with treat()/topTreat() against a stated log2 fold-change threshold (e.g. 1) — never by post-hoc filtering the logFC column of the zero-null test. Produce a volcano plot, an MA plot, and a heatmap of the top significant genes on the log2 values.",
+        "acceptance_criteria": [
+          "Gene filter applied on mean log2 expression with the floor stated numerically and derived without reference to the condition labels; number of genes before and after filtering reported",
+          "Reference level of condition explicitly set to control and the contrast reported as treated vs control, with the sign convention stated",
+          "eBayes called with trend=TRUE and robust=TRUE, and both options named in the output",
+          "Full topTable for every tested gene written to disk with BH-adjusted p-values, including moderated t statistic — this is the input to T2S1",
+          "Counts of differentially expressed genes reported at adj.P.Val < 0.05 and < 0.1, alongside the number of genes tested",
+          "No count-based model (DESeq2, edgeR, voom) is used and no pseudo-count back-transformation is performed",
+          "Volcano plot, MA plot, and top-gene heatmap produced"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA and camera on the treated vs control ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method-dependent: fgsea and camera will not agree fully, and each significant set is a hypothesis for follow-up, not a demonstrated mechanism",
+          "Hallmark sets overlap; a block of related significant sets is one finding, not several",
+          "GO biological-process sets are a nested hierarchy, so parent and child hits are correlated and must be collapsed before any count is reported",
+          "If fewer than about 50 genes reach adj.P.Val < 0.05 in T1S2, a hypergeometric over-representation test on that list has no power and must not be run"
+        ],
+        "context": "Input is the complete topTable from T1S2 — every tested gene with logFC, moderated t, p-value and BH-adjusted p-value — plus the filtered log2 expression matrix and design matrix for the camera test. Organism is human; gene identifiers come from the first column of log_expr.csv. Reference data needed: the MSigDB human hallmark gene set collection (present in this environment as a symbols GMT), and, as a secondary pass, human Gene Ontology biological-process gene sets. Reactome C2 sets are NOT staged here — if the resolver finds no Reactome collection, use the staged GO biological-process sets as the second collection and say so in the output; do not attempt any download.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "limma",
+          "org.Hs.eg.db",
+          "AnnotationDbi",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which hallmark biological states are coordinately shifted between treated and control muscle, given the full ranked list of tested genes from the limma-trend fit?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0098@d01b",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0053@d1ca",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0097@a38e"
+          ],
+          "reason": "Preranked fgsea on the full tested list against MSigDB Hallmark per R-0107@976c and R-0048@500d, with camera on the limma fit per R-0053@d1ca. Disputed rule R-0108@409f resolved to the signed standard-error-scaled statistic — the limma moderated t, since no count model and therefore no DESeq2 Wald statistic exists here. R-0098@d01b names Reactome as the second collection but no Reactome GMT is staged, so the staged human GO biological-process sets substitute and the step must say so.",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "enrichment: gsea_input = full_ranked_list — never a thresholded list (doi:10.1073/pnas.0506580102)",
+          "enrichment: rank_metric stated in the plan and in the report; here the limma moderated t statistic, the signed standard-error-scaled analogue of the Wald statistic (rule:R-0108)",
+          "enrichment: min_size = 15, max_size = 500 after intersection with the tested genes (doi:10.1073/pnas.0506580102)",
+          "enrichment: universe = tested_genes, never the whole genome (doi:10.1371/journal.pcbi.1009935)",
+          "enrichment: gene_set_collection = msigdb_hallmark_human as the first pass (doi:10.1016/j.cels.2015.12.004)",
+          "enrichment: collapse_redundant = true before reporting (doi:10.1101/060012)",
+          "enrichment: id_mapping to a single identifier space with org.Hs.eg.db; report the unmapped share (doi:10.1016/j.xinn.2021.100141)",
+          "enrichment: camera called with inter.gene.cor = NA, not the limma default of 0.01 (doi:10.1093/nar/gks461)",
+          "enrichment: ora_min_significant_genes = 50 — below that, use only the ranked method (doi:10.3389/fgene.2020.00654)",
+          "No KEGG collection is served in this environment and none may be downloaded",
+          "Use only reference collections resolvable in this environment; there is no network access"
+        ],
+        "description": "Rank every tested gene by the limma moderated t statistic (do not threshold the list first). Resolve the human hallmark gene set collection from the environment's reference store, read the GMT, and record its version string. Reconcile identifier spaces between the ranked list and the collection: if the expression matrix uses HGNC symbols the sets are directly usable; if it uses Ensembl or Entrez identifiers, map to symbols with org.Hs.eg.db and report the annotation package version, the share of tested genes that failed to map, and the number of many-to-many mappings dropped. Never mix identifier spaces between the ranked list and the sets. Restrict sets to 15-500 members after intersecting with the tested genes. Run fgsea with a fixed random seed, BH adjustment, and collapse redundant leading-edge-overlapping sets before reporting; keep the full table as a supplement. Then run camera on the same limma fit and design with inter.gene.cor=NA so the inter-gene correlation is estimated per set, and report the estimated correlation. Present the overlap and the disagreement between fgsea and camera. Repeat the fgsea pass against the human GO biological-process collection as the secondary annotation. Report the number of genes passing adj.P.Val < 0.05 in T1S2; if fewer than about 50, do not run an over-representation test on that list and say why.",
+        "acceptance_criteria": [
+          "fgsea run on the FULL ranked list of tested genes — no p-value or fold-change cut applied before ranking",
+          "Ranking metric stated explicitly in the output as the limma moderated t statistic, with the reason it substitutes for the DESeq2 Wald statistic (no count model was fitted)",
+          "Hallmark collection resolved from the environment reference store, with its version string reported; gene set size window 15-500 applied after intersection with the tested genes",
+          "Identifier reconciliation reported: identifier space used, mapping source and version if mapping was needed, and the share of tested genes that did not map",
+          "camera run on the limma fit with inter.gene.cor=NA, with the estimated inter-gene correlation reported per set, and the fgsea/camera agreement and disagreement summarised",
+          "Redundant significant sets collapsed by leading-edge overlap, one representative reported per group, full table retained as a supplement",
+          "Random seed set and recorded so the permutation p-values are reproducible",
+          "Secondary pass against human GO biological-process sets reported; if no Reactome collection is resolvable in this environment, that substitution is stated rather than silently made",
+          "Size of the significant gene list from T1S2 stated; no over-representation test run if that list is under ~50 genes"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not present an enriched gene set as a demonstrated mechanism",
+          "If the DE list is empty or very short, report that directly as the finding rather than relaxing the FDR threshold"
+        ],
+        "context": "Consolidates the QC from T1S1, the limma-trend DE table from T1S2, and the fgsea/camera enrichment from T2S1 into one report for the 12-sample human muscle dataset.",
+        "maxSteps": 200,
+        "packages": [
+          "rmarkdown",
+          "knitr",
+          "ggplot2",
+          "sessioninfo"
+        ],
+        "question": "What is the defensible answer to 'which genes differ between treated and control', with the method, thresholds, effect sizes and limits of a 6 vs 6 log2-TPM design stated plainly?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report contents follow R-0041@059a (method, versions, design, thresholds, counts), R-0051@01ca and R-0055@107a (enrichment provenance and method-dependence), R-0105@c4a8 (leading edge per set) and R-0086@becf (reproducibility record).",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+          "report: leading_edge = per_significant_set (doi:10.1073/pnas.0506580102)",
+          "report: enrichment_caveat = method_dependence (doi:10.1093/bib/bbz158)",
+          "report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)",
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "State that the values were delivered as log2(TPM+1) by the core facility and that the normalization procedure behind them is not documented in the inputs"
+        ],
+        "description": "Write the report. State the method (limma-trend on core-facility-delivered log2(TPM+1) values), why no count model was used, the package versions, the design formula and the contrast (condition: treated vs control, control as reference), the expression floor and the number of genes tested out of 12,000, the BH thresholds and the number of DE genes at each, and the top up- and down-regulated genes with logFC, moderated t and adjusted p-value. For each significant gene set report the leading-edge genes with their gene-level statistics and mark leading-edge overlap between reported sets. Name the gene set database and version, the ranking metric, the universe and the size window, and state that enrichment results depend on the method chosen. Attach the reproducibility record: sessionInfo, all package versions, the random seed used for the fgsea permutations, and the gene set collection version. Close with the limitations: 6 vs 6 detects only moderate-to-large effects; TPM values are compositional and were normalized by the core facility by an unstated procedure; no counts means no count-model sensitivity check is possible; and any outlier flagged in T1S1 and its likely influence.",
+        "acceptance_criteria": [
+          "Report names the method, all package versions, the design, the contrast with its sign convention, the expression floor, n_tested, and n_DE at each threshold",
+          "Top differentially expressed genes tabulated with logFC, moderated t, p-value and BH-adjusted p-value",
+          "Leading-edge genes listed per significant gene set with their gene-level statistics, and overlap between reported sets marked",
+          "Gene set database, version, ranking metric, universe and size window all reported, with an explicit statement that enrichment results are method-dependent",
+          "Reproducibility record attached: sessionInfo, package versions, fgsea seed, collection version",
+          "Limitations section states the power limits of n=6 per group, the compositional nature of TPM, the unstated core-facility normalization, and the impossibility of a count-model cross-check",
+          "No causal or mechanistic claim is made from the DE or enrichment result beyond an explicitly labelled hypothesis"
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle limma-trend DE + GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000 x 12 matrix of log2(TPM+1) values (/data/inputs/expression/log_expr.csv, first column gene identifiers) with a 12 x 2 sample table (/data/inputs/metadata/metadata.csv) giving condition for 6 treated and 6 control human muscle samples, unpaired, single batch. No counts were delivered, so a negative-binomial count model (DESeq2, edgeR, voom) is inapplicable — those require raw integer counts, and back-transforming log2 TPM to pseudo-counts would invent data. The analysis therefore runs limma-trend directly on the delivered log2 values, which is the sourced method for log-scale input (R-0019, R-0093).\n\nT1S1 checks sample structure on the log2 matrix as delivered — PCA/MDS on the 500 most variable genes, a sample-distance heatmap, per-sample distributions and detected-gene counts, coloured by condition — and verifies the value range is consistent with a log2 scale rather than a count table (R-0071, R-0074). No second normalization is applied. T1S2 filters genes on mean log2 expression with a floor set from the overall distribution and independent of the group labels, fits ~ condition with control as the explicit reference so a positive logFC means higher in treated, runs eBayes with trend=TRUE and robust=TRUE, and takes topTable with BH adjustment at FDR 0.05 (R-0075, R-0036, R-0093, R-0044); any fold-change requirement goes through treat() rather than a post-hoc filter (R-0037). T2S1 runs fgsea preranked on the full tested list against MSigDB human hallmark, with camera on the same limma fit as the correlation-aware companion test. T1S3 assembles the report with the reproducibility record and the caveat that 6 vs 6 detects only moderate-to-large effects.\n\nThe disputed ranking-metric rule (R-0108) is resolved as follows: the DESeq2 Wald statistic does not exist here because no count model is fitted; the plan uses the limma moderated t-statistic, which is the direct analogue — signed and scaled by the moderated standard error — and states that choice in the report."
+  },
+  "usage": {
+    "inputTokens": 263524,
+    "outputTokens": 10122,
+    "cacheCreationInputTokens": 115087,
+    "cacheReadInputTokens": 148389,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS on log2 values, sample distance heatmap, detected-gene counts",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "none_already_log2"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Mean log2 expression floor filter, expressed above floor in at least smallest group size",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "filter_statistic",
+                "value": "mean_log_expression"
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "No renormalization; value range check confirms log2 scale",
+            "package": "base",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "none_already_normalized"
+              },
+              {
+                "name": "value_range_check",
+                "value": "required"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition with control as explicit reference level",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition_treated_vs_control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-trend linear model on log2(TPM+1) values with robust eBayes",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment; TREAT when a fold-change threshold is required",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the full ranked list, plus camera on the limma fit",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "limma moderated t statistic"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              },
+              {
+                "name": "inter.gene.cor",
+                "value": "NA"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility record with sessionInfo, seed, package and collection versions; leading-edge genes per significant set",
+            "package": "rmarkdown",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM, FPKM, or log expression values",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "filter_statistic",
+                "value": "mean_log_expression"
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle limma-trend DE + GSEA",
+          "analytical_narrative": "The input is a 12,000 x 12 matrix of log2(TPM+1) values (/data/inputs/expression/log_expr.csv, first column gene identifiers) with a 12 x 2 sample table (/data/inputs/metadata/metadata.csv) giving condition for 6 treated and 6 control human muscle samples, unpaired, single batch. No counts were delivered, so a negative-binomial count model (DESeq2, edgeR, voom) is inapplicable — those require raw integer counts, and back-transforming log2 TPM to pseudo-counts would invent data. The analysis therefore runs limma-trend directly on the delivered log2 values, which is the sourced method for log-scale input (R-0019, R-0093).\n\nT1S1 checks sample structure on the log2 matrix as delivered — PCA/MDS on the 500 most variable genes, a sample-distance heatmap, per-sample distributions and detected-gene counts, coloured by condition — and verifies the value range is consistent with a log2 scale rather than a count table (R-0071, R-0074). No second normalization is applied. T1S2 filters genes on mean log2 expression with a floor set from the overall distribution and independent of the group labels, fits ~ condition with control as the explicit reference so a positive logFC means higher in treated, runs eBayes with trend=TRUE and robust=TRUE, and takes topTable with BH adjustment at FDR 0.05 (R-0075, R-0036, R-0093, R-0044); any fold-change requirement goes through treat() rather than a post-hoc filter (R-0037). T2S1 runs fgsea preranked on the full tested list against MSigDB human hallmark, with camera on the same limma fit as the correlation-aware companion test. T1S3 assembles the report with the reproducibility record and the caveat that 6 vs 6 detects only moderate-to-large effects.\n\nThe disputed ranking-metric rule (R-0108) is resolved as follows: the DESeq2 Wald statistic does not exist here because no count model is fitted; the plan uses the limma moderated t-statistic, which is the direct analogue — signed and scaled by the moderated standard error — and states that choice in the report.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on log2 expression",
+              "track": "T1",
+              "step_type": "qc",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Do the 12 human muscle samples separate by condition (6 treated vs 6 control), and is any sample an outlier, before any model is fitted?",
+              "context": "Inputs: /eval-full-32-with-log-normalized-n6-2/data/inputs/expression/log_expr.csv, a 12,000 gene x 12 sample matrix of log2(TPM+1) values as delivered by the core facility (first column holds gene identifiers), and /eval-full-32-with-log-normalized-n6-2/data/inputs/metadata/metadata.csv, 12 rows x 2 columns with one row per sample and a condition column (treated / control). Single batch, unpaired.",
+              "description": "Load the log2 matrix and the sample table, confirm sample identifiers match exactly between the two files and reorder the matrix columns to the metadata order. Verify the value range is consistent with a log2 scale (roughly 0-20, fractional values present) and NOT an integer count table; report min, max, median and the fraction of exact zeros. Do not transform the values again and do not renormalize. Produce: per-sample boxplots/density of the log2 values, count of detected genes per sample (value above the chosen floor), PCA and limma plotMDS on the 500 most variable genes coloured by condition, and a sample-sample correlation/distance heatmap. State explicitly whether any sample fails to cluster with its group.",
+              "question_note": "",
+              "acceptance_criteria": [
+                "Sample identifiers in log_expr.csv columns and metadata.csv rows are confirmed to match 1:1 and the group sizes are reported as 6 treated and 6 control",
+                "Value-range check reported (min, max, median, fraction of exact zeros) with an explicit statement that the data is log2-scale and not counts",
+                "PCA/MDS on the top 500 variable genes and a sample-distance heatmap are produced, coloured by condition",
+                "Any sample not clustering with its condition group is named, with a recommendation to keep or flag it — no sample is silently dropped",
+                "No renormalization or additional log transform is applied to the delivered values"
+              ],
+              "packages": [
+                "limma",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "constraints": [
+                "qc_sample_structure: use the values as delivered — they are already log2, do not apply log2(x+1) again (guide:limma/2026-05-19#data-exploration)",
+                "qc_sample_structure: n_top_genes = 500 for the MDS/PCA (guide:limma/2026-05-19#multidimensional-scaling-plots)",
+                "Do not apply a variance-stabilizing transformation from a count model — it expects raw counts",
+                "Report the value-range check before any modelling step"
+              ],
+              "caveats": [
+                "With n=6 per group, a single outlier sample carries substantial leverage; flag it rather than removing it without stating the effect on the DE result",
+                "TPM-scale values are compositional across samples; a strong shift in a few highly expressed genes can move all other genes"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0071@e4e2",
+                  "R-0074@06b0"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "Log-scale input: sample structure QC on the log values with PCA/MDS on 500 top-variable genes and sample distances, no re-transform, per R-0071@e4e2 and the value-range check of R-0074@06b0."
+              },
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "limma-trend differential expression, treated vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Which genes differ in expression between treated and control human muscle samples (6 vs 6), fitting limma-trend on the delivered log2(TPM+1) values?",
+              "context": "The core facility delivered log2(TPM+1) values, not counts. DESeq2, edgeR and voom require raw integer counts and must not be used here, nor may the values be back-transformed into pseudo-counts. limma-trend on the log-scale values is the correct model. Design: ~ condition, unpaired, single batch, no covariates in the 12 x 2 metadata table.",
+              "description": "Filter genes on mean log2 expression: choose a floor at the low end of the overall expression distribution, set from the data and independent of the group labels, and additionally require the gene to exceed that floor in at least 6 samples (the smallest group size). Report the floor, the number of genes in (12,000) and the number kept. Build the design matrix with condition as a factor whose reference level is set explicitly to control, so the contrast is treated - control and a positive logFC means higher in treated. Fit lmFit, then eBayes with trend=TRUE and robust=TRUE. Extract the full result table with topTable(number=Inf, adjust.method='BH') carrying gene id, logFC, AveExpr, moderated t, P.Value and adj.P.Val, and write it to disk as the complete ranked table for downstream enrichment. Report the number of genes at adj.P.Val < 0.05 and, separately, at < 0.1. If a minimum effect size is wanted, obtain it with treat()/topTreat() against a stated log2 fold-change threshold (e.g. 1) — never by post-hoc filtering the logFC column of the zero-null test. Produce a volcano plot, an MA plot, and a heatmap of the top significant genes on the log2 values.",
+              "acceptance_criteria": [
+                "Gene filter applied on mean log2 expression with the floor stated numerically and derived without reference to the condition labels; number of genes before and after filtering reported",
+                "Reference level of condition explicitly set to control and the contrast reported as treated vs control, with the sign convention stated",
+                "eBayes called with trend=TRUE and robust=TRUE, and both options named in the output",
+                "Full topTable for every tested gene written to disk with BH-adjusted p-values, including moderated t statistic — this is the input to T2S1",
+                "Counts of differentially expressed genes reported at adj.P.Val < 0.05 and < 0.1, alongside the number of genes tested",
+                "No count-based model (DESeq2, edgeR, voom) is used and no pseudo-count back-transformation is performed",
+                "Volcano plot, MA plot, and top-gene heatmap produced"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "constraints": [
+                "filter_low_counts: filter_statistic = mean_log_expression (guide:limma/2026-05-19#filtering)",
+                "filter_low_counts: min_samples = smallest_group_size, i.e. 6 (guide:limma/2026-05-19#filtering)",
+                "filter_low_counts: the floor must be set independently of the group labels",
+                "normalize: normalization = none_already_normalized — do not renormalize the delivered log2 values (guide:limma/2026-05-19#normalization)",
+                "model_design: reference_level set explicitly (control), never left to alphabetical order (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+                "model_design: contrast named as factor/numerator/denominator — condition, treated, control (vignette:DESeq2/1.52.0#contrasts)",
+                "differential_expression: trend = true (doi:10.1093/nar/gkv007)",
+                "differential_expression: robust = true (doi:10.1214/16-AOAS920)",
+                "multiple_testing: adjustment = BH (guide:limma/2026-05-19#statistics-for-differential-expression)",
+                "multiple_testing: filter_results_by = adjusted_pvalue, not raw p-value and not fold change alone (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+                "multiple_testing: any fold-change threshold is tested inside the model with treat(), not applied post hoc (doi:10.1093/bioinformatics/btp053)"
+              ],
+              "caveats": [
+                "6 vs 6 has power for moderate-to-large effects only; an empty or short significant list is a real outcome and must be reported as such rather than rescued by loosening thresholds",
+                "limma has no independent filtering step, so the low-expression filter must run before the fit for the BH adjustment to be over the tested genes only",
+                "log2(TPM+1) compresses low-expression genes and the +1 offset flattens their variance; the trend fit accommodates but does not remove this"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0075@4d16",
+                  "R-0074@06b0",
+                  "R-0036@9786",
+                  "R-0019@251d",
+                  "R-0093@4fa4",
+                  "R-0037@e6d8",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "reason": "Delivered data is log2(TPM+1), so R-0019@251d mandates limma-trend and forbids count models; robust eBayes per R-0093@4fa4, mean-log-expression filter per R-0075@4d16, explicit control reference per R-0036@9786, BH via topTable per R-0044@1777."
+              },
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA and camera on the treated vs control ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "agent": "enrichment-agent",
+              "question": "Which hallmark biological states are coordinately shifted between treated and control muscle, given the full ranked list of tested genes from the limma-trend fit?",
+              "context": "Input is the complete topTable from T1S2 — every tested gene with logFC, moderated t, p-value and BH-adjusted p-value — plus the filtered log2 expression matrix and design matrix for the camera test. Organism is human; gene identifiers come from the first column of log_expr.csv. Reference data needed: the MSigDB human hallmark gene set collection (present in this environment as a symbols GMT), and, as a secondary pass, human Gene Ontology biological-process gene sets. Reactome C2 sets are NOT staged here — if the resolver finds no Reactome collection, use the staged GO biological-process sets as the second collection and say so in the output; do not attempt any download.",
+              "description": "Rank every tested gene by the limma moderated t statistic (do not threshold the list first). Resolve the human hallmark gene set collection from the environment's reference store, read the GMT, and record its version string. Reconcile identifier spaces between the ranked list and the collection: if the expression matrix uses HGNC symbols the sets are directly usable; if it uses Ensembl or Entrez identifiers, map to symbols with org.Hs.eg.db and report the annotation package version, the share of tested genes that failed to map, and the number of many-to-many mappings dropped. Never mix identifier spaces between the ranked list and the sets. Restrict sets to 15-500 members after intersecting with the tested genes. Run fgsea with a fixed random seed, BH adjustment, and collapse redundant leading-edge-overlapping sets before reporting; keep the full table as a supplement. Then run camera on the same limma fit and design with inter.gene.cor=NA so the inter-gene correlation is estimated per set, and report the estimated correlation. Present the overlap and the disagreement between fgsea and camera. Repeat the fgsea pass against the human GO biological-process collection as the secondary annotation. Report the number of genes passing adj.P.Val < 0.05 in T1S2; if fewer than about 50, do not run an over-representation test on that list and say why.",
+              "acceptance_criteria": [
+                "fgsea run on the FULL ranked list of tested genes — no p-value or fold-change cut applied before ranking",
+                "Ranking metric stated explicitly in the output as the limma moderated t statistic, with the reason it substitutes for the DESeq2 Wald statistic (no count model was fitted)",
+                "Hallmark collection resolved from the environment reference store, with its version string reported; gene set size window 15-500 applied after intersection with the tested genes",
+                "Identifier reconciliation reported: identifier space used, mapping source and version if mapping was needed, and the share of tested genes that did not map",
+                "camera run on the limma fit with inter.gene.cor=NA, with the estimated inter-gene correlation reported per set, and the fgsea/camera agreement and disagreement summarised",
+                "Redundant significant sets collapsed by leading-edge overlap, one representative reported per group, full table retained as a supplement",
+                "Random seed set and recorded so the permutation p-values are reproducible",
+                "Secondary pass against human GO biological-process sets reported; if no Reactome collection is resolvable in this environment, that substitution is stated rather than silently made",
+                "Size of the significant gene list from T1S2 stated; no over-representation test run if that list is under ~50 genes"
+              ],
+              "packages": [
+                "fgsea",
+                "limma",
+                "org.Hs.eg.db",
+                "AnnotationDbi",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "constraints": [
+                "enrichment: gsea_input = full_ranked_list — never a thresholded list (doi:10.1073/pnas.0506580102)",
+                "enrichment: rank_metric stated in the plan and in the report; here the limma moderated t statistic, the signed standard-error-scaled analogue of the Wald statistic (rule:R-0108)",
+                "enrichment: min_size = 15, max_size = 500 after intersection with the tested genes (doi:10.1073/pnas.0506580102)",
+                "enrichment: universe = tested_genes, never the whole genome (doi:10.1371/journal.pcbi.1009935)",
+                "enrichment: gene_set_collection = msigdb_hallmark_human as the first pass (doi:10.1016/j.cels.2015.12.004)",
+                "enrichment: collapse_redundant = true before reporting (doi:10.1101/060012)",
+                "enrichment: id_mapping to a single identifier space with org.Hs.eg.db; report the unmapped share (doi:10.1016/j.xinn.2021.100141)",
+                "enrichment: camera called with inter.gene.cor = NA, not the limma default of 0.01 (doi:10.1093/nar/gks461)",
+                "enrichment: ora_min_significant_genes = 50 — below that, use only the ranked method (doi:10.3389/fgene.2020.00654)",
+                "No KEGG collection is served in this environment and none may be downloaded",
+                "Use only reference collections resolvable in this environment; there is no network access"
+              ],
+              "caveats": [
+                "Enrichment results are method-dependent: fgsea and camera will not agree fully, and each significant set is a hypothesis for follow-up, not a demonstrated mechanism",
+                "Hallmark sets overlap; a block of related significant sets is one finding, not several",
+                "GO biological-process sets are a nested hierarchy, so parent and child hits are correlated and must be collapsed before any count is reported",
+                "If fewer than about 50 genes reach adj.P.Val < 0.05 in T1S2, a hypergeometric over-representation test on that list has no power and must not be run"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0098@d01b",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0053@d1ca",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0097@a38e"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Preranked fgsea on the full tested list against MSigDB Hallmark per R-0107@976c and R-0048@500d, with camera on the limma fit per R-0053@d1ca. Disputed rule R-0108@409f resolved to the signed standard-error-scaled statistic — the limma moderated t, since no count model and therefore no DESeq2 Wald statistic exists here. R-0098@d01b names Reactome as the second collection but no Reactome GMT is staged, so the staged human GO biological-process sets substitute and the step must say so."
+              },
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "What is the defensible answer to 'which genes differ between treated and control', with the method, thresholds, effect sizes and limits of a 6 vs 6 log2-TPM design stated plainly?",
+              "context": "Consolidates the QC from T1S1, the limma-trend DE table from T1S2, and the fgsea/camera enrichment from T2S1 into one report for the 12-sample human muscle dataset.",
+              "description": "Write the report. State the method (limma-trend on core-facility-delivered log2(TPM+1) values), why no count model was used, the package versions, the design formula and the contrast (condition: treated vs control, control as reference), the expression floor and the number of genes tested out of 12,000, the BH thresholds and the number of DE genes at each, and the top up- and down-regulated genes with logFC, moderated t and adjusted p-value. For each significant gene set report the leading-edge genes with their gene-level statistics and mark leading-edge overlap between reported sets. Name the gene set database and version, the ranking metric, the universe and the size window, and state that enrichment results depend on the method chosen. Attach the reproducibility record: sessionInfo, all package versions, the random seed used for the fgsea permutations, and the gene set collection version. Close with the limitations: 6 vs 6 detects only moderate-to-large effects; TPM values are compositional and were normalized by the core facility by an unstated procedure; no counts means no count-model sensitivity check is possible; and any outlier flagged in T1S1 and its likely influence.",
+              "acceptance_criteria": [
+                "Report names the method, all package versions, the design, the contrast with its sign convention, the expression floor, n_tested, and n_DE at each threshold",
+                "Top differentially expressed genes tabulated with logFC, moderated t, p-value and BH-adjusted p-value",
+                "Leading-edge genes listed per significant gene set with their gene-level statistics, and overlap between reported sets marked",
+                "Gene set database, version, ranking metric, universe and size window all reported, with an explicit statement that enrichment results are method-dependent",
+                "Reproducibility record attached: sessionInfo, package versions, fgsea seed, collection version",
+                "Limitations section states the power limits of n=6 per group, the compositional nature of TPM, the unstated core-facility normalization, and the impossibility of a count-model cross-check",
+                "No causal or mechanistic claim is made from the DE or enrichment result beyond an explicitly labelled hypothesis"
+              ],
+              "packages": [
+                "rmarkdown",
+                "knitr",
+                "ggplot2",
+                "sessioninfo"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "constraints": [
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+                "report: leading_edge = per_significant_set (doi:10.1073/pnas.0506580102)",
+                "report: enrichment_caveat = method_dependence (doi:10.1093/bib/bbz158)",
+                "report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)",
+                "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+                "State that the values were delivered as log2(TPM+1) by the core facility and that the normalization procedure behind them is not documented in the inputs"
+              ],
+              "caveats": [
+                "Do not present an enriched gene set as a demonstrated mechanism",
+                "If the DE list is empty or very short, report that directly as the finding rather than relaxing the FDR threshold"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report contents follow R-0041@059a (method, versions, design, thresholds, counts), R-0051@01ca and R-0055@107a (enrichment provenance and method-dependence), R-0105@c4a8 (leading edge per set) and R-0086@becf (reproducibility record)."
+              },
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+  }
+}

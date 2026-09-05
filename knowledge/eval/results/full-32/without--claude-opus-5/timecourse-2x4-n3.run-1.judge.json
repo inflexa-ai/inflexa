@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference exactly: a DESeq2 LRT of ~condition + time + condition:time against ~condition + time, with explicit reference levels (t0, control), printed interaction coefficients, and per-time-point contrasts pulled from the single fit rather than refit subsets. QC includes PCA coloured by condition/shaped by time and a sample-distance heatmap, but library sizes are not inspected and there is no stated policy for an outlier or shallow sample. The low-count rule (>=10 in >=3 samples, before the fit, count retained reported) is minimal and appropriate; normalization is implicitly DESeq2 size factors on raw counts and TMM for the voom track, though size-factor estimation is not spelled out. BH at 0.05 is stated and shrinkage is applied to the per-time-point effects only 'where appropriate'; enrichment is added though not warranted, and while the universe and collections are explicit, no collection version or gene-set size window is given. Package versions are not part of the reporting requirements."
+}

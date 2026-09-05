@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the repeated-measures structure and fits a single shared paired model (~subject + condition) with an omnibus LRT against ~subject plus all three pairwise Wald contrasts extracted from that one fit rather than from subset refits, which matches the reference closely. QC includes PCA/correlation colored by subject and condition and a defensible filter (count >=10 in >=4 samples, i.e., group size), with size factors and dispersion diagnostics kept inside the model, so normalization is handled properly. The main statistical gap is that no log fold-change shrinkage (ashr or equivalent) is specified anywhere, so reported effect sizes will be unshrunk despite BH at 0.05 being explicit. Enrichment is ORA on thresholded lists with a named collection but no stated universe/background, no collection version, no gene-set size window, and no ranking metric for the 'GSEA-style' option; the report also omits software versions and any explicit caveat about n=4 and the resulting low power."
+}

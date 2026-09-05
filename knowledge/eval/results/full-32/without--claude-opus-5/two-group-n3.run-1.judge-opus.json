@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference method exactly: DESeq2 negative-binomial Wald test on raw Salmon counts with ~condition, explicit releveling of control as reference read verbatim from metadata, no invented batch term, apeglm shrinkage, BH at 0.05 (with 0.10 reported secondarily and no lowering of alpha), and edgeR QLF as a cross-method check rather than a substitute. QC precedes the test with library sizes, size factors, VST PCA, sample-correlation heatmap and dispersion plots, plus an outlier policy that goes beyond visual inspection into leave-one-out stability, which is the right response to n=3; the filter (>=10 counts in >=3 samples) is minimal and its effect is reported, and normalization is left entirely inside the models. The confidence half of the question is handled seriously and correctly scoped: exhaustive 3v3 label permutation framed as a set-level bound rather than a per-gene p-value, dataset-derived dispersions for the detectable-effect curve, and an explicit refusal to rescue an empty list with nominal p-values. Enrichment is appropriately preranked GSEA on the Wald statistic with a stated universe, mapping loss, organism verification, per-collection BH and a size-gated ORA with background, but it omits a min/max gene-set size window and any MSigDB version pin. Minor deductions elsewhere: the |shrunken LFC|>1 cut is applied post hoc rather than as an lfcThreshold in the test, and software version reporting is only specified for the pydeseq2 fallback."
+}

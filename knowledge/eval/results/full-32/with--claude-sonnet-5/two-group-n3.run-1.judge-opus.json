@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan selects exactly the right model for the stated design: DESeq2 Wald on raw counts for an unpaired, single-batch 3v3 comparison, with an edgeR QLF cross-check and an explicit, repeated statement that n=3 is low power and that non-significance is not evidence of no change, with alpha held at 0.05. QC is concrete and precedes the model (blind VST, top-500 PCA colored by condition, sample-distance heatmap, library sizes, outlier flagging), though the outlier policy is 'flag and report' rather than a stated inclusion/exclusion rule. Filtering (>=10 counts in >=3 samples, deferring the rest to independent filtering), internal median-of-ratios normalization, the explicit relevel of control as reference with the (condition, treated, control) contrast, BH at 0.05, and apeglm shrinkage are all correct and stated, with Cook's-outlier NAs separated from filtering NAs. Enrichment was not asked for, but the added preranked fgsea is properly specified (full tested-gene list ranked by Wald stat, named collections with versions, 15-500 size window, leading edge, stated universe), so it is a minor scope addition rather than a methodological error. The final report names methods, versions, design, thresholds, tested and significant counts, diagnostics, power caveats, and reproducibility metadata."
+}

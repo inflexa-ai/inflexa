@@ -1,0 +1,229 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "confounded-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T17:31:07.523Z",
+  "elapsedMs": 32149,
+  "outcome": "plan_submitted",
+  "planId": "pln-dca6f640",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 differential expression: treated vs control (confounded design)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not attempt to add batch as a second design term — the model matrix is singular/aliased since batch perfectly predicts condition; DESeq2/pydeseq2 will error or silently drop the term",
+          "Do not apply ComBat, limma removeBatchEffect, or SVA to 'correct' this confound — with zero within-batch variation in condition, such correction cannot distinguish batch effect from condition effect and can only remove or fabricate signal, not recover the truth",
+          "Report gene identifiers exactly as given in the counts file's first column (gene symbols) without assuming an additional ID space"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes differ in raw count expression between the 6 treated (batch B2) and 6 control (batch B1) lung samples using DESeq2 with condition as the sole design factor?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Sample size is only 12 (n=6/6) — treat resulting p-values/effect sizes as exploratory given the small n on top of the confound"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run on the 12000 x 12 raw integer count matrix (excluding gene-ID column) with metadata condition as the only design factor (~condition), since batch is a perfect linear alias of condition and cannot be jointly estimated",
+          "Output table has log2FoldChange, p-value, and BH-adjusted p-value (padj) per gene, written to a CSV",
+          "Standard DESeq2 QC included: size-factor normalization, dispersion estimation plot, and a PCA/sample-distance plot on rlog or vst-transformed counts showing that samples separate along both batch and condition axes (since they are identical groupings here)",
+          "A written note in the step output explicitly states that the design matrix precludes including batch as a covariate (aliasing/rank deficiency) and that any DE result is condition+batch confounded, not attributable to treatment alone"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Quantify and report the batch-condition confound explicitly",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This step is a documentation/verification step, not a fix — no analysis can un-confound a perfectly aliased design; the goal is to prevent overclaiming in the final report"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "How completely is batch B1/B2 assignment aligned with treated/control condition in this metadata, and what does that imply for interpretability of any DE gene found in T1S1?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "Cross-tabulation of condition x batch from the 12-row metadata.csv confirming 6/6 control-B1 and 6/6 treated-B2 with zero samples in the off-diagonal cells",
+          "A short written statement (included in step output, not just code) that with this design, statistical batch-effect and treatment-effect are mathematically unidentifiable from expression data alone: every DE gene from T1S1 could be driven by processing batch, by biological treatment effect, or a mixture of the two, and this dataset cannot resolve which",
+          "Explicit recommendation that any DE genes reported downstream be labeled 'condition-associated (batch-confounded)' rather than 'treatment-responsive' in all outputs"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on condition-associated DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than ~10 genes pass padj<0.05, fall back to a ranked GSEA-preranked approach on the full log2FoldChange-ranked gene list rather than a small hard-thresholded ORA list",
+          "WikiPathways human GMT file uses '%'-delimited descriptors in the first field — parse out the pathway name before reporting, and split on the delimiter as documented for the reference file"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which biological pathways are over-represented among the genes significantly associated with the treated(B2) vs control(B1) contrast identified in T1S1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Must use the Homo sapiens WikiPathways GMT specifically (not the mouse or rat versions) given the dataset organism is Homo sapiens"
+        ],
+        "acceptance_criteria": [
+          "Enrichment (e.g., over-representation or GSEA-style ranked analysis) run on the DESeq2 gene list from T1S1, using significant genes (padj < 0.05) as the foreground set and the full 12000-gene panel as background",
+          "Uses the human WikiPathways gene set collection (HGNC symbols) available in the reference store for Homo sapiens; if gene symbols in counts.csv need harmonization, confirm case/format matches the GMT's HGNC symbols before matching",
+          "Output is a ranked table of pathway name, gene overlap, p-value, and adjusted p-value, saved to CSV, plus a bar or dot plot of top pathways",
+          "Enrichment results are reported as candidate biology consistent with the condition/batch contrast, explicitly re-stating the batch confound caveat from T1S2 — pathways enriched here cannot be asserted as treatment-driven mechanisms without an independent, non-confounded dataset"
+        ]
+      }
+    ],
+    "title": "Confounded DE analysis: treated vs control, lung RNA-seq",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The design has 6 treated vs 6 control samples but batch B1 = all controls and B2 = all treated — batch is perfectly confounded with condition (12000 genes x 13 columns, one column presumably being gene symbol/ID). No statistical method can separate a condition effect from a batch effect in this design: any gene difference detected could equally be a technical (library prep, processing day) artifact rather than a treatment effect. The plan proceeds honestly: (1) run standard DESeq2 differential expression on condition only, since batch cannot be added as a covariate (it is aliased with condition — the design matrix would be singular), (2) explicitly flag and quantify the confound (report that the batch term cannot be estimated separately), (3) run functional enrichment on the resulting DE gene list so any biological signal is contextualized, and (4) produce a clear caveats report stating that results reflect condition+batch combined and cannot be attributed to treatment alone. No batch-correction step (e.g., ComBat/SVA) is included as a fix, because with a fully confounded design such correction would either do nothing or arbitrarily remove/inflate the very effect of interest — it is a well-known statistical impossibility, not an oversight."
+  },
+  "usage": {
+    "inputTokens": 43264,
+    "outputTokens": 2390,
+    "cacheCreationInputTokens": 34110,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Confounded DE analysis: treated vs control, lung RNA-seq",
+          "analytical_narrative": "The design has 6 treated vs 6 control samples but batch B1 = all controls and B2 = all treated — batch is perfectly confounded with condition (12000 genes x 13 columns, one column presumably being gene symbol/ID). No statistical method can separate a condition effect from a batch effect in this design: any gene difference detected could equally be a technical (library prep, processing day) artifact rather than a treatment effect. The plan proceeds honestly: (1) run standard DESeq2 differential expression on condition only, since batch cannot be added as a covariate (it is aliased with condition — the design matrix would be singular), (2) explicitly flag and quantify the confound (report that the batch term cannot be estimated separately), (3) run functional enrichment on the resulting DE gene list so any biological signal is contextualized, and (4) produce a clear caveats report stating that results reflect condition+batch combined and cannot be attributed to treatment alone. No batch-correction step (e.g., ComBat/SVA) is included as a fix, because with a fully confounded design such correction would either do nothing or arbitrarily remove/inflate the very effect of interest — it is a well-known statistical impossibility, not an oversight.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 differential expression: treated vs control (confounded design)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ in raw count expression between the 6 treated (batch B2) and 6 control (batch B1) lung samples using DESeq2 with condition as the sole design factor?",
+              "acceptance_criteria": [
+                "DESeq2 run on the 12000 x 12 raw integer count matrix (excluding gene-ID column) with metadata condition as the only design factor (~condition), since batch is a perfect linear alias of condition and cannot be jointly estimated",
+                "Output table has log2FoldChange, p-value, and BH-adjusted p-value (padj) per gene, written to a CSV",
+                "Standard DESeq2 QC included: size-factor normalization, dispersion estimation plot, and a PCA/sample-distance plot on rlog or vst-transformed counts showing that samples separate along both batch and condition axes (since they are identical groupings here)",
+                "A written note in the step output explicitly states that the design matrix precludes including batch as a covariate (aliasing/rank deficiency) and that any DE result is condition+batch confounded, not attributable to treatment alone"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not attempt to add batch as a second design term — the model matrix is singular/aliased since batch perfectly predicts condition; DESeq2/pydeseq2 will error or silently drop the term",
+                "Do not apply ComBat, limma removeBatchEffect, or SVA to 'correct' this confound — with zero within-batch variation in condition, such correction cannot distinguish batch effect from condition effect and can only remove or fabricate signal, not recover the truth",
+                "Report gene identifiers exactly as given in the counts file's first column (gene symbols) without assuming an additional ID space"
+              ],
+              "constraints": [
+                "Sample size is only 12 (n=6/6) — treat resulting p-values/effect sizes as exploratory given the small n on top of the confound"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Quantify and report the batch-condition confound explicitly",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "How completely is batch B1/B2 assignment aligned with treated/control condition in this metadata, and what does that imply for interpretability of any DE gene found in T1S1?",
+              "acceptance_criteria": [
+                "Cross-tabulation of condition x batch from the 12-row metadata.csv confirming 6/6 control-B1 and 6/6 treated-B2 with zero samples in the off-diagonal cells",
+                "A short written statement (included in step output, not just code) that with this design, statistical batch-effect and treatment-effect are mathematically unidentifiable from expression data alone: every DE gene from T1S1 could be driven by processing batch, by biological treatment effect, or a mixture of the two, and this dataset cannot resolve which",
+                "Explicit recommendation that any DE genes reported downstream be labeled 'condition-associated (batch-confounded)' rather than 'treatment-responsive' in all outputs"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "This step is a documentation/verification step, not a fix — no analysis can un-confound a perfectly aliased design; the goal is to prevent overclaiming in the final report"
+              ],
+              "constraints": []
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on condition-associated DE genes",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which biological pathways are over-represented among the genes significantly associated with the treated(B2) vs control(B1) contrast identified in T1S1?",
+              "acceptance_criteria": [
+                "Enrichment (e.g., over-representation or GSEA-style ranked analysis) run on the DESeq2 gene list from T1S1, using significant genes (padj < 0.05) as the foreground set and the full 12000-gene panel as background",
+                "Uses the human WikiPathways gene set collection (HGNC symbols) available in the reference store for Homo sapiens; if gene symbols in counts.csv need harmonization, confirm case/format matches the GMT's HGNC symbols before matching",
+                "Output is a ranked table of pathway name, gene overlap, p-value, and adjusted p-value, saved to CSV, plus a bar or dot plot of top pathways",
+                "Enrichment results are reported as candidate biology consistent with the condition/batch contrast, explicitly re-stating the batch confound caveat from T1S2 — pathways enriched here cannot be asserted as treatment-driven mechanisms without an independent, non-confounded dataset"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "If fewer than ~10 genes pass padj<0.05, fall back to a ranked GSEA-preranked approach on the full log2FoldChange-ranked gene list rather than a small hard-thresholded ORA list",
+                "WikiPathways human GMT file uses '%'-delimited descriptors in the first field — parse out the pathway name before reporting, and split on the delimiter as documented for the reference file"
+              ],
+              "constraints": [
+                "Must use the Homo sapiens WikiPathways GMT specifically (not the mouse or rat versions) given the dataset organism is Homo sapiens"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

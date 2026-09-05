@@ -1,0 +1,418 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "sample-scores-gsva",
+  "run": 2,
+  "startedAt": "2026-09-05T17:43:27.162Z",
+  "elapsedMs": 84614,
+  "outcome": "plan_submitted",
+  "planId": "pln-711d0b07",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Normalisation, VST and sample QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group is small — PCA separation may be driven by a handful of genes",
+          "Low library depth in sample_01 inflates variance for low-expressed genes even after VST; do not read a lone sample_01 shift as biology",
+          "Salmon counts are estimates and may be non-integer if not rounded upstream — round before DESeq2 and report if rounding was needed"
+        ],
+        "context": "Human (taxon 9606) colon bulk RNA-seq, 6 ulcerative colitis inflamed vs 6 control, unpaired, single batch, raw gene-level counts from Salmon. The profile flags sample_01 as having a library size about 4x below the median. Downstream gene set scoring (GSVA/ssGSEA) requires a continuous, library-size-corrected expression matrix; raw counts are not a valid input.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "After DESeq2 size-factor normalisation and VST, do the 6 ulcerative-colitis-inflamed and 6 control colon samples separate in unsupervised space, and is sample_01 (library size ~4x below median) an outlier beyond its depth?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Use the exact input paths given in the description; do not search for other files",
+          "Verify sample identifiers in counts.csv columns match metadata.csv rows exactly before proceeding",
+          "Use DESeq2 vst() (or varianceStabilizingTransformation if n or dispersion fitting requires it) — do not use log2(CPM+1) as the primary matrix",
+          "Filter low-count genes before VST: count >= 10 in >= 6 samples",
+          "Collapse duplicate gene symbols deterministically (highest mean count) and report the number collapsed",
+          "Do not perform batch correction — the design is single-batch",
+          "Report sample_01's size factor, PCA position and median inter-sample correlation explicitly in the step output"
+        ],
+        "description": "Load /eval-full-32-without-sample-scores-gsva-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer Salmon counts, first column gene symbol) and /eval-full-32-without-sample-scores-gsva-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Align sample column order to metadata rows and fail loudly on any mismatch. Collapse duplicate gene symbols by keeping the row with the highest mean count (report how many were collapsed). Filter to genes with a count of at least 10 in at least 6 samples (the size of the smaller group). Build a DESeqDataSet with ~condition, estimate size factors, and produce a variance-stabilising-transformed matrix. Emit: the VST matrix as CSV (genes x 12 samples), the filtered raw count matrix as CSV, the size factors, a per-sample library-size table, a PCA of the top 2000 variable genes coloured by condition, and a sample-sample Spearman correlation heatmap. Explicitly assess sample_01: report its size factor, its position on PC1/PC2, and its median correlation to the other samples relative to the cohort. Retain it by default (size-factor + VST handles depth) and record the flag rather than dropping it; only drop it if it is a clear expression-space outlier, and if so also emit the VST matrix with it retained so downstream steps can compare.",
+        "acceptance_criteria": [
+          "VST expression matrix written as CSV with genes as rows and all retained samples as columns",
+          "Number of genes before and after filtering, and number of duplicate symbols collapsed, are reported",
+          "PCA plot coloured by condition (UC inflamed vs control) and a sample-sample correlation heatmap are produced",
+          "An explicit statement of whether sample_01 is an outlier beyond its library depth, with the numbers supporting it, and an explicit statement of whether it was retained"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Per-sample hallmark activity scores (GSVA + ssGSEA)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The matrix holds only ~12,000 genes, so some hallmark sets will be represented by a fraction of their members — low-coverage sets give unstable scores and must be flagged, not silently ranked",
+          "GSVA scores are relative to the sample set: they are not comparable to scores computed on a different cohort",
+          "If the hallmark GMT cannot be resolved in the reference store, stop and report it — this step cannot proceed on a substitute collection, and GO or oncogenic sets do not answer the question as asked"
+        ],
+        "context": "This is the core deliverable: a pathway activity score per sample. GSVA is available as an R Bioconductor package (GSVA 2.6.6); decoupler and gseapy are also present as Python alternatives if needed. The expression matrix carries HGNC gene symbols, so it joins directly to a symbols GMT with no ID mapping.",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "GSEABase",
+          "SummarizedExperiment"
+        ],
+        "question": "What is the activity score of each of the 50 MSigDB hallmark pathways in each of the 12 colon samples, and are the scores stable across two scoring methods?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Score the VST matrix from T1S1 — never raw counts",
+          "Use the HUMAN hallmark gene sets (Homo sapiens, HGNC symbols); explicitly refuse the mouse hallmark file",
+          "Resolve the hallmark GMT from the environment reference store; never download",
+          "Set kcdf='Gaussian' for GSVA because the input is continuous VST, not counts",
+          "min.sz=10, max.sz=500; report any hallmark set dropped for size",
+          "Produce both GSVA and ssGSEA score matrices and report their per-pathway concordance",
+          "Write the primary GSVA score matrix as pathways x samples CSV with sample names preserved"
+        ],
+        "description": "Using the VST matrix from T1S1, compute a per-sample pathway activity matrix over the human MSigDB hallmark gene sets. The reference needed is the 50 human hallmark gene sets as a symbols GMT (HGNC gene symbols, matching the counts' gene-symbol identifier space); resolve it in the environment's reference store rather than hard-coding a path — a human hallmark GMT was catalogued at plan time under the MSigDB hallmark collection. Do NOT substitute the mouse hallmark file; the data is Homo sapiens. Run GSVA with the Gaussian kernel (gsvaParam, kcdf='Gaussian' — correct for continuous VST input, not for counts) and minimum set size 10, maximum 500, producing a 50 x n_samples score matrix. Independently run ssGSEA (ssgseaParam) on the same matrix as a methodological replicate. Emit both score matrices as CSV (pathways x samples), a table of how many genes of each hallmark set were found in the filtered expression matrix (sets with poor coverage must be flagged, since only 12,000 genes are present), and the per-pathway Spearman correlation between the GSVA and ssGSEA score vectors across samples. Also emit a per-sample summary so that the 'pathway activity score for every sample' request is directly readable.",
+        "acceptance_criteria": [
+          "A GSVA score matrix covering the hallmark sets that passed size filtering, with one column per sample, written as CSV",
+          "An ssGSEA score matrix over the same sets and samples, written as CSV",
+          "A gene-coverage table reporting, per hallmark set, how many of its members were present in the filtered 12,000-gene matrix",
+          "Per-pathway GSVA-vs-ssGSEA Spearman correlations reported, with poorly concordant pathways named"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Differential hallmark activity and heatmap",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 vs 6 gives limited power; a hallmark failing BH correction is not evidence of no change",
+          "GSVA scores across pathways are correlated because hallmark sets share genes — significant pathways will arrive in correlated blocks and must not be counted as independent findings",
+          "A heatmap will always look like it separates groups when rows were selected by that same group contrast; the unfiltered all-pathway heatmap is the honest one and must be shown alongside"
+        ],
+        "context": "The user asked specifically for a heatmap of hallmark activity across samples that shows which pathways separate the two groups. UC inflamed colon is expected a priori to show inflammatory hallmark elevation (TNFA_SIGNALING_VIA_NFKB, INFLAMMATORY_RESPONSE, INTERFERON_GAMMA_RESPONSE, IL6_JAK_STAT3_SIGNALING, COMPLEMENT); concordance with that expectation is a sanity check on the pipeline, not independent confirmation of the finding.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "ComplexHeatmap",
+          "pheatmap",
+          "ggplot2",
+          "circlize"
+        ],
+        "question": "Which hallmark pathways separate ulcerative colitis inflamed colon from control, and how does hallmark activity look across all 12 samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Test on the GSVA score matrix with limma (lmFit/eBayes), not a per-pathway unmoderated t-test alone",
+          "Apply Benjamini-Hochberg correction across the tested hallmark sets and report adjusted p-values in every results table",
+          "Heatmap must include ALL samples as columns with a condition annotation bar, and must be z-scored per pathway row",
+          "If no pathway survives BH < 0.05, say so explicitly and label the top-15 panel as unadjusted-p ranked",
+          "Cross-check every called pathway against the ssGSEA-based test and report the overlap",
+          "Exclude or explicitly flag any pathway marked low-coverage by T1S2 before interpreting it"
+        ],
+        "description": "Take the GSVA score matrix from T1S2 and test each hallmark pathway for a difference between the UC-inflamed and control groups using limma on the score matrix (lmFit + eBayes with design ~condition), which is the standard treatment for GSVA output. Report per-pathway log-fold-change (difference in mean score), moderated t, raw p, and BH-adjusted p, ranked by adjusted p. Repeat the same test on the ssGSEA matrix and report which pathways are called by both methods — only the intersection should be described as robust. Produce the requested figure: a heatmap of hallmark activity across all 12 samples, rows = hallmark pathways, columns = samples, values z-scored per pathway, with a column annotation bar for condition (UC inflamed vs control), rows and columns clustered (Euclidean, complete linkage), plus a second heatmap restricted to pathways with BH-adjusted p < 0.05 (or, if none reach that, the top 15 by raw p, clearly labelled as unadjusted). Also emit a boxplot/strip plot of the top separating pathways' per-sample scores by condition, so the individual sample values behind each heatmap row are visible. State plainly that pathways were ranked and displayed on the same 12 samples that defined the contrast, so the visual separation in the heatmap is descriptive of this cohort and is not an out-of-sample validated result.",
+        "acceptance_criteria": [
+          "Ranked table of all tested hallmark pathways with mean score difference (UC inflamed minus control), moderated t, raw p and BH-adjusted p",
+          "Heatmap PNG/PDF of hallmark activity: pathways x all 12 samples, z-scored rows, condition annotation bar, clustered",
+          "Second heatmap restricted to significantly separating pathways (or top 15 by raw p if none are significant, labelled as such)",
+          "Explicit statement that ranking and display used the same samples that defined the contrast, so separation is descriptive rather than validated",
+          "List of pathways called by both GSVA-based and ssGSEA-based testing"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Gene-level DE to ground the hallmark result",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group, DESeq2 dispersion estimates are moderately stable but individual low-count genes remain unreliable — rely on adjusted p, not fold change alone",
+          "sample_01's low depth can trigger Cook's-distance outlier flagging; report how many genes were flagged rather than silently accepting the filtered result",
+          "Agreement between the gene-level result and the hallmark result is a consistency check on the same data, not independent validation"
+        ],
+        "context": "Pathway activity scores are a summary; without gene-level evidence a separating hallmark can reflect a scoring artefact or a handful of high-variance genes. This step supplies the check and gives the interpretable gene list behind each pathway. Same 12 samples, unpaired, single batch.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are differentially expressed between UC inflamed and control colon, and do they support the hallmark pathways called as separating in T1S3?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the filtered raw integer count matrix from T1S1, not the VST matrix",
+          "Design ~condition with control as the reference level; state the contrast direction explicitly in the output",
+          "Use LFC shrinkage (apeglm or ashr) for ranking and plotting, and report both shrunken and unshrunken log2FC",
+          "Report BH-adjusted p-values; do not report raw p-values as significance",
+          "For each hallmark pathway called in T1S3, report member-gene significance counts and direction"
+        ],
+        "description": "Run DESeq2 on the filtered raw count matrix from T1S1 with design ~condition, contrast UC inflamed vs control, using the Wald test with apeglm (or ashr) LFC shrinkage for ranking. Emit the full results table (baseMean, log2FC, shrunken log2FC, lfcSE, stat, p, BH-adjusted p) sorted by adjusted p, an MA plot, a volcano plot, and counts of genes at padj < 0.05 with |log2FC| > 1. Then link back to T1S3: for each hallmark pathway called as separating, report how many of its member genes are individually significant and in which direction, and give the leading-edge-style list of its top 10 member genes by shrunken log2FC. A pathway called at the score level whose member genes show no coherent gene-level shift should be reported as unsupported. Report the independent-filtering and outlier (Cook's distance) behaviour, given that sample_01 has low depth and a single low-depth sample can drive Cook's-based gene flagging.",
+        "acceptance_criteria": [
+          "Full DESeq2 results table written as CSV with shrunken log2FC and BH-adjusted p",
+          "MA plot and volcano plot produced, with the direction of the contrast stated (UC inflamed relative to control)",
+          "Number of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 1 reported",
+          "Per-pathway gene-level support table for the hallmarks called in T1S3, naming any pathway whose member genes show no coherent shift"
+        ]
+      }
+    ],
+    "title": "Per-sample hallmark GSVA in UC inflamed colon",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks for a per-sample pathway activity score and a hallmark heatmap that shows which pathways separate ulcerative colitis inflamed colon from control. The input is a raw Salmon gene-level count matrix (12,000 gene symbols x 12 samples) with a 12-row metadata table carrying condition (6 UC inflamed vs 6 control, unpaired, single batch). Sample-level gene set scoring needs a variance-stabilised, library-size-corrected expression matrix, not raw counts — so T1S1 normalises with DESeq2 VST (appropriate at n=12 and robust to the one flagged outlier), filters low-count genes, resolves duplicate gene symbols, and runs unsupervised QC (library sizes, PCA, sample correlation) with explicit attention to sample_01, whose library size is ~4x below the median. Because size-factor normalisation plus VST handles depth differences, sample_01 is retained by default and flagged, not dropped — but the QC output must state whether it is an expression-space outlier so downstream results can be read accordingly.\n\nT1S2 computes the per-sample scores themselves: GSVA on the VST matrix against the 50 human MSigDB hallmark sets (staged at /mnt/refs as h.all symbols GMT, HGNC symbols matching the counts' first column), producing a 50 x 12 sample-by-pathway activity matrix — the direct answer to 'a pathway activity score for every sample'. ssGSEA is added as a second, differently-parameterised scoring method so that the reported separation is not an artefact of one estimator. T1S3 does the statistics and the figure: a moderated t-test (limma) on the hallmark score matrix with BH correction to rank pathways by UC-inflamed vs control separation, then the requested heatmap of hallmark activity across all 12 samples (z-scored per pathway, samples annotated by condition), plus a version restricted to the significantly separating pathways. Ranking on the same 12 samples that defined the contrast means the heatmap's apparent separation is descriptive, not a validated classifier — the step must say so. T1S4 grounds the pathway-level result in gene-level differential expression (DESeq2 Wald on raw counts) so that a hallmark called as separating can be checked against the actual genes driving it, which is the standard guard against a score-level artefact."
+  },
+  "usage": {
+    "inputTokens": 92297,
+    "outputTokens": 6328,
+    "cacheCreationInputTokens": 74125,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GSVA",
+          "decoupleR",
+          "singscore",
+          "UCell",
+          "limma",
+          "DESeq2",
+          "edgeR",
+          "ComplexHeatmap",
+          "pheatmap",
+          "GSEABase",
+          "decoupler",
+          "gseapy"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Per-sample hallmark GSVA in UC inflamed colon",
+          "analytical_narrative": "The question asks for a per-sample pathway activity score and a hallmark heatmap that shows which pathways separate ulcerative colitis inflamed colon from control. The input is a raw Salmon gene-level count matrix (12,000 gene symbols x 12 samples) with a 12-row metadata table carrying condition (6 UC inflamed vs 6 control, unpaired, single batch). Sample-level gene set scoring needs a variance-stabilised, library-size-corrected expression matrix, not raw counts — so T1S1 normalises with DESeq2 VST (appropriate at n=12 and robust to the one flagged outlier), filters low-count genes, resolves duplicate gene symbols, and runs unsupervised QC (library sizes, PCA, sample correlation) with explicit attention to sample_01, whose library size is ~4x below the median. Because size-factor normalisation plus VST handles depth differences, sample_01 is retained by default and flagged, not dropped — but the QC output must state whether it is an expression-space outlier so downstream results can be read accordingly.\n\nT1S2 computes the per-sample scores themselves: GSVA on the VST matrix against the 50 human MSigDB hallmark sets (staged at /mnt/refs as h.all symbols GMT, HGNC symbols matching the counts' first column), producing a 50 x 12 sample-by-pathway activity matrix — the direct answer to 'a pathway activity score for every sample'. ssGSEA is added as a second, differently-parameterised scoring method so that the reported separation is not an artefact of one estimator. T1S3 does the statistics and the figure: a moderated t-test (limma) on the hallmark score matrix with BH correction to rank pathways by UC-inflamed vs control separation, then the requested heatmap of hallmark activity across all 12 samples (z-scored per pathway, samples annotated by condition), plus a version restricted to the significantly separating pathways. Ranking on the same 12 samples that defined the contrast means the heatmap's apparent separation is descriptive, not a validated classifier — the step must say so. T1S4 grounds the pathway-level result in gene-level differential expression (DESeq2 Wald on raw counts) so that a hallmark called as separating can be checked against the actual genes driving it, which is the standard guard against a score-level artefact.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Normalisation, VST and sample QC",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After DESeq2 size-factor normalisation and VST, do the 6 ulcerative-colitis-inflamed and 6 control colon samples separate in unsupervised space, and is sample_01 (library size ~4x below median) an outlier beyond its depth?",
+              "description": "Load /eval-full-32-without-sample-scores-gsva-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer Salmon counts, first column gene symbol) and /eval-full-32-without-sample-scores-gsva-2/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Align sample column order to metadata rows and fail loudly on any mismatch. Collapse duplicate gene symbols by keeping the row with the highest mean count (report how many were collapsed). Filter to genes with a count of at least 10 in at least 6 samples (the size of the smaller group). Build a DESeqDataSet with ~condition, estimate size factors, and produce a variance-stabilising-transformed matrix. Emit: the VST matrix as CSV (genes x 12 samples), the filtered raw count matrix as CSV, the size factors, a per-sample library-size table, a PCA of the top 2000 variable genes coloured by condition, and a sample-sample Spearman correlation heatmap. Explicitly assess sample_01: report its size factor, its position on PC1/PC2, and its median correlation to the other samples relative to the cohort. Retain it by default (size-factor + VST handles depth) and record the flag rather than dropping it; only drop it if it is a clear expression-space outlier, and if so also emit the VST matrix with it retained so downstream steps can compare.",
+              "context": "Human (taxon 9606) colon bulk RNA-seq, 6 ulcerative colitis inflamed vs 6 control, unpaired, single batch, raw gene-level counts from Salmon. The profile flags sample_01 as having a library size about 4x below the median. Downstream gene set scoring (GSVA/ssGSEA) requires a continuous, library-size-corrected expression matrix; raw counts are not a valid input.",
+              "constraints": [
+                "Use the exact input paths given in the description; do not search for other files",
+                "Verify sample identifiers in counts.csv columns match metadata.csv rows exactly before proceeding",
+                "Use DESeq2 vst() (or varianceStabilizingTransformation if n or dispersion fitting requires it) — do not use log2(CPM+1) as the primary matrix",
+                "Filter low-count genes before VST: count >= 10 in >= 6 samples",
+                "Collapse duplicate gene symbols deterministically (highest mean count) and report the number collapsed",
+                "Do not perform batch correction — the design is single-batch",
+                "Report sample_01's size factor, PCA position and median inter-sample correlation explicitly in the step output"
+              ],
+              "acceptance_criteria": [
+                "VST expression matrix written as CSV with genes as rows and all retained samples as columns",
+                "Number of genes before and after filtering, and number of duplicate symbols collapsed, are reported",
+                "PCA plot coloured by condition (UC inflamed vs control) and a sample-sample correlation heatmap are produced",
+                "An explicit statement of whether sample_01 is an outlier beyond its library depth, with the numbers supporting it, and an explicit statement of whether it was retained"
+              ],
+              "caveats": [
+                "n=6 per group is small — PCA separation may be driven by a handful of genes",
+                "Low library depth in sample_01 inflates variance for low-expressed genes even after VST; do not read a lone sample_01 shift as biology",
+                "Salmon counts are estimates and may be non-integer if not rounded upstream — round before DESeq2 and report if rounding was needed"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Per-sample hallmark activity scores (GSVA + ssGSEA)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What is the activity score of each of the 50 MSigDB hallmark pathways in each of the 12 colon samples, and are the scores stable across two scoring methods?",
+              "description": "Using the VST matrix from T1S1, compute a per-sample pathway activity matrix over the human MSigDB hallmark gene sets. The reference needed is the 50 human hallmark gene sets as a symbols GMT (HGNC gene symbols, matching the counts' gene-symbol identifier space); resolve it in the environment's reference store rather than hard-coding a path — a human hallmark GMT was catalogued at plan time under the MSigDB hallmark collection. Do NOT substitute the mouse hallmark file; the data is Homo sapiens. Run GSVA with the Gaussian kernel (gsvaParam, kcdf='Gaussian' — correct for continuous VST input, not for counts) and minimum set size 10, maximum 500, producing a 50 x n_samples score matrix. Independently run ssGSEA (ssgseaParam) on the same matrix as a methodological replicate. Emit both score matrices as CSV (pathways x samples), a table of how many genes of each hallmark set were found in the filtered expression matrix (sets with poor coverage must be flagged, since only 12,000 genes are present), and the per-pathway Spearman correlation between the GSVA and ssGSEA score vectors across samples. Also emit a per-sample summary so that the 'pathway activity score for every sample' request is directly readable.",
+              "context": "This is the core deliverable: a pathway activity score per sample. GSVA is available as an R Bioconductor package (GSVA 2.6.6); decoupler and gseapy are also present as Python alternatives if needed. The expression matrix carries HGNC gene symbols, so it joins directly to a symbols GMT with no ID mapping.",
+              "constraints": [
+                "Score the VST matrix from T1S1 — never raw counts",
+                "Use the HUMAN hallmark gene sets (Homo sapiens, HGNC symbols); explicitly refuse the mouse hallmark file",
+                "Resolve the hallmark GMT from the environment reference store; never download",
+                "Set kcdf='Gaussian' for GSVA because the input is continuous VST, not counts",
+                "min.sz=10, max.sz=500; report any hallmark set dropped for size",
+                "Produce both GSVA and ssGSEA score matrices and report their per-pathway concordance",
+                "Write the primary GSVA score matrix as pathways x samples CSV with sample names preserved"
+              ],
+              "acceptance_criteria": [
+                "A GSVA score matrix covering the hallmark sets that passed size filtering, with one column per sample, written as CSV",
+                "An ssGSEA score matrix over the same sets and samples, written as CSV",
+                "A gene-coverage table reporting, per hallmark set, how many of its members were present in the filtered 12,000-gene matrix",
+                "Per-pathway GSVA-vs-ssGSEA Spearman correlations reported, with poorly concordant pathways named"
+              ],
+              "caveats": [
+                "The matrix holds only ~12,000 genes, so some hallmark sets will be represented by a fraction of their members — low-coverage sets give unstable scores and must be flagged, not silently ranked",
+                "GSVA scores are relative to the sample set: they are not comparable to scores computed on a different cohort",
+                "If the hallmark GMT cannot be resolved in the reference store, stop and report it — this step cannot proceed on a substitute collection, and GO or oncogenic sets do not answer the question as asked"
+              ],
+              "packages": [
+                "GSVA",
+                "GSEABase",
+                "SummarizedExperiment"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Differential hallmark activity and heatmap",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which hallmark pathways separate ulcerative colitis inflamed colon from control, and how does hallmark activity look across all 12 samples?",
+              "description": "Take the GSVA score matrix from T1S2 and test each hallmark pathway for a difference between the UC-inflamed and control groups using limma on the score matrix (lmFit + eBayes with design ~condition), which is the standard treatment for GSVA output. Report per-pathway log-fold-change (difference in mean score), moderated t, raw p, and BH-adjusted p, ranked by adjusted p. Repeat the same test on the ssGSEA matrix and report which pathways are called by both methods — only the intersection should be described as robust. Produce the requested figure: a heatmap of hallmark activity across all 12 samples, rows = hallmark pathways, columns = samples, values z-scored per pathway, with a column annotation bar for condition (UC inflamed vs control), rows and columns clustered (Euclidean, complete linkage), plus a second heatmap restricted to pathways with BH-adjusted p < 0.05 (or, if none reach that, the top 15 by raw p, clearly labelled as unadjusted). Also emit a boxplot/strip plot of the top separating pathways' per-sample scores by condition, so the individual sample values behind each heatmap row are visible. State plainly that pathways were ranked and displayed on the same 12 samples that defined the contrast, so the visual separation in the heatmap is descriptive of this cohort and is not an out-of-sample validated result.",
+              "context": "The user asked specifically for a heatmap of hallmark activity across samples that shows which pathways separate the two groups. UC inflamed colon is expected a priori to show inflammatory hallmark elevation (TNFA_SIGNALING_VIA_NFKB, INFLAMMATORY_RESPONSE, INTERFERON_GAMMA_RESPONSE, IL6_JAK_STAT3_SIGNALING, COMPLEMENT); concordance with that expectation is a sanity check on the pipeline, not independent confirmation of the finding.",
+              "constraints": [
+                "Test on the GSVA score matrix with limma (lmFit/eBayes), not a per-pathway unmoderated t-test alone",
+                "Apply Benjamini-Hochberg correction across the tested hallmark sets and report adjusted p-values in every results table",
+                "Heatmap must include ALL samples as columns with a condition annotation bar, and must be z-scored per pathway row",
+                "If no pathway survives BH < 0.05, say so explicitly and label the top-15 panel as unadjusted-p ranked",
+                "Cross-check every called pathway against the ssGSEA-based test and report the overlap",
+                "Exclude or explicitly flag any pathway marked low-coverage by T1S2 before interpreting it"
+              ],
+              "acceptance_criteria": [
+                "Ranked table of all tested hallmark pathways with mean score difference (UC inflamed minus control), moderated t, raw p and BH-adjusted p",
+                "Heatmap PNG/PDF of hallmark activity: pathways x all 12 samples, z-scored rows, condition annotation bar, clustered",
+                "Second heatmap restricted to significantly separating pathways (or top 15 by raw p if none are significant, labelled as such)",
+                "Explicit statement that ranking and display used the same samples that defined the contrast, so separation is descriptive rather than validated",
+                "List of pathways called by both GSVA-based and ssGSEA-based testing"
+              ],
+              "caveats": [
+                "n=6 vs 6 gives limited power; a hallmark failing BH correction is not evidence of no change",
+                "GSVA scores across pathways are correlated because hallmark sets share genes — significant pathways will arrive in correlated blocks and must not be counted as independent findings",
+                "A heatmap will always look like it separates groups when rows were selected by that same group contrast; the unfiltered all-pathway heatmap is the honest one and must be shown alongside"
+              ],
+              "packages": [
+                "limma",
+                "ComplexHeatmap",
+                "pheatmap",
+                "ggplot2",
+                "circlize"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Gene-level DE to ground the hallmark result",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between UC inflamed and control colon, and do they support the hallmark pathways called as separating in T1S3?",
+              "description": "Run DESeq2 on the filtered raw count matrix from T1S1 with design ~condition, contrast UC inflamed vs control, using the Wald test with apeglm (or ashr) LFC shrinkage for ranking. Emit the full results table (baseMean, log2FC, shrunken log2FC, lfcSE, stat, p, BH-adjusted p) sorted by adjusted p, an MA plot, a volcano plot, and counts of genes at padj < 0.05 with |log2FC| > 1. Then link back to T1S3: for each hallmark pathway called as separating, report how many of its member genes are individually significant and in which direction, and give the leading-edge-style list of its top 10 member genes by shrunken log2FC. A pathway called at the score level whose member genes show no coherent gene-level shift should be reported as unsupported. Report the independent-filtering and outlier (Cook's distance) behaviour, given that sample_01 has low depth and a single low-depth sample can drive Cook's-based gene flagging.",
+              "context": "Pathway activity scores are a summary; without gene-level evidence a separating hallmark can reflect a scoring artefact or a handful of high-variance genes. This step supplies the check and gives the interpretable gene list behind each pathway. Same 12 samples, unpaired, single batch.",
+              "constraints": [
+                "Use the filtered raw integer count matrix from T1S1, not the VST matrix",
+                "Design ~condition with control as the reference level; state the contrast direction explicitly in the output",
+                "Use LFC shrinkage (apeglm or ashr) for ranking and plotting, and report both shrunken and unshrunken log2FC",
+                "Report BH-adjusted p-values; do not report raw p-values as significance",
+                "For each hallmark pathway called in T1S3, report member-gene significance counts and direction"
+              ],
+              "acceptance_criteria": [
+                "Full DESeq2 results table written as CSV with shrunken log2FC and BH-adjusted p",
+                "MA plot and volcano plot produced, with the direction of the contrast stated (UC inflamed relative to control)",
+                "Number of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 1 reported",
+                "Per-pathway gene-level support table for the hallmarks called in T1S3, naming any pathway whose member genes show no coherent shift"
+              ],
+              "caveats": [
+                "With n=6 per group, DESeq2 dispersion estimates are moderately stable but individual low-count genes remain unreliable — rely on adjusted p, not fold change alone",
+                "sample_01's low depth can trigger Cook's-distance outlier flagging; report how many genes were flagged rather than silently accepting the filtered result",
+                "Agreement between the gene-level result and the hallmark result is a consistency check on the same data, not independent validation"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

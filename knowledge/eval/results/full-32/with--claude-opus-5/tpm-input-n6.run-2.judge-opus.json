@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the decisive fact — a TPM matrix with no counts or quant directories — and rules out DESeq2, edgeR and voom explicitly, fitting limma with eBayes(trend=TRUE, robust=TRUE) on log2(TPM+1) for an unpaired 6v6 single-batch design, and it also asks for the missing counts/quant dirs in the report rationale. QC is concrete and on the log scale (MDS/PCA on top 500 variable genes, distance heatmap, detected genes, column sums as a subset check) with a stated outlier policy; the filter (TPM >= 1 in >= 6 samples, the smallest group size) is minimal and justified with pre/post gene counts reported. Normalization is handled correctly by refusing TMM, size factors and pseudo-count reconstruction, and the design is explicit with control set as reference and the logFC direction stated. FDR is BH at 0.05 via topTable with the fold-change threshold moved inside the model via treat() rather than post hoc — the right substitute for lfcShrink, which does not exist for limma, so only a hair short of perfect. Enrichment, while not strictly demanded by the question, is executed properly (full ranked list, moderated t as the stated metric, universe restricted to tested genes, size window, collapse, named collections with versions, seed), and the report section covers method, versions, thresholds, counts tested and significant, and the design caveats including the truncated 12,000-gene universe."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 1,
+    "low_count_filter": 1,
+    "normalization": 1,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 4
+  },
+  "rationale": "The planner correctly recognized that the profile contains only paired-end FASTQ files with no count matrix and that the environment lacks any quantifier or reference index, and it stopped to ask whether a count table exists or the reads must be quantified against a named human reference — exactly the reference outcome, and it avoided fabricating a matrix to feed DESeq2. However, because no plan was submitted, none of the downstream analytic elements are stated: there is no PCA/sample-distance QC step, no low-count filter, no statement that normalization occurs inside the model via size factors or TMM, no design formula or contrast with a declared reference level, and no BH alpha or LFC shrinkage; these score near zero on the stated-content standard. Enrichment is not warranted before counts exist and is correctly absent. The clarification message is specific and well-scoped (sample counts, design, tissue, the two concrete provisioning options), which earns partial credit on reporting, but it names no methods, versions, thresholds, or the low-power caveat of a 3v3 design."
+}

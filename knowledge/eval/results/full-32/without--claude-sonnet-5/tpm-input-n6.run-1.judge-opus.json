@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses that a TPM table cannot feed a negative-binomial count model and explicitly forbids DESeq2/edgeR/pydeseq2, substituting limma lmFit + eBayes(trend=TRUE) on log2(TPM+1) with a Wilcoxon cross-check appropriate to n=6/group; the only gap is that it never asks the core for the raw counts or quant directories, which the reference does. QC is solid and design-specific (PCA and clustering on log2(TPM+1) colored by condition, outliers flagged not dropped, no batch correction given the single-batch design), and the low-expression filter (TPM>=1 in >=3 of 12) is reproducible with a stated sensitivity check, though slightly laxer than the smallest-group-size rule. Normalization is handled correctly: no rescaling to pseudo-counts, no size factors, no voom, with TPM treated as pre-normalized continuous data. The weakest point is the model specification: the contrast is described only in words as 'unpaired lesional-vs-control' with no explicit design matrix or reference-level assignment; enrichment names collections and versions and ranks by moderated t for GSEA, but omits an explicit ORA universe (the filtered tested genes) and a gene-set size window."
+}

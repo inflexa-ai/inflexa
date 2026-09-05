@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The planner correctly recognized that unquantified FASTQ files cannot be fed to a count model and stopped with a specific, well-grounded question that names the missing quantifier, the available GENCODE v50 GTF and GRCh38 FASTA, and the two acceptable remedies (a count matrix or Salmon/kallisto quantifications), matching the reference outcome. It did not invent a count file or run DESeq2 on nothing, which is the key correctness test here. The downstream criteria (QC, filtering, normalization, formula, BH/shrinkage, low-power caveat) are not stated beyond a one-line promise to plan 3 vs 3 once counts exist, so they receive middling credit rather than full marks; enrichment is correctly absent as not warranted."
+}

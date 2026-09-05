@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design precisely: unpaired 6v6, single batch, raw Salmon counts into DESeq2 with ~condition, control set explicitly as reference, apeglm/ashr shrinkage used for ranking and BH FDR without any pre-FDR fold-change filter. QC is exemplary and dataset-specific: library sizes, detected genes, top-20 library fraction, size factors versus raw depth, VST PCA and correlation heatmap coloured by condition, with an explicit RETAIN/FLAG adjudication for sample_01 plus a full leave-one-out sensitivity DE run rather than a silent drop. Normalization is correctly internal (median-of-ratios on raw counts, with explicit prohibition on feeding transformed values to the model). The main gap is the low-count filter: it leans entirely on DESeq2 independent filtering with no stated minimal pre-filter (e.g. rowSums or filterByExpr), which is defensible but under-specified, and the enrichment/report sections state the collection and organism check, seed, permutations, leading edge and a min-size cutoff of 10 but never pin a MSigDB or software version."
+}

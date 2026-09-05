@@ -1,0 +1,395 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 1,
+  "startedAt": "2026-09-05T17:16:48.562Z",
+  "elapsedMs": 64638,
+  "outcome": "plan_submitted",
+  "planId": "pln-c296670e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and metadata concordance check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 17-column counts.csv (12000 genes x samples) and the 16-row metadata.csv (genotype, treatment, condition) align sample-for-sample, and are library sizes / gene detection consistent enough across the 4 genotype x treatment cells (WT-vehicle, WT-drug, KO-vehicle, KO-drug, n=4 each) to proceed to differential expression?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Confirms which column of counts.csv is the gene-symbol column and that the remaining columns match metadata sample IDs 1:1 (report and resolve any name mismatch or the extra 17th column)",
+          "Reports library size, number of detected genes, and PCA/hierarchical clustering colored by genotype and treatment for all 16 samples",
+          "Flags any sample whose PCA position, library size, or clustering is discordant with its assigned genotype/treatment group",
+          "Confirms 4 replicates are present in each of the 4 genotype x treatment cells as declared in the design"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Fit factorial DESeq2 model with genotype:treatment interaction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=4 per cell and 12000 genes, interaction tests are underpowered relative to main-effect tests; a null interaction result does not prove the drug acts identically in KO and WT, only that this sample size did not detect a difference",
+          "Do not substitute a simple 'compare the two simple-effect gene lists by eye' approach for the formal interaction test — the interaction coefficient is the correct statistical object for this question"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Using the full design ~genotype + treatment + genotype:treatment on the raw integer counts, which genes show a significant genotype x treatment interaction (i.e., the drug's effect significantly differs between KO and WT) at FDR < 0.05, and what are the two genotype-specific simple effects of drug vs vehicle (within WT and within KO) derived from the same fitted model?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 model fit on raw counts with design ~genotype + treatment + genotype:treatment, using the metadata's genotype/treatment/condition columns exactly as coded",
+          "Interaction coefficient (genotypeKO.treatmentdrug or equivalent) extracted and reported as the primary test of differential drug response by genotype, with independent filtering and BH-adjusted p-values",
+          "Two simple-effect contrasts extracted: drug vs vehicle within WT, and drug vs vehicle within KO (using contrast/lfcShrink as appropriate for the parameterization), each with log2FC, shrunken LFC (apeglm or ashr), and adjusted p-value per gene",
+          "Reports counts of significant genes (FDR<0.05) for the interaction term and for each simple effect separately, and states explicitly whether any interaction-significant genes exist (drug response differs by genotype) versus only main/simple effects",
+          "Full result tables (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj) saved for the interaction term and both simple effects"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on interaction and simple-effect gene rankings",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes with a significant genotype x treatment interaction, and how do the pathways enriched in the WT drug-response ranking compare to those enriched in the KO drug-response ranking?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "fgsea run on three separately ranked gene lists (ranked by signed -log10(p)*sign(log2FC) or equivalent test statistic): the interaction term, the WT drug-vs-vehicle simple effect, and the KO drug-vs-vehicle simple effect",
+          "Uses the WikiPathways Homo sapiens GMT gene sets (HGNC symbols), matching counts.csv gene-symbol identifiers directly with no cross-species ID mapping",
+          "Reports normalized enrichment score, p-value, and BH-adjusted p-value per pathway for each of the three rankings",
+          "Explicitly compares pathways enriched uniquely in the KO simple effect versus uniquely in the WT simple effect versus those flagged by the interaction ranking, to characterize what biological processes underlie any genotype-dependent drug response",
+          "If the WikiPathways human gene set file is unavailable at run time, reports that gap and skips enrichment rather than substituting a mismatched-species gene set"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Summarize interaction vs simple-effect gene overlap and visualize top interaction genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2",
+          "VennDiagram"
+        ],
+        "question": "How much overlap exists between genes with a significant genotype x treatment interaction and genes significant in each simple effect, and what do the expression patterns of the top interaction genes look like across all 16 samples (WT-vehicle, WT-drug, KO-vehicle, KO-drug)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "visualization",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Overlap table/Venn-style summary of significant (FDR<0.05) gene sets: interaction term, WT drug-vs-vehicle, KO drug-vs-vehicle",
+          "Heatmap of normalized (e.g., variance-stabilized) expression for the top interaction genes (by adjusted p-value) across all 16 samples, annotated by genotype and treatment, showing the pattern that constitutes a genotype-dependent drug effect (e.g., drug changes expression in KO but not WT, or in opposite directions)",
+          "Written summary stating the direct answer to the research question: whether a statistically supported genotype x treatment interaction exists, its magnitude/gene count, and the caveat that a null result at this sample size (n=4/cell) is not proof of no interaction"
+        ]
+      }
+    ],
+    "title": "Genotype x Treatment Interaction in Bulk RNA-seq",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4 per cell, 16 samples, 12000 genes). The research question - does the drug act differently in KO vs WT - is precisely a genotype:treatment interaction question in a factorial DESeq2 model. The plan therefore: (1) QC's the count matrix and metadata concordance, (2) fits a single DESeq2 model with a full interaction term (~genotype + treatment + genotype:treatment) to test the interaction coefficient directly (this is the primary, most rigorous test of 'does the drug act differently by genotype' - superior to comparing separate simple-effect contrasts by eye), (3) as a complementary/interpretive layer, derives the two simple effects (drug vs vehicle within WT; drug vs vehicle within KO) via contrasts from the same fitted model so genotype-specific drug responses can be characterized and ranked, (4) runs pathway enrichment (fgsea against WikiPathways Homo sapiens gene sets, since the data context declares taxon 9606 human) on the interaction-term ranked gene list and separately on each simple-effect ranked list, to give biological interpretation to any genotype-dependent drug response, and (5) summarizes convergence/divergence between the interaction-significant genes and the two simple-effect gene sets with a Venn/overlap and heatmap of top interaction genes across all 16 samples, so the answer to the research question is grounded in an explicit statistical test rather than eyeballing separate contrasts. Reference pathway gene sets (WikiPathways human, HGNC symbols) match the counts.csv gene-symbol identifier space, so no ID mapping step is required for the primary organism (human, taxon 9606) declared in the data context."
+  },
+  "usage": {
+    "inputTokens": 781241,
+    "outputTokens": 4394,
+    "cacheCreationInputTokens": 89059,
+    "cacheReadInputTokens": 691990,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler",
+          "apeglm",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string ppi human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "org.Mm.eg.db",
+          "GSVA",
+          "AnnotationDbi"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "brain"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "drug target open targets"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pharmacogenomics"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "perturbation-signatures"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "sva",
+          "limma",
+          "IHW"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "GSVA",
+          "clusterProfiler",
+          "enrichplot",
+          "DOSE"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Genotype x Treatment Interaction in Bulk RNA-seq",
+          "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4 per cell, 16 samples, 12000 genes). The research question - does the drug act differently in KO vs WT - is precisely a genotype:treatment interaction question in a factorial DESeq2 model. The plan therefore: (1) QC's the count matrix and metadata concordance, (2) fits a single DESeq2 model with a full interaction term (~genotype + treatment + genotype:treatment) to test the interaction coefficient directly (this is the primary, most rigorous test of 'does the drug act differently by genotype' - superior to comparing separate simple-effect contrasts by eye), (3) as a complementary/interpretive layer, derives the two simple effects (drug vs vehicle within WT; drug vs vehicle within KO) via contrasts from the same fitted model so genotype-specific drug responses can be characterized and ranked, (4) runs pathway enrichment (fgsea against WikiPathways Homo sapiens gene sets, since the data context declares taxon 9606 human) on the interaction-term ranked gene list and separately on each simple-effect ranked list, to give biological interpretation to any genotype-dependent drug response, and (5) summarizes convergence/divergence between the interaction-significant genes and the two simple-effect gene sets with a Venn/overlap and heatmap of top interaction genes across all 16 samples, so the answer to the research question is grounded in an explicit statistical test rather than eyeballing separate contrasts. Reference pathway gene sets (WikiPathways human, HGNC symbols) match the counts.csv gene-symbol identifier space, so no ID mapping step is required for the primary organism (human, taxon 9606) declared in the data context.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and metadata concordance check",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 17-column counts.csv (12000 genes x samples) and the 16-row metadata.csv (genotype, treatment, condition) align sample-for-sample, and are library sizes / gene detection consistent enough across the 4 genotype x treatment cells (WT-vehicle, WT-drug, KO-vehicle, KO-drug, n=4 each) to proceed to differential expression?",
+              "acceptance_criteria": [
+                "Confirms which column of counts.csv is the gene-symbol column and that the remaining columns match metadata sample IDs 1:1 (report and resolve any name mismatch or the extra 17th column)",
+                "Reports library size, number of detected genes, and PCA/hierarchical clustering colored by genotype and treatment for all 16 samples",
+                "Flags any sample whose PCA position, library size, or clustering is discordant with its assigned genotype/treatment group",
+                "Confirms 4 replicates are present in each of the 4 genotype x treatment cells as declared in the design"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Fit factorial DESeq2 model with genotype:treatment interaction",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using the full design ~genotype + treatment + genotype:treatment on the raw integer counts, which genes show a significant genotype x treatment interaction (i.e., the drug's effect significantly differs between KO and WT) at FDR < 0.05, and what are the two genotype-specific simple effects of drug vs vehicle (within WT and within KO) derived from the same fitted model?",
+              "acceptance_criteria": [
+                "DESeq2 model fit on raw counts with design ~genotype + treatment + genotype:treatment, using the metadata's genotype/treatment/condition columns exactly as coded",
+                "Interaction coefficient (genotypeKO.treatmentdrug or equivalent) extracted and reported as the primary test of differential drug response by genotype, with independent filtering and BH-adjusted p-values",
+                "Two simple-effect contrasts extracted: drug vs vehicle within WT, and drug vs vehicle within KO (using contrast/lfcShrink as appropriate for the parameterization), each with log2FC, shrunken LFC (apeglm or ashr), and adjusted p-value per gene",
+                "Reports counts of significant genes (FDR<0.05) for the interaction term and for each simple effect separately, and states explicitly whether any interaction-significant genes exist (drug response differs by genotype) versus only main/simple effects",
+                "Full result tables (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj) saved for the interaction term and both simple effects"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "caveats": [
+                "With n=4 per cell and 12000 genes, interaction tests are underpowered relative to main-effect tests; a null interaction result does not prove the drug acts identically in KO and WT, only that this sample size did not detect a difference",
+                "Do not substitute a simple 'compare the two simple-effect gene lists by eye' approach for the formal interaction test — the interaction coefficient is the correct statistical object for this question"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on interaction and simple-effect gene rankings",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes with a significant genotype x treatment interaction, and how do the pathways enriched in the WT drug-response ranking compare to those enriched in the KO drug-response ranking?",
+              "acceptance_criteria": [
+                "fgsea run on three separately ranked gene lists (ranked by signed -log10(p)*sign(log2FC) or equivalent test statistic): the interaction term, the WT drug-vs-vehicle simple effect, and the KO drug-vs-vehicle simple effect",
+                "Uses the WikiPathways Homo sapiens GMT gene sets (HGNC symbols), matching counts.csv gene-symbol identifiers directly with no cross-species ID mapping",
+                "Reports normalized enrichment score, p-value, and BH-adjusted p-value per pathway for each of the three rankings",
+                "Explicitly compares pathways enriched uniquely in the KO simple effect versus uniquely in the WT simple effect versus those flagged by the interaction ranking, to characterize what biological processes underlie any genotype-dependent drug response",
+                "If the WikiPathways human gene set file is unavailable at run time, reports that gap and skips enrichment rather than substituting a mismatched-species gene set"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Summarize interaction vs simple-effect gene overlap and visualize top interaction genes",
+              "track": "T2",
+              "step_type": "visualization",
+              "question": "How much overlap exists between genes with a significant genotype x treatment interaction and genes significant in each simple effect, and what do the expression patterns of the top interaction genes look like across all 16 samples (WT-vehicle, WT-drug, KO-vehicle, KO-drug)?",
+              "acceptance_criteria": [
+                "Overlap table/Venn-style summary of significant (FDR<0.05) gene sets: interaction term, WT drug-vs-vehicle, KO drug-vs-vehicle",
+                "Heatmap of normalized (e.g., variance-stabilized) expression for the top interaction genes (by adjusted p-value) across all 16 samples, annotated by genotype and treatment, showing the pattern that constitutes a genotype-dependent drug effect (e.g., drug changes expression in KO but not WT, or in opposite directions)",
+                "Written summary stating the direct answer to the research question: whether a statistically supported genotype x treatment interaction exists, its magnitude/gene count, and the caveat that a null result at this sample size (n=4/cell) is not proof of no interaction"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2",
+                "VennDiagram"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

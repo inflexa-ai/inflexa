@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses count models on TPM and fits limma with trend=TRUE on log2(TPM+1) with an explicit lesional - control contrast, BH FDR, and a TPM>1-in-at-least-6-samples filter, matching the reference; QC (PCA, correlation heatmap, boxplots) with a named-outlier policy is solid. It never asks the core for the raw counts or quant directories, which the reference requires. It adds cross-sample quantile normalization on the log scale, a defensible but unrequested step that can mask global shifts (mitigated by keeping the unnormalized matrix). The |log2FC|>1 cut is applied post hoc rather than via treat, no software versions are named, and the MSigDB version is unstated, though the enrichment universe, collections and size window are explicit."
+}

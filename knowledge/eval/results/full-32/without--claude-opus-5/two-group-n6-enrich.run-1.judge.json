@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with ~condition and control as reference, apeglm shrinkage, BH at 0.05, and a well-specified QC that keeps the shallow sample by default while inspecting it on PCA and distance heatmap and reporting absolute library sizes, plus a sensitivity re-run. Enrichment is preranked fgsea on the full list with the Wald statistic named, the MSigDB 2026.1 hallmark collection named, a size window and a fixed seed; minSize 10 is slightly below the reference 15. The prefilter (>=10 in >=6 samples) is stated and justified but on the stricter side, and the |LFC|>1 count is applied post hoc rather than via lfcThreshold in the test. Report content is thorough on thresholds, counts, and caveats, but the plan never explicitly requires software/package versions to be recorded in the report."
+}

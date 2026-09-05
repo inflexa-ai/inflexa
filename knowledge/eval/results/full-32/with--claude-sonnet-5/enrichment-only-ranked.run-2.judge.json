@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly does not redo DE and runs fgsea preranked on the full list ranked by the DESeq2 Wald statistic against a named, versioned Hallmark collection with a 15-500 size window, a recorded seed, BH at 0.05 on pathways, and leading edges reported, matching the reference. It explicitly justifies skipping filtering and normalization as already handled upstream and states the contrast direction, though it never names the reference level. Sample-structure QC is thin: the shallow sample_01 is only carried as an inherited caveat with no check on the provided raw counts (library sizes/PCA), and the input QC is confined to the ranking vector plus a p-value histogram. The report specification is thorough (sessionInfo, seed, collection versions, universe, metric, caveats), and the Reactome follow-up is extra but not harmful, though its collection has no stated version."
+}

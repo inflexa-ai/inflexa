@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the RSEM situation: it keeps expected counts, rounds only for the NB model, never substitutes TPM/FPKM, and states plainly that no effective-length offset could be applied and what bias that leaves — but it declares the tximport route simply unavailable rather than requesting the missing per-sample genes.results files, which is the reference's first move, so method_fits_design loses points. QC is exemplary and dataset-specific: library sizes, detection, size factors, RLE, vst PCA and correlation heatmap computed on all 12 samples before any exclusion, a quantitative centroid-distance criterion for sample_01, an explicit keep/drop flag, plus an unconditional leave-one-out sensitivity run and voomWithQualityWeights as a down-weighting alternative. Normalization is entirely inside the models (median-of-ratios, TMM) and the design ~condition with control as reference and the treated-vs-control contrast is explicit; BH at 0.05 with apeglm shrinkage used for ranking only is correct, though the |log2FC|>1 cut is applied post hoc rather than as an lfcThreshold. The filter (count>=10 in >=6 samples, filterByExpr for limma) is tied to group size and justified, if slightly on the strict side for a 12,000-gene pre-filtered matrix. Enrichment is well specified — full ranked list, stated metric, named human symbol-keyed collections with version, tested-gene background for ORA, redundancy collapsing — missing only an explicit gene-set size window; reporting covers design, thresholds, hit counts and caveats but not software versions."
+}

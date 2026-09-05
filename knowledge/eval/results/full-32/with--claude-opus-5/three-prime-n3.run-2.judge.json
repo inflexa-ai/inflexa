@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every design-driven point: raw counts go straight into DESeq2 Wald (with edgeR QL as a cross-check), no tximport length offset, no TPM/FPKM, a justified 5-in-3 floor with gene counts reported, median-of-ratios/TMM inside the model, explicit control reference level and (condition, treated, control) contrast, BH at 0.05 with apeglm and any lfcThreshold inside results(), and blind-VST PCA/distance/library-size QC with a stated report-not-drop outlier policy. The report step names versions, design, thresholds, tested and significant counts, the n=3 power limit before the gene table, and the library type. The enrichment step was not requested, though it is executed defensibly (full Wald-ranked list, named hallmark/GO BP 2026.1, tested-gene universe, 15-500 window, seed, ORA suppressed below 50 genes); the only blemish is a caveat invoking gene-length bias in enrichment on count data, which sits awkwardly against the plan's own correct point that 3' tag counts carry no length dependence."
+}

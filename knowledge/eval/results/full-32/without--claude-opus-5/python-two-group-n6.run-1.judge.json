@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan fits the 6v6 unpaired single-batch design with PyDESeq2 Wald tests on raw counts, design ~condition with control as explicit reference and a stated sign convention, and handles sample_01 with a quantified keep/drop rule plus a mandatory sensitivity refit rather than reflexive exclusion. QC covers library size, detected genes, VST PCA, correlation heatmaps, and PC-vs-depth correlations; the low-count filter (sum >= 10, expressed in >= 3 samples) is minimal with counts reported; normalization is median-of-ratios inside the model with an explicit ban on pre-normalized input. Shrinkage and BH at 0.05 are stated, but the |log2FC| >= 1 subset is a post hoc filter rather than a threshold in the test. Enrichment uses gseapy prerank on the full ranking with seed, permutation count, universe restriction, and an explicit ORA background, but hedges between shrunk LFC and Wald stat as the ranking metric, uses min set size 10 rather than 15, and never names the MSigDB version of the hallmark collection; tool versions are otherwise given and caveats are thorough."
+}

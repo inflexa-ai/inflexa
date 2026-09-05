@@ -1,0 +1,295 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "multi-group-3x4",
+  "run": 1,
+  "startedAt": "2026-09-05T17:53:18.965Z",
+  "elapsedMs": 36130,
+  "outcome": "plan_submitted",
+  "planId": "pln-3074e5e3",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and DESeq2 model fit",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Verify the counts.csv first column (gene symbol) is set as rownames and dropped from the numeric matrix before building the DESeqDataSet",
+          "Confirm metadata sample identifiers align exactly with counts column names and in the same order, or reorder explicitly",
+          "n=4 per group is small; note in QC output if any sample is a PCA outlier, but do not drop samples without explicit justification"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "After loading the raw Salmon gene-level counts (12000 genes x 12 samples, plus gene symbol column) and the 12-sample metadata (condition: control/treated_a/treated_b, n=4 each), what is the filtered, normalized count matrix and fitted DESeq2 model (~condition) to use for all downstream contrasts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts and metadata are loaded and sample order/names are matched and verified identical between the two files",
+          "Low-count genes are filtered (e.g. require count >= 10 in at least 4 samples, the smallest group size) before dispersion estimation",
+          "A single DESeqDataSet is built with design ~condition, condition releveled so 'control' is the reference level, and size factors + dispersions are estimated once",
+          "Diagnostic outputs are saved: PCA plot colored by condition, dispersion plot, and a sample-distance heatmap",
+          "The fitted DESeqDataSet object is persisted (e.g. as an RDS) for reuse by the omnibus and pairwise contrast steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Omnibus likelihood-ratio test across all three groups",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "LRT p-values test the overall condition effect, not any single contrast; do not interpret the LRT log2FC columns as contrast-specific effect sizes",
+          "With n=4 per group, power for the LRT is limited — report the number of significant genes as an estimate, not an exhaustive discovery"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Using the fitted DESeq2 model (~condition), which genes differ significantly across control, treated_a, and treated_b jointly, via a likelihood-ratio test of the full model (~condition) against the reduced model (~1)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq() is re-run (or reused) with test='LRT' and reduced=~1 against the full ~condition design from T1S1",
+          "A results table is produced with gene symbol, LRT p-value, BH-adjusted p-value (padj), and log2 fold changes are reported per non-reference level (treated_a vs control, treated_b vs control) for interpretability",
+          "Genes with padj < 0.05 are flagged as significantly differing across the three groups ('any-group-difference' gene set)",
+          "Output includes counts of significant genes and a full results CSV sorted by padj"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pairwise Wald contrasts: treated_a vs control and treated_b vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not derive treated_a-vs-treated_b from these two control-referenced contrasts by subtraction without re-running a dedicated contrast if that comparison is later requested",
+          "Independent filtering and padj are computed per contrast and are not directly comparable in magnitude to the LRT padj from T1S2"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ashr",
+          "ComplexUpset"
+        ],
+        "question": "Which genes does treated_a change relative to control, and which genes does treated_b change relative to control (independent Wald tests from the shared ~condition DESeq2 model)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Two DESeq2 results() calls are extracted from the T1S1 fitted model using contrast=c('condition','treated_a','control') and contrast=c('condition','treated_b','control')",
+          "Each contrast reports gene symbol, log2FoldChange, lfcSE, p-value, and BH padj, with independent filtering (independentFiltering=TRUE) applied per contrast",
+          "Optional shrunken log2FoldChange (apeglm or ashr, since apeglm requires coef not arbitrary contrast — use ashr or normal shrinkage) is reported for more reliable effect-size ranking",
+          "Genes with padj < 0.05 are flagged as significant per contrast, with separate significant-gene CSVs and counts for treated_a-vs-control and treated_b-vs-control",
+          "A comparison summary (e.g. Venn/UpSet counts) reports overlap between the two treatment-specific significant gene sets and the omnibus (T1S2) set"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of omnibus and treatment-specific gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Gene symbols in counts.csv must match HGNC symbol case/format used in the WikiPathways GMT; report any unmapped gene fraction",
+          "With ~12000 background genes and small significant sets (n=4/group), enrichment results should be treated as exploratory, not confirmatory"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among (a) genes differing across all three groups (T1S2 omnibus set), (b) genes changed by treated_a vs control, and (c) genes changed by treated_b vs control (T1S3)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "WikiPathways human gene sets (HGNC symbols) are loaded from the WikiPathways human GMT reference and parsed by splitting the descriptor field on '%' to recover readable pathway names",
+          "Over-representation analysis (or GSEA on a ranked stat, e.g. Wald stat) is run separately for each of the three significant gene sets from T1S2 and T1S3, using the full filtered gene list (post T1S1 filtering) as background",
+          "Each pathway result reports pathway name, WikiPathways ID, gene overlap, enrichment p-value, and BH-adjusted q-value",
+          "Results are exported as three separate CSVs (omnibus, treated_a-vs-control, treated_b-vs-control) plus a short comparison noting pathways shared across treatments vs unique to one treatment",
+          "If the WikiPathways human GMT reference is unavailable at run time, the step reports that enrichment could not be performed rather than substituting a different organism's gene sets"
+        ]
+      }
+    ],
+    "title": "Liver 3-group DE: control vs treated_a vs treated_b",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a bulk RNA-seq liver experiment with raw Salmon gene-level counts (12000 genes x 13 samples, one extra column being gene symbol) and 12 samples split into 3 balanced groups (control, treated_a, treated_b; n=4 each, unpaired, single batch). This directly supports the two-part research question: (1) an omnibus test for genes that differ across all three groups (LRT), and (2) two targeted pairwise contrasts (treated_a vs control, treated_b vs control) to see what each treatment changes. The plan uses DESeq2 (bulk-transcriptomics-agent) fit once with the full 3-level design, tested first via likelihood-ratio test against the intercept-only model for the omnibus 'any group differs' question, then via two Wald contrasts for the treatment-specific effects, sharing a single dispersion/size-factor estimation to keep the comparisons coherent. A downstream enrichment step interprets each of the three DE gene sets (omnibus ANOVA-like set, treated_a-vs-control, treated_b-vs-control) against WikiPathways human pathways, which is confirmed present in the reference store. No translational/clinical elements (drug, PK, safety, biomarker outcome) are named in the research question, so no translational steps are added."
+  },
+  "usage": {
+    "inputTokens": 87199,
+    "outputTokens": 3227,
+    "cacheCreationInputTokens": 68891,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver 3-group DE: control vs treated_a vs treated_b",
+          "analytical_narrative": "The dataset is a bulk RNA-seq liver experiment with raw Salmon gene-level counts (12000 genes x 13 samples, one extra column being gene symbol) and 12 samples split into 3 balanced groups (control, treated_a, treated_b; n=4 each, unpaired, single batch). This directly supports the two-part research question: (1) an omnibus test for genes that differ across all three groups (LRT), and (2) two targeted pairwise contrasts (treated_a vs control, treated_b vs control) to see what each treatment changes. The plan uses DESeq2 (bulk-transcriptomics-agent) fit once with the full 3-level design, tested first via likelihood-ratio test against the intercept-only model for the omnibus 'any group differs' question, then via two Wald contrasts for the treatment-specific effects, sharing a single dispersion/size-factor estimation to keep the comparisons coherent. A downstream enrichment step interprets each of the three DE gene sets (omnibus ANOVA-like set, treated_a-vs-control, treated_b-vs-control) against WikiPathways human pathways, which is confirmed present in the reference store. No translational/clinical elements (drug, PK, safety, biomarker outcome) are named in the research question, so no translational steps are added.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and DESeq2 model fit",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After loading the raw Salmon gene-level counts (12000 genes x 12 samples, plus gene symbol column) and the 12-sample metadata (condition: control/treated_a/treated_b, n=4 each), what is the filtered, normalized count matrix and fitted DESeq2 model (~condition) to use for all downstream contrasts?",
+              "acceptance_criteria": [
+                "Counts and metadata are loaded and sample order/names are matched and verified identical between the two files",
+                "Low-count genes are filtered (e.g. require count >= 10 in at least 4 samples, the smallest group size) before dispersion estimation",
+                "A single DESeqDataSet is built with design ~condition, condition releveled so 'control' is the reference level, and size factors + dispersions are estimated once",
+                "Diagnostic outputs are saved: PCA plot colored by condition, dispersion plot, and a sample-distance heatmap",
+                "The fitted DESeqDataSet object is persisted (e.g. as an RDS) for reuse by the omnibus and pairwise contrast steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Verify the counts.csv first column (gene symbol) is set as rownames and dropped from the numeric matrix before building the DESeqDataSet",
+                "Confirm metadata sample identifiers align exactly with counts column names and in the same order, or reorder explicitly",
+                "n=4 per group is small; note in QC output if any sample is a PCA outlier, but do not drop samples without explicit justification"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Omnibus likelihood-ratio test across all three groups",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using the fitted DESeq2 model (~condition), which genes differ significantly across control, treated_a, and treated_b jointly, via a likelihood-ratio test of the full model (~condition) against the reduced model (~1)?",
+              "acceptance_criteria": [
+                "DESeq() is re-run (or reused) with test='LRT' and reduced=~1 against the full ~condition design from T1S1",
+                "A results table is produced with gene symbol, LRT p-value, BH-adjusted p-value (padj), and log2 fold changes are reported per non-reference level (treated_a vs control, treated_b vs control) for interpretability",
+                "Genes with padj < 0.05 are flagged as significantly differing across the three groups ('any-group-difference' gene set)",
+                "Output includes counts of significant genes and a full results CSV sorted by padj"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "LRT p-values test the overall condition effect, not any single contrast; do not interpret the LRT log2FC columns as contrast-specific effect sizes",
+                "With n=4 per group, power for the LRT is limited — report the number of significant genes as an estimate, not an exhaustive discovery"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Pairwise Wald contrasts: treated_a vs control and treated_b vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes does treated_a change relative to control, and which genes does treated_b change relative to control (independent Wald tests from the shared ~condition DESeq2 model)?",
+              "acceptance_criteria": [
+                "Two DESeq2 results() calls are extracted from the T1S1 fitted model using contrast=c('condition','treated_a','control') and contrast=c('condition','treated_b','control')",
+                "Each contrast reports gene symbol, log2FoldChange, lfcSE, p-value, and BH padj, with independent filtering (independentFiltering=TRUE) applied per contrast",
+                "Optional shrunken log2FoldChange (apeglm or ashr, since apeglm requires coef not arbitrary contrast — use ashr or normal shrinkage) is reported for more reliable effect-size ranking",
+                "Genes with padj < 0.05 are flagged as significant per contrast, with separate significant-gene CSVs and counts for treated_a-vs-control and treated_b-vs-control",
+                "A comparison summary (e.g. Venn/UpSet counts) reports overlap between the two treatment-specific significant gene sets and the omnibus (T1S2) set"
+              ],
+              "packages": [
+                "DESeq2",
+                "ashr",
+                "ComplexUpset"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not derive treated_a-vs-treated_b from these two control-referenced contrasts by subtraction without re-running a dedicated contrast if that comparison is later requested",
+                "Independent filtering and padj are computed per contrast and are not directly comparable in magnitude to the LRT padj from T1S2"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of omnibus and treatment-specific gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among (a) genes differing across all three groups (T1S2 omnibus set), (b) genes changed by treated_a vs control, and (c) genes changed by treated_b vs control (T1S3)?",
+              "acceptance_criteria": [
+                "WikiPathways human gene sets (HGNC symbols) are loaded from the WikiPathways human GMT reference and parsed by splitting the descriptor field on '%' to recover readable pathway names",
+                "Over-representation analysis (or GSEA on a ranked stat, e.g. Wald stat) is run separately for each of the three significant gene sets from T1S2 and T1S3, using the full filtered gene list (post T1S1 filtering) as background",
+                "Each pathway result reports pathway name, WikiPathways ID, gene overlap, enrichment p-value, and BH-adjusted q-value",
+                "Results are exported as three separate CSVs (omnibus, treated_a-vs-control, treated_b-vs-control) plus a short comparison noting pathways shared across treatments vs unique to one treatment",
+                "If the WikiPathways human GMT reference is unavailable at run time, the step reports that enrichment could not be performed rather than substituting a different organism's gene sets"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Gene symbols in counts.csv must match HGNC symbol case/format used in the WikiPathways GMT; report any unmapped gene fraction",
+                "With ~12000 background genes and small significant sets (n=4/group), enrichment results should be treated as exploratory, not confirmatory"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

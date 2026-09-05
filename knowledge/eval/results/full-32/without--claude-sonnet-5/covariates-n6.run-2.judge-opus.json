@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 4,
+    "low_count_filter": 4,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the design (unpaired, single batch, two recorded covariates) and specifies DESeq2 Wald on ~ sex + age + condition with age continuous, plus a sensible unadjusted sensitivity comparison and an explicit tabulation of age/sex balance by group, though it never states that a covariate perfectly aligned with condition would be unfittable and never centers age. QC is thin: library sizes and metadata distributions only, with no PCA or sample-distance clustering colored by condition/sex/age and no XIST/Y-linked sex verification, and the outlier policy is only 'flags'. The low-count filter is left as 'e.g., CPM/count threshold' with no stated, justified rule. Normalization is implicitly correct (raw integer counts into DESeq2, no pre-adjustment) but size factors are never named; multiple testing relies on DESeq2 defaults with padj cutoffs but BH is not stated for the DE step and no apeglm/lfcShrink is applied to the condition coefficient. Enrichment names a versioned WikiPathways snapshot and a ranking metric but omits an explicit ORA universe and gene-set size window; the report covers design, thresholds, significant counts and caveats but not tool versions or the number of genes tested."
+}

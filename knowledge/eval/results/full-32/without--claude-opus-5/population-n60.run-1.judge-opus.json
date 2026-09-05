@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the unpaired single-batch 60v60 design with a fixed-effect ~condition model, explicit reference level, and no fabricated covariates; DESeq2 as primary with limma-voom and edgeR-QL as cross-method checks is defensible even though voom would be the faster first choice at n=120. It handles the core of the question exactly right: BH at 0.05 alongside apeglm shrinkage and a formal lfcThreshold=log2(1.5) test (with TREAT/glmTreat analogues and threshold sensitivity at log2(1.2)/log2(2)), so 'large enough to matter' is tested rather than post-hoc filtered. Normalization is correct and inside the model (median-of-ratios; TMM for the independent fits), raw integer counts only, and the low-count filter is tied to the smaller group size with retained-gene counts reported. QC is thorough (PCA with variance explained and PC-condition association, correlation heatmap, library size/detection, globin fraction, named-outlier policy) but omits the sex check against XIST/Y-linked genes and any explicit hidden-structure/surrogate-variable search. Enrichment is preranked over the full list against named human hallmark and GO-BP symbol GMTs with the tested genes as ORA universe, but ranks by shrunken LFC rather than the moderated/Wald statistic and states no gene-set size window or collection version; reporting likewise omits software versions."
+}

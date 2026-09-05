@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses to treat TPM as counts and fits limma-trend on log2(TPM+1) for an unpaired 6 vs 6 single-batch design, with no size factors, no voom, and no reverse-engineering of counts; it does not, however, request the raw counts or quantification directories as the reference does. QC is a PCA or clustering on the log values colored by condition without a distance heatmap or a stated outlier policy, and the low-expression filter is phrased ambiguously though its intent (TPM>=1 in at least six samples) matches the smallest group size. The design matrix is described only as two-group lesional vs control with no explicit reference level or formula; BH at 0.05 is stated but the |logFC|>=1 cut is applied post hoc rather than via treat. Enrichment was not asked for but is done with an explicit universe and a versioned WikiPathways collection, lacking a size window; the report names method, design, thresholds and caveats but not package versions."
+}

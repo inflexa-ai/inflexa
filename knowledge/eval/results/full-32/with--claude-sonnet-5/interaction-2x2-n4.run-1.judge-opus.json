@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as an interaction in a 2x2 factorial, specifies ~genotype + treatment + genotype:treatment with explicit WT/vehicle reference levels, names the interaction coefficient, and reports both simple effects alongside it rather than substituting a one-factor four-group model. QC (blind VST, PCA colored by both factors, distance heatmap, library sizes, flag-don't-drop policy) precedes modeling; the filter (>=10 counts in >=4 samples) is minimal and explicitly justified by the smallest cell size; normalization is median-of-ratios inside DESeq2 with no external re-normalization; BH at alpha=0.05 with independent filtering, ashr shrinkage on all three contrasts, p-value histograms, and Cook's NA accounting at n<7 are all stated. Enrichment is well specified (preranked fgsea on the Wald statistic, named collections with versions/paths, 15-500 size window, collapsePathways, leading edge, mapping-rate reporting), but it defaults to human HGNC collections for what is almost certainly a mouse knockout brain dataset without an ortholog-mapping step, and GSEA on an interaction statistic is interpretively fraught without comment. The report step is thorough on design, thresholds, gene counts, diagnostics, reproducibility, and the n=4 power caveat for the difference-of-differences test."
+}

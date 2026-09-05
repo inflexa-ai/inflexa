@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly refuses to redo the existing DESeq2 contrast and runs fgsea preranked on the full Wald-statistic ranked list against the human MSigDB Hallmark collection with a 15-500 size window, fixed seed, BH at 0.05, leading edges, and explicit rejection of ORA and thresholded inputs, matching the reference on every enrichment point. Contrast direction is verified against metadata and group means rather than assumed, NA-statistic genes are counted by cause, and the pre-filtered 12,000-gene universe is named as such with no new arbitrary filter added. Sample QC is limited to library sizes and a stated keep-sample_01 policy; no PCA or sample-distance check is planned, which is defensible for an enrichment-only task but falls short of the criterion. Normalization and model formula are not directly applicable since no model is refit, and the plan states no count adjustment or refitting, which is correct. The report block is complete: fgsea and collection versions, ranking metric with rationale, universe, seed, sessionInfo, tested and significant gene counts, and design caveats."
+}

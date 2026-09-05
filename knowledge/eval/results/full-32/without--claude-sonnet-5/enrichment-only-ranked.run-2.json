@@ -1,0 +1,370 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "enrichment-only-ranked",
+  "run": 2,
+  "startedAt": "2026-09-05T17:52:36.150Z",
+  "elapsedMs": 42803,
+  "outcome": "plan_submitted",
+  "planId": "pln-5833f1bc",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Prepare ranked gene list from DESeq2 results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "From de_results.csv (gene, base_mean, log2_fold_change, log2_fold_change SE/stat, p-value, padj columns for the psoriasis-lesional vs control contrast), build a clean ranking metric (e.g., signed -log10(p) * sign(log2FC), or the DESeq2 Wald statistic if present) per gene symbol, deduplicate gene symbols, and drop rows with NA statistics.",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "data-prep",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Output is a two-column table (gene symbol, rank metric) with no missing or duplicate gene symbols",
+          "Number of genes retained and dropped (NA/duplicate) is reported",
+          "Distribution of the rank metric is sane (finite, not all zero/tied)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark GSEA (pre-ranked) on treated vs control",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "context": "Use the pre-ranked gene list produced in T1S1 and the MSigDB human hallmark gene sets (h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) staged under /mnt/refs. Run a GSEA-preranked style test (fgsea in R, or gseapy/blitzgsea in Python) with 1000+ permutations, report NES, p-value, and BH-adjusted q-value per hallmark set, and the leading-edge genes for each significant set.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are significantly enriched (up or down) in psoriasis-lesional vs control skin, using the pre-ranked gene list from the DESeq2 contrast?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "All 50 hallmark gene sets are tested (or the count actually matched after symbol overlap is reported)",
+          "Output table has NES, p-value, FDR q-value, leading-edge gene count per pathway",
+          "Pathways with FDR < 0.05 are flagged as significant; direction (up in lesional vs up in control) is explicit from NES sign",
+          "If the hallmark gmt file is not found at run time, the step reports this explicitly rather than silently skipping enrichment"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Hallmark over-representation test on significant DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "context": "Complements the ranked GSEA (T2S1) with a simpler, threshold-based hypergeometric/Fisher enrichment as a robustness check, run separately for up-regulated and down-regulated DE genes against the human hallmark gene sets. Background gene universe is all 12000 genes tested in de_results.csv.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "scipy",
+          "statsmodels"
+        ],
+        "question": "Among genes significantly differentially expressed (padj < 0.05, |log2FC| > 1, using the existing de_results.csv thresholds) between psoriasis-lesional and control skin, which hallmark pathways are over-represented, tested separately for up- and down-regulated gene sets against the same MSigDB human hallmark background?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Up- and down-regulated DE gene lists are enrichment-tested separately against the full 12000-gene background as the universe",
+          "Output includes odds ratio/enrichment ratio, p-value, and BH-adjusted q-value per hallmark set for each direction",
+          "Result is compared qualitatively against the T2S1 GSEA hits to note overlap/discrepancy in the final table"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Consolidate hallmark pathway findings",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "context": "Merge T2S1 (GSEA NES/FDR) and T2S2 (ORA odds ratio/FDR) results into one ranked table of hallmark pathways, keeping direction of change (lesional-up vs lesional-down) and flagging pathways significant in both tests as high-confidence versus those significant in only one as lower-confidence.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "What is the consolidated set of hallmark pathways that change between psoriasis-lesional and control skin, reconciling the pre-ranked GSEA and over-representation results, and what is their direction of change?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "acceptance_criteria": [
+          "Single consolidated table with pathway name, GSEA NES/FDR, ORA odds ratio/FDR (up and down), and a confidence flag (both methods agree vs single method)",
+          "Report explicitly lists which hallmark pathways are significantly changed (FDR<0.05 in at least one method) and their direction",
+          "No claims of causality or mechanism beyond what the enrichment statistics support"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control: hallmark pathway enrichment",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "DESeq2 results (12000 genes) for psoriasis lesional vs control skin already exist (de_results.csv). The research question is purely about which hallmark pathways change between the two groups, so no re-analysis of counts is needed. The plan runs GSEA-style (fgsea/decoupleR-style ranked) enrichment against the MSigDB human hallmark gene sets (50 sets, HGNC symbols, staged locally) using a rank metric derived from the DESeq2 statistics, then a complementary over-representation test on the significant DE gene subset for robustness, and finally produces a consolidated, interpreted summary of the pathways that move between psoriasis-lesional and control skin."
+  },
+  "usage": {
+    "inputTokens": 140691,
+    "outputTokens": 4511,
+    "cacheCreationInputTokens": 79021,
+    "cacheReadInputTokens": 61634,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control: hallmark pathway enrichment",
+          "analytical_narrative": "DESeq2 results (12000 genes) for psoriasis lesional vs control skin already exist (de_results.csv). The research question is purely about which hallmark pathways change between the two groups, so no re-analysis of counts is needed. The plan runs GSEA-style (fgsea/decoupleR-style ranked) enrichment against the MSigDB human hallmark gene sets (50 sets, HGNC symbols, staged locally) using a rank metric derived from the DESeq2 statistics, then a complementary over-representation test on the significant DE gene subset for robustness, and finally produces a consolidated, interpreted summary of the pathways that move between psoriasis-lesional and control skin.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Prepare ranked gene list from DESeq2 results",
+              "track": "T1",
+              "step_type": "data-prep",
+              "question": "From de_results.csv (gene, base_mean, log2_fold_change, log2_fold_change SE/stat, p-value, padj columns for the psoriasis-lesional vs control contrast), build a clean ranking metric (e.g., signed -log10(p) * sign(log2FC), or the DESeq2 Wald statistic if present) per gene symbol, deduplicate gene symbols, and drop rows with NA statistics.",
+              "acceptance_criteria": [
+                "Output is a two-column table (gene symbol, rank metric) with no missing or duplicate gene symbols",
+                "Number of genes retained and dropped (NA/duplicate) is reported",
+                "Distribution of the rank metric is sane (finite, not all zero/tied)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark GSEA (pre-ranked) on treated vs control",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are significantly enriched (up or down) in psoriasis-lesional vs control skin, using the pre-ranked gene list from the DESeq2 contrast?",
+              "context": "Use the pre-ranked gene list produced in T1S1 and the MSigDB human hallmark gene sets (h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) staged under /mnt/refs. Run a GSEA-preranked style test (fgsea in R, or gseapy/blitzgsea in Python) with 1000+ permutations, report NES, p-value, and BH-adjusted q-value per hallmark set, and the leading-edge genes for each significant set.",
+              "acceptance_criteria": [
+                "All 50 hallmark gene sets are tested (or the count actually matched after symbol overlap is reported)",
+                "Output table has NES, p-value, FDR q-value, leading-edge gene count per pathway",
+                "Pathways with FDR < 0.05 are flagged as significant; direction (up in lesional vs up in control) is explicit from NES sign",
+                "If the hallmark gmt file is not found at run time, the step reports this explicitly rather than silently skipping enrichment"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Hallmark over-representation test on significant DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Among genes significantly differentially expressed (padj < 0.05, |log2FC| > 1, using the existing de_results.csv thresholds) between psoriasis-lesional and control skin, which hallmark pathways are over-represented, tested separately for up- and down-regulated gene sets against the same MSigDB human hallmark background?",
+              "context": "Complements the ranked GSEA (T2S1) with a simpler, threshold-based hypergeometric/Fisher enrichment as a robustness check, run separately for up-regulated and down-regulated DE genes against the human hallmark gene sets. Background gene universe is all 12000 genes tested in de_results.csv.",
+              "acceptance_criteria": [
+                "Up- and down-regulated DE gene lists are enrichment-tested separately against the full 12000-gene background as the universe",
+                "Output includes odds ratio/enrichment ratio, p-value, and BH-adjusted q-value per hallmark set for each direction",
+                "Result is compared qualitatively against the T2S1 GSEA hits to note overlap/discrepancy in the final table"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "scipy",
+                "statsmodels"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Consolidate hallmark pathway findings",
+              "track": "T3",
+              "step_type": "synthesis",
+              "question": "What is the consolidated set of hallmark pathways that change between psoriasis-lesional and control skin, reconciling the pre-ranked GSEA and over-representation results, and what is their direction of change?",
+              "context": "Merge T2S1 (GSEA NES/FDR) and T2S2 (ORA odds ratio/FDR) results into one ranked table of hallmark pathways, keeping direction of change (lesional-up vs lesional-down) and flagging pathways significant in both tests as high-confidence versus those significant in only one as lower-confidence.",
+              "acceptance_criteria": [
+                "Single consolidated table with pathway name, GSEA NES/FDR, ORA odds ratio/FDR (up and down), and a confidence flag (both methods agree vs single method)",
+                "Report explicitly lists which hallmark pathways are significantly changed (FDR<0.05 in at least one method) and their direction",
+                "No claims of causality or mechanism beyond what the enrichment statistics support"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control: hallmark pathway enrichment",
+          "analytical_narrative": "DESeq2 results (12000 genes) for psoriasis lesional vs control skin already exist (de_results.csv). The research question is purely about which hallmark pathways change between the two groups, so no re-analysis of counts is needed. The plan runs GSEA-style (fgsea/decoupleR-style ranked) enrichment against the MSigDB human hallmark gene sets (50 sets, HGNC symbols, staged locally) using a rank metric derived from the DESeq2 statistics, then a complementary over-representation test on the significant DE gene subset for robustness, and finally produces a consolidated, interpreted summary of the pathways that move between psoriasis-lesional and control skin.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Prepare ranked gene list from DESeq2 results",
+              "track": "T1",
+              "step_type": "data-prep",
+              "question": "From de_results.csv (gene, base_mean, log2_fold_change, log2_fold_change SE/stat, p-value, padj columns for the psoriasis-lesional vs control contrast), build a clean ranking metric (e.g., signed -log10(p) * sign(log2FC), or the DESeq2 Wald statistic if present) per gene symbol, deduplicate gene symbols, and drop rows with NA statistics.",
+              "acceptance_criteria": [
+                "Output is a two-column table (gene symbol, rank metric) with no missing or duplicate gene symbols",
+                "Number of genes retained and dropped (NA/duplicate) is reported",
+                "Distribution of the rank metric is sane (finite, not all zero/tied)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark GSEA (pre-ranked) on treated vs control",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are significantly enriched (up or down) in psoriasis-lesional vs control skin, using the pre-ranked gene list from the DESeq2 contrast?",
+              "context": "Use the pre-ranked gene list produced in T1S1 and the MSigDB human hallmark gene sets (h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) staged under /mnt/refs. Run a GSEA-preranked style test (fgsea in R, or gseapy/blitzgsea in Python) with 1000+ permutations, report NES, p-value, and BH-adjusted q-value per hallmark set, and the leading-edge genes for each significant set.",
+              "acceptance_criteria": [
+                "All 50 hallmark gene sets are tested (or the count actually matched after symbol overlap is reported)",
+                "Output table has NES, p-value, FDR q-value, leading-edge gene count per pathway",
+                "Pathways with FDR < 0.05 are flagged as significant; direction (up in lesional vs up in control) is explicit from NES sign",
+                "If the hallmark gmt file is not found at run time, the step reports this explicitly rather than silently skipping enrichment"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Hallmark over-representation test on significant DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Among genes significantly differentially expressed (padj < 0.05, |log2FC| > 1, using the existing de_results.csv thresholds) between psoriasis-lesional and control skin, which hallmark pathways are over-represented, tested separately for up- and down-regulated gene sets against the same MSigDB human hallmark background?",
+              "context": "Complements the ranked GSEA (T2S1) with a simpler, threshold-based hypergeometric/Fisher enrichment as a robustness check, run separately for up-regulated and down-regulated DE genes against the human hallmark gene sets. Background gene universe is all 12000 genes tested in de_results.csv.",
+              "acceptance_criteria": [
+                "Up- and down-regulated DE gene lists are enrichment-tested separately against the full 12000-gene background as the universe",
+                "Output includes odds ratio/enrichment ratio, p-value, and BH-adjusted q-value per hallmark set for each direction",
+                "Result is compared qualitatively against the T2S1 GSEA hits to note overlap/discrepancy in the final table"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "scipy",
+                "statsmodels"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Consolidate hallmark pathway findings",
+              "track": "T3",
+              "step_type": "synthesis",
+              "question": "What is the consolidated set of hallmark pathways that change between psoriasis-lesional and control skin, reconciling the pre-ranked GSEA and over-representation results, and what is their direction of change?",
+              "context": "Merge T2S1 (GSEA NES/FDR) and T2S2 (ORA odds ratio/FDR) results into one ranked table of hallmark pathways, keeping direction of change (lesional-up vs lesional-down) and flagging pathways significant in both tests as high-confidence versus those significant in only one as lower-confidence.",
+              "acceptance_criteria": [
+                "Single consolidated table with pathway name, GSEA NES/FDR, ORA odds ratio/FDR (up and down), and a confidence flag (both methods agree vs single method)",
+                "Report explicitly lists which hallmark pathways are significantly changed (FDR<0.05 in at least one method) and their direction",
+                "No claims of causality or mechanism beyond what the enrichment statistics support"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

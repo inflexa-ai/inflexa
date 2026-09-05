@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan targets the interaction term directly with a single PyDESeq2 fit on all 16 samples (~genotype + treatment + genotype:treatment), states reference levels (WT, vehicle), extracts the two within-genotype simple effects from the same model, and gives an explicit, statistically equivalent fallback (four-level condition factor with the difference-of-differences contrast vector) if the installed PyDESeq2 cannot express the interaction — exactly what the reference asks, and it is Python-only throughout. QC is design-aware (balance cross-tab, PCA colored by genotype and shaped by treatment, library sizes, correlation heatmap, report-don't-remove outlier policy) and normalization is median-of-ratios inside the model with log-transformed values used for QC only. The low-count filter is anchored to the smallest group size (n=4) but never names the actual count threshold, so it is justified in principle yet under-specified. FDR is BH at stated alphas (0.05 and 0.1) with shrinkage for ranking and unshrunken statistics for the formal tests, though shrinkage is specified only for the simple effects, not the interaction LFC. Enrichment is well-motivated (preranked on Wald statistics, no thresholding, symbol-space overlap check, FDR q-values, human hallmark and GO BP) but omits a gene-set size window and any collection version, and it asserts human origin from staged references rather than verifying species. Reporting is thorough on method, version, design, thresholds, counts, and design caveats including the difference-of-significance fallacy."
+}

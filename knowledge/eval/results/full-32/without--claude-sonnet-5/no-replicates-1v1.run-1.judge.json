@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 6,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 2,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly recognizes that n=1 vs n=1 permits no dispersion estimate, but then hedges by allowing a pydeseq2 run with a fixed dispersion and 'descriptive' p-values instead of committing to normalized counts and log2 fold changes only; it also never names the replicated design that would support inference. The QC step covers library sizes and count distributions, but the expression floor is left as an unspecified 'e.g. baseMean or CPM > threshold', no design formula or reference level is stated, and the normalize-then-DESeq2 wording is ambiguous about feeding CPM into a count model. Enrichment is not warranted on an unreplicated ranked list, yet the plan runs ORA with p-values/FDR and no stated universe or size window. Caveats about lack of replication are well stated, but versions and thresholds are absent."
+}

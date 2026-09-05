@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The negative-binomial model (DESeq2 Wald with edgeR QL cross-check), ~condition with control as reference, in-model normalisation, BH at 0.05 with apeglm shrinkage and a flag-not-drop QC policy all fit a 3 vs 3 single-batch design, and the low-power caveat is stated without lowering alpha. The plan falls short on the central concern: it substitutes count-matrix heuristics for an actual strandedness inference (infer_experiment.py on BAMs or salmon libType A), does not request the alignments or the featureCounts summary, does not condition the DE on the outcome, and asserts that a uniform strand error only costs power — which ignores misattribution of counts between antisense-overlapping genes, a validity problem, not just a sensitivity one. The pre-filter names the sample count but not the count threshold, the enrichment step leaves the ranking metric as an either/or and names no collection version, and the report does not commit to stating software versions."
+}

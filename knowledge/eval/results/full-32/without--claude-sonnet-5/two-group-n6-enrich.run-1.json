@@ -1,0 +1,267 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-05T17:13:21.209Z",
+  "elapsedMs": 37700,
+  "outcome": "plan_submitted",
+  "planId": "pln-6ea050e6",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and outlier assessment of shallow sample",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A single low-depth sample can inflate dispersion estimates or bias size factors in a 6 vs 6 design; check its influence on PCA before deciding",
+          "With n=6 per group, removing a sample drops one arm to n=5 — factor this into the interpretation of statistical power downstream"
+        ],
+        "context": "Input is /eval-full-32-without-two-group-n6-enrich-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw Salmon gene-level integer counts) and metadata.csv (12 samples x condition: 6 AD lesional, 6 control, unpaired, single batch). The data profile already flags sample_01 as having library size ~4x below the median — this step must investigate it quantitatively rather than accept or drop it by default.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Is sample_01 (library size ~4x below the median of the 12 skin samples) a valid low-depth sample to retain with normalization, or should it be excluded from the AD lesional vs control comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not silently drop sample_01 without reporting the diagnostic evidence used to decide",
+          "Use raw counts as input to any DESeq2-based normalization; do not pre-normalize before this step's DESeq2 calls"
+        ],
+        "acceptance_criteria": [
+          "Library size per sample computed and reported for all 12 samples, confirming the magnitude of sample_01's shortfall",
+          "PCA and/or sample-sample correlation on normalized (e.g., DESeq2 vst/rlog or CPM-log) counts produced to check whether sample_01 clusters as an outlier or groups normally with its condition",
+          "An explicit keep/exclude decision for sample_01 is stated with justification, plus the resulting sample count and group balance used downstream",
+          "If sample_01 is retained, note that DESeq2 size-factor normalization will account for depth and flag the sample for a sensitivity re-run in the DE step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: AD lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per arm (or 5 vs 6 if sample_01 is excluded) is a modest sample size — treat nominal significance thresholds as adequately but not highly powered, and report this in the results summary"
+        ],
+        "context": "Raw gene-level Salmon counts for 12000 genes across 12 skin samples (6 AD lesional vs 6 control, unpaired, single batch); metadata.csv supplies the condition label per sample. This step answers the 'which genes' half of the research question and produces the ranked/significant gene list that feeds hallmark pathway enrichment.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between AD lesional and control skin samples (raw Salmon gene counts, 12000 genes, 6 vs 6 unpaired design), accounting for the QC decision on sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the sample inclusion/exclusion decision made in T1S1 as-is; do not re-adjudicate sample_01 here",
+          "Model condition as AD lesional vs control explicitly (not a generic factor label) so results are directly interpretable"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run on raw integer counts with condition (AD lesional vs control) as the sole design factor, using the sample set finalized in T1S1",
+          "Full results table with gene symbol, log2FoldChange, p-value, and BH-adjusted p-value (padj) exported for all tested genes",
+          "Significant DE gene list reported at padj < 0.05 (and |log2FC| > 1 as a secondary effect-size filter), with counts of up- and down-regulated genes in AD lesional vs control",
+          "Volcano plot and MA plot produced to visualize the DE result",
+          "If sample_01 was retained in T1S1, a sensitivity comparison of the top DE genes with and without sample_01 is reported to show robustness of the finding"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark pathway enrichment of AD lesional vs control signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only 12000 genes profiled (a reduced/filtered gene panel rather than a full ~20k transcriptome), hallmark gene sets will have variable coverage — report the number of each hallmark set's genes actually present in the data, since sparse overlap weakens GSEA power for that set"
+        ],
+        "context": "Uses the DESeq2 result table (log2FoldChange, p-value, padj, gene symbol) from T1S2 for the AD lesional vs control contrast. Reference: the 50 MSigDB human hallmark gene sets (HALLMARK_*, HGNC symbols, GMT format) confirmed present in the environment's reference store. Genes in the count matrix are already human gene symbols, matching the hallmark GMT's identifier space directly.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are enriched among genes changing between AD lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the human hallmark GMT specifically (not the mouse hallmark file) since the dataset is Homo sapiens",
+          "Rank genes by a signed test statistic (not raw log2FC alone) for the GSEA pre-ranked analysis to properly weight significance and direction"
+        ],
+        "acceptance_criteria": [
+          "Ranked gene list (by DESeq2 stat or log2FC-signed -log10(p)) from T1S2 used for pre-ranked GSEA against the human MSigDB hallmark gene sets, reporting NES, p-value, and BH-adjusted p-value per hallmark set",
+          "A complementary over-representation test (ORA) run on the significant DE gene list (padj < 0.05) from T1S2 against the same hallmark sets, for cross-check",
+          "Hallmark pathways significant at adjusted p < 0.05 reported, ranked by NES/effect direction (enriched in AD lesional vs enriched in control)",
+          "Enrichment barplot/dotplot of top hallmark pathways produced",
+          "Report explicitly if the human MSigDB hallmark gene set reference was unavailable at run time, since the enrichment step cannot substitute a different-organism gene set"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark pathways",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 samples: 6 lesional AD vs 6 control, unpaired, single batch) are profiled with one flagged outlier (sample_01, library size ~4x below median). Step 1 runs QC on the count matrix, confirms the library-size shortfall for sample_01, and decides — via diagnostic plots (PCA, library size, sample correlation) rather than assumption — whether it is a low-depth-but-valid sample to keep (with size-factor normalization correcting for depth) or an outlier to exclude, documenting the decision and testing DE results with/without it as a sensitivity check if kept. Step 2 runs DESeq2 differential expression between AD lesional and control on the raw counts, using the QC decision from step 1, producing a full gene-level results table (log2FC, p, padj) and diagnostic plots (volcano, MA). Step 3 takes the ranked/significant gene list into hallmark pathway enrichment (GSEA-style ranked test and/or ORA on significant genes) against the human MSigDB hallmark gene sets to answer which hallmark pathways change between conditions. This directly answers both parts of the research question — which genes and which hallmark pathways differ — while explicitly handling the shallow sample rather than silently including or excluding it."
+  },
+  "usage": {
+    "inputTokens": 138894,
+    "outputTokens": 3119,
+    "cacheCreationInputTokens": 77325,
+    "cacheReadInputTokens": 61533,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "pydeseq2"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark pathways",
+          "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 samples: 6 lesional AD vs 6 control, unpaired, single batch) are profiled with one flagged outlier (sample_01, library size ~4x below median). Step 1 runs QC on the count matrix, confirms the library-size shortfall for sample_01, and decides — via diagnostic plots (PCA, library size, sample correlation) rather than assumption — whether it is a low-depth-but-valid sample to keep (with size-factor normalization correcting for depth) or an outlier to exclude, documenting the decision and testing DE results with/without it as a sensitivity check if kept. Step 2 runs DESeq2 differential expression between AD lesional and control on the raw counts, using the QC decision from step 1, producing a full gene-level results table (log2FC, p, padj) and diagnostic plots (volcano, MA). Step 3 takes the ranked/significant gene list into hallmark pathway enrichment (GSEA-style ranked test and/or ORA on significant genes) against the human MSigDB hallmark gene sets to answer which hallmark pathways change between conditions. This directly answers both parts of the research question — which genes and which hallmark pathways differ — while explicitly handling the shallow sample rather than silently including or excluding it.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and outlier assessment of shallow sample",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Is sample_01 (library size ~4x below the median of the 12 skin samples) a valid low-depth sample to retain with normalization, or should it be excluded from the AD lesional vs control comparison?",
+              "acceptance_criteria": [
+                "Library size per sample computed and reported for all 12 samples, confirming the magnitude of sample_01's shortfall",
+                "PCA and/or sample-sample correlation on normalized (e.g., DESeq2 vst/rlog or CPM-log) counts produced to check whether sample_01 clusters as an outlier or groups normally with its condition",
+                "An explicit keep/exclude decision for sample_01 is stated with justification, plus the resulting sample count and group balance used downstream",
+                "If sample_01 is retained, note that DESeq2 size-factor normalization will account for depth and flag the sample for a sensitivity re-run in the DE step"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input is /eval-full-32-without-two-group-n6-enrich-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw Salmon gene-level integer counts) and metadata.csv (12 samples x condition: 6 AD lesional, 6 control, unpaired, single batch). The data profile already flags sample_01 as having library size ~4x below the median — this step must investigate it quantitatively rather than accept or drop it by default.",
+              "constraints": [
+                "Do not silently drop sample_01 without reporting the diagnostic evidence used to decide",
+                "Use raw counts as input to any DESeq2-based normalization; do not pre-normalize before this step's DESeq2 calls"
+              ],
+              "caveats": [
+                "A single low-depth sample can inflate dispersion estimates or bias size factors in a 6 vs 6 design; check its influence on PCA before deciding",
+                "With n=6 per group, removing a sample drops one arm to n=5 — factor this into the interpretation of statistical power downstream"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: AD lesional vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between AD lesional and control skin samples (raw Salmon gene counts, 12000 genes, 6 vs 6 unpaired design), accounting for the QC decision on sample_01?",
+              "acceptance_criteria": [
+                "DESeq2 run on raw integer counts with condition (AD lesional vs control) as the sole design factor, using the sample set finalized in T1S1",
+                "Full results table with gene symbol, log2FoldChange, p-value, and BH-adjusted p-value (padj) exported for all tested genes",
+                "Significant DE gene list reported at padj < 0.05 (and |log2FC| > 1 as a secondary effect-size filter), with counts of up- and down-regulated genes in AD lesional vs control",
+                "Volcano plot and MA plot produced to visualize the DE result",
+                "If sample_01 was retained in T1S1, a sensitivity comparison of the top DE genes with and without sample_01 is reported to show robustness of the finding"
+              ],
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw gene-level Salmon counts for 12000 genes across 12 skin samples (6 AD lesional vs 6 control, unpaired, single batch); metadata.csv supplies the condition label per sample. This step answers the 'which genes' half of the research question and produces the ranked/significant gene list that feeds hallmark pathway enrichment.",
+              "constraints": [
+                "Use the sample inclusion/exclusion decision made in T1S1 as-is; do not re-adjudicate sample_01 here",
+                "Model condition as AD lesional vs control explicitly (not a generic factor label) so results are directly interpretable"
+              ],
+              "caveats": [
+                "n=6 per arm (or 5 vs 6 if sample_01 is excluded) is a modest sample size — treat nominal significance thresholds as adequately but not highly powered, and report this in the results summary"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark pathway enrichment of AD lesional vs control signature",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are enriched among genes changing between AD lesional and control skin?",
+              "acceptance_criteria": [
+                "Ranked gene list (by DESeq2 stat or log2FC-signed -log10(p)) from T1S2 used for pre-ranked GSEA against the human MSigDB hallmark gene sets, reporting NES, p-value, and BH-adjusted p-value per hallmark set",
+                "A complementary over-representation test (ORA) run on the significant DE gene list (padj < 0.05) from T1S2 against the same hallmark sets, for cross-check",
+                "Hallmark pathways significant at adjusted p < 0.05 reported, ranked by NES/effect direction (enriched in AD lesional vs enriched in control)",
+                "Enrichment barplot/dotplot of top hallmark pathways produced",
+                "Report explicitly if the human MSigDB hallmark gene set reference was unavailable at run time, since the enrichment step cannot substitute a different-organism gene set"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses the DESeq2 result table (log2FoldChange, p-value, padj, gene symbol) from T1S2 for the AD lesional vs control contrast. Reference: the 50 MSigDB human hallmark gene sets (HALLMARK_*, HGNC symbols, GMT format) confirmed present in the environment's reference store. Genes in the count matrix are already human gene symbols, matching the hallmark GMT's identifier space directly.",
+              "constraints": [
+                "Use the human hallmark GMT specifically (not the mouse hallmark file) since the dataset is Homo sapiens",
+                "Rank genes by a signed test statistic (not raw log2FC alone) for the GSEA pre-ranked analysis to properly weight significance and direction"
+              ],
+              "caveats": [
+                "With only 12000 genes profiled (a reduced/filtered gene panel rather than a full ~20k transcriptome), hallmark gene sets will have variable coverage — report the number of each hallmark set's genes actually present in the data, since sparse overlap weakens GSEA power for that set"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

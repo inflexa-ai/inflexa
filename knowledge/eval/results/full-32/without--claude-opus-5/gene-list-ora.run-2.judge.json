@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats the supplied DESeq2 table as the data state, builds the foreground at padj<0.05 with a stated |LFC|>=1 cutoff, uses the tested-gene universe (non-NA padj) rather than the genome, names a human GO BP symbol collection with a 10-500 size window, runs hypergeometric/BH via enricher, tests up and down separately, collapses redundant terms, and reports term, overlap, q and member genes. It departs from the reference by re-fitting DESeq2 in a leave-one-out sensitivity step; this is explicitly labelled as not replacing the supplied results and is motivated by the sample_01 depth flag, so it is docked rather than failed. Weaker points: the GO collection version is left to run-time resolution, the reference level and any low-count filter or LFC shrinkage for the re-fit are not stated, and software versions are not explicitly called out in the report. QC is strong: library sizes, VST PCA and correlation heatmap by condition with a stated policy for the shallow sample."
+}

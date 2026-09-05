@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies perfect confounding as the governing fact, refuses a batch term (rank deficiency) and any ComBat-seq/removeBatchEffect/SVA repair, fits ~ condition with the no-batch-effect assumption stated in words, labels every result as treatment+batch, and recommends a batch-balanced replication — exactly the reference's second acceptable path. QC (blind VST, PCA top-500, distance heatmap, library sizes, dual colouring, explicit no-drop-without-reason policy), a minimal justified filter (>=10 in >=6, the smallest group), in-model normalization (median-of-ratios, TMM), explicit relevel and contrast triple, BH at 0.05 with apeglm and lfcThreshold-in-test are all stated. Enrichment was not requested and is of doubtful value on a confounded contrast, but it is specified correctly (full ranked list, Wald stat metric stated, tested genes as universe, 15-500 window, collection/version and seed recorded, confounding caveat), so a small deduction only. The report leads with the confounding statement and carries methods, versions, design, thresholds, counts, diagnostics and reproducibility record."
+}

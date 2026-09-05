@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The central requirement is to infer strandedness from alignments or reads (infer_experiment.py or salmon libType A) and re-count if the -s setting was wrong before fitting any model; the plan instead asserts that no BAM/FASTQ exist, substitutes an unvalidated count-matrix antisense-pair proxy, and then fits DESeq2 on the counts as delivered with only a caveat, which is close to the failure mode the reference names. The DE machinery itself is well specified: DESeq2 Wald on raw integer counts with ~condition, control as reference, a named contrast, a >=10-in->=3 filter tied to group size, BH at 0.05 with independent filtering, apeglm shrinkage, an edgeR QL cross-check, and an honest n=3 power statement without lowering alpha. Normalization is implied by feeding raw counts to DESeq2/edgeR but size factors/TMM are never stated. Enrichment was not requested and is run on counts whose reliability is unresolved, though the fgsea specification (stat as metric, full list, Hallmark 2026.1, 15-500 window, universe stated) is sound. The report is thorough on versions, thresholds, gene counts, and caveats, but leads with a caveat where the reference expects a resolved strand setting."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: a QC-only workflow with library sizes and detected genes, median-of-ratios size factors, blind VST, PCA on the top 500 genes coloured by condition, a Euclidean distance heatmap, and an explicit keep/caution/drop verdict on sample_01 that must rest on clustering and detection rather than depth alone, with no differential test, fold changes, or enrichment. Normalization is correctly inside DESeq2 with raw counts, and the single-batch situation is handled honestly rather than fabricating a batch annotation. The low-count filter is the standard (>=10 counts in >=6 samples, the smallest group size) but is hedged as 'only if needed for numerical stability', which leaves it ambiguous whether it is actually applied before the VST and PCA. The report step names the method, versions via sessionInfo, thresholds, and the power caveat of dropping one of six replicates; the design formula is stated as ~condition and correctly left untested."
+}

@@ -1,0 +1,173 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "gene-list-ora",
+  "run": 1,
+  "startedAt": "2026-09-05T17:35:19.687Z",
+  "elapsedMs": 32721,
+  "outcome": "plan_submitted",
+  "planId": "pln-bcd35b41",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Define significant gene list and background universe from DE results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Use the full 12000-gene tested panel (not a generic genome-wide list) as the ORA background, since that is the actual universe that could have been called significant",
+          "sample_01 has ~4x below-median library size; this is a caveat of the upstream DE call already reflected in de_results.csv and is not re-analyzed here — note it in output as an inherited QC caveat, do not attempt to redo DESeq2"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "Which genes in the treated (AD lesional) vs control DESeq2 contrast meet significance thresholds, and what is the correct background gene universe for a GO over-representation test?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "data_prep",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reads de_results.csv (12000 x 8: gene, base_mean, log2_fold_change, log2fc SE/stat/pvalue/padj columns) and metadata.csv",
+          "Applies a documented significance cutoff (padj < 0.05, |log2FoldChange| > 1 as default, both stated explicitly in output) and reports the resulting number of significant genes up- and down-regulated separately",
+          "Writes out three gene lists as plain gene-symbol text/CSV: significant genes (all), background universe (all 12000 tested genes with non-NA padj), and optionally up/down subsets",
+          "Reports how many gene symbols in de_results.csv fail to map to standard HGNC symbols (if any) so the downstream ORA step knows the effective queryable set"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GO Biological Process over-representation analysis",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO BP is a deeply nested ontology; do not report raw term counts as if they were independent discoveries — state redundancy handling in the summary",
+          "If the significant gene list is very small (e.g., <10-15 genes), note that ORA power is limited and results should be read as exploratory"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "gseapy"
+        ],
+        "question": "Which GO Biological Process terms are significantly over-represented among the genes significant in the AD lesional vs control contrast, relative to the 12000-gene tested background?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Runs a hypergeometric/Fisher's exact ORA (e.g., via clusterProfiler::enricher or gseapy enrich) of the significant gene list against GO Biological Process gene sets, using the study's own 12000-gene tested panel as the background universe (not the default whole-genome background)",
+          "Uses the human GO:BP gene set collection staged in the reference store (MSigDB C5 GO:BP, HGNC symbols, GOBP_* set names) — reports if it is absent and cannot proceed without substitution",
+          "Reports term name, gene ratio, background ratio, p-value, BH-adjusted p-value (FDR), and the overlapping gene symbols for every term passing FDR < 0.05",
+          "Explicitly addresses GO hierarchy redundancy: collapses or flags parent/child terms sharing >=80% of their significant overlapping genes, so the final table is not dozens of near-duplicate entries from the same pathway block",
+          "Produces a ranked results table (CSV) and a summary bar/dot plot of the top enriched terms by FDR"
+        ]
+      }
+    ],
+    "title": "GO BP over-representation, AD lesional vs control DE genes",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The de_results.csv already carries a DESeq2 treated-vs-control (AD lesional vs control) contrast for 12000 genes across 6 vs 6 skin samples. The research question is purely about which GO biological processes are over-represented among the genes that came out significant in that contrast — an over-representation analysis (ORA) task, not a re-run of differential expression. The plan therefore has one preparatory step (define the significant gene list and the appropriate background/universe from the existing DE table) and one ORA step (hypergeometric/Fisher test of that list against GO Biological Process gene sets, using the whole 12000-gene panel as background rather than a generic genome-wide background, since the assay only measured those genes). The human MSigDB C5 GO:BP GMT staged in the reference store is used as the gene-set resource — it is species-matched (Homo sapiens) and is the canonical GO BP source. Because GO is a nested hierarchy, the enrichment step must flag redundancy among significant terms rather than reporting a flat list. The known low-library-size outlier (sample_01) is a caveat for the original DE call, not something this ORA step re-litigates, since a finished, presumably QC'd DE table was handed off as the analysis input."
+  },
+  "usage": {
+    "inputTokens": 142970,
+    "outputTokens": 1963,
+    "cacheCreationInputTokens": 81292,
+    "cacheReadInputTokens": 61642,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology biological process human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "GO BP over-representation, AD lesional vs control DE genes",
+          "analytical_narrative": "The de_results.csv already carries a DESeq2 treated-vs-control (AD lesional vs control) contrast for 12000 genes across 6 vs 6 skin samples. The research question is purely about which GO biological processes are over-represented among the genes that came out significant in that contrast — an over-representation analysis (ORA) task, not a re-run of differential expression. The plan therefore has one preparatory step (define the significant gene list and the appropriate background/universe from the existing DE table) and one ORA step (hypergeometric/Fisher test of that list against GO Biological Process gene sets, using the whole 12000-gene panel as background rather than a generic genome-wide background, since the assay only measured those genes). The human MSigDB C5 GO:BP GMT staged in the reference store is used as the gene-set resource — it is species-matched (Homo sapiens) and is the canonical GO BP source. Because GO is a nested hierarchy, the enrichment step must flag redundancy among significant terms rather than reporting a flat list. The known low-library-size outlier (sample_01) is a caveat for the original DE call, not something this ORA step re-litigates, since a finished, presumably QC'd DE table was handed off as the analysis input.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Define significant gene list and background universe from DE results",
+              "track": "T1",
+              "step_type": "data_prep",
+              "question": "Which genes in the treated (AD lesional) vs control DESeq2 contrast meet significance thresholds, and what is the correct background gene universe for a GO over-representation test?",
+              "acceptance_criteria": [
+                "Reads de_results.csv (12000 x 8: gene, base_mean, log2_fold_change, log2fc SE/stat/pvalue/padj columns) and metadata.csv",
+                "Applies a documented significance cutoff (padj < 0.05, |log2FoldChange| > 1 as default, both stated explicitly in output) and reports the resulting number of significant genes up- and down-regulated separately",
+                "Writes out three gene lists as plain gene-symbol text/CSV: significant genes (all), background universe (all 12000 tested genes with non-NA padj), and optionally up/down subsets",
+                "Reports how many gene symbols in de_results.csv fail to map to standard HGNC symbols (if any) so the downstream ORA step knows the effective queryable set"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Use the full 12000-gene tested panel (not a generic genome-wide list) as the ORA background, since that is the actual universe that could have been called significant",
+                "sample_01 has ~4x below-median library size; this is a caveat of the upstream DE call already reflected in de_results.csv and is not re-analyzed here — note it in output as an inherited QC caveat, do not attempt to redo DESeq2"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "GO Biological Process over-representation analysis",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which GO Biological Process terms are significantly over-represented among the genes significant in the AD lesional vs control contrast, relative to the 12000-gene tested background?",
+              "acceptance_criteria": [
+                "Runs a hypergeometric/Fisher's exact ORA (e.g., via clusterProfiler::enricher or gseapy enrich) of the significant gene list against GO Biological Process gene sets, using the study's own 12000-gene tested panel as the background universe (not the default whole-genome background)",
+                "Uses the human GO:BP gene set collection staged in the reference store (MSigDB C5 GO:BP, HGNC symbols, GOBP_* set names) — reports if it is absent and cannot proceed without substitution",
+                "Reports term name, gene ratio, background ratio, p-value, BH-adjusted p-value (FDR), and the overlapping gene symbols for every term passing FDR < 0.05",
+                "Explicitly addresses GO hierarchy redundancy: collapses or flags parent/child terms sharing >=80% of their significant overlapping genes, so the final table is not dozens of near-duplicate entries from the same pathway block",
+                "Produces a ranked results table (CSV) and a summary bar/dot plot of the top enriched terms by FDR"
+              ],
+              "packages": [
+                "pandas",
+                "gseapy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "GO BP is a deeply nested ontology; do not report raw term counts as if they were independent discoveries — state redundancy handling in the summary",
+                "If the significant gene list is very small (e.g., <10-15 genes), note that ORA power is limited and results should be read as exploratory"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

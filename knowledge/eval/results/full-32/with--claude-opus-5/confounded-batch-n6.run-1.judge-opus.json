@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan diagnoses the perfect confound correctly, refuses ComBat-seq/SVA/removeBatchEffect with the right rank-deficiency reasoning, fits ~condition alone, and attaches a confounding label to every table, figure and number, closing with a recommendation for a batch-balanced redesign — this matches the reference's second acceptable route. QC is design-specific and honest: blind VST, PCA on top 500, sample distances, library sizes, all coloured by both annotations with an explicit note that the two colourings are identical by construction, plus a condition-by-batch cross-tab. The filter (>=10 in >=6, justified by smallest group size), in-model normalization (median-of-ratios and TMM, no pre-scaling), explicit reference level and named contrast, BH at alpha 0.05 with independent filtering, apeglm shrinkage and a pre-adjustment p-value histogram are all correctly and specifically stated. Enrichment is well-specified (full ranked list on the Wald statistic, tested-gene universe, 15-500 window, named collections and versions, seed, collapsePathways, ORA suppressed below ~50 DE genes) but is arguably unwarranted on a contrast that cannot be attributed to treatment, so pathway-level narrative risk remains despite the labels; the edgeR cross-check is correctly framed as method robustness only, not a fix for the confound.\"}"
+}

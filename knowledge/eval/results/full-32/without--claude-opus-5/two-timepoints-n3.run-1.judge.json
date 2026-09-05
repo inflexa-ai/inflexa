@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: time is a two-level factor with t0 as reference, the design is ~ condition + time + condition:time, the interaction coefficient (Wald, plus LRT vs the reduced ~ condition + time) is the primary test, and simple effects at each time point come as contrasts from the same fit with apeglm/ashr shrinkage; it explicitly refuses a spline/trajectory and the naive set-difference trap. QC is thorough with a stated no-drop/flag policy, the 10-counts-in-3-samples filter is minimal and tied to the replicate number, and raw counts go into DESeq2 without pre-normalization, though size factors are not named. Enrichment was not asked for; what is planned is largely sound (signed interaction Wald stat ranking, filtered universe for ORA, human hallmark/GO-BP named) but omits collection versions and a gene-set size window. Reporting covers method, design, thresholds, gene counts and design caveats but does not commit to reporting package versions."
+}

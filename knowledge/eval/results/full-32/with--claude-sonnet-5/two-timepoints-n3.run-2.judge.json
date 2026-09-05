@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the 2x2 factorial as an interaction question, fits ~condition*time in DESeq2 with explicit reference levels, tests the condition:time Wald coefficient as the primary result, and reports both simple effects with ashr shrinkage and BH at 0.05 within each contrast, matching the reference. QC (blind VST, PCA, distances, library sizes, colored by both factors) and the minimal justified filter (10 counts in 3 samples, the cell size) are well specified, though the outlier policy is only 'flag'. Normalization is implicit in feeding raw counts to DESeq2 but size factors are never named. Enrichment was not asked for; the plan adds it but specifies ranking metric, universe, collection versions and size window correctly, so it is not penalized heavily. The report step is complete with versions, thresholds, counts, and design/power caveats."
+}

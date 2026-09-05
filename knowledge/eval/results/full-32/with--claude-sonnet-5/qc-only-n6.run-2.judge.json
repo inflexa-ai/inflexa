@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan stays within the QC scope the question asks for: library sizes, a blind VST, PCA on the top 500 variable genes colored by condition, a Euclidean sample-distance heatmap with clustering, and a verdict on sample_01 grounded in its PCA/heatmap position and detected-gene count rather than depth alone, with an explicit keep-unless-outlier policy. The low-count filter (>=10 counts in at least 6 samples, the smaller group) is minimal and justified, and normalization is left to DESeq2 size factors inside vst rather than any pre-scaling. Differential testing, FDR, shrinkage, and enrichment are correctly and explicitly omitted, matching the reference. Minor gaps: no count-distribution view (boxplot of per-sample counts), no recommended design formula for the later test, and package versions are not stated."
+}

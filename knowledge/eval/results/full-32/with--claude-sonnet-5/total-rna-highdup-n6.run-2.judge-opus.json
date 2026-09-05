@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan gets the central trap right: it explicitly refuses deduplication because the libraries lack UMIs and duplication tracks expression level, keeps sample_01 rather than dropping it on depth alone, and lets size factors absorb the depth difference. The statistical core is correct and dataset-specific — DESeq2 Wald on ~condition with control explicitly releveled, a smallest-group-size prefilter (>=10 in >=6), apeglm shrinkage, BH at 0.05 with independent filtering, p-value histogram and dispersion diagnostics, and an edgeR QL cross-check with intersection reported. The main shortfall is that the QC does not diagnose the duplication in the way a total-RNA library demands: no rRNA fraction, mitochondrial fraction, or intronic share per sample, and no decision rule about removing residual rRNA/MT genes before normalization if their share is large and uneven — all of which are computable from a gene-level count matrix, so calling them un-inferrable is an evasion. Enrichment is well specified (full ranked list on the Wald statistic, tested-gene universe, 15–500 size window, named collections with versions, leading edges, redundancy collapse), and the report section covers design, thresholds, gene counts, versions, and the duplication and depth caveats, though it inherits the missing rRNA/MT composition caveat."
+}

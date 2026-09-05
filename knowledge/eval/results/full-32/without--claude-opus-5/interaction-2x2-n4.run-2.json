@@ -1,0 +1,422 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "interaction-2x2-n4",
+  "run": 2,
+  "startedAt": "2026-09-05T17:28:04.806Z",
+  "elapsedMs": 95117,
+  "outcome": "plan_submitted",
+  "planId": "pln-b46e674d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Build DESeq2 object and QC the 2x2 design",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A 12,000-gene matrix is already a filtered/subset annotation, not a full transcriptome — do not describe genome-wide coverage",
+          "No batch or covariate columns are documented beyond genotype/treatment/condition; if metadata.csv contains an additional column, report it and state whether it is confounded with the design rather than adding it to the model silently",
+          "PCA separating by genotype but not treatment (or vice versa) is informative about where the signal lives and should be reported before any p-value is seen"
+        ],
+        "context": "Inputs: /eval-full-32-without-interaction-2x2-n4-2/data/inputs/counts/counts.csv — 12,000 genes x 16 sample columns of raw integer salmon counts, first column is the gene symbol; and /eval-full-32-without-interaction-2x2-n4-2/data/inputs/metadata/metadata.csv — 16 rows x 4 columns with genotype, treatment and a combined condition label. Note the counts file is profiled as 12000 x 17: 1 gene-symbol column + 16 sample columns. This step produces the shared DESeqDataSet used by all downstream inference.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Do the 16 brain samples align cleanly to the 2x2 genotype (WT/KO) x treatment (vehicle/drug) metadata, do the four cells of 4 replicates separate on VST-PCA, and is any sample an outlier that would destabilise an n=4-per-cell interaction test?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 in R with the full interaction design ~ genotype + treatment + genotype:treatment from the outset — do not build separate per-genotype objects",
+          "Do not remove any sample unless it is a clear technical outlier; with n=4 per cell, dropping one sample costs 25% of a group and must be justified in writing and its impact on the interaction test stated",
+          "Do not collapse genotype and treatment into the single 'condition' column for the model — the factorial parameterisation is what makes the interaction term available",
+          "Gene identifiers are symbols; preserve them as row names without conversion"
+        ],
+        "description": "Load counts and metadata, verify sample-name correspondence, construct a DESeqDataSet with factors genotype (reference WT) and treatment (reference vehicle) and design ~ genotype + treatment + genotype:treatment, filter low-count genes, apply VST, and produce QC diagnostics (library sizes, PCA coloured by genotype and by treatment, sample-sample correlation heatmap, per-cell replicate counts). Save the filtered dds object and the VST matrix for downstream steps.",
+        "acceptance_criteria": [
+          "Counts columns and metadata rows are matched by name, order verified explicitly, and any mismatch is reported as a hard failure rather than silently reordered",
+          "genotype is a factor releveled to WT and treatment to vehicle, so the interaction coefficient is interpretable as (KO drug effect) minus (WT drug effect)",
+          "A 2x2 cross-tabulation of genotype x treatment is printed and confirms 4 replicates in each of the four cells (16 samples total)",
+          "Low-count filter applied and documented (e.g. counts >= 10 in at least 4 samples, the smallest group size), with the number of genes retained out of 12,000 reported",
+          "VST-PCA plot (PC1/PC2, percent variance labelled) coloured by genotype, by treatment and by the four-level condition, plus a sample-correlation heatmap, are written to disk",
+          "Any candidate outlier or apparent label swap is named explicitly with the evidence; if none, that is stated. Samples are NOT dropped without reporting the effect on per-cell n",
+          "Saved dds/VST artifacts are readable by the downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Interaction test: genotype-dependent drug effect",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 4 replicates per cell the interaction contrast is the least powered term in the model — its standard error is roughly double that of a main effect, so a null interaction result is entirely plausible and must not be read as proof of no differential drug action",
+          "A gene significant for drug in KO but not in WT is NOT evidence of interaction; only the interaction term tests that difference. State this explicitly in the write-up",
+          "Genotype main effects in a KO model can be dominated by the knocked-out gene itself and by trivially large constitutive differences — check whether the targeted gene appears and report its counts across cells as a knockout-validation observation"
+        ],
+        "context": "This is the primary analytic step and the direct answer to the research question. It uses the single DESeqDataSet from T1S1 fitted once with design ~ genotype + treatment + genotype:treatment. The interaction coefficient (genotypeKO.treatmentdrug, with WT and vehicle as references) is the difference of differences: (KO_drug - KO_vehicle) - (WT_drug - WT_vehicle).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "ggrepel",
+          "pheatmap",
+          "EnhancedVolcano",
+          "dplyr"
+        ],
+        "question": "Which genes show a drug effect in KO that differs from the drug effect in WT — i.e. which genes have a significant genotype:treatment interaction — and how do the drug-vs-vehicle simple effects within WT and within KO compare?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "The interaction term is the primary result. Do NOT answer the research question by intersecting or Venn-diagramming the WT and KO simple-effect gene lists — that comparison is not a statistical test of differential drug response and must be labelled descriptive wherever it appears",
+          "Use BH FDR across all filtered genes; do not report nominal p-values as significance",
+          "Do not apply independent-filtering overrides or cook's-distance changes without stating them",
+          "Report effect sizes with confidence in absolute terms (log2FC and lfcSE), not p-values alone"
+        ],
+        "description": "Run DESeq() on the T1S1 object and extract, from this one fit: (1) the interaction contrast — the primary result, BH-adjusted; (2) the drug-vs-vehicle simple effect within WT (the treatment main coefficient under this parameterisation); (3) the drug-vs-vehicle simple effect within KO (treatment coefficient + interaction coefficient, via a list-style contrast, NOT by re-running DESeq2 on a KO-only subset); (4) the genotype main effect in vehicle. Write a full results table per contrast (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj), an MA and volcano plot for the interaction, a heatmap of VST values across the four cells for the top interaction genes, and a scatter of WT-drug-effect log2FC versus KO-drug-effect log2FC with the Pearson/Spearman concordance annotated. Report shrunken log2FCs (apeglm or ashr) alongside the unshrunken values for ranking. Save the full interaction results table ranked by the test statistic for the downstream GSEA step.",
+        "acceptance_criteria": [
+          "A single DESeq2 fit is used for all reported contrasts; the report states the exact coefficient name and the contrast specification used for each of the four results tables",
+          "The interaction results table is complete (all filtered genes, no threshold applied to the saved file) and includes padj; the count of genes at padj < 0.05 and at padj < 0.1 is reported explicitly, including when that count is zero",
+          "The KO simple effect is obtained by combining the treatment and interaction coefficients from the shared fit, and the report says so — a subset-refit is not acceptable",
+          "Shrunken log2FC (apeglm or ashr, with the method named) is reported for the interaction contrast and used for effect-size ranking; unshrunken values are retained in the table",
+          "WT-vs-KO drug-effect log2FC scatter is produced with a correlation coefficient and the count of genes in each quadrant, presented as descriptive context and explicitly NOT as a test of interaction",
+          "Top interaction genes (up to 30, or all if fewer pass) are shown as a four-cell VST heatmap so the direction of the differential drug response is visually verifiable",
+          "If zero genes reach padj < 0.05 for the interaction, the step reports that as the finding, gives the smallest observed padj and the strongest effect sizes, and does not substitute simple-effect results as if they answered the question"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Interaction power and orthogonal-method robustness",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "voom's precision weights behave differently from DESeq2's negative-binomial fit at low counts; disagreement concentrated in low-baseMean genes is expected and should be described as such rather than treated as a contradiction",
+          "Post-hoc power computed from the observed effect sizes of the same data is circular — express sensitivity as detectable effect size given the estimated variance, not as 'power to detect the effect we saw'"
+        ],
+        "context": "The 2x2 with n=4 is a small factorial. Whether the T1S2 interaction result is 'no differential drug effect' or 'not enough data to see one' cannot be settled by the p-values alone. This step quantifies the detectable effect size from the observed dispersions and cross-checks the interaction with a different statistical framework on the same counts.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "ggplot2",
+          "dplyr",
+          "statmod"
+        ],
+        "question": "Given 4 replicates per cell, what magnitude of differential drug effect (interaction log2FC) is this design actually able to detect, and does an independent modelling framework (limma-voom) reproduce the interaction call from DESeq2?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Do not run a simulation-based power analysis that invents new count data; ground the sensitivity assessment in the dispersions and standard errors estimated from these 16 samples",
+          "Use the same filtered gene set as T1S2 for the limma-voom refit so the comparison is like-for-like",
+          "Do not present limma-voom as a replacement for the DESeq2 primary result — it is a robustness check, and the primary call stays with the pre-specified DESeq2 interaction test"
+        ],
+        "description": "Using the dispersion estimates and the observed per-gene lfcSE from the T1S2 interaction fit, characterise detection sensitivity: report the distribution of interaction lfcSE, the minimum interaction log2FC detectable at padj<0.05 across the expression range, and a simple power curve or effect-size-vs-power table for representative expression deciles. Independently, refit the same design with limma-voom (voom + lmFit + eBayes, same ~ genotype + treatment + genotype:treatment) on the filtered counts and compare interaction results to DESeq2: overlap of significant sets, rank correlation of moderated statistics, and a scatter of the two interaction log2FC estimates. Conclude with an explicit, evidence-backed statement choosing between 'interaction supported', 'interaction not detectable at this sample size' and 'evidence against a large interaction', with the effect size that could have been ruled out.",
+        "acceptance_criteria": [
+          "Median and quantiles of the interaction-term lfcSE are reported, and the minimum detectable interaction log2FC at padj<0.05 is stated for low-, mid- and high-expression genes",
+          "limma-voom is fitted with the identical factorial design and its interaction contrast is extracted; the number of genes at BH<0.05 is reported for both methods with the overlap",
+          "Rank correlation (Spearman) between the DESeq2 and limma-voom interaction statistics is reported with a scatter plot",
+          "The final statement distinguishes 'no interaction detected' from 'no interaction exists', and names the interaction effect size the design could have detected with reasonable power",
+          "Any strong disagreement between the two methods is investigated at the gene level rather than reported as a bare number"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway-level interaction signal (GSEA on interaction ranking)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A 12,000-gene background is a subset of the transcriptome; GSEA results are conditional on that universe and the overlap fraction must be reported so the reader can judge set coverage",
+          "Hallmark and GO-BP are not independent of each other, and GO-BP sets are nested — do not add up significant-set counts across collections",
+          "Pathway enrichment on an underpowered gene-level ranking inherits that noise; a significant NES with a leading edge of 3-4 weakly ranked genes is fragile and should be flagged rather than headlined"
+        ],
+        "context": "Consumes the full interaction results table from T1S2 (all filtered genes, human HGNC symbols as identifiers, ranked by the interaction test statistic). Gene-level interaction tests at n=4 per cell are frequently underpowered while the aggregate pathway signal survives, so GSEA on the complete ranking — not on a thresholded gene list — is the appropriate second look. Reference gene sets needed: human hallmark gene sets and human GO biological-process gene sets, both keyed on gene symbols; the environment currently stages both for Homo sapiens, which matches this dataset's organism.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "data.table",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "At the pathway level, which biological processes show a drug response that differs between KO and WT brain — i.e. what is enriched in the genotype:treatment interaction ranking — and how does that compare with the pathways moved by drug within WT and within KO separately?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use only human, gene-symbol-keyed gene sets — the data is Homo sapiens and the count matrix row names are symbols; a mouse or rat collection would produce confident meaningless results",
+          "Pre-ranked GSEA on the complete ranking, not over-representation on a truncated significant-gene list — the interaction list may legitimately be empty",
+          "Do not interpret an enriched pathway in the interaction ranking as mechanism; state it as a hypothesis with its leading-edge genes",
+          "Multiple-testing correction within each collection separately, and say which"
+        ],
+        "description": "Run pre-ranked GSEA (fgsea) on the interaction ranking from T1S2 against human hallmark sets and human GO biological-process sets, and separately on the WT drug-effect and KO drug-effect rankings for context. Report normalised enrichment scores with BH-adjusted p-values, leading-edge genes for the top interaction pathways, and a comparison table/plot of NES for the same pathways across the three rankings (interaction, WT drug effect, KO drug effect) so a genotype-dependent pathway response can be seen directly. Collapse redundant GO-BP hits (parent/child overlap) before reporting any count of significant processes.",
+        "acceptance_criteria": [
+          "Ranking is built from the full interaction results table using the signed test statistic (or signed -log10 p), with the exact ranking metric stated; no padj threshold is applied before ranking",
+          "Gene sets are resolved at run time from the environment's reference store as human symbol-keyed hallmark and GO biological-process collections; the resolved dataset names, versions and set counts are printed, and the fraction of the 12,000 dataset genes matching the gene-set universe is reported",
+          "fgsea run with a fixed random seed and a stated minSize/maxSize (e.g. 15/500); NES, pval, padj and leading-edge size reported per set",
+          "Redundant GO-BP hits are collapsed (fgsea collapsePathways or equivalent) before any headline count of enriched processes",
+          "A side-by-side NES comparison across the interaction, WT-drug and KO-drug rankings is produced for the top pathways, making the genotype dependence of each pathway response explicit",
+          "If no pathway reaches padj < 0.05 on the interaction ranking, that is reported plainly alongside the top nominal hits, clearly labelled as not surviving correction",
+          "If either the hallmark or the GO-BP human collection is unavailable at run time, the step proceeds with whichever symbol-keyed human collection is present and records the loss; it does not substitute a mouse or rat collection"
+        ]
+      }
+    ],
+    "title": "KO x drug interaction DE in brain RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question — does the drug act differently in KO than in WT — is exactly the genotype:treatment interaction term of a 2x2 factorial design. The input is a 12,000 x 16 raw integer count matrix from salmon (counts.csv, gene symbols in column 1) plus a 16-row sample table (metadata.csv: genotype WT/KO, treatment vehicle/drug, condition), 4 replicates per cell, human brain. The plan therefore centres on one DESeq2 model, ~design ~ genotype + treatment + genotype:treatment, on all 16 samples at once, and reads the interaction coefficient. Nothing else answers the question: a Venn of two separate within-genotype DE lists is not a test of differential drug effect and is explicitly forbidden here.\n\nStep order: T1S1 builds and QCs the DESeq2 object — sample/metadata alignment, low-count filtering, VST + PCA to confirm the four cells separate and to catch swapped labels or an outlier before any inference (with n=4 per cell, one bad sample is 25% of a group). T1S2 fits the full interaction model and extracts three contrast families from the SAME fit: the interaction term (the primary answer), the drug effect within WT, and the drug effect within KO (via the interaction-aware coefficient combination, not by re-subsetting the data), plus the main effects. It also reports the simple-effect concordance as descriptive context for the interaction result. T1S3 is a power/robustness check: with 4 vs 4 the interaction contrast has roughly half the effective information of a main effect, so an empty interaction gene list is a plausible and reportable outcome — this step quantifies detectable effect size and runs a limma-voom refit as an orthogonal method, so a null is stated as 'underpowered or absent' with evidence rather than asserted.\n\nT2S1 takes the interaction-ranked gene list into GSEA against the staged human hallmark and GO-BP sets (HGNC symbols, matching the count matrix's gene-symbol row names). Pathway-level testing aggregates weak per-gene interaction signal and is often the only level at which a 4x4 interaction is visible; it is run on the full ranked statistic, not on a thresholded list, precisely because the gene-level list may be empty. Every step is required to state honestly whether the interaction is supported, absent, or simply not resolvable at n=4."
+  },
+  "usage": {
+    "inputTokens": 91866,
+    "outputTokens": 6689,
+    "cacheCreationInputTokens": 73694,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "pydeseq2",
+          "msigdbr",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "KO x drug interaction DE in brain RNA-seq",
+          "analytical_narrative": "The question — does the drug act differently in KO than in WT — is exactly the genotype:treatment interaction term of a 2x2 factorial design. The input is a 12,000 x 16 raw integer count matrix from salmon (counts.csv, gene symbols in column 1) plus a 16-row sample table (metadata.csv: genotype WT/KO, treatment vehicle/drug, condition), 4 replicates per cell, human brain. The plan therefore centres on one DESeq2 model, ~design ~ genotype + treatment + genotype:treatment, on all 16 samples at once, and reads the interaction coefficient. Nothing else answers the question: a Venn of two separate within-genotype DE lists is not a test of differential drug effect and is explicitly forbidden here.\n\nStep order: T1S1 builds and QCs the DESeq2 object — sample/metadata alignment, low-count filtering, VST + PCA to confirm the four cells separate and to catch swapped labels or an outlier before any inference (with n=4 per cell, one bad sample is 25% of a group). T1S2 fits the full interaction model and extracts three contrast families from the SAME fit: the interaction term (the primary answer), the drug effect within WT, and the drug effect within KO (via the interaction-aware coefficient combination, not by re-subsetting the data), plus the main effects. It also reports the simple-effect concordance as descriptive context for the interaction result. T1S3 is a power/robustness check: with 4 vs 4 the interaction contrast has roughly half the effective information of a main effect, so an empty interaction gene list is a plausible and reportable outcome — this step quantifies detectable effect size and runs a limma-voom refit as an orthogonal method, so a null is stated as 'underpowered or absent' with evidence rather than asserted.\n\nT2S1 takes the interaction-ranked gene list into GSEA against the staged human hallmark and GO-BP sets (HGNC symbols, matching the count matrix's gene-symbol row names). Pathway-level testing aggregates weak per-gene interaction signal and is often the only level at which a 4x4 interaction is visible; it is run on the full ranked statistic, not on a thresholded list, precisely because the gene-level list may be empty. Every step is required to state honestly whether the interaction is supported, absent, or simply not resolvable at n=4.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Build DESeq2 object and QC the 2x2 design",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 16 brain samples align cleanly to the 2x2 genotype (WT/KO) x treatment (vehicle/drug) metadata, do the four cells of 4 replicates separate on VST-PCA, and is any sample an outlier that would destabilise an n=4-per-cell interaction test?",
+              "context": "Inputs: /eval-full-32-without-interaction-2x2-n4-2/data/inputs/counts/counts.csv — 12,000 genes x 16 sample columns of raw integer salmon counts, first column is the gene symbol; and /eval-full-32-without-interaction-2x2-n4-2/data/inputs/metadata/metadata.csv — 16 rows x 4 columns with genotype, treatment and a combined condition label. Note the counts file is profiled as 12000 x 17: 1 gene-symbol column + 16 sample columns. This step produces the shared DESeqDataSet used by all downstream inference.",
+              "description": "Load counts and metadata, verify sample-name correspondence, construct a DESeqDataSet with factors genotype (reference WT) and treatment (reference vehicle) and design ~ genotype + treatment + genotype:treatment, filter low-count genes, apply VST, and produce QC diagnostics (library sizes, PCA coloured by genotype and by treatment, sample-sample correlation heatmap, per-cell replicate counts). Save the filtered dds object and the VST matrix for downstream steps.",
+              "acceptance_criteria": [
+                "Counts columns and metadata rows are matched by name, order verified explicitly, and any mismatch is reported as a hard failure rather than silently reordered",
+                "genotype is a factor releveled to WT and treatment to vehicle, so the interaction coefficient is interpretable as (KO drug effect) minus (WT drug effect)",
+                "A 2x2 cross-tabulation of genotype x treatment is printed and confirms 4 replicates in each of the four cells (16 samples total)",
+                "Low-count filter applied and documented (e.g. counts >= 10 in at least 4 samples, the smallest group size), with the number of genes retained out of 12,000 reported",
+                "VST-PCA plot (PC1/PC2, percent variance labelled) coloured by genotype, by treatment and by the four-level condition, plus a sample-correlation heatmap, are written to disk",
+                "Any candidate outlier or apparent label swap is named explicitly with the evidence; if none, that is stated. Samples are NOT dropped without reporting the effect on per-cell n",
+                "Saved dds/VST artifacts are readable by the downstream steps"
+              ],
+              "constraints": [
+                "Use DESeq2 in R with the full interaction design ~ genotype + treatment + genotype:treatment from the outset — do not build separate per-genotype objects",
+                "Do not remove any sample unless it is a clear technical outlier; with n=4 per cell, dropping one sample costs 25% of a group and must be justified in writing and its impact on the interaction test stated",
+                "Do not collapse genotype and treatment into the single 'condition' column for the model — the factorial parameterisation is what makes the interaction term available",
+                "Gene identifiers are symbols; preserve them as row names without conversion"
+              ],
+              "caveats": [
+                "A 12,000-gene matrix is already a filtered/subset annotation, not a full transcriptome — do not describe genome-wide coverage",
+                "No batch or covariate columns are documented beyond genotype/treatment/condition; if metadata.csv contains an additional column, report it and state whether it is confounded with the design rather than adding it to the model silently",
+                "PCA separating by genotype but not treatment (or vice versa) is informative about where the signal lives and should be reported before any p-value is seen"
+              ],
+              "depends_on": [],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Interaction test: genotype-dependent drug effect",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes show a drug effect in KO that differs from the drug effect in WT — i.e. which genes have a significant genotype:treatment interaction — and how do the drug-vs-vehicle simple effects within WT and within KO compare?",
+              "context": "This is the primary analytic step and the direct answer to the research question. It uses the single DESeqDataSet from T1S1 fitted once with design ~ genotype + treatment + genotype:treatment. The interaction coefficient (genotypeKO.treatmentdrug, with WT and vehicle as references) is the difference of differences: (KO_drug - KO_vehicle) - (WT_drug - WT_vehicle).",
+              "description": "Run DESeq() on the T1S1 object and extract, from this one fit: (1) the interaction contrast — the primary result, BH-adjusted; (2) the drug-vs-vehicle simple effect within WT (the treatment main coefficient under this parameterisation); (3) the drug-vs-vehicle simple effect within KO (treatment coefficient + interaction coefficient, via a list-style contrast, NOT by re-running DESeq2 on a KO-only subset); (4) the genotype main effect in vehicle. Write a full results table per contrast (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj), an MA and volcano plot for the interaction, a heatmap of VST values across the four cells for the top interaction genes, and a scatter of WT-drug-effect log2FC versus KO-drug-effect log2FC with the Pearson/Spearman concordance annotated. Report shrunken log2FCs (apeglm or ashr) alongside the unshrunken values for ranking. Save the full interaction results table ranked by the test statistic for the downstream GSEA step.",
+              "acceptance_criteria": [
+                "A single DESeq2 fit is used for all reported contrasts; the report states the exact coefficient name and the contrast specification used for each of the four results tables",
+                "The interaction results table is complete (all filtered genes, no threshold applied to the saved file) and includes padj; the count of genes at padj < 0.05 and at padj < 0.1 is reported explicitly, including when that count is zero",
+                "The KO simple effect is obtained by combining the treatment and interaction coefficients from the shared fit, and the report says so — a subset-refit is not acceptable",
+                "Shrunken log2FC (apeglm or ashr, with the method named) is reported for the interaction contrast and used for effect-size ranking; unshrunken values are retained in the table",
+                "WT-vs-KO drug-effect log2FC scatter is produced with a correlation coefficient and the count of genes in each quadrant, presented as descriptive context and explicitly NOT as a test of interaction",
+                "Top interaction genes (up to 30, or all if fewer pass) are shown as a four-cell VST heatmap so the direction of the differential drug response is visually verifiable",
+                "If zero genes reach padj < 0.05 for the interaction, the step reports that as the finding, gives the smallest observed padj and the strongest effect sizes, and does not substitute simple-effect results as if they answered the question"
+              ],
+              "constraints": [
+                "The interaction term is the primary result. Do NOT answer the research question by intersecting or Venn-diagramming the WT and KO simple-effect gene lists — that comparison is not a statistical test of differential drug response and must be labelled descriptive wherever it appears",
+                "Use BH FDR across all filtered genes; do not report nominal p-values as significance",
+                "Do not apply independent-filtering overrides or cook's-distance changes without stating them",
+                "Report effect sizes with confidence in absolute terms (log2FC and lfcSE), not p-values alone"
+              ],
+              "caveats": [
+                "With 4 replicates per cell the interaction contrast is the least powered term in the model — its standard error is roughly double that of a main effect, so a null interaction result is entirely plausible and must not be read as proof of no differential drug action",
+                "A gene significant for drug in KO but not in WT is NOT evidence of interaction; only the interaction term tests that difference. State this explicitly in the write-up",
+                "Genotype main effects in a KO model can be dominated by the knocked-out gene itself and by trivially large constitutive differences — check whether the targeted gene appears and report its counts across cells as a knockout-validation observation"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "ggrepel",
+                "pheatmap",
+                "EnhancedVolcano",
+                "dplyr"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Interaction power and orthogonal-method robustness",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Given 4 replicates per cell, what magnitude of differential drug effect (interaction log2FC) is this design actually able to detect, and does an independent modelling framework (limma-voom) reproduce the interaction call from DESeq2?",
+              "context": "The 2x2 with n=4 is a small factorial. Whether the T1S2 interaction result is 'no differential drug effect' or 'not enough data to see one' cannot be settled by the p-values alone. This step quantifies the detectable effect size from the observed dispersions and cross-checks the interaction with a different statistical framework on the same counts.",
+              "description": "Using the dispersion estimates and the observed per-gene lfcSE from the T1S2 interaction fit, characterise detection sensitivity: report the distribution of interaction lfcSE, the minimum interaction log2FC detectable at padj<0.05 across the expression range, and a simple power curve or effect-size-vs-power table for representative expression deciles. Independently, refit the same design with limma-voom (voom + lmFit + eBayes, same ~ genotype + treatment + genotype:treatment) on the filtered counts and compare interaction results to DESeq2: overlap of significant sets, rank correlation of moderated statistics, and a scatter of the two interaction log2FC estimates. Conclude with an explicit, evidence-backed statement choosing between 'interaction supported', 'interaction not detectable at this sample size' and 'evidence against a large interaction', with the effect size that could have been ruled out.",
+              "acceptance_criteria": [
+                "Median and quantiles of the interaction-term lfcSE are reported, and the minimum detectable interaction log2FC at padj<0.05 is stated for low-, mid- and high-expression genes",
+                "limma-voom is fitted with the identical factorial design and its interaction contrast is extracted; the number of genes at BH<0.05 is reported for both methods with the overlap",
+                "Rank correlation (Spearman) between the DESeq2 and limma-voom interaction statistics is reported with a scatter plot",
+                "The final statement distinguishes 'no interaction detected' from 'no interaction exists', and names the interaction effect size the design could have detected with reasonable power",
+                "Any strong disagreement between the two methods is investigated at the gene level rather than reported as a bare number"
+              ],
+              "constraints": [
+                "Do not run a simulation-based power analysis that invents new count data; ground the sensitivity assessment in the dispersions and standard errors estimated from these 16 samples",
+                "Use the same filtered gene set as T1S2 for the limma-voom refit so the comparison is like-for-like",
+                "Do not present limma-voom as a replacement for the DESeq2 primary result — it is a robustness check, and the primary call stays with the pre-specified DESeq2 interaction test"
+              ],
+              "caveats": [
+                "voom's precision weights behave differently from DESeq2's negative-binomial fit at low counts; disagreement concentrated in low-baseMean genes is expected and should be described as such rather than treated as a contradiction",
+                "Post-hoc power computed from the observed effect sizes of the same data is circular — express sensitivity as detectable effect size given the estimated variance, not as 'power to detect the effect we saw'"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "packages": [
+                "DESeq2",
+                "limma",
+                "edgeR",
+                "ggplot2",
+                "dplyr",
+                "statmod"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway-level interaction signal (GSEA on interaction ranking)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "At the pathway level, which biological processes show a drug response that differs between KO and WT brain — i.e. what is enriched in the genotype:treatment interaction ranking — and how does that compare with the pathways moved by drug within WT and within KO separately?",
+              "context": "Consumes the full interaction results table from T1S2 (all filtered genes, human HGNC symbols as identifiers, ranked by the interaction test statistic). Gene-level interaction tests at n=4 per cell are frequently underpowered while the aggregate pathway signal survives, so GSEA on the complete ranking — not on a thresholded gene list — is the appropriate second look. Reference gene sets needed: human hallmark gene sets and human GO biological-process gene sets, both keyed on gene symbols; the environment currently stages both for Homo sapiens, which matches this dataset's organism.",
+              "description": "Run pre-ranked GSEA (fgsea) on the interaction ranking from T1S2 against human hallmark sets and human GO biological-process sets, and separately on the WT drug-effect and KO drug-effect rankings for context. Report normalised enrichment scores with BH-adjusted p-values, leading-edge genes for the top interaction pathways, and a comparison table/plot of NES for the same pathways across the three rankings (interaction, WT drug effect, KO drug effect) so a genotype-dependent pathway response can be seen directly. Collapse redundant GO-BP hits (parent/child overlap) before reporting any count of significant processes.",
+              "acceptance_criteria": [
+                "Ranking is built from the full interaction results table using the signed test statistic (or signed -log10 p), with the exact ranking metric stated; no padj threshold is applied before ranking",
+                "Gene sets are resolved at run time from the environment's reference store as human symbol-keyed hallmark and GO biological-process collections; the resolved dataset names, versions and set counts are printed, and the fraction of the 12,000 dataset genes matching the gene-set universe is reported",
+                "fgsea run with a fixed random seed and a stated minSize/maxSize (e.g. 15/500); NES, pval, padj and leading-edge size reported per set",
+                "Redundant GO-BP hits are collapsed (fgsea collapsePathways or equivalent) before any headline count of enriched processes",
+                "A side-by-side NES comparison across the interaction, WT-drug and KO-drug rankings is produced for the top pathways, making the genotype dependence of each pathway response explicit",
+                "If no pathway reaches padj < 0.05 on the interaction ranking, that is reported plainly alongside the top nominal hits, clearly labelled as not surviving correction",
+                "If either the hallmark or the GO-BP human collection is unavailable at run time, the step proceeds with whichever symbol-keyed human collection is present and records the loss; it does not substitute a mouse or rat collection"
+              ],
+              "constraints": [
+                "Use only human, gene-symbol-keyed gene sets — the data is Homo sapiens and the count matrix row names are symbols; a mouse or rat collection would produce confident meaningless results",
+                "Pre-ranked GSEA on the complete ranking, not over-representation on a truncated significant-gene list — the interaction list may legitimately be empty",
+                "Do not interpret an enriched pathway in the interaction ranking as mechanism; state it as a hypothesis with its leading-edge genes",
+                "Multiple-testing correction within each collection separately, and say which"
+              ],
+              "caveats": [
+                "A 12,000-gene background is a subset of the transcriptome; GSEA results are conditional on that universe and the overlap fraction must be reported so the reader can judge set coverage",
+                "Hallmark and GO-BP are not independent of each other, and GO-BP sets are nested — do not add up significant-set counts across collections",
+                "Pathway enrichment on an underpowered gene-level ranking inherits that noise; a significant NES with a leading edge of 3-4 weakly ranked genes is fragile and should be flagged rather than headlined"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "data.table",
+                "ggplot2",
+                "dplyr"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

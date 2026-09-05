@@ -1,0 +1,261 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T17:12:08.164Z",
+  "elapsedMs": 40795,
+  "outcome": "plan_submitted",
+  "planId": "pln-d4ae575b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering and DESeq2 differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is bulk RNA-seq unpaired 2-group design with the minimum practical replicate number (n=3/group) for a variance-based test — do not treat nominal p-values as if they came from a well-powered study",
+          "counts.csv has 7 columns but metadata.csv only describes 6 samples; identify and explicitly exclude/report the unmatched column rather than guessing its group",
+          "Use raw counts, not any pre-normalized values, as DESeq2 input; do not renormalize before feeding to DESeq2's own size-factor estimation",
+          "Do not filter genes post-hoc based on the DE result itself (e.g., filtering by fold-change before testing) — only pre-filter by count magnitude"
+        ],
+        "context": "Raw integer gene-level counts from salmon, 12000 genes x 7 sample columns in counts.csv; metadata.csv has 6 rows (one per sample) with a condition column marking 3 treated and 3 control. The mismatch between 7 count columns and 6 metadata rows must be resolved by an inner join on sample identifiers and reported, not assumed.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "pandas",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples in counts.csv, using metadata.csv to define group membership?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Must use DESeq2's native workflow (DESeqDataSetFromMatrix, DESeq(), results()) rather than a manual t-test, since dispersion shrinkage is what makes small-n bulk RNA-seq DE tractable"
+        ],
+        "acceptance_criteria": [
+          "Counts matrix (12000 genes x 6 samples used for the 3v3 comparison; note the 7th column/sample if present but unassigned in metadata must be explicitly excluded and reported, not silently dropped or silently included) is loaded and merged with metadata.csv on sample ID",
+          "Low-count genes are filtered (e.g., require count >=10 in at least 3 samples) before DESeq2 fitting, and the number of genes retained is reported",
+          "DESeq2 is run with condition (treated vs control) as the sole factor, using the Wald test and BH FDR correction",
+          "Output table has log2FoldChange, lfcSE, stat, pvalue, padj for every tested gene, written to a persisted results file",
+          "Number of genes significant at padj < 0.05 and at padj < 0.1 is reported explicitly, plus a shrunken LFC (apeglm or ashr) version of the effect sizes",
+          "A PCA or sample-distance plot is produced to confirm the 3 treated and 3 control samples separate as expected and to flag any outlier sample before it distorts the group comparison"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Small-sample confidence assessment for the DE call set",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 6 samples total, the permutation null has very few distinct balanced splits (10), so the empirical null distribution itself is coarse — report this limitation rather than treating the permutation p-value as exact",
+          "Leave-one-out with n=3 per group means at least one leave-one-out fit will compare 2 vs 3, which changes power asymmetrically; report per-fold group sizes alongside the results",
+          "Do not present the permutation-null hit count as a formal FDR correction — it is a robustness diagnostic, not a replacement for the BH procedure already applied in T1S1"
+        ],
+        "context": "This step directly answers the 'how confident can we be with three replicates per group' half of the research question. It reuses the DESeq2 fit/pipeline established in T1S1 but iterates it under leave-one-out and permutation resampling schemes appropriate for n=3 per arm.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy",
+          "itertools"
+        ],
+        "question": "How robust and reliable is the treated-vs-control DE gene list given only 3 replicates per group — what is the leave-one-out sensitivity of the significant gene set, and what does label-permutation say about the false-positive rate at this sample size?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical-robustness",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Must reuse the same gene filtering and DESeq2 model formula as T1S1 for comparability across leave-one-out and permutation runs"
+        ],
+        "acceptance_criteria": [
+          "Leave-one-out re-analysis: rerun the DESeq2 contrast 6 times, each time dropping one of the 6 samples (preserving at least 2 vs 3 or 2 vs 2 balance), and report what fraction of the padj<0.05 genes from T1S1 remain significant in at least 5 of 6 leave-one-out fits",
+          "A label-permutation null (all balanced 3-vs-3 relabelings of the 6 samples, up to the full set of C(6,3)/2=10 distinct splits) is run through the same DESeq2 pipeline, and the observed number of padj<0.05 genes is compared against the distribution of permuted-null hit counts to give an empirical sense of how many 'significant' genes would arise from label noise alone at this n",
+          "Report includes explicit statements about statistical power: the minimum detectable log2FC at 80% power for typical dispersion values estimated in T1S1, using the empirical or theoretical dispersion-power relationship (e.g., via RNASeqPower-style calculation or a documented approximation) — packages permitting; if no power-calculation package is available, this must be reported as a documented limitation, not fabricated",
+          "Final written summary explicitly states, in plain language, that with n=3 per group the study has limited power to detect anything but large effect sizes, and that some fraction of the nominally significant gene list is expected to be permutation-consistent with noise"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment of the DE gene list (WikiPathways, human)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Pathway gene sets use HGNC symbols; confirm the counts.csv gene identifier column is also HGNC symbol (per data profile) before joining — do not assume Ensembl IDs need mapping",
+          "Given n=3/group and correspondingly modest statistical power (per T1S2), the input DE list may be short; report if too few genes pass padj<0.05 to run a meaningful over-representation test, and fall back to a preranked GSEA using all tested genes' stat/log2FC if so"
+        ],
+        "context": "The environment holds a human WikiPathways GMT (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt) with HGNC gene symbols, matching the gene-symbol-indexed counts.csv and human liver tissue of this dataset.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "pandas"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Must use the human WikiPathways GMT specifically (not the mouse or rat file) since the dataset organism is Homo sapiens"
+        ],
+        "acceptance_criteria": [
+          "Confirms availability of the human WikiPathways GMT reference before use; if unavailable, reports the DE gene list ranked by padj/log2FC as the sole deliverable of this step and states the enrichment was skipped",
+          "If available, gene symbols from the DESeq2 results (T1S1) are matched against the WikiPathways human GMT gene sets (split on '%' to recover readable pathway names) and an over-representation or GSEA-style test is run separately on up- and down-regulated gene sets (padj<0.05 from T1S1)",
+          "Output table reports pathway name, WikiPathways ID, gene overlap count, and BH-adjusted enrichment p-value, written to a persisted results file",
+          "Report explicitly flags that with a modest DE list size (dependent on T1S1 output), pathway enrichment results should be treated as hypothesis-generating given the small-n upstream DE call"
+        ]
+      }
+    ],
+    "title": "Liver DE analysis: treated vs control (n=3/3)",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The input is a raw gene-level count matrix (12000 genes x 7 samples/columns, salmon-derived) with a 6x2 metadata table describing a 3-vs-3 treated/control design in human liver, unpaired, single batch. Given only 3 replicates per arm, the plan runs a standard DESeq2 workflow (size-factor normalization, dispersion shrinkage via the negative binomial GLM, Wald test with independent filtering and BH-FDR) since DESeq2's moderated dispersion estimation is specifically designed to borrow information across genes and stabilize estimates when per-group n is small. A dedicated power/sensitivity step quantifies what n=3 buys: it reports the detectable effect size at the achieved dispersion, flags the fraction of genes where the group difference is driven by a single outlier replicate (leave-one-out sensitivity of the DE call), and describes the FDR-BH result stability under label permutation given the small sample size — directly answering the 'how confident can we be' half of the question. A downstream WikiPathways enrichment step (human GMT set available in refs) contextualizes the DE gene list, and is described so it degrades gracefully (reports DE list only) if the pathway file cannot be joined by gene symbol for some reason at runtime. No translational/PK/immune modules are added since the research question is a plain DE + confidence question with no drug-target, biomarker-outcome, or immune angle specified."
+  },
+  "usage": {
+    "inputTokens": 43219,
+    "outputTokens": 3446,
+    "cacheCreationInputTokens": 43207,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver DE analysis: treated vs control (n=3/3)",
+          "analytical_narrative": "The input is a raw gene-level count matrix (12000 genes x 7 samples/columns, salmon-derived) with a 6x2 metadata table describing a 3-vs-3 treated/control design in human liver, unpaired, single batch. Given only 3 replicates per arm, the plan runs a standard DESeq2 workflow (size-factor normalization, dispersion shrinkage via the negative binomial GLM, Wald test with independent filtering and BH-FDR) since DESeq2's moderated dispersion estimation is specifically designed to borrow information across genes and stabilize estimates when per-group n is small. A dedicated power/sensitivity step quantifies what n=3 buys: it reports the detectable effect size at the achieved dispersion, flags the fraction of genes where the group difference is driven by a single outlier replicate (leave-one-out sensitivity of the DE call), and describes the FDR-BH result stability under label permutation given the small sample size — directly answering the 'how confident can we be' half of the question. A downstream WikiPathways enrichment step (human GMT set available in refs) contextualizes the DE gene list, and is described so it degrades gracefully (reports DE list only) if the pathway file cannot be joined by gene symbol for some reason at runtime. No translational/PK/immune modules are added since the research question is a plain DE + confidence question with no drug-target, biomarker-outcome, or immune angle specified.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering and DESeq2 differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples in counts.csv, using metadata.csv to define group membership?",
+              "acceptance_criteria": [
+                "Counts matrix (12000 genes x 6 samples used for the 3v3 comparison; note the 7th column/sample if present but unassigned in metadata must be explicitly excluded and reported, not silently dropped or silently included) is loaded and merged with metadata.csv on sample ID",
+                "Low-count genes are filtered (e.g., require count >=10 in at least 3 samples) before DESeq2 fitting, and the number of genes retained is reported",
+                "DESeq2 is run with condition (treated vs control) as the sole factor, using the Wald test and BH FDR correction",
+                "Output table has log2FoldChange, lfcSE, stat, pvalue, padj for every tested gene, written to a persisted results file",
+                "Number of genes significant at padj < 0.05 and at padj < 0.1 is reported explicitly, plus a shrunken LFC (apeglm or ashr) version of the effect sizes",
+                "A PCA or sample-distance plot is produced to confirm the 3 treated and 3 control samples separate as expected and to flag any outlier sample before it distorts the group comparison"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "pandas",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts from salmon, 12000 genes x 7 sample columns in counts.csv; metadata.csv has 6 rows (one per sample) with a condition column marking 3 treated and 3 control. The mismatch between 7 count columns and 6 metadata rows must be resolved by an inner join on sample identifiers and reported, not assumed.",
+              "caveats": [
+                "This is bulk RNA-seq unpaired 2-group design with the minimum practical replicate number (n=3/group) for a variance-based test — do not treat nominal p-values as if they came from a well-powered study",
+                "counts.csv has 7 columns but metadata.csv only describes 6 samples; identify and explicitly exclude/report the unmatched column rather than guessing its group",
+                "Use raw counts, not any pre-normalized values, as DESeq2 input; do not renormalize before feeding to DESeq2's own size-factor estimation",
+                "Do not filter genes post-hoc based on the DE result itself (e.g., filtering by fold-change before testing) — only pre-filter by count magnitude"
+              ],
+              "constraints": [
+                "Must use DESeq2's native workflow (DESeqDataSetFromMatrix, DESeq(), results()) rather than a manual t-test, since dispersion shrinkage is what makes small-n bulk RNA-seq DE tractable"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Small-sample confidence assessment for the DE call set",
+              "track": "T1",
+              "step_type": "statistical-robustness",
+              "question": "How robust and reliable is the treated-vs-control DE gene list given only 3 replicates per group — what is the leave-one-out sensitivity of the significant gene set, and what does label-permutation say about the false-positive rate at this sample size?",
+              "acceptance_criteria": [
+                "Leave-one-out re-analysis: rerun the DESeq2 contrast 6 times, each time dropping one of the 6 samples (preserving at least 2 vs 3 or 2 vs 2 balance), and report what fraction of the padj<0.05 genes from T1S1 remain significant in at least 5 of 6 leave-one-out fits",
+                "A label-permutation null (all balanced 3-vs-3 relabelings of the 6 samples, up to the full set of C(6,3)/2=10 distinct splits) is run through the same DESeq2 pipeline, and the observed number of padj<0.05 genes is compared against the distribution of permuted-null hit counts to give an empirical sense of how many 'significant' genes would arise from label noise alone at this n",
+                "Report includes explicit statements about statistical power: the minimum detectable log2FC at 80% power for typical dispersion values estimated in T1S1, using the empirical or theoretical dispersion-power relationship (e.g., via RNASeqPower-style calculation or a documented approximation) — packages permitting; if no power-calculation package is available, this must be reported as a documented limitation, not fabricated",
+                "Final written summary explicitly states, in plain language, that with n=3 per group the study has limited power to detect anything but large effect sizes, and that some fraction of the nominally significant gene list is expected to be permutation-consistent with noise"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy",
+                "itertools"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "context": "This step directly answers the 'how confident can we be with three replicates per group' half of the research question. It reuses the DESeq2 fit/pipeline established in T1S1 but iterates it under leave-one-out and permutation resampling schemes appropriate for n=3 per arm.",
+              "caveats": [
+                "With only 6 samples total, the permutation null has very few distinct balanced splits (10), so the empirical null distribution itself is coarse — report this limitation rather than treating the permutation p-value as exact",
+                "Leave-one-out with n=3 per group means at least one leave-one-out fit will compare 2 vs 3, which changes power asymmetrically; report per-fold group sizes alongside the results",
+                "Do not present the permutation-null hit count as a formal FDR correction — it is a robustness diagnostic, not a replacement for the BH procedure already applied in T1S1"
+              ],
+              "constraints": [
+                "Must reuse the same gene filtering and DESeq2 model formula as T1S1 for comparability across leave-one-out and permutation runs"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment of the DE gene list (WikiPathways, human)",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Confirms availability of the human WikiPathways GMT reference before use; if unavailable, reports the DE gene list ranked by padj/log2FC as the sole deliverable of this step and states the enrichment was skipped",
+                "If available, gene symbols from the DESeq2 results (T1S1) are matched against the WikiPathways human GMT gene sets (split on '%' to recover readable pathway names) and an over-representation or GSEA-style test is run separately on up- and down-regulated gene sets (padj<0.05 from T1S1)",
+                "Output table reports pathway name, WikiPathways ID, gene overlap count, and BH-adjusted enrichment p-value, written to a persisted results file",
+                "Report explicitly flags that with a modest DE list size (dependent on T1S1 output), pathway enrichment results should be treated as hypothesis-generating given the small-n upstream DE call"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "The environment holds a human WikiPathways GMT (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt) with HGNC gene symbols, matching the gene-symbol-indexed counts.csv and human liver tissue of this dataset.",
+              "caveats": [
+                "Pathway gene sets use HGNC symbols; confirm the counts.csv gene identifier column is also HGNC symbol (per data profile) before joining — do not assume Ensembl IDs need mapping",
+                "Given n=3/group and correspondingly modest statistical power (per T1S2), the input DE list may be short; report if too few genes pass padj<0.05 to run a meaningful over-representation test, and fall back to a preranked GSEA using all tested genes' stat/log2FC if so"
+              ],
+              "constraints": [
+                "Must use the human WikiPathways GMT specifically (not the mouse or rat file) since the dataset organism is Homo sapiens"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

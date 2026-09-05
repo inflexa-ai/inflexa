@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference almost exactly: DESeq2 with ~subject + condition, an omnibus LRT against ~subject, then three explicitly named pairwise Wald contrasts with control as the stated reference, ashr shrinkage (correctly justified over apeglm for the non-coefficient contrast), and BH at 0.05 with thresholds fixed in the test. QC is blind-VST PCA/distance heatmap/library sizes colored by subject and condition, the filter (>=10 counts in >=4 samples) is minimal and tied to the smallest group, and normalization stays inside the model. The only soft spots are that the outlier policy is 'flag' without a stated action, and the enrichment step, while methodologically sound (Wald-stat ranking, tested-gene universe, versioned Hallmark, 15-500 size window), was not asked for by the question. The report specification covers design, thresholds, tested/DE counts, versions, and the limited-df caveat of a 4-subject block."
+}

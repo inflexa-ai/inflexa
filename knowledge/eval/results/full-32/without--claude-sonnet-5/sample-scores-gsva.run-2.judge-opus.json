@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 2,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames this as a per-sample scoring question rather than a gene-level DE contrast: it normalizes and log-transforms (TMM or median-of-ratios, log2 CPM or vst) before GSVA on the Hallmark collection, then applies a limma moderated t-test on the 12 score vectors with BH correction, which matches the reference path. QC is partial: library sizes are computed and sample_01 is explicitly flagged, retained rather than dropped, and checked as a leverage point on top pathways, but there is no PCA or sample-distance clustering colored by condition before scoring. No low-count/expression filter is mentioned anywhere, which matters because unexpressed genes inflate the tied ranks GSVA works on. The contrast direction and unpaired n=6/6 structure are stated, but no explicit design formula or reference level is given, and the Hallmark collection is named without an MSigDB version or a min/max gene-set size window; package and collection versions are likewise absent from the reporting requirements."
+}

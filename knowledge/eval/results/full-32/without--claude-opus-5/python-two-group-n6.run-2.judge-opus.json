@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly maps the unpaired single-batch 6v6 design onto PyDESeq2 with ~condition, an explicit control reference level, and a stated lesional-vs-control contrast, honoring the Python-only constraint throughout (gseapy/decoupler, no R). QC is exemplary and dataset-specific: library sizes with the numeric ratio for sample_01, size factors, VST PCA, correlation heatmap, RLE, and a pre-declared KEEP/FLAG adjudication rule plus a full leave-sample_01-out sensitivity refit. Normalization is correctly left inside the model (median-of-ratios), with an explicit prohibition on a library-size covariate; the >=10 counts in >=6 samples filter is standard and justified by smallest group size, though marginally stricter than a minimal filter. Weaknesses: BH is only implied via 'padj' rather than named, an additional post hoc |log2FC|>1 cut is layered on the FDR call, and shrunken LFCs are reserved for ranking/plots rather than the reported effect size; the enrichment step names the human hallmark collection and fixes a seed but never states its MSigDB version and uses a 10-500 size window, and software versions are not required in the report."
+}

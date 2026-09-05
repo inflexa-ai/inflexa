@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 2,
+    "qc_present": 1,
+    "low_count_filter": 0,
+    "normalization": 8,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly diagnoses that n=1 per group makes dispersion inestimable, but then does precisely what the design forbids: it invents a BCV of 0.4 and reports exactTest p-values and BH-adjusted FDRs as the primary result, and even fixes DESeq2's dispersion to match, so the caveat text does not undo the false inferential output; it also never names the replication level that would support a test. There is no sample-structure QC (library sizes, count distributions, sample distances) and no low-count filter is specified at all, which matters more than usual when a single sample's zeros drive the ranking. Normalization is handled correctly inside the models (TMM via calcNormFactors, median-of-ratios size factors) and is the plan's strongest element; the contrast is a bare two-group comparison with no stated reference level, no shrinkage of the reported logFCs, and thresholds applied to invalid p-values. Enrichment names WikiPathways human with an explicit 12000-gene background but no version or gene-set size window, and it inherits an FDR<0.05 selection from a test that should not exist, with a top-100 |logFC| fallback that treats fold change as significance. Reporting states the method, design, and caveats but omits versions and the counts of genes tested and called significant."
+}

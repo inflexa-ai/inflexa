@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every core element: DESeq2 Wald on raw counts with design ~condition, control releveled explicitly and the contrast written as the triple, median-of-ratios (and TMM in the edgeR check) estimated inside the model, a minimal >=10-in->=3-samples filter tied to the smallest group, BH at 0.05 with apeglm shrinkage and no alpha loosening. The blind-VST PCA, distance heatmap and library sizes precede the test with an explicit no-drop-at-QC policy, though a specific rule for a shallow library is not spelled out. Enrichment was not asked for and the reference treats it as unwarranted, but the plan executes it correctly (full Wald-ranked list, named human collections with version reporting, 15-500 window, tested-gene universe, seed), so it is only mildly penalized for scope. The report section is complete and places the quantified power statement before the gene tables as the question demands."
+}

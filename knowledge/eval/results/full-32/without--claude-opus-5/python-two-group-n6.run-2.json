@@ -1,0 +1,492 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "python-two-group-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T17:47:27.657Z",
+  "elapsedMs": 117631,
+  "outcome": "plan_submitted",
+  "planId": "pln-b264e4b7",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization and sample_01 outlier adjudication",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A 4x depth deficit reduces sample_01's precision even when its profile is normal — DESeq2 dispersion estimation accounts for this, but the sample contributes less information",
+          "n=6 per group means PCA structure can be driven by one sample; do not over-read cluster separation",
+          "Do not use library size as a covariate in the design — size factors already model it"
+        ],
+        "context": "Human skin bulk RNA-seq, atopic dermatitis lesional vs control, 6 vs 6, unpaired, single batch. The profile flags sample_01 as ~4x below median library size. Depth alone is handled by DESeq2 size factors; a distorted composition is not, so the two cases must be told apart before any DE claim is made.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "pydeseq2",
+          "scipy",
+          "matplotlib",
+          "seaborn",
+          "scikit-learn"
+        ],
+        "question": "Is sample_01 in counts.csv merely shallow (low depth but normal expression profile) or a genuine profile outlier that would distort the AD lesional vs control contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Python only — no R, no rpy2 calls into R packages",
+          "Use pydeseq2 for size factors and normalized/variance-stabilized counts",
+          "Do NOT drop sample_01 in this step — this step only characterizes it",
+          "State the numeric library size of sample_01 and the cohort median, not just 'about 4x'",
+          "Report condition level names exactly as they appear in metadata.csv",
+          "Record the low-count filter (>=10 counts in >=6 samples) and how many of the 12,000 genes survive"
+        ],
+        "description": "Load /eval-full-32-without-python-two-group-n6-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer Salmon counts, first column = gene symbol) and /eval-full-32-without-python-two-group-n6-2/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample IDs match between the two files and record the condition levels verbatim. Produce: (a) per-sample library size (total counts) and detected-gene count, with sample_01 marked and its ratio to the cohort median stated numerically; (b) DESeq2 median-of-ratios size factors from PyDESeq2 — report whether sample_01's size factor tracks its raw depth, which is the signature of pure shallowness; (c) a variance-stabilized / log-CPM matrix, PCA (PC1-PC3, coloured by condition, labelled by sample) and a sample-sample Spearman/Pearson correlation heatmap, stating explicitly whether sample_01 separates by condition (fine) or sits apart from both groups (suspicious); (d) relative log expression (RLE) boxplots per sample after normalization; (e) a written adjudication: KEEP (shallow only — the NB model with size factors absorbs depth) or FLAG (profile outlier — downstream sensitivity analysis becomes primary). Write the normalized matrix, size factors, per-sample QC table and the adjudication verdict to disk for downstream steps. Low-count filtering rule to apply and record: keep genes with at least 10 counts in at least 6 samples (smallest group size).",
+        "acceptance_criteria": [
+          "Per-sample table with library size, detected genes and DESeq2 size factor for all 12 samples, sample_01 identifiable",
+          "PCA plot and correlation heatmap saved, with sample_01 labelled",
+          "Explicit written verdict: sample_01 KEEP (shallow only) or FLAG (profile outlier), with the evidence that supports it",
+          "Number of genes passing the low-count filter reported out of 12,000",
+          "Normalized/VST matrix and size factors persisted for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression with sample_01 sensitivity",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6 the FDR set can be small or empty — report that plainly rather than loosening thresholds to manufacture hits",
+          "Genes appearing only in fit B may be power artefacts, not new biology; do not present them as discoveries",
+          "Shrunken LFCs are for ranking and visualization; use unshrunken stats for the significance call, and say which is which"
+        ],
+        "context": "12,000 gene symbols, 12 samples, unpaired two-group design, single batch, so the design is ~condition with no covariates. n=6 vs 6 gives modest power; effect sizes will be better estimated than individual p-values.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "pydeseq2",
+          "scipy",
+          "statsmodels",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which genes are differentially expressed between AD lesional and control skin, and how many of those calls survive removing the shallow sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only — pydeseq2, not R DESeq2",
+          "Set the control condition as the reference level explicitly so log2FC sign means lesional-relative-to-control",
+          "Run BOTH the all-12 fit and the sample_01-excluded fit; neither may be skipped",
+          "If T1S1 returned FLAG for sample_01, present fit B as primary and say so; otherwise fit A is primary",
+          "Report DE counts at padj<0.05 alone and at padj<0.05 & |log2FC|>1 separately",
+          "Persist both shrunken-LFC-ranked full gene lists (all genes, not only significant) for GSEA"
+        ],
+        "description": "Run PyDESeq2 on the filtered count matrix with design ~condition, contrast lesional vs control (use the level names read from metadata.csv; set control as the reference level explicitly). Fit A = all 12 samples (primary, unless T1S1 returned FLAG). Fit B = sensitivity, sample_01 excluded (5 vs 6). For each fit report the full results table (baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) plus LFC shrinkage for ranking, sorted by padj. Call DE at padj < 0.05 and |log2FC| > 1, and also report the padj<0.05-only count so the effect-size cut is transparent. Then compare A and B directly: number of DE genes in each, the overlap, genes gained/lost, and the Spearman correlation of the shrunken log2FC vectors between the two fits — this is the quantitative answer to 'how much does the shallow sample matter'. Produce a volcano plot and a heatmap of the top ~40 DE genes on VST counts with sample_01 marked. Save the shrunken-LFC-ranked full gene list from BOTH fits for the pathway step. Report dispersion-fit and p-value-histogram diagnostics; a non-uniform null histogram must be flagged.",
+        "acceptance_criteria": [
+          "Full DESeq2 results tables written for fit A (n=12) and fit B (n=11, sample_01 removed)",
+          "Explicit statement of which fit is primary and why, referencing T1S1's verdict",
+          "Overlap statistics between A and B DE sets, plus Spearman correlation of their shrunken log2FCs",
+          "Volcano plot and top-DE-gene heatmap saved, sample_01 annotated in the heatmap",
+          "p-value histogram and dispersion plot saved and commented on",
+          "Named top up- and down-regulated genes with their log2FC and padj"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark GSEA and per-sample hallmark scoring",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The 12,000-symbol matrix is a subset of the transcriptome; hallmark sets with poor coverage give NES values that should not be interpreted",
+          "GSEA FDR q<0.25 is exploratory by convention — label it as such, do not present it as significance",
+          "Hallmark sets overlap in membership; several correlated hits are not several independent findings",
+          "ssGSEA scores are within-cohort relative values and are not comparable to any external dataset"
+        ],
+        "context": "Downstream of the DESeq2 contrast. The hallmark collection is 50 broad, coherent biological states; it is the right granularity for a two-group disease-vs-control skin contrast at n=6. Ranked GSEA is preferred over over-representation of a thresholded list because per-gene power at n=6 is limited.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "gseapy",
+          "decoupler",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are coordinately shifted in AD lesional versus control skin, and are those calls robust to the shallow sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only — gseapy and/or decoupler; no clusterProfiler, no fgsea, no R",
+          "Use the HUMAN hallmark gene sets (Homo sapiens, HGNC symbols) — the dataset is human skin; using the mouse collection is a hard error",
+          "Run prerank on the full ranked gene list from T1S2, not on a thresholded DE subset",
+          "Run the enrichment on BOTH the fit A and fit B rankings and compare",
+          "Report per-hallmark set coverage (members found / set size) alongside every NES",
+          "Set a fixed random seed so permutation results are reproducible"
+        ],
+        "description": "Run pre-ranked gene set enrichment against the human hallmark collection (MSigDB hallmark gene sets for Homo sapiens, HGNC symbols, 50 sets — resolve the reference from the environment's pathway resources; the human hallmark GMT, not the mouse one) using gseapy prerank on the shrunken-log2FC ranking from T1S2. Do this for BOTH rankings: fit A (all 12 samples, primary) and fit B (sample_01 excluded), then report which hallmarks are significant in both, in one only, and how their NES values agree. Use 1000+ permutations, min set size 10, max 500, and report for each hallmark the NES, nominal p, FDR q, leading-edge genes, and the number of set members actually present in the 12,000-symbol matrix — coverage must be reported because the matrix is a subset and low overlap makes an NES unreliable. Separately, compute per-sample hallmark activity scores from the VST/normalized matrix (gseapy ssgsea or decoupler enrichment scoring) and plot a sample-by-hallmark heatmap annotated by condition with sample_01 marked, so pathway shifts can be inspected sample-wise rather than only as a group statistic. Report the top enriched hallmarks in both directions with their leading-edge genes, and state whether AD-expected biology (inflammatory response, interferon, complement, allograft-rejection-type immune signatures, keratinocyte proliferation) appears — without forcing the narrative if it does not.",
+        "acceptance_criteria": [
+          "Hallmark GSEA result tables for both the all-12 and sample_01-excluded rankings, with NES, p, FDR q, leading edge and set coverage",
+          "Explicit list of hallmarks significant at FDR<0.25 (and separately FDR<0.05) in both rankings versus one only",
+          "Per-sample hallmark score heatmap saved, annotated by condition with sample_01 marked",
+          "Named top hallmarks in each direction with leading-edge genes",
+          "If the hallmark reference is unavailable at run time, the step reports that explicitly and falls back to the human GO biological process collection, stating the substitution — it must not silently use a different organism"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark GSEA (Python)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq count matrix from Salmon (12,000 gene symbols x 12 samples) with an unpaired 6 lesional vs 6 control design in human skin. The research question has two parts — which genes change, and which hallmark pathways change — plus an explicit data-quality flag: sample_01 has a library size ~4x below the median. Everything is written in Python per the user constraint, so PyDESeq2 replaces DESeq2 and gseapy/decoupler replace fgsea/clusterProfiler.\n\nTrack 1 handles the shallow-library concern before it can distort the contrast. T1S1 quantifies library sizes, DESeq2 median-of-ratios size factors, and sample-sample relationships (PCA on VST-transformed counts, correlation heatmap, RLE) to decide empirically whether sample_01 is merely shallow (low depth, normal profile — keep, since the negative binomial model with size factors handles depth) or an outlier in profile (systematically distorted — then it must be down-weighted or excluded). That decision is made from evidence, not asserted. T1S2 then runs the primary DESeq2 contrast lesional vs control on all 12 samples, and, critically, re-runs the identical contrast with sample_01 excluded (n=5 vs 6) as a sensitivity analysis — the overlap of the two DE gene sets is the honest measure of how much the shallow sample drives any result. The full-12 fit is primary unless T1S1 showed profile-level distortion; either way both are reported side by side.\n\nTrack 2 takes the DE result to pathways. T2S1 runs hallmark GSEA on the full shrunken-LFC-ranked gene list (not a thresholded gene set), which is the right test at n=6 per group where per-gene power is limited, and repeats it on the sensitivity ranking so that any hallmark claim can be checked against sample_01's influence. A per-sample hallmark score (ssGSEA/decoupler on normalized counts) is added so pathway calls can be inspected sample-by-sample rather than only as a group summary — this also makes sample_01's position in pathway space visible.\n\nCaveats carried throughout: n=6 vs 6 unpaired with a single batch gives modest power and no way to separate biological from technical variation beyond depth; the matrix is 12,000 symbols, i.e. already filtered or a subset, so hallmark set coverage must be reported rather than assumed complete; and 'treated' here means AD lesional skin, an observational disease-vs-control contrast, not a drug intervention, so nothing causal follows."
+  },
+  "usage": {
+    "inputTokens": 145667,
+    "outputTokens": 10271,
+    "cacheCreationInputTokens": 84287,
+    "cacheReadInputTokens": 61344,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "gseapy",
+          "decoupler",
+          "scanpy",
+          "statsmodels",
+          "matplotlib",
+          "seaborn",
+          "blitzgsea"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark GSEA (Python)",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq count matrix from Salmon (12,000 gene symbols x 12 samples) with an unpaired 6 lesional vs 6 control design in human skin. The research question has two parts — which genes change, and which hallmark pathways change — plus an explicit data-quality flag: sample_01 has a library size ~4x below the median. Everything is written in Python per the user constraint, so PyDESeq2 replaces DESeq2 and gseapy/decoupler replace fgsea/clusterProfiler.\n\nTrack 1 handles the shallow-library concern before it can distort the contrast. T1S1 quantifies library sizes, DESeq2 median-of-ratios size factors, and sample-sample relationships (PCA on VST-like transformed counts, correlation heatmap, Cook's/outlier diagnostics) to decide empirically whether sample_01 is merely shallow (low depth, normal profile — keep, since the negative binomial model with size factors handles depth) or an outlier in profile (systematically distorted — then it must be down-weighted or excluded). That decision is made from evidence, not asserted. T1S2 then runs the primary DESeq2 contrast lesional vs control on all 12 samples, and, critically, re-runs the identical contrast with sample_01 excluded (n=5 vs 6) as a sensitivity analysis — the overlap of the two DE gene sets is the honest measure of how much the shallow sample drives any result. The full-12 fit is the primary result unless T1S1 showed profile-level distortion; either way both are reported side by side.\n\nTrack 2 takes the DE result to pathways. T2S1 runs hallmark GSEA on the full shrunken-LFC-ranked gene list (not a thresholded gene set), which is the right test at n=6 per group where per-gene power is limited, and repeats it on the sensitivity ranking so that any hallmark claim can be checked against sample_01's influence. A per-sample hallmark score (ssGSEA/decoupler on normalized counts) is added so pathway calls can be inspected sample-by-sample rather than only as a group summary — this also makes sample_01's position in pathway space visible.\n\nCaveats carried throughout: n=6 vs 6 unpaired with a single batch gives modest power and no way to separate biological from technical variation beyond depth; the matrix is 12,000 symbols, i.e. already filtered or a subset, so absolute pathway coverage per hallmark set must be reported rather than assumed complete; and 'treated' here means AD lesional skin, an observational disease-vs-control contrast, not a drug intervention, so nothing causal follows.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization and sample_01 outlier adjudication",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is sample_01 in counts.csv merely shallow (low depth but normal expression profile) or a genuine profile outlier that would distort the AD lesional vs control contrast?",
+              "description": "Load /eval-full-32-without-python-two-group-n6-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer Salmon counts, first column = gene symbol) and /eval-full-32-without-python-two-group-n6-2/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample IDs match between the two files and record the condition levels verbatim. Produce: (a) per-sample library size (total counts) and detected-gene count, with sample_01 marked and its ratio to the cohort median stated numerically; (b) DESeq2 median-of-ratios size factors from PyDESeq2 — report whether sample_01's size factor tracks its raw depth, which is the signature of pure shallowness; (c) a variance-stabilized / log-CPM matrix, PCA (PC1-PC3, coloured by condition, labelled by sample) and a sample-sample Spearman/Pearson correlation heatmap, stating explicitly whether sample_01 separates by condition (fine) or sits apart from both groups (suspicious); (d) relative log expression (RLE) boxplots per sample after normalization; (e) a written adjudication: KEEP (shallow only — the NB model with size factors absorbs depth) or FLAG (profile outlier — downstream sensitivity analysis becomes primary). Write the normalized matrix, size factors, per-sample QC table and the adjudication verdict to disk for downstream steps. Low-count filtering rule to apply and record: keep genes with at least 10 counts in at least 6 samples (smallest group size).",
+              "question_note": "",
+              "context": "Human skin bulk RNA-seq, atopic dermatitis lesional vs control, 6 vs 6, unpaired, single batch. The profile flags sample_01 as ~4x below median library size. Depth alone is handled by DESeq2 size factors; a distorted composition is not, so the two cases must be told apart before any DE claim is made.",
+              "constraints": [
+                "Python only — no R, no rpy2 calls into R packages",
+                "Use pydeseq2 for size factors and variance-stabilizing/normalized counts",
+                "Do NOT drop sample_01 in this step — this step only characterizes it",
+                "State the numeric library size of sample_01 and the cohort median, not just 'about 4x'",
+                "Report condition level names exactly as they appear in metadata.csv",
+                "Record the low-count filter (>=10 counts in >=6 samples) and how many of the 12,000 genes survive"
+              ],
+              "acceptance_criteria": [
+                "Per-sample table with library size, detected genes and DESeq2 size factor for all 12 samples, sample_01 identifiable",
+                "PCA plot and correlation heatmap saved, with sample_01 labelled",
+                "Explicit written verdict: sample_01 KEEP (shallow only) or FLAG (profile outlier), with the evidence that supports it",
+                "Number of genes passing the low-count filter reported out of 12,000",
+                "Normalized/VST matrix and size factors persisted for downstream steps"
+              ],
+              "caveats": [
+                "A 4x depth deficit reduces sample_01's precision even when its profile is normal — DESeq2 dispersion estimation accounts for this, but the sample contributes less information",
+                "n=6 per group means PCA structure can be driven by one sample; do not over-read cluster separation",
+                "Do not use library size as a covariate in the design — size factors already model it"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "scipy",
+                "matplotlib",
+                "seaborn",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: lesional vs control, with sample_01 sensitivity",
+              "question": "Which genes are differentially expressed between AD lesional and control skin, and how many of those calls survive removing the shallow sample_01?",
+              "description": "Run PyDESeq2 on the filtered count matrix with design ~condition, contrast lesional vs control (use the level names read from metadata.csv; set control as the reference level explicitly). Fit A = all 12 samples (primary, unless T1S1 returned FLAG). Fit B = sensitivity, sample_01 excluded (5 vs 6). For each fit report the full results table (baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) plus apeglm/normal LFC shrinkage for ranking, sorted by padj. Call DE at padj < 0.05 and |log2FC| > 1, and also report the padj<0.05-only count so the effect-size cut is transparent. Then compare A and B directly: number of DE genes in each, the overlap, genes gained/lost, and the Spearman correlation of the shrunken log2FC vectors between the two fits — this is the quantitative answer to 'how much does the shallow sample matter'. Produce a volcano plot and a heatmap of the top ~40 DE genes on VST counts with sample_01 marked. Save the shrunken-LFC-ranked gene list from BOTH fits for the pathway step. Report dispersion-fit and p-value-histogram diagnostics; a non-uniform null histogram must be flagged.",
+              "context": "12,000 gene symbols, 12 samples, unpaired two-group design, single batch, so the design is ~condition with no covariates. n=6 vs 6 gives modest power; effect sizes will be better estimated than individual p-values.",
+              "constraints": [
+                "Python only — pydeseq2, not R DESeq2",
+                "Set the control condition as the reference level explicitly so log2FC sign means lesional-relative-to-control",
+                "Run BOTH the all-12 fit and the sample_01-excluded fit; neither may be skipped",
+                "If T1S1 returned FLAG for sample_01, present fit B as primary and say so; otherwise fit A is primary",
+                "Report DE counts at padj<0.05 alone and at padj<0.05 & |log2FC|>1 separately",
+                "Persist both shrunken-LFC-ranked full gene lists (all genes, not only significant) for GSEA"
+              ],
+              "acceptance_criteria": [
+                "Full DESeq2 results tables written for fit A (n=12) and fit B (n=11, sample_01 removed)",
+                "Explicit statement of which fit is primary and why, referencing T1S1's verdict",
+                "Overlap statistics between A and B DE sets, plus Spearman correlation of their shrunken log2FCs",
+                "Volcano plot and top-DE-gene heatmap saved, sample_01 annotated in the heatmap",
+                "p-value histogram and dispersion plot saved and commented on",
+                "Named top up- and down-regulated genes with their log2FC and padj"
+              ],
+              "caveats": [
+                "With 6 vs 6 the FDR set can be small or empty — report that plainly rather than loosening thresholds to manufacture hits",
+                "Genes appearing only in fit B may be power gains, not new biology; do not present them as discoveries",
+                "Shrunken LFCs are for ranking and visualization; use unshrunken stats for the significance call, and say which is which"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "scipy",
+                "statsmodels",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark GSEA and per-sample hallmark scoring",
+              "question": "Which of the 50 MSigDB hallmark pathways are coordinately shifted in AD lesional versus control skin, and are those calls robust to the shallow sample_01?",
+              "description": "Run pre-ranked gene set enrichment against the human hallmark collection (MSigDB hallmark gene sets for Homo sapiens, HGNC symbols, 50 sets — resolve the reference from the environment's pathway resources; the human hallmark GMT, not the mouse one) using gseapy prerank on the shrunken-log2FC ranking from T1S2. Do this for BOTH rankings: fit A (all 12 samples, primary) and fit B (sample_01 excluded), then report which hallmarks are significant in both, in one only, and how their NES values agree. Use 1000+ permutations, min set size 10, max 500, and report for each hallmark the NES, nominal p, FDR q, leading-edge genes, and the number of set members actually present in the 12,000-symbol matrix — coverage must be reported because the matrix is a subset and low overlap makes an NES unreliable. Separately, compute per-sample hallmark activity scores from the VST/normalized matrix (gseapy ssgsea or decoupler's enrichment scoring) and plot a sample-by-hallmark heatmap annotated by condition with sample_01 marked, so pathway shifts can be inspected sample-wise rather than only as a group statistic. Report the top enriched hallmarks in both directions with their leading-edge genes, and state whether AD-expected biology (e.g. inflammatory/interferon/complement/allograft-rejection type signatures, keratinocyte proliferation) appears — without forcing the narrative if it does not.",
+              "context": "Downstream of the DESeq2 contrast. The hallmark collection is 50 broad, coherent biological states; it is the right granularity for a two-group disease-vs-control skin contrast at n=6. Ranked GSEA is preferred over over-representation of a thresholded list because per-gene power at n=6 is limited.",
+              "constraints": [
+                "Python only — gseapy and/or decoupler; no clusterProfiler, no fgsea, no R",
+                "Use the HUMAN hallmark gene sets (Homo sapiens, HGNC symbols) — the dataset is human skin; using the mouse collection is a hard error",
+                "Run prerank on the full ranked gene list from T1S2, not on a thresholded DE subset",
+                "Run the enrichment on BOTH the fit A and fit B rankings and compare",
+                "Report per-hallmark set coverage (members found / set size) alongside every NES",
+                "Set a fixed random seed so permutation results are reproducible"
+              ],
+              "acceptance_criteria": [
+                "Hallmark GSEA result tables for both the all-12 and sample_01-excluded rankings, with NES, p, FDR q, leading edge and set coverage",
+                "Explicit list of hallmarks significant at FDR<0.25 (and separately FDR<0.05) in both rankings versus one only",
+                "Per-sample hallmark score heatmap saved, annotated by condition with sample_01 marked",
+                "Named top hallmarks in each direction with leading-edge genes",
+                "If the hallmark reference is unavailable in the environment, the step reports that explicitly and falls back to the human GO biological process collection, stating the substitution — it must not silently use a different organism"
+              ],
+              "caveats": [
+                "The 12,000-symbol matrix is a subset of the transcriptome; hallmark sets with poor coverage give NES values that should not be interpreted",
+                "GSEA FDR q<0.25 is exploratory by convention — label it as such, do not present it as significance",
+                "Hallmark sets overlap in membership; several correlated hits are not several independent findings",
+                "ssGSEA scores are within-cohort relative values and are not comparable to any external dataset"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "gseapy",
+                "decoupler",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark GSEA (Python)",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq count matrix from Salmon (12,000 gene symbols x 12 samples) with an unpaired 6 lesional vs 6 control design in human skin. The research question has two parts — which genes change, and which hallmark pathways change — plus an explicit data-quality flag: sample_01 has a library size ~4x below the median. Everything is written in Python per the user constraint, so PyDESeq2 replaces DESeq2 and gseapy/decoupler replace fgsea/clusterProfiler.\n\nTrack 1 handles the shallow-library concern before it can distort the contrast. T1S1 quantifies library sizes, DESeq2 median-of-ratios size factors, and sample-sample relationships (PCA on VST-transformed counts, correlation heatmap, RLE) to decide empirically whether sample_01 is merely shallow (low depth, normal profile — keep, since the negative binomial model with size factors handles depth) or an outlier in profile (systematically distorted — then it must be down-weighted or excluded). That decision is made from evidence, not asserted. T1S2 then runs the primary DESeq2 contrast lesional vs control on all 12 samples, and, critically, re-runs the identical contrast with sample_01 excluded (n=5 vs 6) as a sensitivity analysis — the overlap of the two DE gene sets is the honest measure of how much the shallow sample drives any result. The full-12 fit is primary unless T1S1 showed profile-level distortion; either way both are reported side by side.\n\nTrack 2 takes the DE result to pathways. T2S1 runs hallmark GSEA on the full shrunken-LFC-ranked gene list (not a thresholded gene set), which is the right test at n=6 per group where per-gene power is limited, and repeats it on the sensitivity ranking so that any hallmark claim can be checked against sample_01's influence. A per-sample hallmark score (ssGSEA/decoupler on normalized counts) is added so pathway calls can be inspected sample-by-sample rather than only as a group summary — this also makes sample_01's position in pathway space visible.\n\nCaveats carried throughout: n=6 vs 6 unpaired with a single batch gives modest power and no way to separate biological from technical variation beyond depth; the matrix is 12,000 symbols, i.e. already filtered or a subset, so hallmark set coverage must be reported rather than assumed complete; and 'treated' here means AD lesional skin, an observational disease-vs-control contrast, not a drug intervention, so nothing causal follows.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization and sample_01 outlier adjudication",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is sample_01 in counts.csv merely shallow (low depth but normal expression profile) or a genuine profile outlier that would distort the AD lesional vs control contrast?",
+              "description": "Load /eval-full-32-without-python-two-group-n6-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer Salmon counts, first column = gene symbol) and /eval-full-32-without-python-two-group-n6-2/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample IDs match between the two files and record the condition levels verbatim. Produce: (a) per-sample library size (total counts) and detected-gene count, with sample_01 marked and its ratio to the cohort median stated numerically; (b) DESeq2 median-of-ratios size factors from PyDESeq2 — report whether sample_01's size factor tracks its raw depth, which is the signature of pure shallowness; (c) a variance-stabilized / log-CPM matrix, PCA (PC1-PC3, coloured by condition, labelled by sample) and a sample-sample Spearman/Pearson correlation heatmap, stating explicitly whether sample_01 separates by condition (fine) or sits apart from both groups (suspicious); (d) relative log expression (RLE) boxplots per sample after normalization; (e) a written adjudication: KEEP (shallow only — the NB model with size factors absorbs depth) or FLAG (profile outlier — downstream sensitivity analysis becomes primary). Write the normalized matrix, size factors, per-sample QC table and the adjudication verdict to disk for downstream steps. Low-count filtering rule to apply and record: keep genes with at least 10 counts in at least 6 samples (smallest group size).",
+              "context": "Human skin bulk RNA-seq, atopic dermatitis lesional vs control, 6 vs 6, unpaired, single batch. The profile flags sample_01 as ~4x below median library size. Depth alone is handled by DESeq2 size factors; a distorted composition is not, so the two cases must be told apart before any DE claim is made.",
+              "constraints": [
+                "Python only — no R, no rpy2 calls into R packages",
+                "Use pydeseq2 for size factors and normalized/variance-stabilized counts",
+                "Do NOT drop sample_01 in this step — this step only characterizes it",
+                "State the numeric library size of sample_01 and the cohort median, not just 'about 4x'",
+                "Report condition level names exactly as they appear in metadata.csv",
+                "Record the low-count filter (>=10 counts in >=6 samples) and how many of the 12,000 genes survive"
+              ],
+              "acceptance_criteria": [
+                "Per-sample table with library size, detected genes and DESeq2 size factor for all 12 samples, sample_01 identifiable",
+                "PCA plot and correlation heatmap saved, with sample_01 labelled",
+                "Explicit written verdict: sample_01 KEEP (shallow only) or FLAG (profile outlier), with the evidence that supports it",
+                "Number of genes passing the low-count filter reported out of 12,000",
+                "Normalized/VST matrix and size factors persisted for downstream steps"
+              ],
+              "caveats": [
+                "A 4x depth deficit reduces sample_01's precision even when its profile is normal — DESeq2 dispersion estimation accounts for this, but the sample contributes less information",
+                "n=6 per group means PCA structure can be driven by one sample; do not over-read cluster separation",
+                "Do not use library size as a covariate in the design — size factors already model it"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "scipy",
+                "matplotlib",
+                "seaborn",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression with sample_01 sensitivity",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between AD lesional and control skin, and how many of those calls survive removing the shallow sample_01?",
+              "description": "Run PyDESeq2 on the filtered count matrix with design ~condition, contrast lesional vs control (use the level names read from metadata.csv; set control as the reference level explicitly). Fit A = all 12 samples (primary, unless T1S1 returned FLAG). Fit B = sensitivity, sample_01 excluded (5 vs 6). For each fit report the full results table (baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) plus LFC shrinkage for ranking, sorted by padj. Call DE at padj < 0.05 and |log2FC| > 1, and also report the padj<0.05-only count so the effect-size cut is transparent. Then compare A and B directly: number of DE genes in each, the overlap, genes gained/lost, and the Spearman correlation of the shrunken log2FC vectors between the two fits — this is the quantitative answer to 'how much does the shallow sample matter'. Produce a volcano plot and a heatmap of the top ~40 DE genes on VST counts with sample_01 marked. Save the shrunken-LFC-ranked full gene list from BOTH fits for the pathway step. Report dispersion-fit and p-value-histogram diagnostics; a non-uniform null histogram must be flagged.",
+              "context": "12,000 gene symbols, 12 samples, unpaired two-group design, single batch, so the design is ~condition with no covariates. n=6 vs 6 gives modest power; effect sizes will be better estimated than individual p-values.",
+              "constraints": [
+                "Python only — pydeseq2, not R DESeq2",
+                "Set the control condition as the reference level explicitly so log2FC sign means lesional-relative-to-control",
+                "Run BOTH the all-12 fit and the sample_01-excluded fit; neither may be skipped",
+                "If T1S1 returned FLAG for sample_01, present fit B as primary and say so; otherwise fit A is primary",
+                "Report DE counts at padj<0.05 alone and at padj<0.05 & |log2FC|>1 separately",
+                "Persist both shrunken-LFC-ranked full gene lists (all genes, not only significant) for GSEA"
+              ],
+              "acceptance_criteria": [
+                "Full DESeq2 results tables written for fit A (n=12) and fit B (n=11, sample_01 removed)",
+                "Explicit statement of which fit is primary and why, referencing T1S1's verdict",
+                "Overlap statistics between A and B DE sets, plus Spearman correlation of their shrunken log2FCs",
+                "Volcano plot and top-DE-gene heatmap saved, sample_01 annotated in the heatmap",
+                "p-value histogram and dispersion plot saved and commented on",
+                "Named top up- and down-regulated genes with their log2FC and padj"
+              ],
+              "caveats": [
+                "With 6 vs 6 the FDR set can be small or empty — report that plainly rather than loosening thresholds to manufacture hits",
+                "Genes appearing only in fit B may be power artefacts, not new biology; do not present them as discoveries",
+                "Shrunken LFCs are for ranking and visualization; use unshrunken stats for the significance call, and say which is which"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "scipy",
+                "statsmodels",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark GSEA and per-sample hallmark scoring",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are coordinately shifted in AD lesional versus control skin, and are those calls robust to the shallow sample_01?",
+              "description": "Run pre-ranked gene set enrichment against the human hallmark collection (MSigDB hallmark gene sets for Homo sapiens, HGNC symbols, 50 sets — resolve the reference from the environment's pathway resources; the human hallmark GMT, not the mouse one) using gseapy prerank on the shrunken-log2FC ranking from T1S2. Do this for BOTH rankings: fit A (all 12 samples, primary) and fit B (sample_01 excluded), then report which hallmarks are significant in both, in one only, and how their NES values agree. Use 1000+ permutations, min set size 10, max 500, and report for each hallmark the NES, nominal p, FDR q, leading-edge genes, and the number of set members actually present in the 12,000-symbol matrix — coverage must be reported because the matrix is a subset and low overlap makes an NES unreliable. Separately, compute per-sample hallmark activity scores from the VST/normalized matrix (gseapy ssgsea or decoupler enrichment scoring) and plot a sample-by-hallmark heatmap annotated by condition with sample_01 marked, so pathway shifts can be inspected sample-wise rather than only as a group statistic. Report the top enriched hallmarks in both directions with their leading-edge genes, and state whether AD-expected biology (inflammatory response, interferon, complement, allograft-rejection-type immune signatures, keratinocyte proliferation) appears — without forcing the narrative if it does not.",
+              "context": "Downstream of the DESeq2 contrast. The hallmark collection is 50 broad, coherent biological states; it is the right granularity for a two-group disease-vs-control skin contrast at n=6. Ranked GSEA is preferred over over-representation of a thresholded list because per-gene power at n=6 is limited.",
+              "constraints": [
+                "Python only — gseapy and/or decoupler; no clusterProfiler, no fgsea, no R",
+                "Use the HUMAN hallmark gene sets (Homo sapiens, HGNC symbols) — the dataset is human skin; using the mouse collection is a hard error",
+                "Run prerank on the full ranked gene list from T1S2, not on a thresholded DE subset",
+                "Run the enrichment on BOTH the fit A and fit B rankings and compare",
+                "Report per-hallmark set coverage (members found / set size) alongside every NES",
+                "Set a fixed random seed so permutation results are reproducible"
+              ],
+              "acceptance_criteria": [
+                "Hallmark GSEA result tables for both the all-12 and sample_01-excluded rankings, with NES, p, FDR q, leading edge and set coverage",
+                "Explicit list of hallmarks significant at FDR<0.25 (and separately FDR<0.05) in both rankings versus one only",
+                "Per-sample hallmark score heatmap saved, annotated by condition with sample_01 marked",
+                "Named top hallmarks in each direction with leading-edge genes",
+                "If the hallmark reference is unavailable at run time, the step reports that explicitly and falls back to the human GO biological process collection, stating the substitution — it must not silently use a different organism"
+              ],
+              "caveats": [
+                "The 12,000-symbol matrix is a subset of the transcriptome; hallmark sets with poor coverage give NES values that should not be interpreted",
+                "GSEA FDR q<0.25 is exploratory by convention — label it as such, do not present it as significance",
+                "Hallmark sets overlap in membership; several correlated hits are not several independent findings",
+                "ssGSEA scores are within-cohort relative values and are not comparable to any external dataset"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "gseapy",
+                "decoupler",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

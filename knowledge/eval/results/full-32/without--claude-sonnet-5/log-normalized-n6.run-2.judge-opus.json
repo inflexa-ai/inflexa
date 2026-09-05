@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly diagnoses that log2(TPM+1) values cannot enter a negative-binomial model and specifies limma-trend (lmFit, eBayes trend=TRUE, robust=TRUE) directly on the delivered values, with explicit constraints against back-transforming, re-logging, or quantile-normalizing — this is the right method for the stated design and the normalization handling is exemplary. QC is concrete and design-aware (PCA, correlation heatmap, per-sample median/IQR, condition annotation, no batch term justified), though it stops at 'flagging' outliers without a stated policy and never performs the sanity check on the value range (max near 10-16, no hidden integers, no double log) that would confirm the transform claim. The most serious gap is the complete absence of a low-expression filter: the plan explicitly runs all 12000 genes, which weakens the mean-variance trend fit that limma-trend depends on. The contrast is stated in direction (treated vs control) but the reference level is never explicitly set, and the enrichment step names collections with versions and a stated ranking metric but omits both an explicit ORA universe and a gene-set size window; reporting covers design, thresholds, gene counts, and caveats but not software versions."
+}

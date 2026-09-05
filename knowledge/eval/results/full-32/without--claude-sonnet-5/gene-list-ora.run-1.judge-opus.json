@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly reads the question as over-representation on an existing DESeq2 table and does not re-fit a count model, which is the key design judgment here; it names the contrast (AD lesional vs control) and states the significance rule (padj < 0.05, |log2FC| > 1) up front rather than post hoc. QC, filtering, and normalization are not re-run, which is right, but the plan only gestures at them: sample_01's shallow library is noted as an inherited caveat with no sanity check on the handed-off table, and the low-count/normalization issues are handled implicitly by restricting the universe to genes with non-NA padj rather than being reasoned about. Enrichment is the strongest part: explicit 12000-gene tested universe rather than a genome background, a named species-matched collection (MSigDB C5 GO:BP, HGNC symbols), hypergeometric/Fisher with BH FDR 0.05, and term-, gene-ratio-, FDR- and member-gene-level reporting; however no gene-set size window is specified, no collection version is pinned, redundancy is handled by an ad hoc 80% overlap rule rather than semantic similarity simplify/rrvgo, and up- and down-regulated genes are computed separately in step 1 but then silently pooled in the ORA without stating that choice. Reporting is otherwise thorough on thresholds, gene counts, and caveats, but omits software versions. Also note that applying an unshrunken |log2FC| > 1 filter to define the foreground is not discussed as a risk."
+}

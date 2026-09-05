@@ -1,0 +1,745 @@
+{
+  "campaign": "full-32",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "tpm-input-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T18:36:35.041Z",
+  "elapsedMs": 88521,
+  "outcome": "plan_submitted",
+  "planId": "pln-fd99714c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log2(TPM+1)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Single batch, unpaired design per profile — no known confounder to check for, but verify condition is not confounded with any hidden processing date if such a column exists in metadata"
+        ],
+        "context": "Data: /eval-full-32-with-tpm-input-n6-1/data/inputs/abundance/tpm.csv (12000 genes x 12 samples, gene-level TPM from Salmon) and metadata.csv (12 samples x condition: 6 lesional, 6 control). No raw counts or quantification directories exist; strandedness cannot be independently verified from a TPM-only delivery — note this as an unresolved caveat, not a blocker.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "pheatmap"
+        ],
+        "question": "Do the 6 lesional and 6 control skin samples separate by condition on log-transformed TPM, and are there outlier or mislabeled samples that should be flagged before modeling?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2",
+            "R-0079@6f8a"
+          ],
+          "reason": "TPM input: QC on log2(TPM+1) via PCA/MDS/sample-distance per R-0071; strandedness unknown flagged per R-0079 as a caveat since raw reads are unavailable to re-infer it",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not apply DESeq2 vst/rlog or any count-based normalization to these values",
+          "Use log2(TPM+1), not log2(TPM) alone, to avoid -Inf on zero values"
+        ],
+        "description": "Load the 12000x13 TPM table and the 12-sample metadata (condition column). Transform to log2(TPM+1) — do not apply a count-based variance-stabilizing transform since input is already TPM, not raw counts. Compute PCA and/or MDS on the top 500 most variable genes, a sample-to-sample distance heatmap, and per-sample counts of detected genes (TPM>0). Color all plots by condition (lesional/control). Report any sample that does not cluster with its labeled group.",
+        "acceptance_criteria": [
+          "PCA/MDS plot produced with all 12 samples colored by condition",
+          "Sample distance heatmap produced",
+          "Per-sample detected-gene count reported",
+          "Any outlier or mis-clustering sample explicitly flagged in output"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter, log-transform, and limma-trend differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Without raw counts or quantification directories, no tximport length-scaling offset can be applied; gene-level TPM as delivered is taken at face value",
+          "TPM values are not comparable across sequencing protocols — if the 12 samples come from more than one processing batch not captured in metadata, this analysis cannot detect or correct for it"
+        ],
+        "context": "12000x12 gene-level TPM matrix from Salmon, no raw counts available. Per the grounded procedure, count models (DESeq2/edgeR/voom) are forbidden for TPM input; limma-trend on log2(TPM+1) is the validated method.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are differentially expressed between psoriasis lesional and control skin (contrast: lesional vs control, control as reference level)?",
+        "grounding": {
+          "claims": [
+            "R-0072@881a",
+            "R-0073@8b36",
+            "R-0036@9786",
+            "R-0093@4fa4",
+            "R-0004@a06d",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "TPM input forbids count models (R-0004); 1 TPM floor filter in >=smallest-group-size samples (R-0072); log2+1 only, no count normalization (R-0073); limma-trend with robust eBayes (R-0093); BH-adjusted selection (R-0043/R-0044); knowledge_check confirmed this exact method permitted",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not use DESeq2, edgeR, or voom on this TPM-derived data — count models assume integer counts with negative-binomial variance, which TPM violates",
+          "Select DE genes by BH-adjusted p-value, never by raw p-value or fold-change alone",
+          "State the reference level and the contrast direction explicitly in the output"
+        ],
+        "description": "Filter to genes with TPM>=1 in at least 6 samples (the smaller group size). Log2(TPM+1) transform the filtered matrix — no cross-sample count normalization (TPM already carries within-sample scaling; do not run TMM/size-factor normalization meant for raw counts). Build a design matrix with an explicit factor level order (control as reference), fit with limma lmFit, then moderate with eBayes(trend=TRUE, robust=TRUE). Extract results with topTable using the lesional-vs-control contrast, BH adjustment. Report the number of genes tested (post-filter) and the number with adjusted p-value < 0.05. Produce an MA plot and a volcano plot of the full DE result table.",
+        "acceptance_criteria": [
+          "Genes filtered to TPM>=1 in >=6 samples, count of genes retained reported",
+          "limma design uses control as explicit reference level; contrast direction (positive logFC = higher in lesional) stated",
+          "eBayes called with trend=TRUE and robust=TRUE",
+          "Full DE table (gene, logFC, AveExpr, t, P.Value, adj.P.Val) exported",
+          "Number of genes tested and number significant at adj.P.Val<0.05 reported"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Over-representation analysis of DE genes against MSigDB Hallmark",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A short significant gene list gives a hypergeometric test little power; report the list size and treat any hit as hypothesis-generating, not confirmed",
+          "Hallmark sets are broad and coherent; a hit does not by itself establish which specific gene drove it — report overlapping gene members per set"
+        ],
+        "context": "Human (Homo sapiens) skin psoriasis dataset. MSigDB human Hallmark gene sets (50 sets, HGNC symbols) are available in the reference store at the hallmark-human collection (2026.1 release). Over-representation analysis with an explicit tested-gene universe is the enrichment method validated for this situation by the knowledge check (preranked GSEA was flagged as not permitted here).",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler"
+        ],
+        "question": "Which MSigDB Hallmark biological processes are over-represented among genes differentially expressed between lesional and control psoriatic skin?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0103@93aa"
+          ],
+          "reason": "knowledge_check validated over-representation analysis with explicit tested-gene universe as the permitted enrichment method for this situation; ranked/preranked GSEA methods were flagged as violations and excluded",
+          "status": "grounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Universe must be the tested-gene set from the DE step, never the whole genome",
+          "Report the Hallmark collection version (2026.1) and license alongside results",
+          "If the significant gene list has fewer than ~50 genes, state this size explicitly as a caveat on the ORA's statistical power"
+        ],
+        "description": "Map the tested gene symbols (post-filter, from T1S2) to the identifier space of the Hallmark gene sets (HGNC symbols, direct match — no Entrez conversion needed since both DE table and Hallmark GMT use symbols). Define the universe as all genes tested in the limma fit (post-filter), not the whole genome. Take the significant gene list (adj.P.Val<0.05) as the query set. Run a hypergeometric over-representation test (e.g. clusterProfiler::enricher) against the 50 MSigDB Hallmark gene sets, restricting gene sets to 15-500 members among the tested genes, with BH correction. If fewer than ~50 genes are significant, state this explicitly in the output as a power caveat per the flagged rule, and still report the ORA result but caveat its reliability; do not silently switch to a ranked method. Report the gene set table with adjusted p-value, gene ratio, and overlapping gene members per set.",
+        "acceptance_criteria": [
+          "Universe explicitly set to genes tested in the T1S2 limma fit, not the whole genome/annotation",
+          "Gene set size window restricted to 15-500 members",
+          "BH-adjusted enrichment result table produced with overlapping genes named per set",
+          "Size of the significant gene list used as input is stated explicitly",
+          "Hallmark gene set collection version noted in output"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Reproducible summary report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Final synthesis step combining QC, DE, and enrichment outputs from this psoriasis lesional-vs-control TPM-only analysis.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the complete, reproducible summary of the psoriasis lesional-vs-control DE and Hallmark enrichment findings, with all methodological caveats stated?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "no single rule covers the report step; consolidated from the report-stage claims of the full_plan procedure",
+          "status": "ungrounded",
+          "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Must include session info, seed (if any randomization used), package versions, and gene-set collection version",
+          "Must not overstate ORA findings given potential small significant-gene-list size"
+        ],
+        "description": "Assemble a report combining: the QC findings (sample clustering, any flagged outliers), the DE method (limma-trend on log2(TPM+1), filter and normalization choices, reference level and contrast direction), the number of genes tested and DE at adj.P.Val<0.05, the top DE genes table, the Hallmark ORA results with overlapping genes, and a reproducibility record (R/package session info, Hallmark collection version 2026.1, all thresholds used). Explicitly restate the data-delivery caveats: TPM-only input with no raw counts or quantification directories, meaning no length-scaling offset via tximport was possible and strandedness could not be independently verified.",
+        "acceptance_criteria": [
+          "Report states design, contrast, reference level, thresholds, n tested, n DE genes",
+          "Report lists package versions and Hallmark collection version",
+          "Report explicitly states the TPM-only data-delivery caveat and its methodological consequences",
+          "DE gene table and Hallmark ORA table both included"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control skin DE + pathway analysis",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "Only a gene-level TPM table from Salmon was delivered (12000 genes x 12 samples: 6 lesional, 6 control skin; no raw counts, no quantification directories). Per the grounded knowledge-service procedure for TPM-only bulk RNA-seq input, count-based tools (DESeq2/edgeR/voom) are inappropriate because they assume raw integer counts with negative-binomial variance; the correct path is: (1) QC sample structure on log2(TPM+1) values via PCA/MDS and sample-distance heatmap to confirm the 6-vs-6 groups separate and to catch outliers or mislabeling before any modeling, since no batch variable exists to control for; (2) filter genes below a 1 TPM floor in fewer than 6 samples (the smaller group size); (3) log2(TPM+1) transform only — no size-factor or TMM normalization, since TPM already carries within-sample scaling; (4) fit a limma linear model (lmFit) on log2(TPM+1) with an explicit factor (control as reference level) and the contrast lesional-vs-control; (5) moderate variance with eBayes(trend=TRUE, robust=TRUE) to protect against hypervariable genes, appropriate because the input approximates continuous log-normal data rather than counts; (6) select DE genes by BH-adjusted p-value (padj < 0.05), not by raw p-value or fold-change alone; (7) run over-representation analysis (not preranked GSEA — the knowledge-check flagged fgsea/GSEA as not permitted for this situation) against MSigDB Hallmark gene sets using the tested-gene universe, since the significant-gene list size will only be known after the DE step and ORA with an explicit universe was the check-validated method; (8) synthesize a report naming the design, thresholds, package versions, n tested, n DE, and enrichment parameters. Caveats stated throughout: no raw counts limits length-bias correction (tximport offsets cannot be reconstructed from TPM alone), strandedness is unknown and cannot be verified retrospectively without FASTQ/BAM, and TPM comparability assumes a single consistent library protocol across all 12 samples (single batch, per profile)."
+  },
+  "usage": {
+    "inputTokens": 662146,
+    "outputTokens": 8008,
+    "cacheCreationInputTokens": 129732,
+    "cacheReadInputTokens": 532306,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "library_type": "unknown",
+        "strandedness": "unknown",
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "limma",
+          "matrixStats",
+          "org.Hs.eg.db",
+          "pheatmap",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/eval-full-32-with-tpm-input-n6-1/data/inputs/metadata"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS on log2(TPM+1), sample distance heatmap, detected-gene counts",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "TPM abundance floor filter",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1), no cross-sample count normalization",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "Explicit factor reference level (control), contrast lesional_vs_control",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-trend (lmFit + eBayes trend=TRUE robust=TRUE) on log2(TPM+1)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment via topTable",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on limma moderated t-statistic, MSigDB Hallmark + Reactome",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "moderated_t"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducible report with session info, thresholds, DE gene table, leading-edge genes",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS on log2(TPM+1), sample distance heatmap, detected-gene counts",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "TPM abundance floor filter",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1), no cross-sample count normalization",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "Explicit factor reference level (control), contrast lesional_vs_control",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values (lmFit + eBayes trend=TRUE robust=TRUE) on log2(TPM+1)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment via topTable",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the moderated t-statistic, MSigDB Hallmark gene sets",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "moderated_t"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducible report with session info, thresholds, DE gene table, leading-edge genes",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values (lmFit + eBayes trend=TRUE robust=TRUE) on log2(TPM+1)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation analysis with an explicit universe of tested genes, MSigDB Hallmark gene sets",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control skin DE + pathway analysis",
+          "analytical_narrative": "Only a gene-level TPM table from Salmon was delivered (12000 genes x 12 samples: 6 lesional, 6 control skin; no raw counts, no quantification directories). Per the grounded knowledge-service procedure for TPM-only bulk RNA-seq input, count-based tools (DESeq2/edgeR/voom) are inappropriate because they assume raw integer counts with negative-binomial variance; the correct path is: (1) QC sample structure on log2(TPM+1) values via PCA/MDS and sample-distance heatmap to confirm the 6-vs-6 groups separate and to catch outliers or mislabeling before any modeling, since no batch variable exists to control for; (2) filter genes below a 1 TPM floor in fewer than 6 samples (the smaller group size); (3) log2(TPM+1) transform only — no size-factor or TMM normalization, since TPM already carries within-sample scaling; (4) fit a limma linear model (lmFit) on log2(TPM+1) with an explicit factor (control as reference level) and the contrast lesional-vs-control; (5) moderate variance with eBayes(trend=TRUE, robust=TRUE) to protect against hypervariable genes, appropriate because the input approximates continuous log-normal data rather than counts; (6) select DE genes by BH-adjusted p-value (padj < 0.05), not by raw p-value or fold-change alone; (7) run over-representation analysis (not preranked GSEA — the knowledge-check flagged fgsea/GSEA as not permitted for this situation) against MSigDB Hallmark gene sets using the tested-gene universe, since the significant-gene list size will only be known after the DE step and ORA with an explicit universe was the check-validated method; (8) synthesize a report naming the design, thresholds, package versions, n tested, n DE, and enrichment parameters. Caveats stated throughout: no raw counts limits length-bias correction (tximport offsets cannot be reconstructed from TPM alone), strandedness is unknown and cannot be verified retrospectively without FASTQ/BAM, and TPM comparability assumes a single consistent library protocol across all 12 samples (single batch, per profile).",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on log2(TPM+1)",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 lesional and 6 control skin samples separate by condition on log-transformed TPM, and are there outlier or mislabeled samples that should be flagged before modeling?",
+              "description": "Load the 12000x13 TPM table and the 12-sample metadata (condition column). Transform to log2(TPM+1) — do not apply a count-based variance-stabilizing transform since input is already TPM, not raw counts. Compute PCA and/or MDS on the top 500 most variable genes, a sample-to-sample distance heatmap, and per-sample counts of detected genes (TPM>0). Color all plots by condition (lesional/control). Report any sample that does not cluster with its labeled group.",
+              "acceptance_criteria": [
+                "PCA/MDS plot produced with all 12 samples colored by condition",
+                "Sample distance heatmap produced",
+                "Per-sample detected-gene count reported",
+                "Any outlier or mis-clustering sample explicitly flagged in output"
+              ],
+              "packages": [
+                "limma",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /eval-full-32-with-tpm-input-n6-1/data/inputs/abundance/tpm.csv (12000 genes x 12 samples, gene-level TPM from Salmon) and metadata.csv (12 samples x condition: 6 lesional, 6 control). No raw counts or quantification directories exist; strandedness cannot be independently verified from a TPM-only delivery — note this as an unresolved caveat, not a blocker.",
+              "constraints": [
+                "Do not apply DESeq2 vst/rlog or any count-based normalization to these values",
+                "Use log2(TPM+1), not log2(TPM) alone, to avoid -Inf on zero values"
+              ],
+              "caveats": [
+                "Single batch, unpaired design per profile — no known confounder to check for, but verify condition is not confounded with any hidden processing date if such a column exists in metadata"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0071@e4e2",
+                  "R-0079@6f8a"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "TPM input: QC on log2(TPM+1) via PCA/MDS/sample-distance per R-0071; strandedness unknown flagged per R-0079 as a caveat since raw reads are unavailable to re-infer it"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter, log-transform, and limma-trend differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between psoriasis lesional and control skin (contrast: lesional vs control, control as reference level)?",
+              "description": "Filter to genes with TPM>=1 in at least 6 samples (the smaller group size). Log2(TPM+1) transform the filtered matrix — no cross-sample count normalization (TPM already carries within-sample scaling; do not run TMM/size-factor normalization meant for raw counts). Build a design matrix with an explicit factor level order (control as reference), fit with limma lmFit, then moderate with eBayes(trend=TRUE, robust=TRUE). Extract results with topTable using the lesional-vs-control contrast, BH adjustment. Report the number of genes tested (post-filter) and the number with adjusted p-value < 0.05. Produce an MA plot and a volcano plot of the full DE result table.",
+              "acceptance_criteria": [
+                "Genes filtered to TPM>=1 in >=6 samples, count of genes retained reported",
+                "limma design uses control as explicit reference level; contrast direction (positive logFC = higher in lesional) stated",
+                "eBayes called with trend=TRUE and robust=TRUE",
+                "Full DE table (gene, logFC, AveExpr, t, P.Value, adj.P.Val) exported",
+                "Number of genes tested and number significant at adj.P.Val<0.05 reported"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000x12 gene-level TPM matrix from Salmon, no raw counts available. Per the grounded procedure, count models (DESeq2/edgeR/voom) are forbidden for TPM input; limma-trend on log2(TPM+1) is the validated method.",
+              "constraints": [
+                "Do not use DESeq2, edgeR, or voom on this TPM-derived data — count models assume integer counts with negative-binomial variance, which TPM violates",
+                "Select DE genes by BH-adjusted p-value, never by raw p-value or fold-change alone",
+                "State the reference level and the contrast direction explicitly in the output"
+              ],
+              "caveats": [
+                "Without raw counts or quantification directories, no tximport length-scaling offset can be applied; gene-level TPM as delivered is taken at face value",
+                "TPM values are not comparable across sequencing protocols — if the 12 samples come from more than one processing batch not captured in metadata, this analysis cannot detect or correct for it"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0072@881a",
+                  "R-0073@8b36",
+                  "R-0036@9786",
+                  "R-0093@4fa4",
+                  "R-0004@a06d",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "reason": "TPM input forbids count models (R-0004); 1 TPM floor filter in >=smallest-group-size samples (R-0072); log2+1 only, no count normalization (R-0073); limma-trend with robust eBayes (R-0093); BH-adjusted selection (R-0043/R-0044); knowledge_check confirmed this exact method permitted"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Over-representation analysis of DE genes against MSigDB Hallmark",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark biological processes are over-represented among genes differentially expressed between lesional and control psoriatic skin?",
+              "description": "Map the tested gene symbols (post-filter, from T1S2) to the identifier space of the Hallmark gene sets (HGNC symbols, direct match — no Entrez conversion needed since both DE table and Hallmark GMT use symbols). Define the universe as all genes tested in the limma fit (post-filter), not the whole genome. Take the significant gene list (adj.P.Val<0.05) as the query set. Run a hypergeometric over-representation test (e.g. clusterProfiler::enricher) against the 50 MSigDB Hallmark gene sets, restricting gene sets to 15-500 members among the tested genes, with BH correction. If fewer than ~50 genes are significant, state this explicitly in the output as a power caveat per the flagged rule, and still report the ORA result but caveat its reliability; do not silently switch to a ranked method. Report the gene set table with adjusted p-value, gene ratio, and overlapping gene members per set.",
+              "acceptance_criteria": [
+                "Universe explicitly set to genes tested in the T1S2 limma fit, not the whole genome/annotation",
+                "Gene set size window restricted to 15-500 members",
+                "BH-adjusted enrichment result table produced with overlapping genes named per set",
+                "Size of the significant gene list used as input is stated explicitly",
+                "Hallmark gene set collection version noted in output"
+              ],
+              "packages": [
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Human (Homo sapiens) skin psoriasis dataset. MSigDB human Hallmark gene sets (50 sets, HGNC symbols) are available in the reference store at the hallmark-human collection (2026.1 release). Over-representation analysis with an explicit tested-gene universe is the enrichment method validated for this situation by the knowledge check (preranked GSEA was flagged as not permitted here).",
+              "constraints": [
+                "Universe must be the tested-gene set from the DE step, never the whole genome",
+                "Report the Hallmark collection version (2026.1) and license alongside results",
+                "If the significant gene list has fewer than ~50 genes, state this size explicitly as a caveat on the ORA's statistical power"
+              ],
+              "caveats": [
+                "A short significant gene list gives a hypergeometric test little power; report the list size and treat any hit as hypothesis-generating, not confirmed",
+                "Hallmark sets are broad and coherent; a hit does not by itself establish which specific gene drove it — report overlapping gene members per set"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0103@93aa"
+                ],
+                "reason": "knowledge_check validated over-representation analysis with explicit tested-gene universe as the permitted enrichment method for this situation; ranked/preranked GSEA methods were flagged as violations and excluded"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Reproducible summary report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the complete, reproducible summary of the psoriasis lesional-vs-control DE and Hallmark enrichment findings, with all methodological caveats stated?",
+              "description": "Assemble a report combining: the QC findings (sample clustering, any flagged outliers), the DE method (limma-trend on log2(TPM+1), filter and normalization choices, reference level and contrast direction), the number of genes tested and DE at adj.P.Val<0.05, the top DE genes table, the Hallmark ORA results with overlapping genes, and a reproducibility record (R/package session info, Hallmark collection version 2026.1, all thresholds used). Explicitly restate the data-delivery caveats: TPM-only input with no raw counts or quantification directories, meaning no length-scaling offset via tximport was possible and strandedness could not be independently verified.",
+              "acceptance_criteria": [
+                "Report states design, contrast, reference level, thresholds, n tested, n DE genes",
+                "Report lists package versions and Hallmark collection version",
+                "Report explicitly states the TPM-only data-delivery caveat and its methodological consequences",
+                "DE gene table and Hallmark ORA table both included"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final synthesis step combining QC, DE, and enrichment outputs from this psoriasis lesional-vs-control TPM-only analysis.",
+              "constraints": [
+                "Must include session info, seed (if any randomization used), package versions, and gene-set collection version",
+                "Must not overstate ORA findings given potential small significant-gene-list size"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "no single rule covers the report step; consolidated from the report-stage claims of the full_plan procedure"
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:ad61b0ba149c28fd038a4c39112a51583072e3855679a0898d0ebfa30fa39624"
+  }
+}

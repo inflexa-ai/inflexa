@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 4,
+    "low_count_filter": 4,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly specifies a paired DESeq2 design (~subject + condition) with subject as a categorical blocking factor, control as reference, and the treated-vs-control coefficient as the test, matching the reference. QC is limited to library size and gene-detection distributions with no PCA/sample-distance check or outlier policy; the low-count filter is an unspecified 'minimum count threshold' without justification. Normalization is never explicitly stated (only implied by feeding raw counts to DESeq2), no fold-change shrinkage is mentioned, and the |log2FC| >= 1 cutoff is applied post hoc rather than in the test. Enrichment names a versioned collection and a GSEA ranking metric but omits an explicit ORA universe and gene-set size window; the report plan lacks software versions."
+}

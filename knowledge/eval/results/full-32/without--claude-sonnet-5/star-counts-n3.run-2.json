@@ -1,0 +1,318 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "star-counts-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T17:58:49.140Z",
+  "elapsedMs": 44184,
+  "outcome": "plan_submitted",
+  "planId": "pln-779c7f6f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load counts/metadata, QC, and sample alignment check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is small; PCA and outlier calls are illustrative, not a formal power analysis",
+          "Do not filter/normalize the counts before DESeq2 in a way that would double-normalize downstream (DESeq2 needs raw integer counts as input)"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Do the counts.csv (12000 genes x 6 samples) and metadata.csv (6 samples x condition) align correctly on sample IDs, and are library sizes / PCA consistent with the stated 3 treated vs 3 control unpaired design with no outlier samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the raw integer counts.csv exactly as provided (STAR+featureCounts output) — no upstream TPM/RPKM conversion",
+          "Treat 'gene symbol' as the row identifier from the first column of counts.csv"
+        ],
+        "acceptance_criteria": [
+          "Sample columns in counts.csv are confirmed to match rows in metadata.csv (same 6 sample IDs, same order or explicitly reordered)",
+          "Condition column recoded/verified as a two-level factor (treated vs control) with reference level = control",
+          "Library size (total counts per sample) and PCA on variance-stabilized/log-CPM data reported for all 6 samples",
+          "Any sample identified as a potential outlier (extreme library size or PCA separation not aligned with condition) is flagged explicitly, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 3 vs 3 replicates, statistical power is limited; genes with borderline padj should be reported with their exact padj, not rounded into a binary call",
+          "Do not report DE genes on raw p-value alone — padj (BH-adjusted) is the primary criterion given ~12000 tests"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between treated (n=3) and control (n=3) liver samples, using a negative-binomial model on raw STAR/featureCounts integer counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design formula must be ~ condition only (single batch, unpaired, no covariates available in metadata)",
+          "Report both the raw DESeq2 result and the shrunken log2FC — do not discard the unshrunken stat/pvalue"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 DataSet built from raw integer counts with design ~ condition, condition releveled so control is the reference",
+          "Default DESeq2 independent filtering and Benjamini-Hochberg FDR correction applied; results table reports baseMean, log2FoldChange, lfcSE, stat, pvalue, padj for every tested gene",
+          "apeglm (or ashr as fallback if apeglm fails to converge for any gene) used for log2FoldChange shrinkage, reported alongside unshrunken estimates",
+          "Full annotated DE table (gene symbol, log2FC, shrunken log2FC, padj) exported, plus explicit counts of genes at padj<0.05 and padj<0.1",
+          "MA plot and volcano plot generated from the shrunken estimates"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway/functional enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Small n=3/3 design means the ranked gene list can be noisy; treat enrichment as hypothesis-generating, not confirmatory",
+          "GO-BP terms are nested and highly redundant — do not report raw term counts as if each were independent evidence"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways and processes are enriched among genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use only the human-organism gene sets (WikiPathways human GMT, MSigDB Hallmark human GMT, MSigDB GO-BP human GMT, Reactome GMT filtered to Homo sapiens) — do not substitute mouse/rat sets",
+          "Gene identifiers in counts.csv are gene symbols; match directly against the HGNC-symbol GMT files without an ID-mapping step"
+        ],
+        "acceptance_criteria": [
+          "Enrichment run against human WikiPathways, MSigDB Hallmark, MSigDB GO Biological Process, and Reactome gene sets (all confirmed present for Homo sapiens in the reference store)",
+          "Both an over-representation analysis on the significant gene list (padj<0.05) and a ranked GSEA on the full gene list (ranked by shrunken log2FC or DESeq2 stat) are reported",
+          "Results reported with BH-adjusted enrichment p-values, and GO-BP results explicitly flagged for parent/child term redundancy given the hierarchy",
+          "If fewer than ~10 genes pass padj<0.05, this is reported explicitly and GSEA on the full ranked list is treated as the primary result"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DESeq2 DE + pathway enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is raw integer gene-level counts (12000 genes x 6 samples: 3 treated, 3 control liver samples) produced by STAR + featureCounts, with a simple unpaired, single-batch design. This is exactly the setting DESeq2's standard workflow is built for — it models raw counts directly with a negative binomial GLM and its own size-factor normalization, so no upstream TPM/CPM normalization from a transcript quantifier is needed or appropriate. The plan therefore: (1) loads counts + metadata, verifies sample-column/metadata alignment and condition coding, and performs basic QC (library size, PCA) to catch outliers/mislabeling before testing; (2) runs DESeq2 with the treated-vs-control contrast, using apeglm shrinkage for stable log2FC estimates and Benjamini-Hochberg FDR control appropriate for a 12000-gene test; (3) produces a diagnostic MA/volcano/PCA report and the full annotated DE gene table; (4) takes the significant DE gene list into functional enrichment against human WikiPathways, MSigDB Hallmark, GO-BP, and Reactome gene sets (all confirmed present for Homo sapiens in the reference store) to interpret which biological processes are perturbed by treatment in liver. Sample size (n=3/group) is small — the QC step and enrichment step both carry explicit caveats about power and about not over-interpreting a handful of leading genes."
+  },
+  "usage": {
+    "inputTokens": 431372,
+    "outputTokens": 3371,
+    "cacheCreationInputTokens": 88935,
+    "cacheReadInputTokens": 342329,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db human gene annotation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "query": "human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb h.all"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DESeq2 DE + pathway enrichment",
+          "analytical_narrative": "The input is raw integer gene-level counts (12000 genes x 6 samples: 3 treated, 3 control liver samples) produced by STAR + featureCounts, with a simple unpaired, single-batch design. This is exactly the setting DESeq2's standard workflow is built for — it models raw counts directly with a negative binomial GLM and its own size-factor normalization, so no upstream TPM/CPM normalization from a transcript quantifier is needed or appropriate. The plan therefore: (1) loads counts + metadata, verifies sample-column/metadata alignment and condition coding, and performs basic QC (library size, PCA) to catch outliers/mislabeling before testing; (2) runs DESeq2 with the treated-vs-control contrast, using apeglm shrinkage for stable log2FC estimates and Benjamini-Hochberg FDR control appropriate for a 12000-gene test; (3) produces a diagnostic MA/volcano/PCA report and the full annotated DE gene table; (4) takes the significant DE gene list into functional enrichment against human WikiPathways, MSigDB Hallmark, GO-BP, and Reactome gene sets (all confirmed present for Homo sapiens in the reference store) to interpret which biological processes are perturbed by treatment in liver. Sample size (n=3/group) is small — the QC step and enrichment step both carry explicit caveats about power and about not over-interpreting a handful of leading genes.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load counts/metadata, QC, and sample alignment check",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the counts.csv (12000 genes x 6 samples) and metadata.csv (6 samples x condition) align correctly on sample IDs, and are library sizes / PCA consistent with the stated 3 treated vs 3 control unpaired design with no outlier samples?",
+              "acceptance_criteria": [
+                "Sample columns in counts.csv are confirmed to match rows in metadata.csv (same 6 sample IDs, same order or explicitly reordered)",
+                "Condition column recoded/verified as a two-level factor (treated vs control) with reference level = control",
+                "Library size (total counts per sample) and PCA on variance-stabilized/log-CPM data reported for all 6 samples",
+                "Any sample identified as a potential outlier (extreme library size or PCA separation not aligned with condition) is flagged explicitly, not silently dropped"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=3 per group is small; PCA and outlier calls are illustrative, not a formal power analysis",
+                "Do not filter/normalize the counts before DESeq2 in a way that would double-normalize downstream (DESeq2 needs raw integer counts as input)"
+              ],
+              "constraints": [
+                "Use the raw integer counts.csv exactly as provided (STAR+featureCounts output) — no upstream TPM/RPKM conversion",
+                "Treat 'gene symbol' as the row identifier from the first column of counts.csv"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between treated (n=3) and control (n=3) liver samples, using a negative-binomial model on raw STAR/featureCounts integer counts?",
+              "acceptance_criteria": [
+                "DESeq2 DataSet built from raw integer counts with design ~ condition, condition releveled so control is the reference",
+                "Default DESeq2 independent filtering and Benjamini-Hochberg FDR correction applied; results table reports baseMean, log2FoldChange, lfcSE, stat, pvalue, padj for every tested gene",
+                "apeglm (or ashr as fallback if apeglm fails to converge for any gene) used for log2FoldChange shrinkage, reported alongside unshrunken estimates",
+                "Full annotated DE table (gene symbol, log2FC, shrunken log2FC, padj) exported, plus explicit counts of genes at padj<0.05 and padj<0.1",
+                "MA plot and volcano plot generated from the shrunken estimates"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With only 3 vs 3 replicates, statistical power is limited; genes with borderline padj should be reported with their exact padj, not rounded into a binary call",
+                "Do not report DE genes on raw p-value alone — padj (BH-adjusted) is the primary criterion given ~12000 tests"
+              ],
+              "constraints": [
+                "Design formula must be ~ condition only (single batch, unpaired, no covariates available in metadata)",
+                "Report both the raw DESeq2 result and the shrunken log2FC — do not discard the unshrunken stat/pvalue"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway/functional enrichment of DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways and processes are enriched among genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Enrichment run against human WikiPathways, MSigDB Hallmark, MSigDB GO Biological Process, and Reactome gene sets (all confirmed present for Homo sapiens in the reference store)",
+                "Both an over-representation analysis on the significant gene list (padj<0.05) and a ranked GSEA on the full gene list (ranked by shrunken log2FC or DESeq2 stat) are reported",
+                "Results reported with BH-adjusted enrichment p-values, and GO-BP results explicitly flagged for parent/child term redundancy given the hierarchy",
+                "If fewer than ~10 genes pass padj<0.05, this is reported explicitly and GSEA on the full ranked list is treated as the primary result"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Small n=3/3 design means the ranked gene list can be noisy; treat enrichment as hypothesis-generating, not confirmatory",
+                "GO-BP terms are nested and highly redundant — do not report raw term counts as if each were independent evidence"
+              ],
+              "constraints": [
+                "Use only the human-organism gene sets (WikiPathways human GMT, MSigDB Hallmark human GMT, MSigDB GO-BP human GMT, Reactome GMT filtered to Homo sapiens) — do not substitute mouse/rat sets",
+                "Gene identifiers in counts.csv are gene symbols; match directly against the HGNC-symbol GMT files without an ID-mapping step"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

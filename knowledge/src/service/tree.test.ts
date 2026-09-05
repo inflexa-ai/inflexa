@@ -310,5 +310,9 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(paired, "differential_expression").template).toBe("tpl-deseq2-blocked@1.0.0");
         const none = answer({ ...BASE, n_per_group_min: 1, n_per_group_max: 1 }, { language: "python" });
         expect(step(none, "differential_expression").template).toBe("tpl-descriptive-python@1.0.0");
+        const interaction = answer({ ...BASE, n_groups: 4, n_per_group_min: 4, n_per_group_max: 4, interaction: true }, { language: "python" });
+        expect(step(interaction, "differential_expression").template).toBe("tpl-pydeseq2-interaction@1.0.0");
+        const three = answer({ ...BASE, n_groups: 3, n_per_group_min: 4, n_per_group_max: 4 }, { language: "python" });
+        expect(step(three, "differential_expression").template).toBe("tpl-pydeseq2-multigroup@1.0.0");
     });
 });

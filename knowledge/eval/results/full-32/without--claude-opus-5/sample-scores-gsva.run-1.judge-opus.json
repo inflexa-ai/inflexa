@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly reads the question as a per-sample scoring problem rather than a gene-level DE problem, and builds the right pipeline: filter, DESeq2 VST, GSVA with a Gaussian kcdf justified by the continuous input, then limma moderated t on the score matrix with BH across the 50 sets, plus a Wilcoxon cross-check appropriate for 6 vs 6. QC is concrete and dataset-specific — library size table, VST distributions, sample-sample correlation, PCA with sample_01 labelled — with an explicit keep-and-flag policy and a leave-sample_01-out sensitivity analysis rather than an arbitrary drop. The filter (filterByExpr by group or CPM>1 in >=6) is minimal and justified, with a sensible caveat about eroding hallmark membership in an already 12,000-gene matrix; normalization is library-size aware and the plan explicitly forbids feeding raw or CPM values into GSVA. Design and contrast are explicit (~0 + condition, inflamed - control, direction stated against the literal metadata labels), and the hallmark collection is named with version, identifier space, and a size window with per-set overlap reporting. Minor gaps only: effect magnitude is mean score difference on an arbitrary scale (acknowledged), and the alpha of 0.05 is implied by acceptance criteria rather than fixed up front in the narrative."
+}

@@ -1,0 +1,428 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "batch-balanced-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T17:25:08.670Z",
+  "elapsedMs": 91924,
+  "outcome": "plan_submitted",
+  "planId": "pln-2debc508",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, and batch/condition variance assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "n=12 gives limited power to detect an outlier; a borderline sample should be flagged and carried, not removed",
+          "If the cross-tabulation shows batch is not in fact balanced across conditions, say so — a confounded design changes the interpretation of every downstream result",
+          "12,000 rows is a pre-filtered/subset gene space, not a full transcriptome; note this when reporting detection rates"
+        ],
+        "context": "Design is 6 treated vs 6 control human kidney bulk RNA-seq, two known processing batches balanced across conditions. Batch being recorded and balanced is what licenses modelling it as a covariate instead of correcting the data. This step exists to verify that stated design against the files themselves and to document the size of the batch effect before it is adjusted away.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Do the 12 kidney samples in counts.csv match the 12 rows of metadata.csv, is the design truly 6 treated vs 6 control crossed with 2 balanced batches, and how much sample-level variance is attributable to batch versus condition?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do NOT run ComBat, removeBatchEffect, or any other correction on the count matrix that will be used for differential testing — batch is handled in the DESeq2 design formula in T1S2",
+          "Do not drop any of the 12 samples without explicitly reporting the sample id and the quantitative reason",
+          "Set condition reference level to the control group so that downstream log2 fold changes read as treated relative to control",
+          "Use the actual condition and batch level names as they appear in metadata.csv; do not rename or recode them"
+        ],
+        "description": "Read /eval-full-32-without-batch-balanced-n6-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 sample columns, raw integer salmon counts; first column is the gene symbol) and /eval-full-32-without-batch-balanced-n6-2/data/inputs/metadata/metadata.csv (12 rows x 3 columns: sample id, condition, batch). Match count column names to metadata sample ids and reorder the metadata to the count column order, failing loudly on any mismatch rather than silently subsetting. Print the condition x batch cross-tabulation to confirm the stated 6-treated / 6-control split and that both batches carry both conditions. Report per-sample library size, detected-gene count, and the fraction of zero counts. Collapse duplicate gene symbols by summing counts if any duplicates exist, and record how many. Filter to genes with sufficient expression using edgeR::filterByExpr with the condition group, and report genes in and genes retained. Build a DESeqDataSet with design ~ batch + condition, apply VST, then produce: (a) PCA of the VST matrix coloured by condition and shaped by batch, with percent variance for PC1-PC4; (b) sample-sample Euclidean distance heatmap; (c) for each of PC1-PC4, the association with batch and with condition (e.g. Kruskal-Wallis or ANOVA on the PC scores) so the relative contribution of the two factors is quantified rather than eyeballed. Additionally produce a batch-removed VST matrix via limma::removeBatchEffect(vst, batch=batch, design=model.matrix(~condition)) and a matching PCA — label this artifact clearly as VISUALISATION ONLY and never pass it to a differential test. Save the filtered count matrix, the aligned sample table, and both VST matrices for downstream steps.",
+        "acceptance_criteria": [
+          "Condition x batch contingency table is printed and confirms (or explicitly contradicts) 6 treated / 6 control with both conditions present in both batches",
+          "All 12 count columns are matched 1:1 to metadata sample ids; any mismatch is reported as an error rather than silently dropped",
+          "Number of genes before and after filterByExpr filtering is reported, starting from 12,000",
+          "PCA percent-variance for PC1-PC4 is reported together with a statistical association of each PC to batch and to condition",
+          "Both the design-matrix VST and the removeBatchEffect VST are saved, with the latter explicitly labelled visualisation-only",
+          "Any sample flagged as a potential outlier is named with the metric that flagged it; no sample is dropped without stating the reason"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, ~ batch + condition",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "6 vs 6 is modest power: absence of significant genes is a legitimate result, not a pipeline failure",
+          "With 12,000 genes and n=12, independent filtering choices can visibly move the significant count — report the filtering threshold DESeq2 selected",
+          "apeglm requires the contrast be expressible as a model coefficient; if the condition factor coding prevents that, fall back to ashr and say which was used"
+        ],
+        "context": "This is the direct answer to the research question. Batch enters the model as a fixed covariate because it is known and balanced against condition, so the batch term is estimable and does not absorb the treatment signal. The dispersion-shrinkage of DESeq2 is the appropriate estimator for n=6 per group.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "ggplot2",
+          "pheatmap",
+          "ComplexHeatmap"
+        ],
+        "question": "Which genes differ between treated and control kidney samples when the two processing batches are modelled as a covariate?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design must be ~ batch + condition with batch as a factor; do not fit condition alone as the primary model",
+          "Do not run any batch-correction transform on counts before DESeq2",
+          "Use BH FDR at 0.05 as the primary significance threshold; report any secondary threshold as clearly secondary",
+          "Do not apply a fold-change cutoff as a significance filter; rank by padj and report LFC alongside",
+          "Gene identifiers are HGNC-style symbols in the first column of counts.csv — carry them through unmodified so downstream enrichment can join on them"
+        ],
+        "description": "Using the filtered counts and aligned sample table from T1S1, fit DESeq2 with design ~ batch + condition on the 12 samples. Extract the treated-vs-control contrast with the control group as reference, using the Wald test and independent filtering, with Benjamini-Hochberg FDR. Report: number of genes tested, number at padj < 0.05, and the split into up- and down-regulated in treated. Produce a second set of log2 fold changes with lfcShrink (apeglm if the contrast is a two-level coefficient, otherwise ashr) and use the shrunken values for ranking and for all plots; keep the unshrunken LFC and its standard error in the output table as well. Write a full results table (gene symbol, baseMean, LFC unshrunken, lfcSE, stat, pvalue, padj, LFC shrunken, and mean normalized expression per condition) sorted by padj, plus a filtered significant table at padj < 0.05. Report the estimated batch coefficient magnitude distribution (how many genes have a substantial batch effect) so the value of the covariate is documented. Generate a volcano plot (shrunken LFC vs -log10 padj), an MA plot, a p-value histogram (to check the null behaves), and a heatmap of the top 40 genes by padj drawn on the batch-removed VST from T1S1 with samples annotated by condition and batch. If fewer than 10 genes reach padj < 0.05, report that plainly and additionally list the top 25 by padj with their unadjusted p-values, explicitly labelled as not passing FDR control rather than presented as findings.",
+        "acceptance_criteria": [
+          "A results table covering every tested gene is written, with both unshrunken and shrunken log2 fold changes and BH-adjusted p-values",
+          "The contrast direction is explicitly stated as treated relative to control and confirmed against a sanity-check gene's per-group means",
+          "Counts of genes at padj < 0.05, split up and down, are reported; a small or empty set is reported as such and not rescued by a looser threshold",
+          "The p-value histogram is produced and its shape commented on (uniform-with-spike vs anomalous)",
+          "Heatmap of top genes uses the batch-removed VST for display only, and the figure caption says so",
+          "The number of genes with a non-negligible batch coefficient is reported, documenting whether the batch term was doing work"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Cross-method and no-batch sensitivity check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "voom's precision weights are estimated from 12 libraries and are correspondingly noisy; treat disagreement with DESeq2 as an uncertainty flag rather than as evidence either fit is wrong",
+          "High concordance across methods does not validate the biology, only the statistical stability of the ranking"
+        ],
+        "context": "With n=6 per arm, method choice can materially change a borderline gene list. Running an independent estimator family and a no-batch sensitivity arm separates genes that are robust from genes that are an artifact of one variance model, and shows quantitatively what the batch covariate bought.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "edgeR",
+          "DESeq2",
+          "ggplot2",
+          "ComplexUpset"
+        ],
+        "question": "Does the treated-vs-control gene list survive a change of statistical method, and how much does including the batch covariate change it?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "All fits must use the identical filtered gene set and identical sample ordering from T1S1",
+          "The no-batch DESeq2 fit is a sensitivity arm only and must never be presented as the primary result",
+          "Use BH FDR at 0.05 throughout so the counts are comparable across methods"
+        ],
+        "description": "Re-test the same filtered counts and sample table from T1S1 under three additional fits and compare against the DESeq2 ~ batch + condition result from T1S2: (1) limma-voom with design ~ batch + condition and eBayes moderation; (2) edgeR quasi-likelihood F-test with the same design; (3) DESeq2 with design ~ condition only, i.e. batch ignored, as the sensitivity arm. For each fit report the number of genes at BH padj < 0.05 and the overlap with the T1S2 significant set (Jaccard index and a 4-way overlap table or UpSet-style summary). Produce a scatter of DESeq2 vs voom log2 fold changes with the Pearson and Spearman correlation. Quantify the effect of the batch term directly: correlate the -log10 p-values from the ~ batch + condition fit against the ~ condition fit, count genes that gain and lose significance, and report the median change in residual dispersion / gene-wise variance between the two designs. Output a consensus annotation column marking, for each gene significant in any fit, which of the four fits called it. Do not re-rank or replace the T1S2 primary result — this step annotates its confidence.",
+        "acceptance_criteria": [
+          "Significant-gene counts at padj < 0.05 are reported for limma-voom, edgeR QLF, DESeq2 ~condition, alongside the T1S2 DESeq2 ~batch+condition count",
+          "Overlap between the DESeq2 primary set and each alternative fit is quantified (counts and Jaccard)",
+          "Log2 fold-change concordance between DESeq2 and voom is reported with a correlation coefficient",
+          "The effect of dropping batch is quantified: genes gained, genes lost, and change in dispersion/variance, with a plain statement of whether the batch term mattered",
+          "A per-gene table annotating which fits called each gene is written",
+          "The primary result from T1S2 is left unchanged; this step's output is annotation only"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark and GO enrichment of the treatment signature",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "The 12,000-gene input is already a reduced feature space, so gene sets will be incompletely covered and NES values are biased toward whichever sets happen to be well represented — report the coverage",
+          "With n=6 per arm the underlying ranking is noisy; a significant NES on a noisy ranking is weak evidence",
+          "GO BP parent and child sets share members, so a long list of significant terms is often one signal counted many times"
+        ],
+        "context": "The DE table alone is a gene list; enrichment says whether the changes hang together as a coherent program. Human hallmark, GO BP, and WikiPathways symbol GMTs are present in the environment's reference store and match this dataset's organism (Homo sapiens) and identifier space (gene symbols in the first column of counts.csv).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "ggplot2",
+          "rrvgo",
+          "data.table"
+        ],
+        "question": "Which biological processes and hallmark states are coordinately shifted between treated and control kidney samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use only human gene-set collections — this is Homo sapiens kidney data; a mouse or rat GMT would produce meaningless results",
+          "Set the ORA background universe to the genes actually tested in T1S2, never to the whole genome or the whole GMT",
+          "Set a fixed random seed for the GSEA permutations and report it",
+          "Report enrichment as hypothesis-generating; do not state that a pathway is activated or inhibited on the basis of enrichment alone"
+        ],
+        "description": "Take the full DESeq2 treated-vs-control results table from T1S2 and run rank-based gene set enrichment (fgsea, or clusterProfiler::GSEA) on all tested genes ranked by the shrunken log2 fold change (ties broken by the Wald statistic; do NOT rank by p-value alone, which discards direction). Test against human gene-set collections resolved from the environment's reference store: the MSigDB human hallmark collection (50 sets, HGNC symbols) as the primary, the MSigDB human GO Biological Process collection as the mechanism-level secondary, and the human WikiPathways collection as an independent curated cross-check. Restrict to sets with 15-500 members after intersecting with the ~12,000-gene tested universe, and report the intersection size for each collection so coverage loss is visible. Apply BH FDR across sets within each collection separately and report normalized enrichment scores, padj, and leading-edge genes for every set at padj < 0.05, plus the top 15 by padj regardless. Because GO BP is a nested hierarchy, collapse redundant significant terms (e.g. by leading-edge Jaccard clustering or rrvgo) before reporting a term count. Separately, IF the T1S2 significant set at padj < 0.05 contains at least 25 genes, also run over-representation analysis on it against the same collections using the tested-gene set as the background universe; if it contains fewer than 25 genes, skip ORA and state that it was skipped for insufficient input rather than running it on a handful of genes. Output per-collection enrichment tables, a dot plot of top NES, and an enrichment-score plot for the top 3 hallmark sets.",
+        "acceptance_criteria": [
+          "GSEA is run on the full ranked gene list, not on a truncated significant subset",
+          "Hallmark, GO BP, and WikiPathways results are reported separately, each with its own BH correction and its own universe-intersection size",
+          "Leading-edge genes are reported for every set called significant",
+          "Redundant GO BP terms are collapsed before any term count is stated",
+          "ORA is either run with the tested-gene universe as background, or explicitly skipped with the input gene count given as the reason",
+          "If a gene-set collection cannot be resolved in the environment, the step reports that collection as unavailable and proceeds with the ones it has, rather than failing"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with batch in model",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single bulk RNA-seq count matrix (/data/inputs/counts/counts.csv, 12,000 gene symbols x 12 samples, raw integer salmon counts) with a 12-row sample table (/data/inputs/metadata/metadata.csv: sample, condition, batch). Design: 6 treated vs 6 control human kidney samples, split across two known processing batches that are balanced across conditions. Because batch is known, recorded, and balanced, the correct handling is to include it as a covariate in the DESeq2 design (~ batch + condition) rather than to run a batch-correction algorithm on the counts and then test on corrected values — the latter under-estimates residual variance and inflates significance. Balance also means batch is not confounded with condition, so the covariate costs one degree of freedom (n=12, 9 residual df) and buys reduced dispersion.\n\nTrack 1 is the core answer. T1S1 loads and joins the two CSVs, verifies the 6/6 condition split and the 2-batch crossing, filters low-count genes, builds VST values, and quantifies how much of the variance PCA attributes to batch versus condition — this is the evidence that the batch term is warranted and that no sample is a gross outlier. It also produces a batch-removed VST matrix for visualisation only, kept strictly separate from any matrix used for testing. T1S2 runs the DESeq2 negative-binomial Wald test with design ~ batch + condition, contrast treated vs control, with LFC shrinkage for ranking, and reports the full result table plus the significant gene list at FDR 5%. T1S3 is a robustness check with a different estimator family (limma-voom with the same ~ batch + condition design, and edgeR quasi-likelihood) plus a sensitivity fit without the batch term, so the reported gene list can be labelled by whether it survives a change of method and whether the batch term actually mattered. With n=6 per arm and only 12,000 genes, a small significant set is a plausible outcome and must be reported as such rather than rescued by relaxing thresholds.\n\nTrack 2 interprets the ranked result: hallmark and GO gene-set enrichment on the shrunken-LFC ranking of all tested genes (human symbol GMTs are present under /mnt/refs), with over-representation on the FDR-significant set only if that set is large enough to be meaningful. Enrichment is downstream of and conditional on T1S2, and is explicitly framed as hypothesis generation, not confirmation."
+  },
+  "usage": {
+    "inputTokens": 92336,
+    "outputTokens": 6569,
+    "cacheCreationInputTokens": 74164,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "sva",
+          "pydeseq2",
+          "clusterProfiler",
+          "fgsea",
+          "ComplexHeatmap",
+          "apeglm",
+          "ashr",
+          "decoupleR",
+          "EnhancedVolcano",
+          "variancePartition"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with batch in model",
+          "analytical_narrative": "The input is a single bulk RNA-seq count matrix (/data/inputs/counts/counts.csv, 12,000 gene symbols x 12 samples, raw integer salmon counts) with a 12-row sample table (/data/inputs/metadata/metadata.csv: sample, condition, batch). Design: 6 treated vs 6 control human kidney samples, split across two known processing batches that are balanced across conditions. Because batch is known, recorded, and balanced, the correct handling is to include it as a covariate in the DESeq2 design (~ batch + condition) rather than to run a batch-correction algorithm on the counts and then test on corrected values — the latter under-estimates residual variance and inflates significance. Balance also means batch is not confounded with condition, so the covariate costs one degree of freedom (n=12, 9 residual df) and buys reduced dispersion.\n\nTrack 1 is the core answer. T1S1 loads and joins the two CSVs, verifies the 6/6 condition split and the 2-batch crossing, filters low-count genes, builds VST values, and quantifies how much of the variance PCA attributes to batch versus condition — this is the evidence that the batch term is warranted and that no sample is a gross outlier. It also produces a batch-removed VST matrix for visualisation only, kept strictly separate from any matrix used for testing. T1S2 runs the DESeq2 negative-binomial Wald test with design ~ batch + condition, contrast treated vs control, with LFC shrinkage for ranking, and reports the full result table plus the significant gene list at FDR 5%. T1S3 is a robustness check with a different estimator family (limma-voom with the same ~ batch + condition design, and edgeR quasi-likelihood) plus a sensitivity fit without the batch term, so the reported gene list can be labelled by whether it survives a change of method and whether the batch term actually mattered. With n=6 per arm and only 12,000 genes, a small significant set is a plausible outcome and must be reported as such rather than rescued by relaxing thresholds.\n\nTrack 2 interprets the ranked result: hallmark and GO gene-set enrichment on the shrunken-LFC ranking of all tested genes (human symbol GMTs are present under /mnt/refs), with over-representation on the FDR-significant set only if that set is large enough to be meaningful. Enrichment is downstream of and conditional on T1S2, and is explicitly framed as hypothesis generation, not confirmation.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, and batch/condition variance assessment",
+              "track": "1",
+              "step_type": "qc",
+              "question": "Do the 12 kidney samples in counts.csv match the 12 rows of metadata.csv, is the design truly 6 treated vs 6 control crossed with 2 balanced batches, and how much sample-level variance is attributable to batch versus condition?",
+              "description": "Read /eval-full-32-without-batch-balanced-n6-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 sample columns, raw integer salmon counts; first column is the gene symbol) and /eval-full-32-without-batch-balanced-n6-2/data/inputs/metadata/metadata.csv (12 rows x 3 columns: sample id, condition, batch). Match count column names to metadata sample ids and reorder the metadata to the count column order, failing loudly on any mismatch rather than silently subsetting. Print the condition x batch cross-tabulation to confirm the stated 6-treated / 6-control split and that both batches carry both conditions. Report per-sample library size, detected-gene count, and the fraction of zero counts. Collapse duplicate gene symbols by summing counts if any duplicates exist, and record how many. Filter to genes with sufficient expression using edgeR::filterByExpr with the condition group, and report genes in and genes retained. Build a DESeqDataSet with design ~ batch + condition, apply VST, then produce: (a) PCA of the VST matrix coloured by condition and shaped by batch, with percent variance for PC1-PC4; (b) sample-sample Euclidean distance heatmap; (c) for each of PC1-PC4, the association with batch and with condition (e.g. Kruskal-Wallis or ANOVA on the PC scores) so the relative contribution of the two factors is quantified rather than eyeballed. Additionally produce a batch-removed VST matrix via limma::removeBatchEffect(vst, batch=batch, design=model.matrix(~condition)) and a matching PCA — label this artifact clearly as VISUALISATION ONLY and never pass it to a differential test. Save the filtered count matrix, the aligned sample table, and both VST matrices for downstream steps.",
+              "context": "Design is 6 treated vs 6 control human kidney bulk RNA-seq, two known processing batches balanced across conditions. Batch being recorded and balanced is what licenses modelling it as a covariate instead of correcting the data. This step exists to verify that stated design against the files themselves and to document the size of the batch effect before it is adjusted away.",
+              "question_notes": "",
+              "acceptance_criteria": [
+                "Condition x batch contingency table is printed and confirms (or explicitly contradicts) 6 treated / 6 control with both conditions present in both batches",
+                "All 12 count columns are matched 1:1 to metadata sample ids; any mismatch is reported as an error rather than silently dropped",
+                "Number of genes before and after filterByExpr filtering is reported, starting from 12,000",
+                "PCA percent-variance for PC1-PC4 is reported together with a statistical association of each PC to batch and to condition",
+                "Both the design-matrix VST and the removeBatchEffect VST are saved, with the latter explicitly labelled visualisation-only",
+                "Any sample flagged as a potential outlier is named with the metric that flagged it; no sample is dropped without stating the reason"
+              ],
+              "constraints": [
+                "Do NOT run ComBat, removeBatchEffect, or any other correction on the count matrix that will be used for differential testing — batch is handled in the DESeq2 design formula in T1S2",
+                "Do not drop any of the 12 samples without explicitly reporting the sample id and the quantitative reason",
+                "Set condition reference level to the control group so that downstream log2 fold changes read as treated relative to control",
+                "Use the actual condition and batch level names as they appear in metadata.csv; do not rename or recode them"
+              ],
+              "caveats": [
+                "n=12 gives limited power to detect an outlier; a borderline sample should be flagged and carried, not removed",
+                "If the cross-tabulation shows batch is not in fact balanced across conditions, say so — a confounded design changes the interpretation of every downstream result",
+                "12,000 rows is a pre-filtered/subset gene space, not a full transcriptome; note this when reporting detection rates"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, ~ batch + condition",
+              "track": "1",
+              "step_type": "analysis",
+              "question": "Which genes differ between treated and control kidney samples when the two processing batches are modelled as a covariate?",
+              "description": "Using the filtered counts and aligned sample table from T1S1, fit DESeq2 with design ~ batch + condition on the 12 samples. Extract the treated-vs-control contrast with the control group as reference, using the Wald test and independent filtering, with Benjamini-Hochberg FDR. Report: number of genes tested, number at padj < 0.05, and the split into up- and down-regulated in treated. Produce a second set of log2 fold changes with lfcShrink (apeglm if the contrast is a two-level coefficient, otherwise ashr) and use the shrunken values for ranking and for all plots; keep the unshrunken LFC and its standard error in the output table as well. Write a full results table (gene symbol, baseMean, LFC unshrunken, lfcSE, stat, pvalue, padj, LFC shrunken, and mean normalized expression per condition) sorted by padj, plus a filtered significant table at padj < 0.05. Report the estimated batch coefficient magnitude distribution (how many genes have a substantial batch effect) so the value of the covariate is documented. Generate a volcano plot (shrunken LFC vs -log10 padj), an MA plot, a p-value histogram (to check the null behaves), and a heatmap of the top 40 genes by padj drawn on the batch-removed VST from T1S1 with samples annotated by condition and batch. If fewer than 10 genes reach padj < 0.05, report that plainly and additionally list the top 25 by padj with their unadjusted p-values, explicitly labelled as not passing FDR control rather than presented as findings.",
+              "context": "This is the direct answer to the research question. Batch enters the model as a fixed covariate because it is known and balanced against condition, so the batch term is estimable and does not absorb the treatment signal. The dispersion-shrinkage of DESeq2 is the appropriate estimator for n=6 per group.",
+              "acceptance_criteria": [
+                "A results table covering every tested gene is written, with both unshrunken and shrunken log2 fold changes and BH-adjusted p-values",
+                "The contrast direction is explicitly stated as treated relative to control and confirmed against a sanity-check gene's per-group means",
+                "Counts of genes at padj < 0.05, split up and down, are reported; a small or empty set is reported as such and not rescued by a looser threshold",
+                "The p-value histogram is produced and its shape commented on (uniform-with-spike vs anomalous)",
+                "Heatmap of top genes uses the batch-removed VST for display only, and the figure caption says so",
+                "The number of genes with a non-negligible batch coefficient is reported, documenting whether the batch term was doing work"
+              ],
+              "constraints": [
+                "Design must be ~ batch + condition with batch as a factor; do not fit condition alone as the primary model",
+                "Do not run any batch-correction transform on counts before DESeq2",
+                "Use BH FDR at 0.05 as the primary significance threshold; report any secondary threshold as clearly secondary",
+                "Do not apply a fold-change cutoff as a significance filter; rank by padj and report LFC alongside",
+                "Gene identifiers are HGNC-style symbols in the first column of counts.csv — carry them through unmodified so downstream enrichment can join on them"
+              ],
+              "caveats": [
+                "6 vs 6 is modest power: absence of significant genes is a legitimate result, not a pipeline failure",
+                "With 12,000 genes and n=12, independent filtering choices can visibly move the significant count — report the filtering threshold DESeq2 selected",
+                "apeglm requires the contrast be expressible as a model coefficient; if the condition factor coding prevents that, fall back to ashr and say which was used"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "ggplot2",
+                "pheatmap",
+                "ComplexHeatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Cross-method and no-batch sensitivity check",
+              "track": "1",
+              "step_type": "analysis",
+              "question": "Does the treated-vs-control gene list survive a change of statistical method, and how much does including the batch covariate change it?",
+              "description": "Re-test the same filtered counts and sample table from T1S1 under three additional fits and compare against the DESeq2 ~ batch + condition result from T1S2: (1) limma-voom with design ~ batch + condition and eBayes moderation; (2) edgeR quasi-likelihood F-test with the same design; (3) DESeq2 with design ~ condition only, i.e. batch ignored, as the sensitivity arm. For each fit report the number of genes at BH padj < 0.05 and the overlap with the T1S2 significant set (Jaccard index and a 4-way overlap table or UpSet-style summary). Produce a scatter of DESeq2 vs voom log2 fold changes with the Pearson and Spearman correlation. Quantify the effect of the batch term directly: correlate the -log10 p-values from the ~ batch + condition fit against the ~ condition fit, count genes that gain and lose significance, and report the median change in residual dispersion / gene-wise variance between the two designs. Output a consensus annotation column marking, for each gene significant in any fit, which of the four fits called it. Do not re-rank or replace the T1S2 primary result — this step annotates its confidence.",
+              "context": "With n=6 per arm, method choice can materially change a borderline gene list. Running an independent estimator family and a no-batch sensitivity arm separates genes that are robust from genes that are an artifact of one variance model, and shows quantitatively what the batch covariate bought.",
+              "acceptance_criteria": [
+                "Significant-gene counts at padj < 0.05 are reported for limma-voom, edgeR QLF, DESeq2 ~condition, alongside the T1S2 DESeq2 ~batch+condition count",
+                "Overlap between the DESeq2 primary set and each alternative fit is quantified (counts and Jaccard)",
+                "Log2 fold-change concordance between DESeq2 and voom is reported with a correlation coefficient",
+                "The effect of dropping batch is quantified: genes gained, genes lost, and change in dispersion/variance, with a plain statement of whether the batch term mattered",
+                "A per-gene table annotating which fits called each gene is written",
+                "The primary result from T1S2 is left unchanged; this step's output is annotation only"
+              ],
+              "constraints": [
+                "All fits must use the identical filtered gene set and identical sample ordering from T1S1",
+                "The no-batch DESeq2 fit is a sensitivity arm only and must never be presented as the primary result",
+                "Use BH FDR at 0.05 throughout so the counts are comparable across methods"
+              ],
+              "caveats": [
+                "voom's precision weights are estimated from 12 libraries and are correspondingly noisy; treat disagreement with DESeq2 as an uncertainty flag rather than as evidence either fit is wrong",
+                "High concordance across methods does not validate the biology, only the statistical stability of the ranking"
+              ],
+              "packages": [
+                "limma",
+                "edgeR",
+                "DESeq2",
+                "ggplot2",
+                "ComplexUpset"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark and GO enrichment of the treatment signature",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "Which biological processes and hallmark states are coordinately shifted between treated and control kidney samples?",
+              "description": "Take the full DESeq2 treated-vs-control results table from T1S2 and run rank-based gene set enrichment (fgsea, or clusterProfiler::GSEA) on all tested genes ranked by the shrunken log2 fold change (ties broken by the Wald statistic; do NOT rank by p-value alone, which discards direction). Test against human gene-set collections resolved from the environment's reference store: the MSigDB human hallmark collection (50 sets, HGNC symbols) as the primary, the MSigDB human GO Biological Process collection as the mechanism-level secondary, and the human WikiPathways collection as an independent curated cross-check. Restrict to sets with 15-500 members after intersecting with the ~12,000-gene tested universe, and report the intersection size for each collection so coverage loss is visible. Apply BH FDR across sets within each collection separately and report normalized enrichment scores, padj, and leading-edge genes for every set at padj < 0.05, plus the top 15 by padj regardless. Because GO BP is a nested hierarchy, collapse redundant significant terms (e.g. by leading-edge Jaccard clustering or rrvgo) before reporting a term count. Separately, IF the T1S2 significant set at padj < 0.05 contains at least 25 genes, also run over-representation analysis on it against the same collections using the tested-gene set as the background universe; if it contains fewer than 25 genes, skip ORA and state that it was skipped for insufficient input rather than running it on a handful of genes. Output per-collection enrichment tables, a dot plot of top NES, and an enrichment-score plot for the top 3 hallmark sets.",
+              "context": "The DE table alone is a gene list; enrichment says whether the changes hang together as a coherent program. Human hallmark, GO BP, and WikiPathways symbol GMTs are present in the environment's reference store and match this dataset's organism (Homo sapiens) and identifier space (gene symbols in the first column of counts.csv).",
+              "acceptance_criteria": [
+                "GSEA is run on the full ranked gene list, not on a truncated significant subset",
+                "Hallmark, GO BP, and WikiPathways results are reported separately, each with its own BH correction and its own universe-intersection size",
+                "Leading-edge genes are reported for every set called significant",
+                "Redundant GO BP terms are collapsed before any term count is stated",
+                "ORA is either run with the tested-gene universe as background, or explicitly skipped with the input gene count given as the reason",
+                "If a gene-set collection cannot be resolved in the environment, the step reports that collection as unavailable and proceeds with the ones it has, rather than failing"
+              ],
+              "constraints": [
+                "Use only human gene-set collections — this is Homo sapiens kidney data; a mouse or rat GMT would produce meaningless results",
+                "Set the ORA background universe to the genes actually tested in T1S2, never to the whole genome or the whole GMT",
+                "Set a fixed random seed for the GSEA permutations and report it",
+                "Report enrichment as hypothesis-generating; do not state that a pathway is activated or inhibited on the basis of enrichment alone"
+              ],
+              "caveats": [
+                "The 12,000-gene input is already a reduced feature space, so gene sets will be incompletely covered and NES values are biased toward whichever sets happen to be well represented — report the coverage",
+                "With n=6 per arm the underlying ranking is noisy; a significant NES on a noisy ranking is weak evidence",
+                "GO BP parent and child sets share members, so a long list of significant terms is often one signal counted many times"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "msigdbr",
+                "ggplot2",
+                "rrvgo",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan fits the 60 vs 60 unpaired single-batch design with an explicit ~ condition model, control as reference, and a stated case-vs-control contrast; DESeq2 Wald is the valid NB alternative to the reference's limma-voom, and limma-voom is run as a cross-check. Effect size handling is the plan's strength: apeglm shrinkage, a formal lfcThreshold/greaterAbs test with its own BH FDR, and an explicit statement that post-hoc |LFC| filtering does not control error. QC covers PCA, library sizes, correlation heatmap, globin fraction, outlier policy and sva reported as a diagnostic, but omits the sex check against XIST/Y-linked genes. Enrichment uses fgsea preranked on the Wald statistic with named collections and a filtered-gene ORA universe, but states no collection version and no set-size window; the report specifies methods, thresholds, counts and caveats but does not commit to recording package versions."
+}

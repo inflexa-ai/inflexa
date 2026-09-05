@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly reads the two orthogonal clusters as an estimable nuisance, keeps raw counts in DESeq2, uses removeBatchEffect only for visualization, and runs a blind svaseq with condition in the full model and ~1 in the null, checking SVs against condition and technical covariates. It departs from the reference by making a PCA-derived hard cluster label the primary blocking term (circular, derived from the same data) with SVA as a secondary check, by capping SVs at 2 rather than trusting the estimator, and by never asking the analyst for the unrecorded variable (extraction date, lane) before estimating it. Filter, shrinkage (apeglm/ashr), and explicit contrast direction are stated, though BH is not named, reference level is not set, and a post hoc |LFC|>1 count is added. Enrichment was not requested and is not warranted here; it is included with a sensible restricted universe and named collections but no size window, so it earns partial credit rather than the omission score."
+}

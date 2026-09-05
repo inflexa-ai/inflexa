@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that batch is perfectly collinear with condition, explicitly refuses a batch term (rank-deficient) and refuses ComBat-seq/SVA/removeBatchEffect with the right justification, fits ~ condition under a stated untestable no-batch-effect assumption, labels every gene and pathway result as a confounded treatment+batch effect, and recommends a batch-balanced replication — exactly the reference behaviour. QC is design-aware: blind VST PCA and distance heatmap coloured by both labels with the explicit statement that the plots cannot adjudicate between treatment and batch, plus library sizes and a named outlier policy. Filtering (>=10 in >=6, the smallest group size), in-model median-of-ratios and TMM normalization, explicit relevel and named contrast, BH at alpha 0.05 with independent filtering tuned to alpha, apeglm by coefficient name, and lfcThreshold inside results() are all correct and stated. Enrichment was not asked for and adds confounded pathway claims to a design that cannot support them, though the fgsea specification itself (full ranked list, Wald stat metric justified, tested-gene universe, 15-500 window, named collections and version, seed, collapse, confounding caveat) is sound; the report section is complete and leads with the confounding statement."
+}

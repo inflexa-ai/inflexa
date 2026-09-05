@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on the core design: subject as a fixed block in both full (~ subject + condition) and reduced (~ subject) models, an omnibus DESeq2 LRT for 'any treatment effect', then three explicitly named factor/numerator/denominator Wald contrasts with ashr shrinkage and BH at 0.05 within contrast, plus an edgeR QL joint F-test on the identical design as a robustness check rather than separate subset fits. QC is blind-VST PCA coloured by both subject and condition with distance heatmap and library sizes, and the outlier policy is to flag rather than drop; the filter (>=10 counts in >=4 samples, the smallest group) is minimal and justified, and normalization is median-of-ratios/TMM inside the model on raw counts. Enrichment was not explicitly requested, but it is specified correctly (fgsea on full Wald-statistic ranking, tested genes as universe, human hallmark then human-filtered Reactome with versions, 15-500 size window, seed recorded), so it costs little. The report section names method, versions, design, reference level, thresholds, n tested/n significant, Cook's NA accounting, residual df, missing length offset and whole-blood composition caveats. Minor deductions only for the somewhat vague QC outlier policy ('report concerns for the modelling step to weigh')."
+}

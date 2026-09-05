@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the design (two-level factor, n=3, unpaired, single batch) and selects DESeq2 Wald with ~condition, control as reference, explicitly declining LRT and covariates the metadata cannot support, and repeatedly flags the low power at three replicates. QC is thorough and design-aware: library sizes, detected genes, top-10 library fraction, VST PCA with percent variance, sample distance heatmap, dispersion fit, p-value histogram, and a stated no-drop-but-report outlier policy. Raw integers go into the model with an explicit prohibition on pre-normalisation, the filter (>=10 counts in >=3 samples, the smallest group size) is minimal and justified, and BH at 0.05 with a 0.10 sensitivity tier plus apeglm (ashr fallback) shrinkage is stated with both raw and shrunken LFCs reported. Enrichment is handled correctly for zebrafish: it states no Danio rerio curated GMT exists in the store, uses native org.Dr.eg.db GO (version named) with the tested-gene universe, size windows, seed, Wald-stat ranking, direction-split ORA, redundancy collapsing, and forbids symbol-uppercasing as a fake ortholog map while requiring an explicit mapping-rate or unavailability statement. The main gap is that the Ensembl release and gene identifier space of the Danio rerio annotation are never named (only that the matrix is symbol-keyed and reduced to 12,000 genes), and the org.Dr.eg.db-derived ortholog route is asserted without specifying what table would supply human orthologs."
+}

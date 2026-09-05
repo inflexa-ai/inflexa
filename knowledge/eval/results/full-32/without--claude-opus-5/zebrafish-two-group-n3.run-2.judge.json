@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 Wald on raw counts with ~condition, explicit control reference, apeglm shrinkage, and a stated n=3 power caveat fits the unpaired single-batch two-group design. QC is thorough (library sizes, size factors, VST PCA with variance explained, distance heatmap, dispersion plot) but the outlier policy stops at 'inspect' without stating what happens to a bad pool, and the low-count filter names the sample count but not the minimum count value. BH is only named in the enrichment step (padj is left implicit in Step 1), the |LFC|>1 count is a post hoc filter rather than lfcThreshold, and the GSEA ranking metric is left as a choice between two options. Enrichment correctly leads with native zebrafish GO and flags its thin coverage, uses the tested genes as universe, and gates any human-pathway tier on an ortholog map with reported mapping rate, but does not restrict to one-to-one orthologs, name the ortholog table version, or set a gene-set size window; the report also never names the Ensembl release."
+}

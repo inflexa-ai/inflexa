@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan matches the reference closely: subject as a blocking term in both full and reduced models, an LRT for any condition effect, then the three Wald contrasts on the same paired model with ashr/apeglm shrinkage and BH at 0.05, with an explicit control reference level. QC includes VST, PCA and sample-distance heatmap with subject clustering, but coloring by condition and a policy for outliers or shallow samples are not stated; the |log2FC| cutoff is applied post hoc rather than via lfcThreshold in the test. Enrichment was not requested and the reference omits it; the plan adds WikiPathways ORA/GSEA without an explicit ORA universe, collection version, or gene-set size window. The report specifies thresholds and gene counts but not package versions or the design caveats beyond n=4 power."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly treats the balanced batch as a covariate in ~ batch + condition on raw counts with control releveled as reference, and it explicitly forbids pre-normalization and dropping the batch term, so the design and formula criteria are well met. QC includes PCA/sample distances colored by both batch and condition but omits library-size checks and any stated policy for outlier or shallow samples. Fold-change shrinkage is only implied by listing apeglm in packages and is never stated in the acceptance criteria, and the effect-size ranking of top genes is not tied to shrunken estimates. Enrichment is added though the question only asks which genes differ; the collection and version are named and a ranking metric is loosely given, but no ORA universe or gene-set size window is specified. The report names the method, design, threshold, and power caveat but not package versions or an explicit tested-gene count."
+}

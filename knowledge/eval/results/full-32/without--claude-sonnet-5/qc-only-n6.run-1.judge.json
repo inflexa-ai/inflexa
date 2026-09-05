@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly answers a QC-only question without fitting a differential model: raw column sums for library sizes, DESeq2 median-of-ratios size factors with vst (rlog fallback) for a labeled, condition-colored PCA and a Euclidean distance heatmap, and a retain/retain-with-caveat/exclude verdict grounded in PCA and distance behavior rather than depth alone, with the 5v6 balance consequence noted. The low-count filter is minimal and justified but vaguely specified ('at least a few samples'), and the verdict evidence omits the detected-gene count and count distribution that the reference uses. No vst design (blind vs ~condition) is stated and package versions are not required in the report, which keeps model and report scores below full marks; enrichment is correctly omitted and no p-values or fold changes are produced."
+}

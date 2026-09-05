@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 9,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 with median-of-ratios inside the model, apeglm shrinkage, and BH at 0.05 fit an unpaired 6 vs 6 single-batch count design, and the QC keeps sample_01 with library sizes, PCA/distances, and a documented sensitivity re-run rather than default exclusion. The plan correctly uses the mouse MSigDB Hallmark (MGI symbol) collection and fgsea preranked on the full list with a named statistic, but omits the MSigDB version, the 15–500 set-size window, and an explicit ORA universe. No low-count filter is stated anywhere, the design formula and reference level are never written out, the |log2FC|>1 cut is applied post hoc rather than as lfcThreshold, and package versions are not requested in the report."
+}

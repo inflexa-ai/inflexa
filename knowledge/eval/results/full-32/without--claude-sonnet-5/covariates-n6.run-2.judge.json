@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 4,
+    "low_count_filter": 4,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The core model is right: DESeq2 Wald on raw counts with ~ sex + age + condition, age continuous, and a prior tabulation of age/sex balance by group, though age is not centered and the reference level is not stated. QC is limited to library sizes and covariate tables; there is no PCA (by condition, sex, age), no sample distance check, no XIST/Y sex check, and no outlier policy. The low-count filter is an unspecified 'e.g., CPM/count threshold', BH is only implied via padj, and no lfcShrink/apeglm is applied to the reported effect. Enrichment and PPI steps are unwarranted for the question and the enrichment lacks an ORA universe or size window despite naming the collection and version; the report lacks software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design correctly: unpaired 60v60, single batch, ~condition with control as reference, no batch term, and SVA run as a reported diagnostic rather than fitted blind; DESeq2 is a valid if slower choice than the reference's limma-voom, and the plan additionally cross-checks with limma-voom on the same filtered counts. QC is thorough and tissue-aware (PCA, library sizes, size factors, correlation heatmap, globin fraction, top-10 gene monopoly) with an explicit no-silent-drop policy. Normalization is correct (raw counts into the NB model, size factors internal, VST used only for visualization and descriptive effect sizes), and the effect-size axis is handled better than most: apeglm/ashr shrinkage plus a formal lfcThreshold/greaterAbs test with an explicit statement that post-hoc |LFC| filtering does not control error at the boundary, BH at 0.05 throughout. The filter (count >= 10 in >= 60 samples) is stated and justified by the smaller group size but is somewhat stricter than filterByExpr on an already-reduced 12,000-symbol matrix. Enrichment is preranked on the Wald statistic with a stated expressed-gene universe for ORA and redundancy collapsing, though no MSigDB version or explicit set-size window is given; reporting is otherwise complete apart from unstated software versions."
+}

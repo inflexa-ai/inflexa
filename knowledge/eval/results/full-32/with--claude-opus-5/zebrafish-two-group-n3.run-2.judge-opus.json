@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan is precisely matched to the stated design: unpaired two-group, n=3, single batch, raw Salmon gene counts, with DESeq2 Wald on ~condition plus an edgeR QLF robustness check reported as an intersection rather than a union, and an explicit low-power caveat placed before the gene tables. QC (blind VST, PCA on top 500, distance heatmap, library sizes, detected genes) precedes the test with a stated no-drop policy, the filter (>=10 counts in >=3 samples, the smallest group size) is minimal and justified, normalization is explicitly kept inside the model (median-of-ratios / TMM, no pre-scaling), the reference level is set by relevel() with the contrast triple printed, and BH at alpha 0.05 with independent filtering plus apeglm shrinkage is correctly specified with no post hoc fold-change filter. The enrichment section is the standout: it states outright that no curated zebrafish collection exists, takes the one-to-one ortholog route to human MSigDB 2026.1 Hallmark/GO BP via babelgene while reporting the mapped share, runs the native org.Dr.eg.db 3.22.0 GO BP path with its thinness stated, and pins the full ranked list, the Wald-statistic metric, the tested-gene universe, the 15-500 size window applied after intersection, redundancy collapsing and a seed. Only minor gap: the specific Ensembl release number for the Danio rerio annotation is deferred to the report rather than named up front, and the babelgene ortholog-table version is not pinned."
+}

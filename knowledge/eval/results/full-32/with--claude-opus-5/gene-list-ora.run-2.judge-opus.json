@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the supplied DESeq2 table as the input and explicitly refuses to re-fit a count model, defining the foreground as padj<0.05 genes (split up/down and combined) and the universe as genes with non-NA padj, which is exactly the reference behaviour; the ORA is enrichGO on GO BP with BH at 0.05, a 15-500 size window applied after intersection with the universe, rrvgo semantic reduction as the headline, and per-term fold enrichment, GeneRatio/BgRatio, padj and member symbols, with annotation release recorded. Because no count model is refit, the QC, filtering, normalization and formula criteria are only addressed indirectly, but the plan does the right substitutes: a p-value histogram sanity check, an NA breakdown separating independent filtering from Cook's outlier flagging, an identifier-space cross-check against the counts matrix, and an explicit sample_01 low-depth caveat carried as a limitation on the upstream estimates rather than silently corrected. The GSEA step is correctly framed as a threshold-free companion with the Wald statistic named as the ranking metric and an explicit ORA-vs-GSEA agreement table, not as a substitute answer to the over-representation question. Weaknesses are minor: the foreground fold-change policy is stated only as 'padj only, never FC alone' rather than as an explicit LFC threshold decision, and no design formula or reference level is restated from the upstream fit beyond direction of the contrast."
+}

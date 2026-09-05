@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 3,
+    "low_count_filter": 2,
+    "normalization": 2,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 5
+  },
+  "rationale": "The planner reached exactly the reference outcome: it recognized that the inputs are raw paired-end FASTQ with no count matrix, verified that no quantifier (STAR, HISAT2, Salmon, kallisto, Rsubread/featureCounts) and no genome/transcriptome index exist in the environment, noted that only a GENCODE v50 GTF annotation is present, and stopped to ask whether a count matrix exists or a named tool plus matching index will be provisioned. That is the correct gating decision, so method_fits_design scores full marks, and omitting enrichment at this stage is likewise correct. However, the halt message contains no contingent downstream specification: it does not state the QC steps (PCA, sample distances, library sizes), a minimal low-count filter, model-internal size-factor/TMM normalization, the design formula and treated-vs-control contrast with reference level, or BH at 0.05 with LFC shrinkage, so those criteria can only be credited minimally on what is stated. The question itself is well-documented and specific about the missing reference and annotation, which earns partial report credit, but it never previews the two-group three-replicate DESeq2/edgeR plan or the low-power caveat that would follow once counts arrive."
+}

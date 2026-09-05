@@ -1,0 +1,313 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "qc-only-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T17:43:32.456Z",
+  "elapsedMs": 32216,
+  "outcome": "plan_submitted",
+  "planId": "pln-95ef87ab",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library size and count distribution QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Library size alone cannot distinguish technical shallow sequencing from a biologically atypical sample; downstream PCA/clustering in T1S2 and T1S3 are needed to triangulate"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "What are the raw library sizes (total counts) for all 12 samples (6 AD lesional vs 6 control), and how does sample_01 compare to the cohort median/IQR and to its condition group?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the raw integer counts.csv and metadata.csv exactly as provided (12000 x 13 counts matrix, 12 x 2 metadata)",
+          "Do not filter or drop sample_01 at this stage — this is descriptive QC only"
+        ],
+        "acceptance_criteria": [
+          "Per-sample total raw counts computed from counts.csv for all 12 samples",
+          "Library sizes reported as a table and a bar plot, samples ordered/colored by condition",
+          "Median, IQR, and fold-deviation of sample_01 from the cohort median explicitly stated",
+          "Non-zero gene count / detection rate per sample also reported as a secondary QC metric"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Normalization and PCA of all 12 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A very low library size can inflate variance-stabilized values for that sample and pull it out on a PC that reflects technical depth rather than biology — call this out explicitly if seen"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "matplotlib"
+        ],
+        "question": "After variance-stabilizing normalization, how do the 12 samples separate on PCA (PC1/PC2, colored by AD-lesional vs control), and where does sample_01 fall relative to its condition group and relative to the other 11 samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Compute DESeq2 size factors / vst on the full 12-sample count matrix, not on a subset",
+          "Report PCA both with and without sample_01 if its low library size visibly distorts size-factor estimation or PC loadings, so the effect of the shallow sample on the projection is transparent"
+        ],
+        "acceptance_criteria": [
+          "Raw counts normalized with DESeq2 vst or rlog (or an equivalent size-factor-aware transform) prior to PCA",
+          "PCA computed on the normalized matrix (e.g. top variable genes), PC1 and PC2 percent variance explained reported",
+          "PCA scatter plot produced with points labeled by sample ID and colored by condition (lesional vs control)",
+          "Explicit statement of whether sample_01 is a PCA outlier (e.g. distance from group centroid / from all other samples) and whether it still separates by condition along PC1 or PC2"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sample-to-sample distance matrix and hierarchical clustering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Euclidean distance on vst-normalized data can still be sensitive to a very low-depth sample's added technical noise; note this when interpreting sample_01's position"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scipy",
+          "seaborn",
+          "matplotlib"
+        ],
+        "question": "Based on pairwise sample-to-sample distances computed from the normalized expression data, does sample_01 cluster with its assigned condition group (lesional or control) or does it fall out as an outlier distinct from all other samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the same normalized matrix produced in T1S2 for consistency between the PCA and the distance-matrix views"
+        ],
+        "acceptance_criteria": [
+          "Pairwise sample-to-sample distance matrix computed (e.g. Euclidean distance on vst/rlog-normalized data, or Poisson distance which is robust to differing library depth)",
+          "Distance matrix rendered as an annotated heatmap with hierarchical clustering dendrogram, samples labeled with condition",
+          "Explicit report of which cluster/branch sample_01 falls into and its mean distance to same-condition vs opposite-condition samples",
+          "Any secondary outlier samples besides sample_01 are also flagged if present"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Synthesized QC verdict on sample_01 and cohort",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A definitive technical-vs-biological determination for sample_01 would ideally involve external QC metrics (e.g. RIN, mapping rate) not present in this data profile; the verdict here is necessarily based only on count-derived evidence"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "Combining library size, PCA position, and sample-to-sample distance evidence, what is the verdict on sample_01 (retain as-is, retain with caveat, or exclude from downstream differential expression) and is the remaining 11/12-sample cohort otherwise clean for testing?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T1S1",
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Do not run or imply any differential expression test in this step — this plan is QC-only per the research question"
+        ],
+        "acceptance_criteria": [
+          "Verdict explicitly integrates the three lines of evidence from T1S1-T1S3 (library size deviation, PCA position, clustering behavior)",
+          "Verdict states a concrete recommendation for the downstream DE analysis (e.g. keep and rely on size-factor normalization vs flag as a sensitivity-analysis exclusion) with the reasoning made explicit rather than asserted",
+          "Report notes whether any sample besides sample_01 shows a comparable anomaly",
+          "No differential expression or hypothesis testing is performed in this step — QC synthesis only, consistent with the research question asking to look at samples 'before we test anything'"
+        ]
+      }
+    ],
+    "title": "AD skin RNA-seq QC: library size, PCA, sample distances",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "This is a pre-testing QC pass on a 12-sample (6 lesional AD vs 6 control), single-batch, unpaired bulk RNA-seq skin dataset with raw Salmon gene-level counts (12000 genes x 12 samples; the counts.csv has 13 columns including the gene symbol column). The data profile flags sample_01 as having a library size ~4x below the median, which is the central question to resolve before any differential expression is run. The plan is a single coherent QC track: (1) compute and report per-sample library sizes (total counts) and flag outliers against the group median/IQR, (2) apply a standard variance-stabilizing normalization (DESeq2 rlog/vst or equivalent) and run PCA colored by condition to see whether sample_01 and any other sample separate from their group, (3) compute a sample-to-sample distance matrix/heatmap (Euclidean on normalized data or Poisson distance suited to count outliers) with hierarchical clustering to see if sample_01 clusters with its condition group or is an outlier, and (4) synthesize the three lines of evidence into an explicit verdict on sample_01 — retain, downweight, or exclude — with the reasoning stated. All steps operate on the same raw counts + metadata files already profiled; no external data or reference sets are needed for this QC-only task."
+  },
+  "usage": {
+    "inputTokens": 43276,
+    "outputTokens": 2724,
+    "cacheCreationInputTokens": 34122,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD skin RNA-seq QC: library size, PCA, sample distances",
+          "analytical_narrative": "This is a pre-testing QC pass on a 12-sample (6 lesional AD vs 6 control), single-batch, unpaired bulk RNA-seq skin dataset with raw Salmon gene-level counts (12000 genes x 12 samples; the counts.csv has 13 columns including the gene symbol column). The data profile flags sample_01 as having a library size ~4x below the median, which is the central question to resolve before any differential expression is run. The plan is a single coherent QC track: (1) compute and report per-sample library sizes (total counts) and flag outliers against the group median/IQR, (2) apply a standard variance-stabilizing normalization (DESeq2 rlog/vst or equivalent) and run PCA colored by condition to see whether sample_01 and any other sample separate from their group, (3) compute a sample-to-sample distance matrix/heatmap (Euclidean on normalized data or Poisson distance suited to count outliers) with hierarchical clustering to see if sample_01 clusters with its condition group or is an outlier, and (4) synthesize the three lines of evidence into an explicit verdict on sample_01 — retain, downweight, or exclude — with the reasoning stated. All steps operate on the same raw counts + metadata files already profiled; no external data or reference sets are needed for this QC-only task.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library size and count distribution QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What are the raw library sizes (total counts) for all 12 samples (6 AD lesional vs 6 control), and how does sample_01 compare to the cohort median/IQR and to its condition group?",
+              "acceptance_criteria": [
+                "Per-sample total raw counts computed from counts.csv for all 12 samples",
+                "Library sizes reported as a table and a bar plot, samples ordered/colored by condition",
+                "Median, IQR, and fold-deviation of sample_01 from the cohort median explicitly stated",
+                "Non-zero gene count / detection rate per sample also reported as a secondary QC metric"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use the raw integer counts.csv and metadata.csv exactly as provided (12000 x 13 counts matrix, 12 x 2 metadata)",
+                "Do not filter or drop sample_01 at this stage — this is descriptive QC only"
+              ],
+              "caveats": [
+                "Library size alone cannot distinguish technical shallow sequencing from a biologically atypical sample; downstream PCA/clustering in T1S2 and T1S3 are needed to triangulate"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Normalization and PCA of all 12 samples",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "After variance-stabilizing normalization, how do the 12 samples separate on PCA (PC1/PC2, colored by AD-lesional vs control), and where does sample_01 fall relative to its condition group and relative to the other 11 samples?",
+              "acceptance_criteria": [
+                "Raw counts normalized with DESeq2 vst or rlog (or an equivalent size-factor-aware transform) prior to PCA",
+                "PCA computed on the normalized matrix (e.g. top variable genes), PC1 and PC2 percent variance explained reported",
+                "PCA scatter plot produced with points labeled by sample ID and colored by condition (lesional vs control)",
+                "Explicit statement of whether sample_01 is a PCA outlier (e.g. distance from group centroid / from all other samples) and whether it still separates by condition along PC1 or PC2"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Compute DESeq2 size factors / vst on the full 12-sample count matrix, not on a subset",
+                "Report PCA both with and without sample_01 if its low library size visibly distorts size-factor estimation or PC loadings, so the effect of the shallow sample on the projection is transparent"
+              ],
+              "caveats": [
+                "A very low library size can inflate variance-stabilized values for that sample and pull it out on a PC that reflects technical depth rather than biology — call this out explicitly if seen"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Sample-to-sample distance matrix and hierarchical clustering",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Based on pairwise sample-to-sample distances computed from the normalized expression data, does sample_01 cluster with its assigned condition group (lesional or control) or does it fall out as an outlier distinct from all other samples?",
+              "acceptance_criteria": [
+                "Pairwise sample-to-sample distance matrix computed (e.g. Euclidean distance on vst/rlog-normalized data, or Poisson distance which is robust to differing library depth)",
+                "Distance matrix rendered as an annotated heatmap with hierarchical clustering dendrogram, samples labeled with condition",
+                "Explicit report of which cluster/branch sample_01 falls into and its mean distance to same-condition vs opposite-condition samples",
+                "Any secondary outlier samples besides sample_01 are also flagged if present"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scipy",
+                "seaborn",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use the same normalized matrix produced in T1S2 for consistency between the PCA and the distance-matrix views"
+              ],
+              "caveats": [
+                "Euclidean distance on vst-normalized data can still be sensitive to a very low-depth sample's added technical noise; note this when interpreting sample_01's position"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Synthesized QC verdict on sample_01 and cohort",
+              "track": "T1",
+              "step_type": "synthesis",
+              "question": "Combining library size, PCA position, and sample-to-sample distance evidence, what is the verdict on sample_01 (retain as-is, retain with caveat, or exclude from downstream differential expression) and is the remaining 11/12-sample cohort otherwise clean for testing?",
+              "acceptance_criteria": [
+                "Verdict explicitly integrates the three lines of evidence from T1S1-T1S3 (library size deviation, PCA position, clustering behavior)",
+                "Verdict states a concrete recommendation for the downstream DE analysis (e.g. keep and rely on size-factor normalization vs flag as a sensitivity-analysis exclusion) with the reasoning made explicit rather than asserted",
+                "Report notes whether any sample besides sample_01 shows a comparable anomaly",
+                "No differential expression or hypothesis testing is performed in this step — QC synthesis only, consistent with the research question asking to look at samples 'before we test anything'"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Do not run or imply any differential expression test in this step — this plan is QC-only per the research question"
+              ],
+              "caveats": [
+                "A definitive technical-vs-biological determination for sample_01 would ideally involve external QC metrics (e.g. RIN, mapping rate) not present in this data profile; the verdict here is necessarily based only on count-derived evidence"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

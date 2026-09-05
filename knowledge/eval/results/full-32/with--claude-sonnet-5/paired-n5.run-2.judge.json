@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference exactly: DESeq2 with ~subject + condition, subject as a fixed blocking term, the treated-vs-control condition coefficient tested by Wald with an explicit control reference level, apeglm shrinkage, and BH at alpha 0.05 with independent filtering, and it correctly notes there are no spare degrees of freedom for further covariates. QC is dataset-specific (blind VST PCA and distance heatmap colored by subject and condition, library-size flagging, explicit pairing assessment), though the outlier policy stops at flagging rather than stating a removal decision rule. The filter (>=10 counts in >=5 samples) is minimal and justified, normalization is median-of-ratios inside the model with raw counts and no VST leakage. Enrichment is a proper preranked fgsea on the Wald statistic with a tested-gene universe, named collections, and a 15-500 window; the Reactome version is only 'current release'. The report enumerates design, thresholds, tested/significant counts, versions, and the small-cohort caveat."
+}

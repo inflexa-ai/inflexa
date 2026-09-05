@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "Step 1 matches the reference exactly: descriptive normalized counts and pseudocount log2FC with no p-values and an explicit no-replication statement. But the plan then contradicts its own narrative by running edgeR exactTest at assumed BCVs and reporting genes 'passing FDR < 0.05 and |log2FC| > 1' per BCV, plus a preranked GSEA with FDR — precisely the assumed-dispersion p-value output the reference identifies as wrong, and the 'sensitivity' framing does not make the error rate valid. The plan never states the design that would support inference (two, preferably three or more per group), only that replication is 'required to confirm'. Filtering (>=10 in at least one sample, retained count reported) and normalization (size factors and library sizes reported, computed inside the pipeline) are adequate; QC is limited to library sizes and pairwise scatter, which is about all a 2-sample design allows, but no outlier/shallow-sample policy is given. Enrichment is not warranted on a 1v1 ranking and should have been omitted, though the collection, size window and ranking metric are stated."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference exactly: it recognizes the perfect confound, refuses batch terms and ComBat/SVA/removeBatchEffect, fits ~condition with control as reference, documents the rank-deficiency failure, and labels every output as the confounded treated+B2 vs control+B1 contrast with a stated design fix. QC is thorough (library sizes, detection, PCA, correlation heatmap) though the outlier/shallow-sample policy is only 'flag and inspect'. The |LFC|>1 cut is applied post hoc on shrunken LFC rather than via lfcThreshold, and normalization is implicit in DESeq2/voom rather than named. Enrichment is preranked GSEA with seed, size window and named human collections, but no collection version is stated and its value on a confounded ranking is marginal; the report specifies methods, thresholds, counts and caveats but does not require software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses PyDESeq2 Wald testing with dispersion/LFC shrinkage on raw counts for an unpaired 6v6 single-batch design, honoring the Python-only constraint with no R steps, and it names the contrast and explicit reference level rather than leaving it to alphabetical default. QC is dataset-specific and strong: library-size bar plot annotating sample_01, blinded log1p-of-size-factor-normalized PCA on top 500 genes, sample-distance heatmap, and an explicit policy to retain sample_01 unless evidence-based reasons justify removal. Filtering is justified (>=10 counts in >= smaller group size) though marginally stricter than the minimal rowSums>=10 convention; normalization is correctly internal median-of-ratios with an explicit ban on pre-normalizing. FDR is BH at alpha=0.05 with independent filtering, apeglm-style shrinkage kept separate from p-values, Cook's outliers and p-value histogram inspected. Enrichment is prerank on the full ranked list by the Wald stat with Hallmark 2026.1, size window 15-500, tested-gene universe, and leading-edge reporting; the only small gap is that a fixed seed is only implied in the report step rather than fixed in the GSEA step itself, and Reactome adds scope beyond the question."
+}

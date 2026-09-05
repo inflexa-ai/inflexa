@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats the balanced batch as a design covariate (~ batch + condition, condition last, control as reference, treated-vs-control contrast) and explicitly forbids feeding removeBatchEffect/ComBat output into any count model, reserving corrected values for display only — exactly the reference behaviour. QC is thorough and design-aware: cross-tabulation of batch x condition, library sizes, detected genes, zero fraction, VST PCA coloured by condition and shaped by batch with per-PC association tests, distance heatmap, and named outlier evidence. Filtering is justified by group size (counts >= 10 in >= 6 samples) though the 'e.g.' alternative of rowSums >= 10 leaves it slightly loose; normalization stays inside the models (DESeq2 size factors implied, TMM stated for voom) but size factors are never named outright. Inference is textbook: BH at alpha 0.05 with 0.10 as a labelled secondary, apeglm shrinkage kept alongside unshrunken statistics, independent filtering, plus an honest sensitivity comparison to ~ condition and a leave-one-out leverage check. Enrichment is well specified (fgsea on the Wald ranking, ORA restricted to the tested-gene universe, size window, named human collections) but no collection versions are given, and the report spec omits explicit software versions."
+}

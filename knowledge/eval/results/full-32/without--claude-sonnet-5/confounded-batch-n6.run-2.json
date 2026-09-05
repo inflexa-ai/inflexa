@@ -1,0 +1,421 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "confounded-batch-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T17:31:39.677Z",
+  "elapsedMs": 59481,
+  "outcome": "plan_submitted",
+  "planId": "pln-ebc51398",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and exploratory diagnostics on raw counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Any PC axis correlating with condition also perfectly correlates with batch by construction — do not interpret a clean PC1 separation as proof of a real treatment effect",
+          "Do not attempt ComBat or other batch correction here — with only 2 batches each fully aliased with one condition level, batch correction would remove the condition signal entirely (over-correction) or do nothing depending on parameterization; report this rather than running it"
+        ],
+        "context": "12000 x 12 raw integer gene-level counts (salmon-derived) with a 12-sample metadata table giving condition (treated/control) and batch (B1/B2), where batch is perfectly confounded with condition (all B1=control, all B2=treated). This step establishes what the between-group separation looks like before any modeling, to inform interpretation of the DE results.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 samples (6 treated/B2, 6 control/B1) separate along PC1/PC2 in a way consistent with a global batch shift, and how do library size, gene detection, and sample-sample correlation compare between B1 and B2?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "PCA plot (on variance-stabilized or log-CPM counts) colored by condition/batch (identical grouping) is produced with % variance explained per PC reported",
+          "Library size, number of detected genes, and sample-sample correlation heatmap are reported per sample",
+          "A written diagnostic statement addresses whether the separation pattern looks like a diffuse/global batch effect or a more localized signal, without claiming this resolves the confound"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, condition-only model",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A design of ~batch + condition is not fittable (rank-deficient) since batch is a perfect linear function of condition with only 2 levels each — do not attempt it",
+          "Any DE gene reported here is consistent with a treatment effect, a batch/processing effect, or both — the magnitude of confounding cannot be estimated from this data"
+        ],
+        "context": "Raw integer gene counts (12000 genes x 12 samples), 6 treated (batch B2) vs 6 control (batch B1). This is the core DE step; because condition and batch are perfectly aliased there is exactly one valid design (~condition) and no way to separate the two effects statistically with this dataset alone.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the ~12000 genes are differentially expressed between treated (n=6, batch B2) and control (n=6, batch B1) using a standard negative-binomial model with condition as the sole design term?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~ condition on raw integer counts, using default independent filtering and Benjamini-Hochberg FDR",
+          "Full results table (log2FC, p-value, padj, base mean) reported for all ~12000 genes, with counts of genes at padj<0.05 and padj<0.1",
+          "Explicit statement in the output that 'batch' was NOT included as a covariate because it is perfectly collinear with 'condition' (design matrix would be rank-deficient / non-identifiable), so this DE list cannot be attributed to treatment alone versus batch/processing effects",
+          "MA plot and p-value histogram produced for QC of the model fit"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are equally consistent with the confounded batch effect and a real treatment effect and cannot on their own disambiguate the two",
+          "If the human WikiPathways GMT is not present at run time, report enrichment as skipped/unavailable rather than substituting a different-organism gene set"
+        ],
+        "context": "DESeq2 differential expression result table for human lung tissue (treated vs control, 12000 genes). A curated set of human WikiPathways gene sets is available in the reference store (wikipathways_Homo_sapiens.gmt) and matches this dataset's organism (Homo sapiens); use gene symbols to match, consistent with the counts file's gene-symbol row identifiers.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the genes differing between treated (B2) and control (B1) converge on coherent biological pathways, or do they look like a diffuse non-specific batch signature?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Over-representation or GSEA-style enrichment run on the DESeq2 result (ranked by stat or log2FC, significance threshold padj<0.05) against human pathway gene sets",
+          "Enriched pathways reported with adjusted p-values, gene set names, and leading-edge/overlapping genes",
+          "Interpretive note distinguishing pathways that look treatment-plausible (targeted, few coherent programs) from a signature that looks like generic stress/technical response (e.g. very broad, housekeeping-dominated, or process-unrelated to the biology of the treatment) — flagged as an indirect diagnostic only, not proof of validity"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Confound-aware synthesis and reporting",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Do not let the enrichment or DE results be presented as confirmed treatment biology anywhere in the report — the confound caveat must accompany every substantive claim"
+        ],
+        "context": "Synthesizes the QC diagnostics, DESeq2 DE table, and pathway enrichment results from the prior steps into a single report for a dataset where condition and batch are perfectly confounded (6 control/B1 vs 6 treated/B2).",
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "How should the treated-vs-control DE and enrichment results be presented given that batch is perfectly confounded with condition?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "reporting",
+        "depends_on": [
+          "T1S1",
+          "T1S2",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Report explicitly states, in the first paragraph, that batch B1/B2 is perfectly confounded with control/treated condition and that this design cannot statistically separate a treatment effect from a batch/processing effect",
+          "Report presents the DE gene list and enrichment results as candidate/hypothesis-generating findings only, not as validated treatment effects",
+          "Report recommends what would resolve the confound (e.g., a follow-up experiment with treatment and control samples distributed across both batches, or technical replicates) rather than proposing any statistical fix within the current data",
+          "Diagnostic findings from T1S1 (PCA/clustering pattern) are summarized alongside the DE/enrichment results to give the reader the fullest picture available for judging plausibility"
+        ]
+      }
+    ],
+    "title": "Batch-confounded DE analysis with caveats",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The design has 6 treated vs 6 control samples where batch B1 = all controls and B2 = all treated, a perfect confound. No statistical method (including ComBat, RUV, SVA) can distinguish a batch effect from a treatment effect when the two are perfectly aliased — there is no residual within-batch variation in condition to estimate the treatment effect independent of batch. Any DE list produced will reflect the sum of true treatment effect and any technical/batch difference between B1 and B2 processing, and this cannot be decomposed with the given design alone. Rather than silently running a batch-corrected DESeq2 model that would launder this confound into a false sense of validity, this plan: (1) runs standard DESeq2 DE analysis on raw counts with condition as the only term (batch cannot be added as a covariate here since it is collinear with condition — the design matrix would be rank-deficient), (2) explicitly runs and reports diagnostics (PCA, sample-sample correlation, library size/composition checks) that characterize whether the treated-vs-control separation looks like a global batch shift (affecting many unrelated genes/pathways non-specifically) versus a more targeted, biologically coherent signal, (3) performs pathway enrichment on the resulting DE list to see if it converges on coherent, plausible treatment-related biology, and (4) produces a report that flags the confound prominently and states that findings are hypothesis-generating only, pending replication in a study where treatment and batch are not aliased. No step attempts spurious deconfounding — that would misrepresent an unresolvable design flaw as a solved problem."
+  },
+  "usage": {
+    "inputTokens": 89737,
+    "outputTokens": 6264,
+    "cacheCreationInputTokens": 37319,
+    "cacheReadInputTokens": 52394,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Batch-confounded DE analysis with caveats",
+          "analytical_narrative": "The design has 6 treated vs 6 control samples where batch B1 = all controls and B2 = all treated, a perfect confound. No statistical method (including ComBat, RUV, SVA) can distinguish a batch effect from a treatment effect when the two are perfectly aliased — there is no residual within-batch variation in condition to estimate the treatment effect independent of batch. Any DE list produced will reflect the sum of true treatment effect and any technical/batch difference between B1 and B2 processing, and this cannot be decomposed with the given design alone. Rather than silently running a batch-corrected DESeq2 model that would launder this confound into a false sense of validity, this plan: (1) runs standard DESeq2 DE analysis on raw counts with condition as the only term (batch cannot be added as a covariate here since it is collinear with condition — the design matrix would be rank-deficient), (2) explicitly runs and reports diagnostics (PCA, sample-sample correlation, library size/composition checks) that characterize whether the treated-vs-control separation looks like a global batch shift (affecting many unrelated genes/pathways non-specifically) versus a more targeted, biologically coherent signal, (3) performs pathway enrichment on the resulting DE list to see if it converges on coherent, plausible treatment-related biology, and (4) produces a report that flags the confound prominently and states that findings are hypothesis-generating only, pending replication in a study where treatment and batch are not aliased. No step attempts spurious deconfounding — that would misrepresent an unresolvable design flaw as a solved problem.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and exploratory diagnostics on raw counts",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the 12 samples (6 treated/B2, 6 control/B1) separate along PC1/PC2 in a way consistent with a global batch shift, and how do library size, gene detection, and sample-sample correlation compare between B1 and B2?",
+              "acceptance_criteria": [
+                "PCA plot (on variance-stabilized or log-CPM counts) colored by condition/batch (identical grouping) is produced with % variance explained per PC reported",
+                "Library size, number of detected genes, and sample-sample correlation heatmap are reported per sample",
+                "A written diagnostic statement addresses whether the separation pattern looks like a diffuse/global batch effect or a more localized signal, without claiming this resolves the confound"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 raw integer gene-level counts (salmon-derived) with a 12-sample metadata table giving condition (treated/control) and batch (B1/B2), where batch is perfectly confounded with condition (all B1=control, all B2=treated). This step establishes what the between-group separation looks like before any modeling, to inform interpretation of the DE results.",
+              "caveats": [
+                "Any PC axis correlating with condition also perfectly correlates with batch by construction — do not interpret a clean PC1 separation as proof of a real treatment effect",
+                "Do not attempt ComBat or other batch correction here — with only 2 batches each fully aliased with one condition level, batch correction would remove the condition signal entirely (over-correction) or do nothing depending on parameterization; report this rather than running it"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, condition-only model",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the ~12000 genes are differentially expressed between treated (n=6, batch B2) and control (n=6, batch B1) using a standard negative-binomial model with condition as the sole design term?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~ condition on raw integer counts, using default independent filtering and Benjamini-Hochberg FDR",
+                "Full results table (log2FC, p-value, padj, base mean) reported for all ~12000 genes, with counts of genes at padj<0.05 and padj<0.1",
+                "Explicit statement in the output that 'batch' was NOT included as a covariate because it is perfectly collinear with 'condition' (design matrix would be rank-deficient / non-identifiable), so this DE list cannot be attributed to treatment alone versus batch/processing effects",
+                "MA plot and p-value histogram produced for QC of the model fit"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene counts (12000 genes x 12 samples), 6 treated (batch B2) vs 6 control (batch B1). This is the core DE step; because condition and batch are perfectly aliased there is exactly one valid design (~condition) and no way to separate the two effects statistically with this dataset alone.",
+              "caveats": [
+                "A design of ~batch + condition is not fittable (rank-deficient) since batch is a perfect linear function of condition with only 2 levels each — do not attempt it",
+                "Any DE gene reported here is consistent with a treatment effect, a batch/processing effect, or both — the magnitude of confounding cannot be estimated from this data"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on DE gene list",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the genes differing between treated (B2) and control (B1) converge on coherent biological pathways, or do they look like a diffuse non-specific batch signature?",
+              "acceptance_criteria": [
+                "Over-representation or GSEA-style enrichment run on the DESeq2 result (ranked by stat or log2FC, significance threshold padj<0.05) against human pathway gene sets",
+                "Enriched pathways reported with adjusted p-values, gene set names, and leading-edge/overlapping genes",
+                "Interpretive note distinguishing pathways that look treatment-plausible (targeted, few coherent programs) from a signature that looks like generic stress/technical response (e.g. very broad, housekeeping-dominated, or process-unrelated to the biology of the treatment) — flagged as an indirect diagnostic only, not proof of validity"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "DESeq2 differential expression result table for human lung tissue (treated vs control, 12000 genes). A curated set of human WikiPathways gene sets is available in the reference store (wikipathways_Homo_sapiens.gmt) and matches this dataset's organism (Homo sapiens); use gene symbols to match, consistent with the counts file's gene-symbol row identifiers.",
+              "caveats": [
+                "Enrichment results are equally consistent with the confounded batch effect and a real treatment effect and cannot on their own disambiguate the two",
+                "If the human WikiPathways GMT is not present at run time, report enrichment as skipped/unavailable rather than substituting a different-organism gene set"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Confound-aware synthesis and reporting",
+              "track": "T3",
+              "step_type": "reporting",
+              "question": "How should the treated-vs-control DE and enrichment results be presented given that batch is perfectly confounded with condition?",
+              "acceptance_criteria": [
+                "Report explicitly states, in the first paragraph, that batch B1/B2 is perfectly confounded with control/treated condition and that this design cannot statistically separate a treatment effect from a batch/processing effect",
+                "Report presents the DE gene list and enrichment results as candidate/hypothesis-generating findings only, not as validated treatment effects",
+                "Report recommends what would resolve the confound (e.g., a follow-up experiment with treatment and control samples distributed across both batches, or technical replicates) rather than proposing any statistical fix within the current data",
+                "Diagnostic findings from T1S1 (PCA/clustering pattern) are summarized alongside the DE/enrichment results to give the reader the fullest picture available for judging plausibility"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesizes the QC diagnostics, DESeq2 DE table, and pathway enrichment results from the prior steps into a single report for a dataset where condition and batch are perfectly confounded (6 control/B1 vs 6 treated/B2).",
+              "caveats": [
+                "Do not let the enrichment or DE results be presented as confirmed treatment biology anywhere in the report — the confound caveat must accompany every substantive claim"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Batch-confounded DE analysis with caveats",
+          "analytical_narrative": "The design has 6 treated vs 6 control samples where batch B1 = all controls and B2 = all treated, a perfect confound. No statistical method (including ComBat, RUV, SVA) can distinguish a batch effect from a treatment effect when the two are perfectly aliased — there is no residual within-batch variation in condition to estimate the treatment effect independent of batch. Any DE list produced will reflect the sum of true treatment effect and any technical/batch difference between B1 and B2 processing, and this cannot be decomposed with the given design alone. Rather than silently running a batch-corrected DESeq2 model that would launder this confound into a false sense of validity, this plan: (1) runs standard DESeq2 DE analysis on raw counts with condition as the only term (batch cannot be added as a covariate here since it is collinear with condition — the design matrix would be rank-deficient), (2) explicitly runs and reports diagnostics (PCA, sample-sample correlation, library size/composition checks) that characterize whether the treated-vs-control separation looks like a global batch shift (affecting many unrelated genes/pathways non-specifically) versus a more targeted, biologically coherent signal, (3) performs pathway enrichment on the resulting DE list to see if it converges on coherent, plausible treatment-related biology, and (4) produces a report that flags the confound prominently and states that findings are hypothesis-generating only, pending replication in a study where treatment and batch are not aliased. No step attempts spurious deconfounding — that would misrepresent an unresolvable design flaw as a solved problem.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and exploratory diagnostics on raw counts",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the 12 samples (6 treated/B2, 6 control/B1) separate along PC1/PC2 in a way consistent with a global batch shift, and how do library size, gene detection, and sample-sample correlation compare between B1 and B2?",
+              "acceptance_criteria": [
+                "PCA plot (on variance-stabilized or log-CPM counts) colored by condition/batch (identical grouping) is produced with % variance explained per PC reported",
+                "Library size, number of detected genes, and sample-sample correlation heatmap are reported per sample",
+                "A written diagnostic statement addresses whether the separation pattern looks like a diffuse/global batch effect or a more localized signal, without claiming this resolves the confound"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 raw integer gene-level counts (salmon-derived) with a 12-sample metadata table giving condition (treated/control) and batch (B1/B2), where batch is perfectly confounded with condition (all B1=control, all B2=treated). This step establishes what the between-group separation looks like before any modeling, to inform interpretation of the DE results.",
+              "caveats": [
+                "Any PC axis correlating with condition also perfectly correlates with batch by construction — do not interpret a clean PC1 separation as proof of a real treatment effect",
+                "Do not attempt ComBat or other batch correction here — with only 2 batches each fully aliased with one condition level, batch correction would remove the condition signal entirely (over-correction) or do nothing depending on parameterization; report this rather than running it"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, condition-only model",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the ~12000 genes are differentially expressed between treated (n=6, batch B2) and control (n=6, batch B1) using a standard negative-binomial model with condition as the sole design term?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~ condition on raw integer counts, using default independent filtering and Benjamini-Hochberg FDR",
+                "Full results table (log2FC, p-value, padj, base mean) reported for all ~12000 genes, with counts of genes at padj<0.05 and padj<0.1",
+                "Explicit statement in the output that 'batch' was NOT included as a covariate because it is perfectly collinear with 'condition' (design matrix would be rank-deficient / non-identifiable), so this DE list cannot be attributed to treatment alone versus batch/processing effects",
+                "MA plot and p-value histogram produced for QC of the model fit"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene counts (12000 genes x 12 samples), 6 treated (batch B2) vs 6 control (batch B1). This is the core DE step; because condition and batch are perfectly aliased there is exactly one valid design (~condition) and no way to separate the two effects statistically with this dataset alone.",
+              "caveats": [
+                "A design of ~batch + condition is not fittable (rank-deficient) since batch is a perfect linear function of condition with only 2 levels each — do not attempt it",
+                "Any DE gene reported here is consistent with a treatment effect, a batch/processing effect, or both — the magnitude of confounding cannot be estimated from this data"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on DE gene list",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the genes differing between treated (B2) and control (B1) converge on coherent biological pathways, or do they look like a diffuse non-specific batch signature?",
+              "acceptance_criteria": [
+                "Over-representation or GSEA-style enrichment run on the DESeq2 result (ranked by stat or log2FC, significance threshold padj<0.05) against human pathway gene sets",
+                "Enriched pathways reported with adjusted p-values, gene set names, and leading-edge/overlapping genes",
+                "Interpretive note distinguishing pathways that look treatment-plausible (targeted, few coherent programs) from a signature that looks like generic stress/technical response (e.g. very broad, housekeeping-dominated, or process-unrelated to the biology of the treatment) — flagged as an indirect diagnostic only, not proof of validity"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "DESeq2 differential expression result table for human lung tissue (treated vs control, 12000 genes). A curated set of human WikiPathways gene sets is available in the reference store (wikipathways_Homo_sapiens.gmt) and matches this dataset's organism (Homo sapiens); use gene symbols to match, consistent with the counts file's gene-symbol row identifiers.",
+              "caveats": [
+                "Enrichment results are equally consistent with the confounded batch effect and a real treatment effect and cannot on their own disambiguate the two",
+                "If the human WikiPathways GMT is not present at run time, report enrichment as skipped/unavailable rather than substituting a different-organism gene set"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Confound-aware synthesis and reporting",
+              "track": "T3",
+              "step_type": "reporting",
+              "question": "How should the treated-vs-control DE and enrichment results be presented given that batch is perfectly confounded with condition?",
+              "acceptance_criteria": [
+                "Report explicitly states, in the first paragraph, that batch B1/B2 is perfectly confounded with control/treated condition and that this design cannot statistically separate a treatment effect from a batch/processing effect",
+                "Report presents the DE gene list and enrichment results as candidate/hypothesis-generating findings only, not as validated treatment effects",
+                "Report recommends what would resolve the confound (e.g., a follow-up experiment with treatment and control samples distributed across both batches, or technical replicates) rather than proposing any statistical fix within the current data",
+                "Diagnostic findings from T1S1 (PCA/clustering pattern) are summarized alongside the DE/enrichment results to give the reader the fullest picture available for judging plausibility"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesizes the QC diagnostics, DESeq2 DE table, and pathway enrichment results from the prior steps into a single report for a dataset where condition and batch are perfectly confounded (6 control/B1 vs 6 treated/B2).",
+              "caveats": [
+                "Do not let the enrichment or DE results be presented as confirmed treatment biology anywhere in the report — the confound caveat must accompany every substantive claim"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

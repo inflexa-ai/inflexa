@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the paired structure and uses subject as a blocking term in DESeq2 (~subject + condition) with a limma-voom fixed-effect paired sensitivity check, plus a per-subject log2FC decomposition that answers the 'within each subject' phrasing descriptively without inventing per-pair p-values. QC is concrete and design-aware (pairing reconciliation, library sizes, correlation heatmap, PCA colored by subject and shaped by condition with variance explained, explicit no-silent-exclusion policy), filtering is filterByExpr with retained-gene reporting, and normalization stays inside the models (DESeq2 size factors, TMM/voom) with an explicit prohibition on batch-correcting the counts. Contrasts and reference level are explicit, BH at a pre-specified alpha=0.05 with apeglm/ashr shrinkage and no post hoc LFC gating, and the report specifies residual df, power caveats, unpaired-model comparison, and cell-composition confounding. Enrichment is well-scoped (full ranked list with named metric, hallmark and GO BP on symbols, filtered-gene background for ORA, GO redundancy collapsing) but omits collection versions and a min/max gene-set size window; package versions are likewise not required to be reported."
+}

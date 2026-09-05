@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly centres the answer on GSVA per-sample scores over the human Hallmark collection (version 2026.1 named) computed on a blind VST matrix with the Gaussian kernel, tests the score matrix with limma under ~condition with an explicit control reference and BH adjustment, and delivers a condition-annotated clustered heatmap with an explicit statement of sample_01's position, keeping that sample unless a reason beyond depth appears. QC, a minimal justified count filter, in-model median-of-ratios normalization, apeglm shrinkage, and a full reporting record are all stated. Deductions: the plan runs a gene-level DESeq2 Wald test and two fgsea passes plus a Reactome/GO follow-up that answer a different question than the per-sample score request, adding weight the reference does not require; the heatmap is not stated to be row-scaled; and the limma test on the score matrix names BH but not the 0.05 alpha at the point of testing."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: PyDESeq2 Wald test on the unpaired 6v6 single-batch design with ~condition, control set as the explicit reference, the contrast named with its sign convention, median-of-ratios normalization kept inside the model with an explicit ban on pre-scaling, BH at alpha 0.05 with independent filtering, apeglm shrinkage reported beside the unshrunken estimate, and no post-hoc fold-change filter. QC precedes the test with library sizes, detected genes, size factors, blind VST PCA on the top 500 genes and a distance heatmap, and sample_01 is handled exactly as the reference asks — kept, quantified numerically against the median, dropped only for a reason other than depth, and further probed by a labelled leave-one-out sensitivity fit with intersection size and rank correlation. The low-count filter (>=10 in >=6, the smallest group size) is minimal and justified, though marginally stricter than DESeq2's default floor. Enrichment is gseapy prerank on the full tested list ranked by the Wald statistic with the metric choice argued, the human hallmark collection named with version, the 15-500 window applied post-intersection, a recorded seed, an explicit universe, redundancy collapsing, and a correct rule against ORA on a short list. The one soft spot is the hand-rolled voom/empirical-Bayes comparator in Step 3, which is honestly labelled as an unvalidated approximation but adds an implementation risk the reference does not require."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every core point: raw counts into DESeq2 Wald with an edgeR QL cross-check, explicit refusal of tximport length offsets and TPM/FPKM with the 3' tag reasoning stated, a lowered 5-in-3 filter with the retained count reported, size factors/TMM inside the model, explicit reference level and contrast, BH at 0.05 with apeglm shrinkage, and a clear n=3 power statement placed before the gene tables. QC is well specified with PCA, distance heatmap and library sizes and a flag-don't-drop policy, though the outlier handling policy stops at flagging. Enrichment was neither asked nor warranted per the reference; the plan adds it anyway, and although the GSEA specification itself is sound (full ranked list, Wald statistic, size window, seed, universe), the collection version is deferred to run time and the caveat about gene-length bias contradicts the plan's own premise that a 3' tag library carries no length dependence."
+}

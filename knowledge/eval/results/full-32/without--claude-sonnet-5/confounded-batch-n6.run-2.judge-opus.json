@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 3,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the perfect aliasing of batch with condition, refuses ComBat-seq/SVA/RUV, notes that ~batch + condition is rank-deficient, fits ~condition alone, and labels every result as confounded and hypothesis-generating with a recommendation to rebalance the design in a follow-up — this is essentially the reference behavior. QC is solid (PCA with variance explained, library sizes, detected genes, correlation heatmap, colored by the identical condition/batch grouping) but no outlier or shallow-sample policy is stated. Weakest points: no low-count pre-filter is specified at all (DESeq2 independent filtering is not a substitute and is only mentioned in passing), normalization is only implied by feeding raw counts to DESeq2 rather than stated as size factors, the reference level and contrast direction are never named, and no lfcShrink or shrunken effect size is requested. Enrichment names a collection and organism and a ranking metric but leaves ORA-vs-GSEA ambiguous, gives no universe, no size window, and no version; its use here is defensible only as the stated diffuse-versus-coherent diagnostic. The report section is thorough on design, thresholds, gene counts, and caveats but omits software versions."
+}

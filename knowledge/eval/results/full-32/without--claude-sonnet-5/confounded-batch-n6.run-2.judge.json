@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 4,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses ComBat/SVA/RUV and a rank-deficient batch term, fits ~condition on raw counts, and labels every result as confounded, matching the reference. QC is thorough (PCA with variance explained, library sizes, detected genes, correlation heatmap) but states no policy for outliers or shallow samples. Low-count handling relies only on DESeq2's default independent filtering with no justified pre-filter; size-factor normalization is implicit rather than stated; BH at 0.05/0.1 is given but no fold-change shrinkage or in-test threshold is planned. Enrichment is undecided between ORA and GSEA, lacks a universe, set version, and size window, and is arguably unwarranted in a confounded design; the report plan is strong on design caveats and gene counts but omits software versions."
+}

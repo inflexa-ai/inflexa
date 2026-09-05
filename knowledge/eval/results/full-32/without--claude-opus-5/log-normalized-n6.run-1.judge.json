@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies log2(TPM+1) as continuous log-scale data, rejects DESeq2/edgeR/voom, runs limma eBayes with trend=TRUE on the values as delivered, and explicitly forbids re-logging, re-normalizing, or converting to counts, with a numeric range check before fitting. QC (distributions, PCA, Pearson/Spearman heatmaps, outlier policy) is present, though it runs in parallel with rather than before the test. The low-expression filter is justified but the actual rule is left unstated, and the design formula/reference level is only implied via the stated contrast direction. Enrichment was not requested; the added GSEA/ORA is methodologically sound (signed moderated-t ranking, tested-gene universe, human collections) but omits collection versions and a set-size window, and package versions are not named in the report."
+}

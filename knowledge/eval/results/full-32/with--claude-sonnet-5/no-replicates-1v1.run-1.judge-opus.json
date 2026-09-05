@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the 1-vs-1 design as inferentially dead, refuses DESeq()/Wald/LRT and any p-value or FDR for genes, explains that no dispersion is estimable, and names the replicated design (>=3 per group) that would support a test — exactly the reference behavior. QC (library sizes, vst blind, sample distance/PCA) is specified with an explicit statement that clustering carries no inferential weight and is not grounds for sample exclusion, though PCA on two samples is near-degenerate and this is only partly acknowledged. Filtering (>=10 counts in >=1 sample, tied to smallest group size) is minimal and justified, normalization is median-of-ratios inside DESeq2 with no pre-scaling, and the reference level and fold-change direction are stated explicitly. The main deficiency is the enrichment step: with a purely descriptive, unreplicated ranking, enrichment is not warranted, and running ORA on an arbitrary top-200 by |log2FC| reintroduces BH q-values and significance language at the pathway level, partially undercutting the plan's own no-inference stance despite an explicit universe, named collections/versions, size window, and heavy caveats. The final report is thorough on design caveats, thresholds, gene counts, and versions."
+}

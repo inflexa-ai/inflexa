@@ -1,0 +1,243 @@
+{
+  "campaign": "full-32",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "startedAt": "2026-09-05T17:32:39.168Z",
+  "elapsedMs": 24214,
+  "outcome": "plan_submitted",
+  "planId": "pln-3c3171ef",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load counts, QC, and normalize",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Only 2 samples total (1 per condition) — no replicate-based QC metrics (e.g. within-group correlation) are possible",
+          "Do not silently drop the caveat of no replication in output metadata"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "What are the library sizes, count distributions, and normalized expression values (CPM/TMM) for the 1 treated vs 1 control liver samples in counts.csv?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use raw integer counts as provided; do not assume prior normalization",
+          "Explicitly carry forward the 'no biological replication' flag from the metadata into all output objects"
+        ],
+        "acceptance_criteria": [
+          "Counts matrix (12000 genes x 2 samples) is loaded and gene symbols set as row index",
+          "Metadata.csv is loaded and treated/control sample labels are confirmed to match the counts column names",
+          "Library size, number of zero-count genes, and count distribution per sample are reported",
+          "A normalized expression matrix (CPM or size-factor-normalized) is produced and saved for downstream use"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression, treated vs control, n=1 vs n=1",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=1 per group, any p-value from DESeq2/edgeR relies on an assumed or borrowed dispersion, not an estimated one from the data — this must be stated plainly in the results, not hidden in a footnote",
+          "Low-count genes are prone to inflated fold-changes; apply an expression floor before ranking",
+          "This step produces a hypothesis-generating gene list, not a statistically powered DE result"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the ~12,000 liver genes show differential expression between the single treated sample and the single control sample?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Report fold-changes and ranks primarily; treat any p-value/FDR as descriptive only given the design, and label it as such in the output",
+          "Do not claim statistical significance language (e.g. 'significantly differentially expressed') without qualifying the lack of replication"
+        ],
+        "acceptance_criteria": [
+          "A DE result table is produced with gene symbol, raw counts in each sample, normalized log2 fold-change, and a rank/effect-size statistic for every gene",
+          "Because there is no biological replication, no per-gene p-value implying within-group variance is reported as if it were reliably calibrated; if DESeq2 is used with a fixed/assumed dispersion, this assumption is stated explicitly in the output and caveats",
+          "Genes are ranked by absolute log2 fold-change (with a minimum expression filter, e.g. baseMean or CPM > threshold, to exclude noise from low-count genes)",
+          "Output table is saved as CSV with columns: gene, control_count, treated_count, log2FC, rank_stat, expressed_filter_flag"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway-level interpretation of top DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The human WikiPathways GMT file must be parsed by splitting the '%'-delimited first field to recover pathway names and IDs before use",
+          "Enrichment on a gene list derived from an unreplicated single-sample comparison should be interpreted as exploratory, not confirmatory",
+          "Gene sets in the GMT use HGNC symbols — confirm the counts.csv gene symbol column matches this namespace before joining"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among the top ranked genes differing between the treated and control liver sample?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the human WikiPathways gene set file at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt",
+          "Report both the top enriched pathways and the caveat that input gene ranking derives from an n=1 vs n=1 comparison"
+        ],
+        "acceptance_criteria": [
+          "Top-ranked genes (by |log2FC| and expression filter) from T1S2 are tested for overrepresentation against human WikiPathways gene sets",
+          "Enrichment results include pathway name, WikiPathways ID, overlap genes, and enrichment p-value/FDR",
+          "If fewer than a minimal number of genes pass the expression/fold-change filter, this is reported rather than silently producing an empty or unstable enrichment"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DE (n=1 per group)",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is 12,000 genes x 2 samples (1 treated, 1 control, no biological replicates), raw salmon counts. Without replication, no within-group variance can be estimated, so standard DESeq2/edgeR dispersion estimation is not statistically valid in the normal sense. The plan proceeds pragmatically: normalize counts (library size / CPM), then apply an approach usable for n=1 vs n=1 comparisons — either DESeq2 with a fixed, literature-typical dispersion (dispersion set manually, e.g. via fType='mean' or a pre-specified dispersion value) or a fold-change + rank-based approach, clearly flagged as descriptive/exploratory rather than inferentially powered. Results are then annotated and interpreted against WikiPathways human gene sets for the affected liver-relevant pathways. Every downstream output is explicitly labeled as unreplicated-design, hypothesis-generating only — no false claims of statistical power are made."
+  },
+  "usage": {
+    "inputTokens": 43216,
+    "outputTokens": 2121,
+    "cacheCreationInputTokens": 34062,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DE (n=1 per group)",
+          "analytical_narrative": "The dataset is 12,000 genes x 2 samples (1 treated, 1 control, no biological replicates), raw salmon counts. Without replication, no within-group variance can be estimated, so standard DESeq2/edgeR dispersion estimation is not statistically valid in the normal sense. The plan proceeds pragmatically: normalize counts (library size / CPM), then apply an approach usable for n=1 vs n=1 comparisons — either DESeq2 with a fixed, literature-typical dispersion (dispersion set manually, e.g. via fType='mean' or a pre-specified dispersion value) or a fold-change + rank-based approach, clearly flagged as descriptive/exploratory rather than inferentially powered. Results are then annotated and interpreted against WikiPathways human gene sets for the affected liver-relevant pathways. Every downstream output is explicitly labeled as unreplicated-design, hypothesis-generating only — no false claims of statistical power are made.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load counts, QC, and normalize",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What are the library sizes, count distributions, and normalized expression values (CPM/TMM) for the 1 treated vs 1 control liver samples in counts.csv?",
+              "acceptance_criteria": [
+                "Counts matrix (12000 genes x 2 samples) is loaded and gene symbols set as row index",
+                "Metadata.csv is loaded and treated/control sample labels are confirmed to match the counts column names",
+                "Library size, number of zero-count genes, and count distribution per sample are reported",
+                "A normalized expression matrix (CPM or size-factor-normalized) is produced and saved for downstream use"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Only 2 samples total (1 per condition) — no replicate-based QC metrics (e.g. within-group correlation) are possible",
+                "Do not silently drop the caveat of no replication in output metadata"
+              ],
+              "constraints": [
+                "Use raw integer counts as provided; do not assume prior normalization",
+                "Explicitly carry forward the 'no biological replication' flag from the metadata into all output objects"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression, treated vs control, n=1 vs n=1",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the ~12,000 liver genes show differential expression between the single treated sample and the single control sample?",
+              "acceptance_criteria": [
+                "A DE result table is produced with gene symbol, raw counts in each sample, normalized log2 fold-change, and a rank/effect-size statistic for every gene",
+                "Because there is no biological replication, no per-gene p-value implying within-group variance is reported as if it were reliably calibrated; if DESeq2 is used with a fixed/assumed dispersion, this assumption is stated explicitly in the output and caveats",
+                "Genes are ranked by absolute log2 fold-change (with a minimum expression filter, e.g. baseMean or CPM > threshold, to exclude noise from low-count genes)",
+                "Output table is saved as CSV with columns: gene, control_count, treated_count, log2FC, rank_stat, expressed_filter_flag"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=1 per group, any p-value from DESeq2/edgeR relies on an assumed or borrowed dispersion, not an estimated one from the data — this must be stated plainly in the results, not hidden in a footnote",
+                "Low-count genes are prone to inflated fold-changes; apply an expression floor before ranking",
+                "This step produces a hypothesis-generating gene list, not a statistically powered DE result"
+              ],
+              "constraints": [
+                "Report fold-changes and ranks primarily; treat any p-value/FDR as descriptive only given the design, and label it as such in the output",
+                "Do not claim statistical significance language (e.g. 'significantly differentially expressed') without qualifying the lack of replication"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway-level interpretation of top DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among the top ranked genes differing between the treated and control liver sample?",
+              "acceptance_criteria": [
+                "Top-ranked genes (by |log2FC| and expression filter) from T1S2 are tested for overrepresentation against human WikiPathways gene sets",
+                "Enrichment results include pathway name, WikiPathways ID, overlap genes, and enrichment p-value/FDR",
+                "If fewer than a minimal number of genes pass the expression/fold-change filter, this is reported rather than silently producing an empty or unstable enrichment"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "The human WikiPathways GMT file must be parsed by splitting the '%'-delimited first field to recover pathway names and IDs before use",
+                "Enrichment on a gene list derived from an unreplicated single-sample comparison should be interpreted as exploratory, not confirmatory",
+                "Gene sets in the GMT use HGNC symbols — confirm the counts.csv gene symbol column matches this namespace before joining"
+              ],
+              "constraints": [
+                "Use the human WikiPathways gene set file at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt",
+                "Report both the top enriched pathways and the caveat that input gene ranking derives from an n=1 vs n=1 comparison"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 2,
+    "low_count_filter": 2,
+    "normalization": 2,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 3
+  },
+  "rationale": "The planner correctly recognized that raw paired-end FASTQ files cannot be tested for differential expression and stopped with a well-formed question that offers the two valid routes (a count matrix or provisioning a named quantifier against a GRCh38 reference), which matches the reference outcome; it did not ask about the annotation version explicitly. Because nothing downstream was proposed, the QC, filtering, normalization, design formula, and FDR/shrinkage criteria are essentially unstated, and the reference's brief conditional plan (DESeq2/edgeR with BH at 0.05 and a low-power caveat once counts arrive) was not previewed. Enrichment is correctly omitted for this design. The question itself states the sample structure and tissue, giving partial credit on report completeness."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: one PyDESeq2 negative-binomial fit on all 16 samples with ~genotype + treatment + genotype:treatment, an explicit difference-of-differences interaction contrast, within-genotype simple effects, WT/vehicle reference levels stated, and an honest fallback to a four-level condition factor with a numeric contrast if the formula interface cannot express it. QC (library sizes, PCA, correlation heatmap, report-don't-drop outlier policy), median-of-ratios normalisation inside the model, BH at stated alphas, and shrinkage kept for ranking only are all explicit. The low-count filter is justified by the smallest group size but never states the actual count threshold. Enrichment was not asked for; the plan adds pre-ranked GSEA with a stated ranking metric and named human collections but omits collection versions and a gene-set size window, and the interaction-statistic GSEA is of limited interpretability. Reporting is thorough across steps, including the n=4 power caveat and the difference-of-significance warning, though there is no consolidated final report step."
+}

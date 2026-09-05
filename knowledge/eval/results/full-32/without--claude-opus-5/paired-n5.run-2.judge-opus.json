@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the complete paired 5x2 design and blocks on subject with ~ subject + condition in DESeq2, cross-checked by edgeR glmQLF and limma-voom with explicit subject blocking (appropriate for complete pairing, rather than duplicateCorrelation), and it verifies balance and column/metadata matching before fitting. The formula, reference level (read from the metadata rather than hard-coded), contrast, low-count filter (filterByExpr on the model matrix or >=10 in >=5), model-internal normalization (median-of-ratios, TMM), apeglm shrinkage for ranking with unshrunken LFCs for the statistics, and padj thresholds at 0.05/0.1 split by direction are all explicit and correct; residual df = 4 and the power limitation are stated up front. QC is solid (library sizes, VST PCA by subject and condition, sample-distance heatmap, dispersion, p-value histogram) but there is no stated policy for handling an outlier or shallow library beyond reporting what PCA shows. Enrichment is well specified as preranked fgsea with a stated ranking statistic, human-only collections, 15-500 set size, universe size, seed, GO redundancy collapse, and leading-edge cross-reference to per-subject consistency, though no collection version is pinned; the report specification covers design, thresholds, gene counts and caveats but not software versions."
+}

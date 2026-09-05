@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly uses DESeq2 Wald on raw Salmon counts with default size factors, a minimal justified filter (>=10 in >=3 samples), BH at 0.05 with apeglm/ashr shrinkage, and honestly frames the n=3 power limits without lowering alpha; the leave-one-out and permutation checks are reasonable extras. QC covers library size, detection, and PCA/clustering by condition with outlier flagging, though the outlier handling policy is only implicit. The design formula is described in words but never written out and the reference level is not stated. Enrichment names the collection and version and uses the tested genes as universe, but the ranking metric is left as an either/or and no gene-set size window is given; enrichment on a 3-vs-3 candidate list is of marginal value. Software versions are not required in the report."
+}

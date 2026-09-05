@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly starts from the supplied DESeq2 table without refitting, defines the foreground as padj < 0.05 by BH and the universe as the non-NA-padj tested genes, names GO BP with enrichGO, a 15-500 size window, BH at 0.05, rrvgo collapse, and separate up/down/joint tests, and records collection and annotation versions. QC is concrete for this dataset: blind vst PCA, sample distances, library sizes, and an explicit keep-unless-non-depth-reason policy for sample_01, plus a p-value histogram check. Weaknesses: the fgsea step is scope creep for an ORA question and the plan conditionally promotes it to the primary answer when the list is short, which the reference treats as answering a different question; the design formula and reference level of the contrast of record are not restated, and the report does not explicitly name the gene ratio among the per-term fields."
+}

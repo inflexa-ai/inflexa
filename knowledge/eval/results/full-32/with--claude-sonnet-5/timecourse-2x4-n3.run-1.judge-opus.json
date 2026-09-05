@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, with per-time-point condition effects to describe the trajectory shape, plus trajectory clustering — this is design-specific, not generic. QC (blind VST PCA colored by condition and time, sample-distance heatmap, library sizes, explicit outlier policy), a minimal filter justified by the smallest cell size, in-model median-of-ratios normalization with an explicit prohibition on pre-normalizing, explicit reference levels, BH at alpha=0.05 with independent filtering matched to the cutoff, and apeglm/ashr shrinkage are all stated correctly. Minor deduction on contrasts because the condition reference is named only as 'control/first level' rather than the actual level. The enrichment step is otherwise well specified (ranked full tested list, universe = tested genes, Hallmark/Reactome with versions, 15–500 size window, leading edge), but ranking on the unsigned LRT chi-square statistic gives an unsigned ranking that makes fgsea NES sign and directionality uninterpretable — a signed metric (e.g., a per-time-point or summarized interaction LFC) is needed. Reporting is complete, with design, thresholds, tested/significant counts, versions, session info, and the n=3 power caveat."
+}

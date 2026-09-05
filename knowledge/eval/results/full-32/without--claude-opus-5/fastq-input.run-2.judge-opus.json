@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 4
+  },
+  "rationale": "The planner correctly recognized that the inputs are unquantified paired-end FASTQ files with no count matrix and no quantifier or reference index available, and stopped to ask whether counts exist elsewhere or whether quantification must be provisioned — this matches the reference outcome, though it did not explicitly ask which genome build and annotation version apply. Because no analysis plan was submitted, there is nothing stated about QC of sample structure, low-count filtering, model-internal normalization, the design formula and contrast, or BH/shrinkage, so those criteria score at zero on stated content. Enrichment is correctly absent, as no testable gene list can exist at this stage. The clarification message does name the design (3 vs 3, unpaired, human liver) and the blocking obstacle, which is partial reporting value, but it states no methods, versions, thresholds, or the low-power caveat that the reference expects once counts arrive."
+}

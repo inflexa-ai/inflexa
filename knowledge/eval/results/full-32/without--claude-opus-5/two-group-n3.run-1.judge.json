@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference: DESeq2 NB GLM on raw Salmon counts with median-of-ratios size factors, design ~condition with control releveled as reference, a minimal '>=10 in >=3 samples' filter with dropped counts reported, BH at 0.05 with apeglm shrinkage, and a full QC block (library sizes, VST PCA, correlation heatmap, dispersion plot) with a flag for samples clustering with the wrong group; it explicitly refuses to rescue an empty list with nominal p-values and does not invent a batch term. The n=3 confidence audit (LOO, edgeR cross-check, dataset-derived power curve, exhaustive permutation) is a strong direct answer to the second half of the question, with its instability caveats stated. Deductions: the |shrunken LFC|>1 cut is applied post hoc rather than via lfcThreshold in the test; the outlier policy is a flag rather than a stated exclusion rule; enrichment is not asked for and, while run correctly on the full Wald-ranked list with human collections and a tested-gene background for ORA, it omits collection versions and a set-size window; package versions beyond pydeseq2 are not pinned."
+}

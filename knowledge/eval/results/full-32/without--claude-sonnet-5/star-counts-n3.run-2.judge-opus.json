@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats the STAR/featureCounts matrix as raw integer counts fed directly into DESeq2 with internal size-factor normalization, explicitly rejecting any TPM/CPM pre-normalization or transcript-quantifier import, and the ~condition design with control as reference is stated plainly for the unpaired single-batch 3v3 layout. QC is concrete (library sizes, PCA on VST/log-CPM, explicit outlier-flagging policy) though it omits a sample-distance heatmap. FDR handling is strong: BH, reported padj<0.05 and <0.1, apeglm with ashr fallback, and both shrunken and unshrunken estimates. The main gap is the absence of any stated minimal low-count pre-filter — DESeq2 independent filtering is invoked but is not a substitute — and the enrichment step names collections and a ranking metric but never specifies an ORA universe, gene-set versions, or a size window, and assumes human symbols without justification. Reporting covers design, thresholds, significant-gene counts, and n=3 power caveats but not software versions."
+}

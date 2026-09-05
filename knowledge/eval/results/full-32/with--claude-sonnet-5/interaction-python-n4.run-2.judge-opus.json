@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames the question as an interaction in a 2x2 factorial, fits ~genotype + treatment + genotype:treatment in PyDESeq2 with stated reference levels (WT, vehicle), tests the interaction coefficient by Wald, and then reports both within-genotype simple effects, which matches the reference design; the minimal filter (>=10 counts in >=4 samples, justified by the smallest cell size) and the blind-VST PCA/sample-distance QC with named-outlier flagging are appropriate, though library sizes and an explicit outlier-handling policy beyond flagging are not stated and size-factor normalization inside the model is only implicit. The main failure is the Python constraint: Step 4 routes shrinkage through rpy2 to R's ashr and DESeq2 without flagging this as a deviation, without offering a Python fallback (e.g., reporting unshrunken LFCs with lfcSE, or PyDESeq2's own shrinkage on the interaction coefficient, which in a 2x2 is a single coefficient by the plan's own admission), and without pausing to ask whether R is permitted. There is likewise no stated fallback if the installed PyDESeq2 cannot express the formula interaction or the KO simple-effect contrast (group-factor reparameterization), so the plan is brittle at exactly the point the reference anticipates. FDR handling is otherwise sound (BH at alpha 0.05, independent filtering, per-contrast not pooled, p-value histogram diagnostics), the preranked GSEA is well specified (Wald stat metric, Hallmark then Reactome, 15-500 size window post-intersection with tested genes, no ORA substitution), and the final report covers design, contrasts, thresholds, gene counts, diagnostics, versions, and the low-power caveat at n=4/cell."
+}

@@ -344,15 +344,20 @@ The evaluation and the tree grew in three directions.
   - a FASTQ input that must stop, and a QC-only question
   - TPM and log-scale inputs
   - three tasks that ask for Python
-- **The Python path.** Six Python templates mirror the R templates slot for
-  slot. They cover PyDESeq2 for the two-group test and gseapy for the
-  ranked and the discrete enrichment. They also cover a QC on log counts,
-  the descriptive path, and decoupler for per-sample scores. A template declares its language. The
+- **The Python path.** Eight Python templates mirror the R templates slot
+  for slot. They cover PyDESeq2 for the two-group test, the interaction
+  design, and the multi-group design, and gseapy for the ranked and the
+  discrete enrichment. They also cover a QC on log counts, the descriptive
+  path, and decoupler for per-sample scores. PyDESeq2 has no likelihood
+  ratio test. Thus the multi-group template runs one Wald contrast per level,
+  and it builds the any-difference table from the minimum p-value with a
+  Bonferroni step. The template, its summary, and its decision record state
+  that substitution. A template declares its language. The
   renderer writes the literals of that language, and the service parses the
   script with the parser of that language. The test runner runs `python3`
   in the same image. The caller selects the language with a
   preference on the recommend call. A preference never changes a rule or a
-  method. The tree holds 27 templates, 21 in R and 6 in Python.
+  method. The tree holds 29 templates, 21 in R and 8 in Python.
 
 ### The validation run of the new tasks
 
@@ -370,8 +375,9 @@ The FASTQ task ended in a clarification request that asks for the
 quantification or the counts. That is the expected outcome, and the scorer
 now judges such a request by its question. The three Python tasks received
 the Python templates through the preference, and their plans name PyDESeq2
-and gseapy and no R command. The interaction task in Python has no Python
-template, thus its plan carries no template and names PyDESeq2 by hand.
+and gseapy and no R command. The interaction task in Python ran before its Python
+template existed, thus its plan carries no template and names PyDESeq2 by
+hand.
 
 Two tasks miss an expectation. The total RNA plan does not name the
 mitochondrial fraction or the intronic share. The QC rule for a total RNA
@@ -379,6 +385,53 @@ library asks for both, thus the plan and not the task is short. The zebrafish
 plan names KEGG in a sentence that rejects it, which the pattern cannot
 tell from a use. These are the findings a full campaign over the 32 tasks
 would score with the judges.
+
+## The full campaign over 32 tasks
+
+Campaign `full-32` in `results/`: four arms, 32 tasks, two runs per task and
+per arm, 256 plans, under one host with the 107-rule snapshot and the 29
+templates. The primary judge is Fable 5.1, a model above every planner. Opus
+5 judged every plan a second time. The two judges agree at r = 0.96 over the
+256 plans, with a mean gap of 4.0 points, and Fable scores about three
+points lower than Opus.
+
+| Arm | Submitted | Rubric, Fable | Rubric, Opus | Grounded steps | Tool calls | Time per plan |
+| --- | --- | --- | --- | --- | --- | --- |
+| Sonnet 5 with the plane | 60 of 64 | 83.2 | 85.4 | 89% | 13.7 | 95 s |
+| Sonnet 5 alone | 62 of 64 | 62.6 | 66.8 | 10% | 14.3 | 86 s |
+| Opus 5 with the plane | 62 of 64 | 93.3 | 93.4 | 97% | 5.1 | 128 s |
+| Opus 5 alone | 62 of 64 | 82.1 | 86.6 | 0% | 4.1 | 97 s |
+
+| Paired contrast by task, Fable judge | All 32 tasks | Without the FASTQ task |
+| --- | --- | --- |
+| Sonnet with, minus Sonnet alone | +20.6 [16.2, 24.9] | +21.1 [16.4, 25.4] |
+| Opus with, minus Opus alone | +11.2 [8.8, 13.9] | +10.3 [8.5, 12.5] |
+| Sonnet with, minus Opus alone | +1.1 [-3.5, 5.2] | +0.9 [-4.1, 5.0] |
+| Sonnet with, minus Opus with | -10.1 [-14.4, -6.5] | -9.4 [-13.9, -6.0] |
+
+Under the Opus judge the four contrasts are +18.6, +6.9, -1.2 with an
+interval of [-5.6, 2.7], and -8.0. The orderings agree.
+
+The FASTQ task ended in a clarification request in all eight of its runs,
+which is the expected outcome. The rubric scores a request between 33 and 69
+in every arm. The task measures the stop, not the plan, thus the
+second column removes it. Two Sonnet runs with the plane ended on a
+degenerate terminal call: one clarification request with the text
+"Placeholder, not used", and one submit with the text "placeholder". The
+host accepts such a call today. A guard that rejects a terminal call with an
+empty or placeholder text is the next host fix. The two runs score zero
+here, as the protocol says.
+
+The reading over the wider task set. The plane lifts Sonnet by 21 points
+and Opus by 10 points, both with intervals far from zero. Sonnet with the
+plane lands level with Opus alone, one point above under Fable and one
+below under Opus, with both intervals over zero. It stays about nine points
+under Opus with the plane. On the eight original tasks the gap to Opus alone
+was four points in favor of Sonnet with the plane. The 24 new tasks are
+harder for the smaller model. The outlier, the Python two-group, the gene
+list, and the enrichment-only tasks score under 70 for Sonnet with the
+plane. The last three name a Python or an enrichment-only path, where the
+plan text carries less of the procedure.
 
 ## What the campaign does not show
 

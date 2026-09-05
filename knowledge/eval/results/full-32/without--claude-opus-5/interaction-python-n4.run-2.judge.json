@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction, fits ~genotype + treatment + genotype:treatment in PyDESeq2 with explicit WT/vehicle reference levels and a stated sign convention, extracts the Wald interaction term as the primary result, adds an LRT against the additive model, and derives all four simple effects from the same fit while explicitly guarding against difference-of-significance reasoning; it also confronts the n=4 power problem directly. QC is thorough (library sizes, PCA, correlation heatmap, flag-not-remove outlier policy, KO-target check) and normalization stays inside the model with raw counts. Weaknesses: the low-count threshold value is not stated (only 'a minimum count in at least 4 samples'); shrinkage is left conditional with no fallback stated if PyDESeq2 cannot express the interaction contrast or shrinkage; enrichment names collections and the ranking metric and universe but omits collection versions and a gene-set size window, and assumes human without confirming organism; the report is not explicitly told to record package versions."
+}

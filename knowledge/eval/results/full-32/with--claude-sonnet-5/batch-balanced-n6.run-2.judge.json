@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core design: balanced batch enters as a fixed covariate in ~batch + condition, counts are not pre-adjusted, DESeq2 median-of-ratios is inside the model, reference level is explicit, Wald test with BH at alpha 0.05 passed to results(), and apeglm shrinkage on the condition coefficient. QC covers PCA, distance heatmap, and library sizes colored by both batch and condition, but the outlier/shallow-sample policy stops at flagging without stating what is done with such a sample. Enrichment was not requested; it is nonetheless done correctly (full Wald-stat ranked list, 15-500 size window, named collections) though the Reactome version is left as 'current release' rather than pinned. The report step names design, thresholds, tested/DE counts, and versions, with design caveats only lightly covered."
+}

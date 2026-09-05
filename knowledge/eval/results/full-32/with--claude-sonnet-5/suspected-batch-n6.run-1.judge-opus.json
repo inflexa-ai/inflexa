@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the hidden-structure scenario, first interrogating every metadata column for an unlabeled batch and only then estimating surrogate variables with sva using condition as the factor of interest, entering them as covariates in ~SV + condition rather than adjusting counts — it explicitly forbids testing on batch-removed counts and avoids ComBat, which matches the reference. QC is strong and dataset-specific (PCA, distance heatmap colored by all metadata, library size, detected genes, an explicit outlier retention policy), the filter (>=10 counts in >=6 samples, tied to the smaller group size) is minimal and justified, and the design, reference level, BH alpha, apeglm shrinkage and independent filtering are all stated. Weaknesses: it does not explicitly say size factors/TMM are estimated within the model (only implied by using DESeq2/edgeR on raw counts), it checks SV correlation with the cluster split but never states a check that no SV tracks condition, and it does not commit to taking n.sv from the estimator rather than assuming two clusters means two SVs. Enrichment was not requested and is not really warranted by the question, though the GSEA specification itself (full ranked list on the Wald statistic, named collections with versions, 15–500 size window, unmapped share) is technically sound."
+}

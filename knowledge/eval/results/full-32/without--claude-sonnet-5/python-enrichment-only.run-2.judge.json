@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses to refit DE, ranks the full 12000-gene table by the Wald stat (with a stated fallback), drops NAs and de-duplicates symbols, and runs gseapy.prerank against a local Hallmark GMT with >=1000 permutations, reporting NES, FDR, and leading edges split by direction. It falls short of the reference on the enrichment specifics: no MSigDB version is named, no set-size window (15-500) is given, no random seed is fixed, and the tie rule covers duplicate symbols rather than tied metric values. Sample-level QC is not performed (reasonable given only a results table is available), but the shallow sample_01 is acknowledged as an uncorrectable upstream caveat rather than with any diagnostic check. The report omits package versions but otherwise names the method, contrast, thresholds, gene count, and design caveats."
+}

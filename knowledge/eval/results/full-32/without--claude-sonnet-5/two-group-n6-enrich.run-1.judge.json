@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 5
+  },
+  "rationale": "DESeq2 on raw counts with condition as the sole factor fits the 6 vs 6 unpaired single-batch design, and the QC step is concrete: library sizes for all samples, PCA and correlation on vst/rlog counts, an explicit documented keep/exclude decision for sample_01, and a sensitivity re-run. Normalization is correctly left to DESeq2 size factors with an explicit ban on pre-normalizing. Weaknesses: no low-count filter is mentioned anywhere; BH at 0.05 is stated but there is no fold-change shrinkage (apeglm) and the |log2FC|>1 cut is a post hoc filter; the contrast is named but the reference level and formula are not written out. Enrichment names fgsea preranked with a signed statistic and the human Hallmark collection, but gives no ORA universe, no set-size window, and no MSigDB or package versions, and the report omits versions."
+}

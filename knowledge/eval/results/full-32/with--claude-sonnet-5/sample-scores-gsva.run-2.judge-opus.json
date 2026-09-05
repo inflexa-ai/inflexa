@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly reads the question as a per-sample scoring task: it runs GSVA on the variance-stabilized matrix (Gaussian kernel, appropriate for continuous data) to produce a 12x50 score matrix, tests the scores with limma using the same ~condition design with control as reference and BH adjustment, and renders a condition-annotated heatmap — matching the reference rather than substituting a ranked-list GSEA. QC is concrete and design-specific: blind VST, PCA on top 500 genes, sample distances, per-sample library size and detected genes, with an explicit keep-unless-justified policy for the shallow sample_01 and the correct note that size factors down-weight it. Filtering (>=10 counts in >=6 samples, tied to the smaller group) and normalization (DESeq2 size factors inside the model, no pre-normalized counts) are minimal and justified; FDR at 0.05 with apeglm shrinkage and separate accounting of Cook's vs independent-filter NAs is well specified. The Hallmark collection is named with version and file path, with a 15-500 size window applied after intersecting with tested genes and reporting of missing set members. Small deductions: row scaling of the heatmap is never stated, and the added gene-level DE step is scope beyond the question (harmless but not required)."
+}

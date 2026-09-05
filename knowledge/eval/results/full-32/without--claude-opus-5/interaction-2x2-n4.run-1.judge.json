@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the question as an interaction test, fits ~ genotype + treatment + genotype:treatment in DESeq2 with explicit WT/vehicle reference levels, tests the interaction coefficient by Wald, derives both simple drug effects from the same fit (with the correct composed contrast for KO), and adds an LRT against the additive reduced model with an honest power framing for n=4. QC is thorough (library sizes, blind VST PCA, distance heatmap, flag-don't-drop outlier policy), the filter is minimal and tied to group size, normalization stays inside the model, and BH at stated alphas with apeglm/ashr shrinkage is explicit. Enrichment uses full signed Wald rankings, named human collections and a 15-500 size window, but no collection version is given; the report specifies thresholds, gene counts and caveats but lists packages without committing to reporting versions."
+}

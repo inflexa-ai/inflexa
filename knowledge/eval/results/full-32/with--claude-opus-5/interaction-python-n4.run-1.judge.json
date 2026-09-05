@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits the 2x2 factorial correctly: a single PyDESeq2 negative-binomial model with ~ genotype + treatment + genotype:treatment, explicit WT/vehicle references, the interaction coefficient as the primary test, and both within-genotype simple effects reported alongside it, all in Python with a statsmodels NB LRT cross-check and an explicit warning against reading one significant simple effect as an interaction. QC precedes the model with a blind transform, top-500 PCA coloured by both factors and cell, distance heatmap and library sizes, with a flag-only outlier policy; the filter (10 counts in at least 4 samples, the smallest group) is minimal and justified, and size factors stay inside the model. BH at alpha 0.05 within contrast, named shrinkage estimator, and in-model lfcThreshold are all stated, and GSEA uses the full Wald-ranked list, a tested-gene universe, named collections with versions, and a 15-500 size window. Small deductions because the plan does not state a fallback should the installed PyDESeq2 fail to express the interaction formula or contrast (the reference asks for one), and the outlier policy stops at flagging without a stated downstream decision rule."
+}

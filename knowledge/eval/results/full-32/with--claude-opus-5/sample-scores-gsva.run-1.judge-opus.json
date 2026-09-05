@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly reads the question as a per-sample scoring problem: GSVA with the Gaussian kernel on a blind VST matrix (correctly justified because the scoring method needs continuous log-scale input, not counts), a 50 x 12 score matrix written out, a row-scaled condition-annotated heatmap, and a limma moderated t-test with BH at 0.05 on the score matrix — exactly the reference pathway. QC precedes everything with blind VST PCA on the top 500 genes, sample-distance heatmap, library size/size factor/detected-gene table, and an explicit keep-inspect-report policy for the 4x-shallow sample_01 that is carried into the score matrix inspection, which is the dataset-specific handling the reference asks for. Filtering (>=10 counts in >=6, the smallest group size), median-of-ratios normalization inside the model with an explicit prohibition on pre-scaling, ~condition with control as the stated reference and a numerator/denominator contrast, BH at alpha 0.05 with apeglm shrinkage, and a complete report with versions, n tested, n significant, and design caveats are all present and correctly scoped. The fgsea cross-check is framed as confirmatory rather than as the answer, with the full ranked list, Wald statistic as the metric, tested genes as universe, 15-500 size window and a recorded seed. The only shortfall is that the Hallmark collection version is required to be reported downstream rather than pinned in the plan itself, and the redundancy of overlapping inflammatory hallmarks is flagged but only handled by narrative collapse."
+}

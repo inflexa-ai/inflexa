@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the design precisely: a DESeq2 Wald test on an unpaired 6v6 single-batch raw-count matrix with ~condition, Control set explicitly as the reference level, a named contrast, and an edgeR QL cross-check whose intersection is reported as the high-confidence set. QC precedes testing with vst PCA, a sample-distance heatmap, and a library-size/detected-gene table, with an explicit keep-inspect-report policy for sample_01 and a requirement that any removal be a stated judgment; only batch coloring is absent, which is moot in a single-batch study. Filtering (>=10 counts in >=6 samples, tied to the smallest group) is defensible though marginally on the strict side given the shallow sample, normalization is entirely inside the models (median-of-ratios and TMM) with no pre-scaling, and inference uses BH at alpha=0.05 with apeglm shrinkage for reported and ranked effect sizes plus a p-value histogram check. Enrichment is fgsea preranked on the full tested list with the Wald statistic named, Hallmark 2026.1 as primary, 15-500 size window applied after intersecting with tested genes, collapsing and leading-edge reporting, and a sensible rule against ORA on a short list. The final report names versions, design, thresholds, counts tested/significant/NA-flagged, collection versions, seed and session info; the main gap is that design-level caveats (unpaired, n=6, single batch limiting confounding assessment) are less explicitly framed than the sample_01 and method-dependence caveats."
+}
