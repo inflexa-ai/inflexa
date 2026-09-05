@@ -1,0 +1,980 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Knowledge Plane, Phase Zero</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #f5f6f8;
+    --panel: #eceef2;
+    --panel-2: #e3e6ec;
+    --ink: #1b1f27;
+    --mut: #5b6270;
+    --line: #d3d7df;
+    --kp: #2f4b8c;
+    --kp-soft: rgba(47, 75, 140, 0.10);
+    --llm: #a8620f;
+    --llm-soft: rgba(168, 98, 15, 0.11);
+    --warn: #8a3b2f;
+    --code-bg: #e8ebf0;
+    --link: #2f4b8c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #12151b;
+      --panel: #191d25;
+      --panel-2: #20252f;
+      --ink: #e6e9ee;
+      --mut: #9aa3b2;
+      --line: #2b313c;
+      --kp: #86a3ea;
+      --kp-soft: rgba(134, 163, 234, 0.13);
+      --llm: #e0a24a;
+      --llm-soft: rgba(224, 162, 74, 0.13);
+      --warn: #e28a7c;
+      --code-bg: #1c2129;
+      --link: #86a3ea;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #12151b;
+    --panel: #191d25;
+    --panel-2: #20252f;
+    --ink: #e6e9ee;
+    --mut: #9aa3b2;
+    --line: #2b313c;
+    --kp: #86a3ea;
+    --kp-soft: rgba(134, 163, 234, 0.13);
+    --llm: #e0a24a;
+    --llm-soft: rgba(224, 162, 74, 0.13);
+    --warn: #e28a7c;
+    --code-bg: #1c2129;
+    --link: #86a3ea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Source Sans 3", "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 24px 96px;
+  }
+  .sheet { max-width: 1040px; margin: 0 auto; }
+  .prose { max-width: 70ch; }
+  h1, h2, h3, h4 {
+    font-family: "Newsreader", "Iowan Old Style", Georgia, serif;
+    font-weight: 500;
+    line-height: 1.15;
+    text-wrap: balance;
+    margin: 0;
+  }
+  h1 { font-size: 46px; letter-spacing: -0.01em; margin-top: 56px; }
+  h2 { font-size: 30px; margin-top: 72px; padding-top: 22px; border-top: 1px solid var(--line); }
+  h3 { font-size: 21px; margin-top: 36px; font-weight: 600; }
+  h4 { font-size: 17px; font-family: "Source Sans 3", sans-serif; font-weight: 600; margin-top: 24px; }
+  p { margin: 14px 0; }
+  .lede { font-size: 21px; line-height: 1.45; color: var(--ink); margin: 18px 0 0; max-width: 60ch; font-family: "Newsreader", Georgia, serif; font-weight: 500; }
+  .meta { color: var(--mut); font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; margin-top: 10px; }
+  .eyebrow { color: var(--mut); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
+  a { color: var(--link); text-decoration: none; border-bottom: 1px solid var(--line); }
+  a:hover, a:focus-visible { border-bottom-color: var(--link); outline: none; }
+  a:focus-visible { outline: 2px solid var(--kp); outline-offset: 2px; }
+  code, pre {
+    font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 0.86em;
+  }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: var(--code-bg);
+    padding: 16px 18px;
+    border-radius: 4px;
+    overflow-x: auto;
+    line-height: 1.5;
+    margin: 16px 0;
+  }
+  pre code { background: none; padding: 0; font-size: 13.5px; }
+  ul, ol { padding-left: 22px; }
+  li { margin: 6px 0; }
+  li > ul { margin-top: 4px; }
+  strong { font-weight: 600; }
+  .contents { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 28px; margin: 28px 0 0; padding: 20px 0 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .contents a { border-bottom: none; color: var(--ink); }
+  .contents a:hover { color: var(--link); }
+  .contents span { color: var(--mut); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; margin: 16px 0; }
+  .tablewrap { overflow-x: auto; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; font-size: 13px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--mut); }
+  td code { white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .goals { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin: 24px 0; }
+  .goal { background: var(--panel); padding: 16px 18px; border-top: 3px solid var(--kp); }
+  .goal .eyebrow { color: var(--kp); }
+  .goal p { margin: 8px 0 0; font-size: 15px; }
+  .goal .fig { font-family: "Newsreader", Georgia, serif; font-size: 30px; font-weight: 500; line-height: 1; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .goal .fig small { font-size: 14px; font-family: "Source Sans 3", sans-serif; color: var(--mut); margin-left: 6px; }
+  .principle { border-left: 3px solid var(--kp); padding: 4px 0 4px 18px; margin: 22px 0; }
+  .principle h3 { margin-top: 0; }
+  .principle .why { color: var(--mut); }
+  .principle .why b { color: var(--ink); font-weight: 600; }
+  .callout { background: var(--panel); padding: 14px 18px; margin: 18px 0; border-left: 3px solid var(--llm); }
+  .callout.kp { border-left-color: var(--kp); }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout p { margin: 6px 0; }
+  figure { margin: 28px 0; }
+  figure svg { max-width: 100%; height: auto; display: block; }
+  figcaption { color: var(--mut); font-size: 14px; margin-top: 10px; max-width: 70ch; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--mut); margin-top: 8px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; vertical-align: -1px; margin-right: 6px; border-radius: 2px; }
+  .claim { background: var(--panel); border: 1px solid var(--line); padding: 16px 18px; margin: 18px 0; font-size: 15px; }
+  .claim .id { font-family: "JetBrains Mono", monospace; font-size: 13px; color: var(--mut); }
+  .claim dl { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; margin: 10px 0 0; }
+  .claim dt { color: var(--mut); font-size: 13px; letter-spacing: 0.05em; text-transform: uppercase; padding-top: 2px; }
+  .claim dd { margin: 0; }
+  .phase { display: grid; grid-template-columns: 120px 1fr; gap: 12px 24px; margin: 22px 0; padding: 18px 0; border-top: 1px solid var(--line); }
+  .phase .num { font-family: "Newsreader", Georgia, serif; font-size: 30px; color: var(--kp); line-height: 1; }
+  .phase .num small { display: block; font-family: "Source Sans 3", sans-serif; font-size: 13px; color: var(--mut); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 6px; }
+  .phase h3 { margin-top: 0; }
+  .phase p, .phase ul { margin-top: 8px; }
+  .refs { font-size: 14.5px; }
+  .refs ol { padding-left: 26px; }
+  .refs li { margin: 5px 0; }
+  .refs h3 { margin-top: 26px; font-size: 18px; }
+  .decisions li { margin: 10px 0; }
+  .decisions b { font-weight: 600; }
+  .tag { display: inline-block; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 7px; border-radius: 3px; margin-left: 6px; vertical-align: 2px; }
+  .tag.kp { background: var(--kp-soft); color: var(--kp); }
+  .tag.llm { background: var(--llm-soft); color: var(--llm); }
+  @media (max-width: 640px) {
+    h1 { font-size: 34px; }
+    h2 { font-size: 26px; }
+    .phase { grid-template-columns: 1fr; }
+    .claim dl { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="sheet">
+
+<header class="prose">
+  <div class="meta">Architecture proposal · 2026-09-03 · revised 2026-09-04 · supersedes the 2026-08-26 draft · six decisions closed</div>
+  <h1>Knowledge Plane, Phase Zero</h1>
+  <p class="lede">A remote knowledge service that gives Inflexa its method choices as cited, versioned rules and tested script templates. The model fills typed parameters. The service does the deterministic work. Phase 0 proves it on bulk RNA-seq with three new tools, one plan-step field, and no other change to Inflexa.</p>
+  <nav class="contents" aria-label="Contents">
+    <a href="#summary"><span>1</span>Summary</a>
+    <a href="#delta"><span>2</span>What changed since the last draft</a>
+    <a href="#present"><span>3</span>The present state</a>
+    <a href="#principles"><span>4</span>The principles</a>
+    <a href="#architecture"><span>5</span>The architecture</a>
+    <a href="#contract"><span>6</span>The query contract</a>
+    <a href="#model"><span>7</span>The knowledge model</a>
+    <a href="#curation"><span>8</span>The curation pipeline</a>
+    <a href="#phase0"><span>9</span>Phase 0, the proof of concept</a>
+    <a href="#evaluation"><span>10</span>The evaluation</a>
+    <a href="#phases"><span>11</span>Phase 1 and Phase 2</a>
+    <a href="#risks"><span>12</span>Risks</a>
+    <a href="#decisions"><span>13</span>Decisions for you</a>
+    <a href="#references"><span>14</span>References</a>
+  </nav>
+</header>
+
+<section id="summary" class="prose">
+  <h2>Summary</h2>
+  <p>Build the knowledge plane as one small remote service with a typed, deterministic API. The service holds three kinds of knowledge object: a <strong>rule</strong> (a situation-to-method claim with conditions, strength, and cited evidence), a <strong>method</strong> (a statistical procedure with its packages and versions), and a <strong>template</strong> (a tested script with a typed parameter contract and pinned environment). The client sends a structured description of the analysis situation. The service matches the rules, assembles the procedure, renders the template, and returns claim identifiers, evidence, and a snapshot digest. The client model never writes a query and never writes a method from memory. For a standard step it does not write the script either. It emits slot values, and the tool writes the rendered script into the workspace.</p>
+  <p>Inflexa reaches the service through three tools: <code>knowledge_recommend</code>, <code>knowledge_check</code>, and <code>knowledge_template</code>. Phase 0 adds these tools and one field: a <code>grounding</code> object on the plan step that holds the claim identifiers, the snapshot digest, the template, and a one-line reason. The step agent also writes a decision record into its output tree, which the signed provenance already hashes. Phase 1 adds the validation gate and the provenance event. Phase 2 adds the offline snapshot and the next modalities. The open-source CLI runs without the service by default. The tools attach only when a license configures the service, and a plan validates as today without them.</p>
+  <p>The knowledge lives as code in a private repository: one YAML file per claim, validated by a LinkML schema, reviewed in pull requests, released as a dated snapshot with a content digest. Phase 0 serves the snapshot from a single SQLite file inside one container. A graph store is a later decision, not a Phase 0 requirement, because the Phase 0 corpus is about fifty rules and ten templates.</p>
+
+  <div class="goals">
+    <div class="goal">
+      <div class="eyebrow">Goal 1 · Smaller models</div>
+      <div class="fig">87.6<small>vs 88.6</small></div>
+      <p>BFCL v4 single-call accuracy of Qwen3-8B against Claude Opus 4.5. Small models call one typed tool as well as frontier models, and fail on chains. Thus the service does the hops [17].</p>
+    </div>
+    <div class="goal">
+      <div class="eyebrow">Goal 2 · Grounded chain</div>
+      <div class="fig">0<small>DOIs today</small></div>
+      <p>The skill packs carry no DOI and no PMID. The plan step has no rationale field. Each served claim carries a content-hashed identifier and at least one resolvable source [Sec. 3].</p>
+    </div>
+    <div class="goal">
+      <div class="eyebrow">Goal 3 · Less time</div>
+      <div class="fig">44–57%</div>
+      <p>The band in which all 23 models on FlowBench select the right tool when they must infer it. Explicit tool selection reaches near 100%. A named method removes a retry loop [27].</p>
+    </div>
+    <div class="goal">
+      <div class="eyebrow">Goal 4 · Fewer tokens</div>
+      <div class="fig">slots, not scripts</div>
+      <p>Output tokens cost several times input tokens. The model emits slot values, and the tool writes the script from the template. Phase 0 measures output tokens per step against the from-scratch baseline [Sec. 10].</p>
+    </div>
+  </div>
+</section>
+
+<section id="delta" class="prose">
+  <h2>What changed since the last draft</h2>
+  <p>The 2026-08-26 draft set the direction: typed tools, nanopublication-shaped claims, a mandatory planner brief, and a grounded plan gate. This proposal keeps that direction and changes six things, because the deep research and the constraint on Phase 0 give different evidence.</p>
+  <ul>
+    <li><strong>Phase 0 changes no prompt and no seam. It adds three tools and one plan-step field.</strong> The three tools carry their own contract in their descriptions. The grounding rides in the new field and in a step deliverable. The brief and the gate move to Phase 1.</li>
+    <li><strong>The store follows the corpus, not the ontology.</strong> The last draft chose Oxigraph first. About fifty rules do not justify a triple store. Phase 0 compiles the knowledge repository into one SQLite file. The LinkML schema can emit RDF and SHACL when a graph query is necessary, thus the path to Oxigraph stays open [50, 63].</li>
+    <li><strong>One check call, not a critic loop.</strong> LLM-Modulo evidence is real, but a ten-iteration loop conflicts with the time and token goals, and small models collapse on chains [11, 12, 17, 18]. The service does the loop work inside one call and returns one procedure.</li>
+    <li><strong>Procedures, not facts.</strong> Skills work as procedural anchors (65.7% of the mechanism), not as knowledge injection (4.5%) [33]. Each answer is an ordered procedure with a template, and the references hang off the steps.</li>
+    <li><strong>The rule copies are two, not three.</strong> The full decision tree lives in the skill pack and in the sandbox prompt. The planner prompt holds one statistics rule only. A partial third copy sits in the shared omics pack [Sec. 3].</li>
+    <li><strong>The evaluation is a non-inferiority test with a noise floor.</strong> Paired agent evaluations show a noise floor near 15 points, and 18.5% of benchmark verdicts disagree with experts [69, 70]. Phase 0 pre-registers a margin, uses fresh simulated data, and keeps airway and pasilla for template tests only.</li>
+    <li><strong>Scripts are reused, not rewritten (added 2026-09-04).</strong> The template tool writes the rendered script and the decision record into the step workspace through the existing mutator seam. The model emits slot values only, and a residual change goes through <code>edit_file</code> as a small diff. Output tokens fall, and the same template gives the same script across runs and across analyses.</li>
+  </ul>
+</section>
+
+<section id="present" class="prose">
+  <h2>The present state</h2>
+  <p>Four agents mapped the repository at commit <code>a8380bb3</code>. These facts decide where the knowledge plane connects.</p>
+
+  <div class="tablewrap">
+  <table>
+    <tr><th>Fact</th><th>Where</th><th>Consequence</th></tr>
+    <tr><td>The planner has no knowledge tool and never sees a skill pack. Its tools are literature search, dataset search, package docs, and the two store inventories.</td><td><code>harness/src/tools/research/generate-plan.ts:905</code></td><td>Method choice at plan time comes from the weights plus an optional literature search. A knowledge tool goes into this list.</td></tr>
+    <tr><td>Skills reach only sandbox agents, by keyword scan, confined to the agent allowlist.</td><td><code>harness/src/tools/sandbox/skills.ts:73</code></td><td>The step agent has method prose. The planner does not.</td></tr>
+    <tr><td>A plan step has no rationale, citation, or evidence field. Validation is structural: DAG shape, agent ids, resources, reserved ids.</td><td><code>harness/src/schemas/workflow-state.ts:16</code>, <code>harness/src/schemas/validate-plan.ts:64</code></td><td>A plan that runs DESeq2 on TPM values validates. Phase 0 adds one <code>grounding</code> field here. Phase 1 adds the gate.</td></tr>
+    <tr><td>The DE decision tree exists in two full copies and one partial copy. No copy carries a DOI or a PMID.</td><td><code>skills/bulk-transcriptomics/SKILL.md:16-41</code>, <code>harness/src/prompts/sandbox/bulk-transcriptomics-agent.ts:19-36</code>, <code>skills/shared/omics-general/references/general-principles.md:50-76</code></td><td>One queriable source ends the drift. The existing tree is the first draft of the rule set.</td></tr>
+    <tr><td>A tool is a factory closure around <code>defineTool</code>. The input schema must be a flat object. Tools call external HTTPS through <code>apiFetch</code>. Tool handlers run in the host process, also for a sandbox agent, while the container has no egress.</td><td><code>harness/src/tools/define-tool.ts:243</code>, <code>harness/src/tools/lib/api-utils.ts:45</code>, <code>harness/src/sandbox/docker-client.ts:26-34</code></td><td>A knowledge tool is an ordinary tool. A step agent can consult the service while its container stays sealed, as the Context7 tool does today.</td></tr>
+    <tr><td>There is no MCP client in the harness, by written decision.</td><td><code>harness/openspec/specs/context7-sandbox-integration/spec.md:14-15</code></td><td>The Inflexa tool speaks plain HTTPS. The service can also expose MCP for other clients and for curation.</td></tr>
+    <tr><td>The sandbox tool allowlist is a closed union. The conversation agent has a host-tools seam. The planner has neither.</td><td><code>harness/src/agents/sandbox/types.ts:17</code>, <code>harness/src/agents/conversation-agent.ts:193</code></td><td>Each surface needs one registration line. The planner is the one that matters for method choice.</td></tr>
+    <tr><td>External API keys follow one pattern: an optional key bag, resolved at the composition root. No tool reads a configurable base URL today.</td><td><code>harness/src/tools/bio/keys.ts:16</code>, <code>cli/src/modules/harness/config.ts:16-27</code></td><td>A <code>knowledge: { baseUrl, apiKey }</code> block copies the embedding block. The secret stays in the environment.</td></tr>
+    <tr><td>Provenance records a tool call only when it writes a file: path, sha256, size, tool, invocation id. Other tool calls leave no signed record. The plan is not an entity. Prompts are never recorded, by policy.</td><td><code>harness/src/provenance/seam.ts:139-157</code>, <code>cli/src/modules/harness/plan_intake.ts:167</code></td><td>In Phase 0 a written decision record is the one path into the signed document. In Phase 1 a host-defined lifecycle action adds the claim entities without a kernel change.</td></tr>
+    <tr><td>The kernel exports <code>appendLifecycleAction</code> for host-defined event kinds. The lineage reader drops relation classes it does not know.</td><td><code>prov-kernel/src/document.ts:242-253</code>, <code>prov-kernel/src/lineage.ts:321-330</code></td><td>Claim entities are cheap. A claim edge into a step activity is a format change with a golden test.</td></tr>
+    <tr><td>The paper draws a line: observed provenance below the agent, not reported provenance from the agent.</td><td><code>paper/SCAFFOLD.md:33-36</code>, <code>paper/SCAFFOLD.md:99</code></td><td>The consultation is observed at the tool boundary. The use of a claim in a step is reported, then checked by the gate. The document must say which is which.</td></tr>
+    <tr><td>Package pins live in the store manifest and in the farm lock, not in the skills. The farm lock records Bioconductor releases and exact versions.</td><td><code>images/package-store/manifest.yaml:217-227</code>, <code>harness/src/sandbox/farm.ts</code></td><td>The template tool passes the farm versions to the service and gets an environment match back.</td></tr>
+    <tr><td>One usable evaluation fixture exists: a 6 vs 6 unpaired, single-batch atopic dermatitis profile with a low-depth sample. No golden plan exists.</td><td><code>harness/src/tools/research/generate-plan.test.ts:100-123</code></td><td>The evaluation set must be authored. Section 10 gives its shape.</td></tr>
+  </table>
+  </div>
+
+  <h3>The always-loaded prose, measured</h3>
+  <p>The token goal needs a baseline. The sandbox standards prompt holds 3,755 words and the planner prompt 2,525 words. The bulk transcriptomics agent body holds 535 words, and its skill pack 942 words. The skill loads on demand through a keyword scan. Thus a knowledge tool cannot save tokens by the removal of prose alone. It can save tokens when a named method removes a wrong-method retry, and when a rendered template removes a debug loop. Phase 0 must measure this, not assume it.</p>
+  <p>The largest output-token item of a step is the script that the agent writes from scratch. A DESeq2 step script of about a hundred lines is on the order of a thousand output tokens or more, and each rewrite in a debug loop pays it again. Output tokens cost several times input tokens. Thus the lever for goal 4 is the script, not the prose. The template tool writes the script, and the model emits slot values. This estimate is a measurement item of Phase 0.</p>
+</section>
+
+<section id="principles" class="prose">
+  <h2>The principles</h2>
+
+  <div class="principle">
+    <h3>P1. The client fills typed parameters. It never writes a query.</h3>
+    <p>Each tool takes a flat object with enumerated values. The service runs a tested query and a deterministic rule match. There is no Cypher, SPARQL, or SQL from the model on either side.</p>
+    <p class="why"><b>Why.</b> Frontier models reach about 60% execution accuracy on CypherBench, and 8B models 19%, with silent errors [7]. A deterministic semantic layer reached 98 to 100% where text-to-SQL with the same 2026 models reached 84 to 90%, and it fails in the open instead of in silence [9]. Small models match frontier models on a single typed call [17, 19].</p>
+  </div>
+
+  <div class="principle">
+    <h3>P2. One call returns one procedure. The service does the hops.</h3>
+    <p>A planning question gets one answer: an ordered procedure with methods, parameters, template ids, rules, flags, and evidence. The service joins situation to rule to method to template to source inside the call.</p>
+    <p class="why"><b>Why.</b> No open model clears 60% on conditional or multi-source tool tiers, and BFCL multi-turn scores fall to 22 to 48% for 4B to 32B models [17, 18]. Every extra step grows context, and context growth is a measured cause of failure [20, 22]. In-service joins removed most intermediate tokens in Anthropic's measurements [24].</p>
+  </div>
+
+  <div class="principle">
+    <h3>P3. Return procedures with the evidence attached, not facts alone.</h3>
+    <p>The unit of an answer is a step with a method, a parameter set with sources, and a template. The claims and their DOIs hang off the steps. A concise answer stays under a few thousand tokens. Alternatives and full evidence come on request.</p>
+    <p class="why"><b>Why.</b> Skills act as procedural anchors in 65.7% of the observed mechanism and as knowledge injection in 4.5% [33]. Expert prose alone gave 1.9 points on ScienceAgentBench and lowered valid execution [29]. Long tool results cut accuracy by 7 to 91% [21]. Prompt bloat cut completion by 28% [31].</p>
+  </div>
+
+  <div class="principle">
+    <h3>P4. A standard step adapts a tested template. It is not free code.</h3>
+    <p>The template carries the imports, the call signatures, the version pins, and the defaults with their sources. The model fills only the slots marked adaptable, as a small JSON object. The service renders the script, and the tool writes it into the step workspace. The model never emits the script. A residual change is an <code>edit_file</code> diff, not a rewrite. The sandbox runs the script and feeds back one error.</p>
+    <p class="why"><b>Why.</b> Open models reference a non-existent package in 21.7% of generations [35]. Version-conditioned code sits near 50% for frontier models, and execution feedback adds 10 to 24 points [36]. A small model with retrieval decides what to do but cannot write the code for a medium pipeline [28]. Bioconductor changes its API twice a year, thus a pinned template removes a whole failure class [40]. Output tokens cost several times input tokens, and a rendered template keeps the code constant across runs, where free generation gave a run-to-run overlap of Jaccard 0.43 [31].</p>
+  </div>
+
+  <div class="principle">
+    <h3>P5. Every answer is a versioned, cited, content-addressed record.</h3>
+    <p>A claim has a content-hash identifier, an evidence line with direction and type, at least one resolvable source, a strength, and a supersedes link. A snapshot has a date and a digest. A plan records both. The service returns only references that exist in its store.</p>
+    <p class="why"><b>Why.</b> GO requires an evidence code and a reference on every annotation [51]. Nanopublications and trusty URIs are the mature shape for an immutable claim [48, 49]. Fabricated citations reached about 147,000 in 2025 alone [26]. Citation existence is not support, thus the record carries the supporting span and the evaluation checks it [26, 27].</p>
+  </div>
+
+  <div class="callout kp">
+    <p><strong>Determinism where it makes sense.</strong> The rule match, the procedure assembly, the template render, the environment check, and the snapshot digest are deterministic. The same situation against the same digest gives byte-identical output.</p>
+    <p><strong>The model glues.</strong> The model extracts the situation from the data profile and the request, selects between two defensible options when the service marks a rule as disputed, fills adaptable slots such as column names and contrasts, and summarizes for the report.</p>
+  </div>
+</section>
+
+<section id="architecture">
+  <div class="prose">
+    <h2>The architecture</h2>
+    <p>Two systems, one boundary. Inflexa stays open source and host-agnostic. The knowledge service stays closed and remote. The tools are the only contract between them, and the snapshot digest is the only shared identifier.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 1040 560" role="img" aria-label="Inflexa agents call three knowledge tools over HTTPS. The service normalizes the situation, matches rules, assembles the procedure, renders templates, and answers with claim identifiers and a snapshot digest. A curation repository builds the snapshot. The step agent writes the rendered script and a decision record, which the signed provenance hashes." style="color: var(--ink);">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+        <marker id="arrkp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--kp)"/>
+        </marker>
+      </defs>
+      <!-- Inflexa host -->
+      <rect x="20" y="20" width="440" height="410" rx="4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4"/>
+      <text x="36" y="44" font-size="12" font-weight="600" letter-spacing="1" fill="currentColor">INFLEXA HOST · OPEN SOURCE · TOOLS RUN IN THE HOST PROCESS</text>
+
+      <rect x="40" y="64" width="180" height="52" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="130" y="86" font-size="13" text-anchor="middle" fill="currentColor">conversation agent</text>
+      <text x="130" y="104" font-size="11" text-anchor="middle" fill="var(--mut)">orient · clarify · explain</text>
+
+      <rect x="40" y="136" width="180" height="52" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="130" y="158" font-size="13" text-anchor="middle" fill="currentColor">planner (generate_plan)</text>
+      <text x="130" y="176" font-size="11" text-anchor="middle" fill="var(--mut)">drafts steps · submit_plan</text>
+
+      <rect x="40" y="208" width="180" height="52" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="130" y="230" font-size="13" text-anchor="middle" fill="currentColor">step agent</text>
+      <text x="130" y="248" font-size="11" text-anchor="middle" fill="var(--mut)">writes files · runs in sandbox</text>
+
+      <!-- tools -->
+      <rect x="260" y="64" width="180" height="196" rx="3" fill="var(--kp-soft)" stroke="var(--kp)" stroke-width="1.2"/>
+      <text x="350" y="86" font-size="12" font-weight="600" text-anchor="middle" fill="var(--kp)">KNOWLEDGE TOOLS</text>
+      <text x="350" y="112" font-size="12.5" text-anchor="middle" fill="currentColor" font-family="JetBrains Mono, monospace">knowledge_recommend</text>
+      <text x="350" y="134" font-size="12.5" text-anchor="middle" fill="currentColor" font-family="JetBrains Mono, monospace">knowledge_check</text>
+      <text x="350" y="156" font-size="12.5" text-anchor="middle" fill="currentColor" font-family="JetBrains Mono, monospace">knowledge_template</text>
+      <text x="350" y="186" font-size="11" text-anchor="middle" fill="var(--mut)">defineTool · flat schema</text>
+      <text x="350" y="202" font-size="11" text-anchor="middle" fill="var(--mut)">apiFetch · farm versions</text>
+      <text x="350" y="218" font-size="11" text-anchor="middle" fill="var(--mut)">absence is a typed result</text>
+      <text x="350" y="234" font-size="11" text-anchor="middle" fill="var(--mut)">phase 0: 3 registrations</text>
+
+      <line x1="220" y1="90" x2="258" y2="112" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="220" y1="162" x2="258" y2="140" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="220" y1="234" x2="258" y2="160" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+
+      <!-- sandbox + prov -->
+      <rect x="40" y="300" width="180" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1"/>
+      <text x="130" y="319" font-size="12.5" text-anchor="middle" fill="currentColor">sandbox container</text>
+      <text x="130" y="336" font-size="11" text-anchor="middle" fill="var(--mut)">no egress · runs the script</text>
+      <line x1="130" y1="260" x2="130" y2="298" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+      <text x="140" y="284" font-size="11" fill="var(--mut)">execute_command</text>
+
+      <rect x="260" y="300" width="180" height="110" rx="3" fill="none" stroke="currentColor" stroke-width="1"/>
+      <text x="350" y="320" font-size="12.5" text-anchor="middle" fill="currentColor">signed PROV document</text>
+      <text x="350" y="340" font-size="11" text-anchor="middle" fill="var(--mut)">write-file: path + sha256</text>
+      <text x="350" y="358" font-size="11" text-anchor="middle" fill="var(--mut)">scripts/de.R</text>
+      <text x="350" y="376" font-size="11" text-anchor="middle" fill="var(--mut)">output/decision_record.json</text>
+      <text x="350" y="396" font-size="11" text-anchor="middle" fill="var(--kp)">claim ids + snapshot digest, hashed</text>
+      <line x1="220" y1="234" x2="258" y2="330" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+      <text x="266" y="292" font-size="11" fill="var(--mut)">template tool writes</text>
+
+      <!-- HTTPS -->
+      <line x1="440" y1="162" x2="558" y2="162" stroke="var(--kp)" stroke-width="1.6" marker-end="url(#arrkp)"/>
+      <text x="499" y="150" font-size="11" text-anchor="middle" fill="var(--kp)">HTTPS · API key</text>
+      <text x="499" y="180" font-size="11" text-anchor="middle" fill="var(--mut)">situation in</text>
+      <text x="499" y="194" font-size="11" text-anchor="middle" fill="var(--mut)">procedure out</text>
+
+      <!-- Service -->
+      <rect x="560" y="20" width="460" height="290" rx="4" fill="none" stroke="var(--kp)" stroke-width="1.4"/>
+      <text x="576" y="44" font-size="12" font-weight="600" letter-spacing="1" fill="var(--kp)">KNOWLEDGE SERVICE · REMOTE · CLOSED · ONE CONTAINER</text>
+
+      <rect x="580" y="62" width="200" height="44" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="680" y="80" font-size="12.5" text-anchor="middle" fill="currentColor">typed API · HTTPS + MCP</text>
+      <text x="680" y="97" font-size="11" text-anchor="middle" fill="var(--mut)">validate · version · cache by digest</text>
+
+      <rect x="800" y="62" width="200" height="44" rx="3" fill="var(--llm-soft)" stroke="var(--llm)" stroke-width="1"/>
+      <text x="900" y="80" font-size="12.5" text-anchor="middle" fill="currentColor">normalizer (phase 1 option)</text>
+      <text x="900" y="97" font-size="11" text-anchor="middle" fill="var(--mut)">free text → situation terms</text>
+
+      <rect x="580" y="126" width="200" height="60" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="680" y="146" font-size="12.5" text-anchor="middle" fill="currentColor">rule engine</text>
+      <text x="680" y="163" font-size="11" text-anchor="middle" fill="var(--mut)">decision tables · hit policy</text>
+      <text x="680" y="178" font-size="11" text-anchor="middle" fill="var(--mut)">disputed → both sides</text>
+
+      <rect x="800" y="126" width="200" height="60" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="900" y="146" font-size="12.5" text-anchor="middle" fill="currentColor">template renderer</text>
+      <text x="900" y="163" font-size="11" text-anchor="middle" fill="var(--mut)">JSON Schema slots · sandboxed</text>
+      <text x="900" y="178" font-size="11" text-anchor="middle" fill="var(--mut)">environment match</text>
+
+      <rect x="580" y="206" width="420" height="84" rx="3" fill="var(--kp-soft)" stroke="var(--kp)" stroke-width="1"/>
+      <text x="790" y="228" font-size="12.5" text-anchor="middle" fill="currentColor">snapshot store · read only</text>
+      <text x="790" y="247" font-size="11" text-anchor="middle" fill="var(--mut)">rules · methods · templates · sources · vocabulary mappings</text>
+      <text x="790" y="264" font-size="11" text-anchor="middle" fill="var(--mut)">phase 0: one SQLite file, FTS5 for free text</text>
+      <text x="790" y="281" font-size="11" text-anchor="middle" fill="var(--kp)">identified by date + content digest</text>
+
+      <line x1="680" y1="106" x2="680" y2="124" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="900" y1="106" x2="900" y2="124" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="680" y1="186" x2="680" y2="204" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="900" y1="186" x2="900" y2="204" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+
+      <!-- Curation -->
+      <rect x="560" y="350" width="460" height="190" rx="4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4"/>
+      <text x="576" y="374" font-size="12" font-weight="600" letter-spacing="1" fill="currentColor">CURATION · KNOWLEDGE AS CODE · PRIVATE GIT</text>
+
+      <rect x="580" y="392" width="130" height="56" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="645" y="412" font-size="12" text-anchor="middle" fill="currentColor">claim YAML</text>
+      <text x="645" y="428" font-size="11" text-anchor="middle" fill="var(--mut)">one file per claim</text>
+      <text x="645" y="441" font-size="11" text-anchor="middle" fill="var(--mut)">LLM drafts · human signs</text>
+
+      <rect x="730" y="392" width="130" height="56" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="795" y="412" font-size="12" text-anchor="middle" fill="currentColor">CI gates</text>
+      <text x="795" y="428" font-size="11" text-anchor="middle" fill="var(--mut)">LinkML · DOI resolves</text>
+      <text x="795" y="441" font-size="11" text-anchor="middle" fill="var(--mut)">span in source · template tests</text>
+
+      <rect x="880" y="392" width="120" height="56" rx="3" fill="var(--kp-soft)" stroke="var(--kp)" stroke-width="1"/>
+      <text x="940" y="412" font-size="12" text-anchor="middle" fill="currentColor">release</text>
+      <text x="940" y="428" font-size="11" text-anchor="middle" fill="var(--mut)">date + digest</text>
+      <text x="940" y="441" font-size="11" text-anchor="middle" fill="var(--mut)">changelog · supersedes</text>
+
+      <line x1="710" y1="420" x2="728" y2="420" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="860" y1="420" x2="878" y2="420" stroke="currentColor" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="940" y1="392" x2="940" y2="292" stroke="var(--kp)" stroke-width="1.4" marker-end="url(#arrkp)"/>
+      <text x="952" y="330" font-size="11" fill="var(--kp)">loads</text>
+
+      <text x="580" y="474" font-size="11" fill="var(--mut)">seed: the 54 verified rules of this research, the skill decision</text>
+      <text x="580" y="490" font-size="11" fill="var(--mut)">trees, nf-core defaults, workflow articles, and tool user guides.</text>
+      <text x="580" y="510" font-size="11" fill="var(--mut)">Each claim carries a license and a retrieval date. CI re-verifies</text>
+      <text x="580" y="526" font-size="11" fill="var(--mut)">the pins on each Bioconductor and nf-core release.</text>
+    </svg>
+    <figcaption>The tools are the only contract. Three tools run in the host process, thus a step agent consults the service while its container has no network. The rendered script and the decision record become files, and the existing write-file provenance hashes them into the signed document. The curation repository produces the snapshot that the service loads.</figcaption>
+    <div class="legend"><span><i style="background: var(--kp-soft); border: 1px solid var(--kp);"></i>deterministic, cited</span><span><i style="background: var(--llm-soft); border: 1px solid var(--llm);"></i>LLM: intent, adaptation, glue</span><span><i style="background: var(--panel); border: 1px solid currentColor;"></i>mechanism</span></div>
+  </figure>
+
+  <div class="prose">
+    <h3>The Inflexa side</h3>
+    <p>One module, <code>harness/src/tools/knowledge/</code>, exports <code>createKnowledgeTools(deps)</code>. The deps are the base URL, the API key, the injectable <code>fetch</code>, the farm-lock reader that <code>list_available_packages</code> already uses, and, for the template tool, the workspace mutator that <code>write_file</code> and <code>edit_file</code> already share at <code>harness/src/agents/sandbox/shared.ts:256</code>. The module returns the three tools. Each tool has a flat Zod input schema, a <code>describeCall</code> hook, and an <code>apiFetch</code> call with the retry and timeout policy of the other external tools.</p>
+    <p>The registrations are three lines. The planner list gains <code>knowledge_recommend</code> and <code>knowledge_check</code>. The sandbox allowlist gains <code>knowledge_template</code>, declared by the bulk transcriptomics agent and the enrichment agent. The conversation agent gains <code>knowledge_recommend</code> through the host-tools seam, from the CLI, with no harness change. The CLI config gains a <code>knowledge</code> block beside the embedding block, and the key comes from the environment only.</p>
+    <p>The tool descriptions carry the contract. They say when to call, what to send, and where to write the result. The planner description says: call <code>knowledge_recommend</code> before you draft a method step, and fill the <code>grounding</code> field of the step with the returned claim identifiers, the snapshot digest, and the template id. The template description says: send the slot values, and the tool writes the rendered script to <code>scripts/</code> and the decision record to <code>output/decision_record.json</code>; use <code>edit_file</code> for a residual change. No prompt changes in Phase 0. Whether the model calls the tool without a prompt line is a Phase 0 measurement, and the answer decides the Phase 1 brief.</p>
+
+    <h3>The one field</h3>
+    <p>The plan step gains one object, <code>grounding</code>. It is optional in both step schemas, thus a stored plan and a plan made without the service both load and validate as today. When the service is configured, the Phase 1 gate requires it on each method step. Phase 0 validates the shape only. The briefing renders the field beside the task fields, thus the step agent reads the template id and the claim identifiers from the step, not from prose.</p>
+<pre><code>grounding: {
+  status:    "grounded" | "ungrounded" | "flagged",
+  snapshot:  "sha256:71ac…" | "none",
+  claims:    ["R-0031@e7d0", "R-0044@1a9b"],     // returned by knowledge_recommend in this run
+  template:  "tpl-deseq2-two-group@1.4.0",       // optional; absent for a step with no template
+  reason:    "6 vs 6 unpaired, fixed effects: DESeq2 Wald with apeglm (R-0031)"   // one line
+}</code></pre>
+    <p>An empty field is visible. The evaluation counts a method step without a value as ungrounded. A planner that called the tool and set the answer aside writes <code>status: ungrounded</code> with a reason. A flag case carries <code>status: flagged</code> and the rule that raised it. The touch points are the two step schemas, <code>workflow-state.ts:16</code> and <code>plan-schemas.ts:16</code>, and the field list of the briefing at <code>briefing.ts:43</code>.</p>
+
+    <h3>Reuse, not rewrite</h3>
+    <p>Today the step agent writes each script from scratch through <code>write_file</code>, and the whole script is output tokens. With the template tool the model sends a slot object of about a hundred tokens. The tool renders the template, writes <code>scripts/&lt;step&gt;.R</code> and <code>output/decision_record.json</code> through the workspace mutator, and returns the path, the slot report, and the environment match. The write goes through the same seam as <code>write_file</code>, thus the confinement and the provenance event are the ones that exist. The tool runs in workflow execution mode, as the two file tools do at <code>write-file.ts:37</code>.</p>
+    <p>A change that the slots do not cover goes through the existing <code>edit_file</code> tool as a small search-and-replace diff. The rendered script marks each adaptable region with a comment, thus the diff lands in a known place and the decision record lists it as an unvetted edit. Two effects follow. Output tokens per standard step fall from the size of a script to the size of a slot object plus the diffs. And the code of a step is the same across runs, and across analyses that share a design, because the template and the slots determine it. The evaluation measures both [Sec. 10].</p>
+
+    <h3>With and without the service</h3>
+    <p>The open-source CLI has no access to the knowledge plane by default. A license enables it. Thus the harness must run as it does today when the service is absent, and the design makes absence the default state, not a failure state.</p>
+    <ul>
+      <li><strong>The tools attach only when configured.</strong> <code>createKnowledgeTools</code> takes an optional client. With no <code>knowledge</code> block in the CLI config, the factory returns no tools, the planner list and the sandbox allowlist are what they are today, and no description of a knowledge tool enters the context. This is the pattern of the host-tools seam and of the eyes seam: an absent optional member is a normal condition.</li>
+      <li><strong>The field is optional in both schemas.</strong> A plan without a <code>grounding</code> value validates as today. The tool description asks the planner to fill it, and the Phase 0 evaluation counts an empty field as ungrounded. The Phase 1 gate requires the field only when the service is configured, in the same way as the resource policy of the planner: absent, validation skips the check.</li>
+      <li><strong>The skill packs stay as the open-source knowledge.</strong> With the service absent, the planner and the step agents work from the prose skills, as today. With the service present, the service is authoritative for method choice, and the step agent gets templates instead of snippets.</li>
+      <li><strong>The license is the API key.</strong> The CLI config block <code>knowledge: { baseUrl, apiKey }</code> carries it, the key comes from the environment, and a managed deployment configures it always. The harness never knows about licenses. It sees a client or nothing.</li>
+      <li><strong>Configured but unreachable</strong> returns the typed <code>unavailable</code> result. The run continues from the skills, and the count is reported. This stays as proposed.</li>
+    </ul>
+    <p>Two products share one knowledge source without drift when the skill decision trees become an output of the knowledge build. The build renders the consensus rules of a modality as the decision-tree section of the skill pack, with the DOIs, and the team commits the rendered section on each release. The open-source pack then carries the same rules as prose, and the service carries the conditions, the evidence, the templates, and the gate. This is a Phase 1 item.</p>
+
+    <h3>The service side</h3>
+    <p>The service is one stateless container. It loads a snapshot by digest at start, serves the typed API over HTTPS, and exposes the same operations as MCP tools for curation clients and for tests. Phase 0 uses one API key for one tenant. The OAuth 2.1 profile of the MCP specification is the growth path when the service gets a second tenant [15].</p>
+    <ul>
+      <li><strong>Typed API.</strong> Validates the input against the generated JSON Schema, returns a typed result with <code>match</code>, <code>snapshot</code>, and the answer. A validation failure names the field and the permitted values. Absence returns <code>match: none</code> with the nearest conditions.</li>
+      <li><strong>Normalizer (Phase 1 option).</strong> When a later phase adds a constrained free-text field, a model inside the service maps the text to the situation schema and to vocabulary terms. The output is validated and echoed back, thus the client sees what the service understood. No query generation. Phase 0 has no free text and no normalizer.</li>
+      <li><strong>Rule engine.</strong> Evaluates each rule condition against the normalized situation. The hit policy is: collect all applicable rules, order by specificity, return both sides of a disputed rule, and raise a flag when a consensus rule forbids the requested analysis. The engine is code over decision tables, not an OWL reasoner, because no ontology can express the conditional rule [43, 56].</li>
+      <li><strong>Procedure assembly.</strong> Walks the ordered step types of the modality (QC, filter, normalize, model, test, shrink, enrich, report), attaches the selected method and its parameters with their <code>default_source</code>, and names one template per step.</li>
+      <li><strong>Template renderer.</strong> Validates the slot values against the parameter contract of the template, renders a logic-light template in a sandboxed engine, checks the R or Python syntax, and returns the script with a decision record. It compares the farm versions with the template pins and returns <code>exact</code>, <code>compatible</code>, or <code>mismatch</code>. The script marks each adaptable region with a comment, thus a later <code>edit_file</code> diff lands in a known place.</li>
+      <li><strong>Snapshot store.</strong> One SQLite file per snapshot: rules, methods, templates, sources, vocabulary mappings, plus an FTS5 index for the free-text path. Read only. Identified by date and content digest.</li>
+    </ul>
+
+    <h3>The provenance path</h3>
+    <p>Phase 0 records the grounding in the plan and in the files. The plan step carries the <code>grounding</code> field in the durable state, and <code>show_plan</code> and <code>inspectRun</code> expose it. The step agent writes the rendered script and the decision record with <code>write_file</code>, and each write becomes an <code>inflexa:FileToolWrite</code> activity with a sha256 hash. Thus a reader of the package can open <code>output/decision_record.json</code> and find the rule ids, the snapshot digest, the template version, and each slot value with its source.</p>
+    <p>This is reported provenance in the sense of the paper. The tool call itself is observed by the loop, with its input and its outcome, but it is not signed. Phase 1 adds the observed record: a <code>knowledge-consulted</code> session event with the query, the digest, and the returned claim identifiers, and claim entities through <code>appendLifecycleAction</code>. The paper's distinction stays intact: the consultation is observed, the use is reported, and the gate checks the use against the observation.</p>
+  </div>
+</section>
+
+<section id="contract" class="prose">
+  <h2>The query contract</h2>
+  <p>Three tools, one situation schema, and one response envelope. The situation schema is the semantic layer of the service. It ships with definitions of each term, because a 4 KB definition of the conventions raised analytics accuracy by 17 to 23 points for three frontier models, more than any model change did [10].</p>
+
+  <h3>The situation schema</h3>
+  <p>The fields are flat, enumerated where possible, and never carry sample rows or identifiers. The data profile gives most values. The planner extracts the rest from the request.</p>
+<pre><code>{
+  "question":          "differential_expression" | "enrichment" | "qc" | "full_plan",
+  "modality":          "bulk_rna_seq",
+  "data_state":        "fastq" | "counts" | "tpm_or_fpkm" | "log_normalized",
+  "count_source":      "salmon" | "kallisto" | "star_featurecounts" | "rsem" | "unknown",
+  "organism":          "human" | "mouse" | "other",
+  "n_groups":          2,
+  "n_per_group_min":   6,
+  "n_per_group_max":   6,
+  "paired":            false,
+  "blocking_factor":   null,
+  "batch":             "none" | "known_balanced" | "known_confounded" | "suspected",
+  "covariates":        ["sex"],
+  "n_timepoints":      null,
+  "library_type":      "polyA" | "total" | "three_prime" | "unknown",
+  "strandedness":      "verified" | "declared_unverified" | "unknown",
+  "response_format":   "concise" | "detailed"
+}</code></pre>
+  <p>Phase 0 sends typed fields only. There is no free-text field, thus no sample identifier can leave the machine and no normalizer model is necessary. The schema is the data-minimization boundary: the service learns the shape of the design, not the samples. The data profile gives most values, and the planner extracts the rest. Whether a small model fills the fields well is a Phase 0 measurement. A constrained free-text field with the server-side normalizer is a Phase 1 option, taken only if the fill quality is poor.</p>
+
+  <h3>The three tools</h3>
+  <div class="tablewrap">
+  <table>
+    <tr><th>Tool</th><th>Who calls it</th><th>Input</th><th>Output</th></tr>
+    <tr><td><code>knowledge_recommend</code></td><td>planner, conversation agent</td><td>the situation</td><td><code>match</code>, the normalized situation, an ordered procedure (step, method with STATO and EDAM ids, package and version range, parameters with <code>default_source</code>, template id, rule ids), flags with severity, claims with evidence, <code>snapshot</code></td></tr>
+    <tr><td><code>knowledge_check</code></td><td>planner, one call after the draft</td><td>the situation plus the drafted steps: step type, method, package, key parameters</td><td>violations and warnings, each with a rule id, a severity, and the permitted alternatives; <code>ok</code> when nothing applies</td></tr>
+    <tr><td><code>knowledge_template</code></td><td>step agent</td><td>template id, slot values as JSON, the farm package versions (added by the tool, not by the model)</td><td>the path of the written script, the path of the decision record, the validation result per slot, the environment match, the pinned versions, the expected outputs. The tool writes both files through the workspace mutator, thus the script is never output tokens.</td></tr>
+  </table>
+  </div>
+
+  <h3>One answer, concise form</h3>
+  <p>The example is the evaluation fixture of the repository: 6 versus 6, unpaired, one batch, raw counts, one low-depth sample.</p>
+<pre><code>{
+  "match": "applicable",
+  "snapshot": { "date": "2026-10-01", "digest": "sha256:71ac…" },
+  "situation": { "n_per_group_min": 6, "paired": false, "batch": "none", "data_state": "counts", … },
+  "procedure": [
+    { "step": "qc_sample_structure",
+      "method": { "label": "vst(blind) + PCA + sample distance", "stato": "STATO:0000555" },
+      "rules": ["R-0012@9f3c"], "template": "tpl-qc-eda@1.2.0",
+      "flags": [{ "rule": "R-0013@2b1e", "severity": "warn",
+                  "message": "one sample has a library size 4x below the median; keep it and down-weight, do not delete in silence" }] },
+    { "step": "filter_low_counts",
+      "method": { "label": "count >= 10 in >= smallest group size" },
+      "parameters": [{ "name": "min_count", "value": 10, "default_source": "doi:10.12688/f1000research.7035.1" }],
+      "rules": ["R-0020@c41a"], "template": "tpl-deseq2-two-group@1.4.0" },
+    { "step": "differential_expression",
+      "method": { "label": "DESeq2 Wald, apeglm shrinkage", "stato": "STATO:0000559" },
+      "package": { "name": "DESeq2", "bioconductor": "3.23", "version_range": ">=1.50" },
+      "parameters": [
+        { "name": "design", "value": "~ condition", "default_source": "doi:10.1186/s13059-014-0550-8" },
+        { "name": "alpha", "value": 0.05, "default_source": "vignette:DESeq2/1.52.0#independent-filtering" },
+        { "name": "lfc_shrink", "value": "apeglm", "default_source": "doi:10.1093/bioinformatics/bty895" } ],
+      "rules": ["R-0031@e7d0", "R-0044@1a9b", "R-0047@77f2"], "template": "tpl-deseq2-two-group@1.4.0",
+      "alternatives": [{ "method": "edgeR quasi-likelihood", "when": "robustness matters; run both and report the overlap", "rules": ["R-0031@e7d0"] }] },
+    { "step": "enrichment",
+      "method": { "label": "fgsea preranked on Wald statistic, MSigDB Hallmark" },
+      "rules": ["R-0060@0c3d", "R-0061@5e12"], "template": "tpl-fgsea-preranked@1.1.0",
+      "disputed": { "rule": "R-0062@a0b7", "sides": ["signed -log10 p", "moderated t statistic"], "choose_and_state": true } }
+  ],
+  "claims": [
+    { "id": "R-0031@e7d0", "statement": "With 2 to about 11 replicates per group and a fixed-effects design, use DESeq2 Wald or edgeR quasi-likelihood.",
+      "strength": "consensus", "evidence": [
+        { "doi": "10.1261/rna.053959.115", "title": "How many biological replicates…", "year": 2016, "direction": "supports" },
+        { "doi": "10.1186/s13059-014-0550-8", "title": "Moderated estimation of fold change…", "year": 2014, "direction": "supports" } ] },
+    …
+  ],
+  "environment_match": "exact"
+}</code></pre>
+  <p>The concise form omits the evidence spans and the alternatives beyond the first. The detailed form adds them. A response is a few thousand tokens at most. The template body never rides in a recommend answer, because a step agent fetches it by id when the step runs.</p>
+
+  <h3>Response rules</h3>
+  <ul>
+    <li><strong>Absence is a typed result.</strong> <code>match: none</code> names the nearest applicable conditions and the reason. The planner then proceeds from the skill prose and marks the step ungrounded. Phase 0 counts these.</li>
+    <li><strong>A flag is a result, not an error.</strong> A confounded batch, a missing replicate, and a large heterogeneous cohort each return <code>match: flag</code> with the rule and the permitted outcome, for example a descriptive analysis or a stop with a question to the user.</li>
+    <li><strong>A disputed rule returns both sides.</strong> The planner selects one and states the choice in the step. The evaluation rubric scores the statement, not the side.</li>
+    <li><strong>A validation failure is an error tool result</strong> that names the parameter and the permitted values, thus the model can correct itself in one turn.</li>
+    <li><strong>The service is unreachable.</strong> The tool returns <code>match: unavailable</code> after the retry policy. The run continues from the prose skills. Phase 0 records the count. A strict mode is a Phase 2 option.</li>
+    <li><strong>The tool definitions are stable.</strong> Their hash is part of the snapshot record, because a changed definition invalidates every prompt-cache level and changes behavior in silence [23].</li>
+  </ul>
+</section>
+
+<section id="model" class="prose">
+  <h2>The knowledge model</h2>
+  <p>One LinkML schema defines the classes. It generates the JSON Schema that validates the curator files, the TypeScript types of the tool contract, and, when a graph is wanted, the OWL and SHACL [50]. The categorical slots bind to external terms through <code>meaning</code> annotations. New concepts get an <code>INFLEXA:</code> term at once, and an SSSOM mapping set connects each local term to an official one when it exists [45, 46].</p>
+
+  <h3>The vocabulary set, deliberately small</h3>
+  <div class="tablewrap">
+  <table>
+    <tr><th>Layer</th><th>Vocabulary</th><th>Used for</th><th>License</th></tr>
+    <tr><td>Pipeline</td><td>EDAM 1.25, rolling release 2026-06-27; bio.tools ids</td><td>package identity through bio.tools ids; EDAM only as optional cross-reference IRIs in Phase 0, with none of its label text</td><td>CC BY-SA 4.0 (EDAM), CC BY 4.0 (bio.tools content)</td></tr>
+    <tr><td>Investigation</td><td>OBI, release 2026-07-27</td><td>assay type (bulk RNA-seq assay), study design type, variable roles</td><td>CC BY 4.0</td></tr>
+    <tr><td>Statistics</td><td>STATO, release 2026-04-20, active again through SEVCO</td><td>test, statistic, distribution, normalization, correction method</td><td>CC BY 3.0</td></tr>
+    <tr><td>Evidence</td><td>ECO, release 2026-07-10; SEPIO evidence lines; CiTO citation intents</td><td>evidence type, direction (supports, disputes), the reason a source is cited</td><td>CC0 (ECO), CC BY (SEPIO, CiTO)</td></tr>
+    <tr><td>Plan</td><td>PROV-O; P-Plan 1.3, vendored</td><td>plan, step, variable, activity, in the Phase 1 provenance</td><td>W3C, CC BY 4.0</td></tr>
+    <tr><td>Minted</td><td><code>INFLEXA:</code> terms with SKOS labels and SSSOM mappings</td><td>the design-to-method rule, batch and confounding as design properties, thresholds, the design formula, the template, the version pin, the step rationale</td><td>ours</td></tr>
+  </table>
+  </div>
+  <p>Batch effect and confounding as design properties return zero hits in OBI, STATO, OBCS, and EDAM [43]. The conditional rule itself is expressible in none of them. Thus the minted layer is not a shortcut. It is the part that does not exist elsewhere, and it is the moat.</p>
+
+  <h3>A rule, as the service stores and returns it</h3>
+  <div class="claim">
+    <div class="id">INFLEXA:R-0035 · content hash e7d0… · evidence lines 2 · snapshot 2026-10-01</div>
+    <dl>
+      <dt>Assertion</dt><dd>If batch (or another covariate) is perfectly confounded with condition, do not fit batch and do not repair with ComBat-seq, removeBatchEffect, or SVA. State the assumption of no batch effect and label the result as confounded, or stop and request a rebalanced design.</dd>
+      <dt>Conditions</dt><dd><code>modality = bulk_rna_seq</code> · <code>batch = known_confounded</code> · severity: <code>flag</code></dd>
+      <dt>Strength</dt><dd>consensus · evidence quality: high · recommendation: strong</dd>
+      <dt>Evidence</dt><dd>ECO:0000033 author statement supported by traceable reference · supports · doi:10.1186/s13059-014-0550-8 (DESeq2 vignette 1.52.0, "Model matrix not full rank") · doi:10.1038/nrg2825 (Leek 2010) · retrieved 2026-09-03</dd>
+      <dt>Alternative</dt><dd>None that restores valid inference. Individuals nested within groups: re-code the individual factor as the DESeq2 vignette describes.</dd>
+      <dt>Publication</dt><dd>curated 2026-09, LLM-drafted, human-verified · license of the assertion CC BY 4.0 · supersedes none · status active</dd>
+    </dl>
+  </div>
+  <p>Today the same rule lives as a sentence in a reference file of the skill pack. In the service it has an identity, conditions that a validator can run, sources that a reviewer can open, a direction on each source, and a version that the plan can pin.</p>
+
+  <h3>The classes</h3>
+  <ul>
+    <li><strong>Situation.</strong> The schema of Section 6. The rule conditions are predicates over it.</li>
+    <li><strong>Rule.</strong> Assertion, conditions, action (a step type, a method, parameter values), strength (consensus, common-practice, disputed), evidence quality and recommendation strength as two axes in the GRADE sense [52], alternatives, disputed sides, evidence lines, status (active, scheduled-for-deprecation, deprecated with replaced-by), supersedes, license, curator, LLM-drafted flag.</li>
+    <li><strong>Evidence line.</strong> Direction (supports, disputes, neutral), ECO type, CiTO intent, the source, a paraphrase with a section anchor or a verbatim span of about 25 words, the retrieval date [55, 57].</li>
+    <li><strong>Source.</strong> DOI or PMID, title, year, venue, license, version and date for a vignette or a pipeline page. Verified at build time with the Crossref and PubMed resolvers, which the harness already has in <code>harness/src/citations/</code>.</li>
+    <li><strong>Method.</strong> Label, STATO term, EDAM operation, packages with bio.tools ids and version ranges per Bioconductor release, the templates that realize it.</li>
+    <li><strong>Template.</strong> Six blocks, in the nf-core module shape: identity (id, semantic version, EDAM ids, citations, license), applicability (modality, count source, design patterns, minimum replicates), parameter contract (JSON Schema 2020-12, each slot with <code>adaptable</code> and <code>default_source</code>), inputs and outputs with EDAM formats, environment (Bioconductor release, bioconda pins, image digest, annotation source and release), body, and tests (dry run, golden anchors on airway and pasilla, one test per adaptable enum value) [58, 59, 60].</li>
+    <li><strong>Snapshot.</strong> Date, content digest over canonical JSON (RFC 8785), the schema version, the vocabulary version IRIs, the tool-definition hash, the changelog.</li>
+  </ul>
+
+  <h3>Versioning</h3>
+  <p>A published snapshot is never edited. A correction is a new snapshot. A rule is never deleted. It becomes deprecated with a replaced-by link, and the tool response includes the replacement, thus an old plan can be upgraded by machine. This is the OBO Foundry lifecycle, and it is the reason every reused ontology stays readable across years [47]. The API and the schema use semantic versions. The content uses date plus digest.</p>
+</section>
+
+<section id="curation" class="prose">
+  <h2>The curation pipeline</h2>
+  <p>Every production knowledge base in 2025 and 2026 works the same way: a model drafts, a curator signs, and the record keeps the evidence. GO reports 86.7% curator agreement with model drafts and a review time cut from 30 to 5 or 10 minutes per article when the draft carries verbatim quotes [53]. The knowledge plane copies this loop and runs it as code.</p>
+  <ol>
+    <li><strong>Seed.</strong> The 54 rules of this research, each with verified primary sources, are the first corpus. The skill decision trees, the nf-core parameter defaults, the Bioconductor workflow articles, and the tool user guides are the next sources, in license order.</li>
+    <li><strong>Draft.</strong> A model writes one YAML file per claim from a source, with the paraphrase or the short quoted span, the section anchor, the conditions, and the proposed strength. The file carries the LLM-drafted flag and the model identifier.</li>
+    <li><strong>Review.</strong> A pull request. A structural reviewer checks the schema, the links, and the tests. A named scientific reviewer checks the assertion and the strength. Nothing unreviewed enters a snapshot.</li>
+    <li><strong>Gates.</strong> CI validates each file against the LinkML JSON Schema, resolves each DOI and PMID, finds each quoted span in its source, runs each template against its golden tests inside the pinned image, and diffs the snapshot against the previous one into the changelog.</li>
+    <li><strong>Release.</strong> A tag, a snapshot file, a digest, a signed manifest. The service pulls it by digest.</li>
+    <li><strong>Re-verification.</strong> Each Bioconductor release (April and October) and each nf-core release re-runs the template tests and re-checks each rule that cites a vignette default. The canonical RNAseq123 workflow was in build error on the Bioconductor 3.23 report of 2026-09-01, and the nf-core DESeq2 module still pins 1.34.0 against 1.52.0 in the current release. Rot is the normal state without a schedule [59].</li>
+    <li><strong>Evolution.</strong> A run feeds the queue. A successful script with an unvetted edit, a flag that an analyst overrode, and a <code>match: none</code> result each become a curation item. A good adapted script becomes a candidate template version, with the same review. Nothing learned enters a snapshot without a curator, because self-generated skills gave no benefit on average [33].</li>
+  </ol>
+
+  <h3>Cost</h3>
+  <p>The one published per-item cost of biocuration is 219 dollars per article at EcoCyc [54]. With model drafts and quotes, the Phase 0 set is about 190 reference checks at 10 minutes each, plus one to two hours per rule for authorship and review. That is 60 to 140 curator hours for the rules, before the templates and their tests. The rules digest of this research already holds the drafts.</p>
+
+  <h3>Licensing rules for the served snapshot</h3>
+  <p>Decided on 2026-09-04: the path with the fewest legal questions.</p>
+  <ul>
+    <li>The Phase 0 vocabularies are attribution-only or public domain: ECO (CC0), STATO (CC BY 3.0), OBI (CC BY 4.0), and the minted INFLEXA terms. EDAM appears only as an optional cross-reference IRI, with none of its label text in the snapshot, because its share-alike clause is the one question the set would otherwise raise.</li>
+    <li>The gene-set collections the rules recommend are CC BY or CC0: MSigDB Hallmark and C5, the Reactome and WikiPathways subsets of C2, and GO. The KEGG legacy sets and KEGG MEDICUS stay out of the snapshot. A user with a KEGG license adds them on their side [71].</li>
+    <li>A source enters the snapshot as metadata and a locator, never as full text. A claim carries a paraphrase and a section anchor by default. A verbatim span is limited to about 25 words, attributed, and used only when the exact wording carries the threshold or the rule. The text and data mining exceptions permit the extraction, not the redistribution [72].</li>
+    <li>Each record carries its license, its source version, and its retrieval date. The attribution duty and the provenance record are the same metadata.</li>
+  </ul>
+</section>
+
+<section id="phase0">
+  <div class="prose">
+    <h2>Phase 0, the proof of concept</h2>
+    <p>Scope: bulk RNA-seq differential expression and enrichment, from a count matrix or from Salmon quantifications. Out of scope: read alignment, single-cell, and every other modality. The proof succeeds when a small model with the tools plans as well as the current frontier model without them, on an evaluation that would catch the difference.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 1040 400" role="img" aria-label="The Phase 0 call flow. The planner calls knowledge_recommend with the situation, drafts steps with claim identifiers in the step context, calls knowledge_check once, and submits the plan. Each step agent calls knowledge_template, writes the script and the decision record, and runs the script in the sandbox." style="color: var(--ink);">
+      <defs>
+        <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <!-- lanes -->
+      <text x="20" y="40" font-size="12" font-weight="600" letter-spacing="1" fill="currentColor">PLANNER</text>
+      <text x="20" y="200" font-size="12" font-weight="600" letter-spacing="1" fill="currentColor">STEP AGENT</text>
+      <text x="20" y="340" font-size="12" font-weight="600" letter-spacing="1" fill="var(--kp)">SERVICE</text>
+      <line x1="20" y1="50" x2="1020" y2="50" stroke="var(--line)" stroke-width="1"/>
+      <line x1="20" y1="210" x2="1020" y2="210" stroke="var(--line)" stroke-width="1"/>
+      <line x1="20" y1="350" x2="1020" y2="350" stroke="var(--line)" stroke-width="1"/>
+
+      <!-- planner boxes -->
+      <rect x="20" y="66" width="170" height="60" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="105" y="90" font-size="12.5" text-anchor="middle" fill="currentColor">read data profile</text>
+      <text x="105" y="108" font-size="11" text-anchor="middle" fill="var(--mut)">extract the situation</text>
+
+      <rect x="220" y="66" width="170" height="60" rx="3" fill="var(--kp-soft)" stroke="var(--kp)" stroke-width="1.2"/>
+      <text x="305" y="90" font-size="12.5" text-anchor="middle" fill="currentColor" font-family="JetBrains Mono, monospace">knowledge_recommend</text>
+      <text x="305" y="108" font-size="11" text-anchor="middle" fill="var(--mut)">one call · procedure back</text>
+
+      <rect x="420" y="66" width="170" height="60" rx="3" fill="var(--llm-soft)" stroke="var(--llm)" stroke-width="1.2"/>
+      <text x="505" y="84" font-size="12.5" text-anchor="middle" fill="currentColor">draft the steps</text>
+      <text x="505" y="100" font-size="11" text-anchor="middle" fill="var(--mut)">choose a disputed side</text>
+      <text x="505" y="115" font-size="11" text-anchor="middle" fill="var(--mut)">grounding: claim ids · digest</text>
+
+      <rect x="620" y="66" width="170" height="60" rx="3" fill="var(--kp-soft)" stroke="var(--kp)" stroke-width="1.2"/>
+      <text x="705" y="90" font-size="12.5" text-anchor="middle" fill="currentColor" font-family="JetBrains Mono, monospace">knowledge_check</text>
+      <text x="705" y="108" font-size="11" text-anchor="middle" fill="var(--mut)">once · violations back</text>
+
+      <rect x="820" y="66" width="170" height="60" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="905" y="90" font-size="12.5" text-anchor="middle" fill="currentColor">submit_plan</text>
+      <text x="905" y="108" font-size="11" text-anchor="middle" fill="var(--mut)">structural validation, unchanged</text>
+
+      <line x1="190" y1="96" x2="218" y2="96" stroke="currentColor" stroke-width="1" marker-end="url(#arr2)"/>
+      <line x1="390" y1="96" x2="418" y2="96" stroke="currentColor" stroke-width="1" marker-end="url(#arr2)"/>
+      <line x1="590" y1="96" x2="618" y2="96" stroke="currentColor" stroke-width="1" marker-end="url(#arr2)"/>
+      <line x1="790" y1="96" x2="818" y2="96" stroke="currentColor" stroke-width="1" marker-end="url(#arr2)"/>
+      <path d="M705 126 C705 150 505 150 505 126" fill="none" stroke="var(--mut)" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr2)"/>
+      <text x="605" y="160" font-size="11" text-anchor="middle" fill="var(--mut)">violation → revise once</text>
+
+      <!-- step agent boxes -->
+      <rect x="20" y="226" width="170" height="60" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="105" y="250" font-size="12.5" text-anchor="middle" fill="currentColor">read the briefing</text>
+      <text x="105" y="268" font-size="11" text-anchor="middle" fill="var(--mut)">template id · claim ids</text>
+
+      <rect x="220" y="226" width="170" height="60" rx="3" fill="var(--llm-soft)" stroke="var(--llm)" stroke-width="1.2"/>
+      <text x="305" y="250" font-size="12.5" text-anchor="middle" fill="currentColor">fill the adaptable slots</text>
+      <text x="305" y="268" font-size="11" text-anchor="middle" fill="var(--mut)">slot object · about 100 tokens</text>
+
+      <rect x="420" y="226" width="170" height="60" rx="3" fill="var(--kp-soft)" stroke="var(--kp)" stroke-width="1.2"/>
+      <text x="505" y="250" font-size="12.5" text-anchor="middle" fill="currentColor" font-family="JetBrains Mono, monospace">knowledge_template</text>
+      <text x="505" y="268" font-size="11" text-anchor="middle" fill="var(--mut)">render · write 2 files · env match</text>
+
+      <rect x="620" y="226" width="170" height="60" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="705" y="246" font-size="12.5" text-anchor="middle" fill="currentColor">edit_file, only if necessary</text>
+      <text x="705" y="262" font-size="11" text-anchor="middle" fill="var(--mut)">small diff in a marked region</text>
+      <text x="705" y="276" font-size="11" text-anchor="middle" fill="var(--mut)">listed as unvetted in the record</text>
+
+      <rect x="820" y="226" width="170" height="60" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="905" y="250" font-size="12.5" text-anchor="middle" fill="currentColor">execute_command</text>
+      <text x="905" y="268" font-size="11" text-anchor="middle" fill="var(--mut)">one error fed back, then stop</text>
+
+      <line x1="190" y1="256" x2="218" y2="256" stroke="currentColor" stroke-width="1" marker-end="url(#arr2)"/>
+      <line x1="390" y1="256" x2="418" y2="256" stroke="currentColor" stroke-width="1" marker-end="url(#arr2)"/>
+      <line x1="590" y1="256" x2="618" y2="256" stroke="currentColor" stroke-width="1" marker-end="url(#arr2)"/>
+      <line x1="790" y1="256" x2="818" y2="256" stroke="currentColor" stroke-width="1" marker-end="url(#arr2)"/>
+
+      <!-- service calls -->
+      <line x1="305" y1="126" x2="305" y2="348" stroke="var(--kp)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr2)"/>
+      <line x1="790" y1="112" x2="805" y2="112" stroke="var(--kp)" stroke-width="1.2" stroke-dasharray="4 3"/>
+      <line x1="805" y1="112" x2="805" y2="348" stroke="var(--kp)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr2)"/>
+      <line x1="505" y1="286" x2="505" y2="348" stroke="var(--kp)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr2)"/>
+      <text x="316" y="190" font-size="11" fill="var(--kp)">match rules · assemble</text>
+      <text x="812" y="190" font-size="11" fill="var(--kp)">check steps</text>
+      <text x="516" y="320" font-size="11" fill="var(--kp)">render · write · farm match</text>
+
+      <text x="20" y="384" font-size="11" fill="var(--mut)">Every call is one round trip. No chain of calls depends on the model. The plan and the files carry the claim ids and the snapshot digest.</text>
+    </svg>
+    <figcaption>The Phase 0 flow. The planner makes two calls and the step agent one. The tool writes the decision record and the script through the workspace mutator, thus they become signed files through the existing write-file provenance, and the model never emits the script. Nothing in the flow needs a prompt change or a seam. The one schema change is the grounding field on the step.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>Deliverables</h3>
+    <div class="tablewrap">
+    <table>
+      <tr><th>Deliverable</th><th>Content</th><th>Size</th></tr>
+      <tr><td>Knowledge repository</td><td>LinkML schema, the claim files, the method files, the template files with tests, the SSSOM mappings, the build and the CI gates</td><td>about 50 rules, 10 methods, 8 templates: DESeq2 two-group, DESeq2 blocked or paired, DESeq2 interaction, DESeq2 LRT time course, edgeR quasi-likelihood, limma-voom with duplicateCorrelation, fgsea preranked, ORA with an explicit universe, plus the QC and EDA template</td></tr>
+      <tr><td>Service</td><td>the container, the typed API, the MCP surface, the rule engine, the renderer, the snapshot loader, the API key check</td><td>one deployable, one region</td></tr>
+      <tr><td>Inflexa tools and the field</td><td><code>harness/src/tools/knowledge/</code>, three registrations, the <code>grounding</code> field in the two step schemas and in the briefing field list, the CLI config block, the tests</td><td>one pull request in the harness, one in the CLI</td></tr>
+      <tr><td>Evaluation harness</td><td>the task set, the simulated data generator, the rubric, the judge calibration set, the runner that records tokens, time, and tool calls per run</td><td>Section 10</td></tr>
+      <tr><td>Report</td><td>the measured results against the exit criteria, and the Phase 1 decision</td><td>one document</td></tr>
+    </table>
+    </div>
+
+    <h3>The service stack, decided</h3>
+    <p>Decided on 2026-09-04: the service in TypeScript on Bun, with <code>bun:sqlite</code>, one container. Reason: the harness is TypeScript, the tool contract types come from the same LinkML-generated JSON Schema on both sides, and the team lives in one language. The build pipeline runs in Python inside CI, because LinkML, OAK, and the nanopub tooling are Python. The container runs on any small host. Fly.io or Cloudflare Containers cost a few dollars per month, and object storage holds the snapshots [64, 65].</p>
+
+    <h3>Exit criteria</h3>
+    <ol>
+      <li><strong>Knowledge base checks pass.</strong> Recall at 1 of at least 0.9 on a gold set of 60 design-to-method queries. Every DOI and PMID resolves. Every template is green on airway and pasilla in the pinned image.</li>
+      <li><strong>The model calls the tools without a prompt line.</strong> The planner calls <code>knowledge_recommend</code> in at least 90% of runs, on both model sizes. If it does not, the Phase 1 brief is necessary and Phase 0 says so.</li>
+      <li><strong>Non-inferiority holds.</strong> The small model with the tools is non-inferior to the frontier model with the prose skills on the rubric, at the pre-registered margin.</li>
+      <li><strong>The chain is grounded.</strong> At least 95% of method steps carry a claim identifier that resolves in the snapshot. Zero fabricated references.</li>
+      <li><strong>Time and tokens are measured</strong> per run, with a breakdown, and reported with confidence intervals. Output tokens per step are reported on their own, against the from-scratch baseline. No target in Phase 0, only the truth.</li>
+    </ol>
+
+    <h3>Effort</h3>
+    <p>About six to eight weeks for one engineer with a scientific reviewer available for the rule review. The service skeleton and the tools take two to three weeks. The curation takes 60 to 140 hours across the same period. The evaluation harness takes one to two weeks, and the runs take days.</p>
+  </div>
+</section>
+
+<section id="evaluation" class="prose">
+  <h2>The evaluation</h2>
+  <p>The claim "equally correct with a smaller model" is a non-inferiority claim. It needs a pre-specified margin, a paired design, repeated runs, and a validated judge, because agent evaluations carry a noise floor near 15 points and public tool benchmarks disagree with experts on 18.5% of verdicts [69, 70]. Airway and pasilla are in every DESeq2 tutorial, thus they serve the template tests and never the evaluation.</p>
+
+  <h3>Tasks</h3>
+  <p>Eight design patterns: two-group unpaired at n=3 and at n=6, paired with subject blocking, balanced batch as covariate, a 2×2 genotype-by-treatment interaction, a short time course, a confounded batch (expected outcome: flag), and no replicates (expected outcome: descriptive only). Each pattern has three datasets: two fresh simulations with compcodeR or Polyester with a new seed per campaign, and one held-out GEO dataset with relabeled samples and a reference analysis by two experts [73, 74]. That is 24 tasks. A memorization probe runs first, and any dataset a model reproduces from memory is excluded.</p>
+
+  <h3>Conditions</h3>
+  <p>A 2×2 factorial: model in {frontier, small open} and knowledge in {prose skills as today, knowledge plane tools}. The prose-skills arm is the open-source product as shipped. Three runs per task and condition, 288 runs per small model. The small model must call tools through a native function-calling API, because prompt-mode tool calling loses most of its accuracy [17]. Ablations on the small model: tools without <code>knowledge_check</code>, and guidance-only responses without templates. An inert comparison, the same condition with two seed sets, reports the empirical noise floor next to every effect.</p>
+
+  <h3>The target models</h3>
+  <p>Decided on 2026-09-04: GLM 5.3 Flash and Qwen 3.8 27B are the two small targets. Each connects through the direct connection mode of the CLI: an OpenAI-compatible endpoint, an explicit model id, and the per-role model settings, thus the planner and the step agents run the small model while the utility role stays cheap. The family guard of the CLI applies only to an auto-resolved id in proxy mode, thus neither model needs a change there. Before the main runs, a smoke test of 30 cases per model checks three things: native tool calls against the three flat schemas, the abstain behavior on an irrelevant request, and the slot-object fill on five templates. A model that fails the smoke test is reported, not evaluated. Its numbers on the public leaderboards are not a substitute, because those carry an 18.5% disagreement rate with experts [70].</p>
+
+  <h3>Metrics</h3>
+  <ul>
+    <li><strong>Primary.</strong> A rubric score of 0 to 100 on eight criteria: method fits design, QC present, low-count filter, normalization, model formula and contrasts, FDR and shrinkage, enrichment universe and set choice, report completeness. Two blinded experts score a 40-run calibration set. A frontier judge is accepted only at a weighted kappa of at least 0.7 against them, and 15% of runs stay double-scored.</li>
+    <li><strong>Result accuracy.</strong> Recall, precision, and AUROC of DE genes against the simulated truth. Jaccard and Spearman against the expert reference on the GEO tasks. nf-core/differentialabundance 2.0.0 on the same counts is the non-LLM anchor.</li>
+    <li><strong>Grounding.</strong> Share of method steps with a resolvable claim identifier. Statement support of each rationale against the returned evidence, RAGAS style, validated on 100 hand-labeled items. Fabricated reference rate, target zero [25].</li>
+    <li><strong>Behavior.</strong> Tool-call validity, execution success per step, sandbox retries, run-to-run Jaccard of the DE gene sets, and the outcome on the two flag cases.</li>
+    <li><strong>Consistency.</strong> The normalized edit distance between the scripts of a step across runs of the same task, and across tasks that share a design pattern. A template gives a distance near zero. Free generation does not.</li>
+    <li><strong>Efficiency.</strong> Input, output, and cache-read tokens per run, price-weighted, with output tokens per step reported on their own; wall-clock; loop iterations; against a measured baseline breakdown of the current CLI.</li>
+  </ul>
+  <p>The margin is 5 rubric points, one-sided at 97.5%. A task-level paired bootstrap handles the repeated runs. Holm correction covers the four primary contrasts. The full design of 48 tasks and five runs with a mixed model is the Phase 1 evaluation, when the rule set is larger.</p>
+</section>
+
+<section id="phases" class="prose">
+  <h2>Phase 1 and Phase 2</h2>
+
+  <div class="phase">
+    <div class="num">0<small>proof</small></div>
+    <div>
+      <h3>Tools only, bulk RNA-seq</h3>
+      <p>Three tools, one plan-step field, the service, the seed knowledge base, and the evaluation. No prompt, seam, or kernel change. The grounding rides in the field and in the decision record. Exit on the five criteria of Section 9.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">1<small>contract</small></div>
+    <div>
+      <h3>Make the grounding structural</h3>
+      <ul>
+        <li>The gate on the <code>grounding</code> field: <code>validatePlan</code> rejects a claim identifier that the service did not return in this run, and rejects a method step with status ungrounded when the service was reachable.</li>
+        <li>A knowledge brief in the planner seed, computed host-side from the data profile beside the reference and package censuses, if the Phase 0 call rate says the description alone is not enough.</li>
+        <li><code>knowledge_check</code> as a stage of <code>fullyValidate</code>, with violations as structured issues into the existing rejection loop. One check per submit attempt, not a loop.</li>
+        <li>A <code>knowledge-consulted</code> session event and claim entities through <code>appendLifecycleAction</code>, and a lineage reader that knows the new relation. The plan becomes a P-Plan entity.</li>
+        <li>Delete the duplicated method prose from the bulk transcriptomics and enrichment prompts. The skill pack stays as the procedure and as the open-source knowledge. The service owns the mutable facts.</li>
+        <li>The knowledge build renders the skill decision tree of each covered modality from the consensus rules, with DOIs, thus the open-source pack and the service carry one rule set.</li>
+        <li>A constrained free-text field with the server-side normalizer, only if the Phase 0 fill quality of the small models is poor.</li>
+        <li>The synthesis attaches the claim evidence to the report through the existing citation resolver verdicts.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">2<small>growth</small></div>
+    <div>
+      <h3>Offline, more modalities, the graph when needed</h3>
+      <ul>
+        <li>A <code>KnowledgeBase</code> seam with three realizations: the remote client, an embedded snapshot, and none. The snapshot ships as a signed, digest-addressed artifact that an air-gapped install pulls once.</li>
+        <li>Single-cell, proteomics, and the next modalities, one seed sprint each, with the same schema.</li>
+        <li>Oxigraph or another store behind the same typed API when a multi-hop question appears, for example a path from a design through a method to every benchmark that ranked it [62].</li>
+        <li>The OAuth 2.1 profile of MCP for a second tenant, and a strict mode that stops a run when the service is unreachable.</li>
+        <li>A fine-tuned server-side querier for free-text questions, if the normalizer ablation shows demand [8].</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="risks" class="prose">
+  <h2>Risks</h2>
+  <ul>
+    <li><strong>The model ignores the tool.</strong> Without a prompt line, a small model may skip an optional call. Phase 0 measures the call rate as an exit criterion, and the Phase 1 brief is the remedy. The tool description is written as onboarding text, with one example, because examples raised complex-parameter accuracy from 72 to 90% [16]. The <code>grounding</code> field makes an omission visible: the evaluation counts an empty field as ungrounded.</li>
+    <li><strong>Tokens move the wrong way.</strong> Tool definitions and responses can exceed the small skill prose. The gain must come from fewer iterations and retries. The evaluation reports the breakdown, and the definitions stay small and first in the request so the cache holds [23].</li>
+    <li><strong>Over-determinism.</strong> A disputed practice encoded as one action gives confident wrong plans on edge cases. Disputed rules return both sides, flag cases return a flag, and each override by an analyst becomes a curation item.</li>
+    <li><strong>Version drift.</strong> A template validated on one DESeq2 version runs on another in the farm. The template tool sends the farm versions and records the environment match in the decision record. A mismatch warns in Phase 0 and can block in Phase 2.</li>
+    <li><strong>Injection through served content.</strong> KB text is partly model-drafted and partly quoted. The tool result is data, never an instruction. Claims are declarative sentences by curation rule. The tool-definition hash is pinned per snapshot, because tool poisoning is the most common MCP client failure and a changed definition is a silent behavior change [66, 67].</li>
+    <li><strong>Personal data.</strong> The situation schema carries counts and categories, never sample rows, and Phase 0 has no free-text field. The query log of the service is still a record of each user's research program, and it needs a retention policy before a second tenant.</li>
+    <li><strong>Curation bottleneck.</strong> The value is the hand-checked rule layer, and it decays on each Bioconductor release. The schedule in Section 8 and a named scientific reviewer are the mitigation.</li>
+    <li><strong>Template rigidity.</strong> A template that does not cover a design forces free code or a poor fit. The escape hatches are the <code>extra_args</code> slot and the <code>edit_file</code> diff, both listed as unvetted in the decision record, and each such case is a curation item for the next template version.</li>
+    <li><strong>Two sources of truth.</strong> The prose skills stay, because the open-source CLI runs on them by default, and they can drift from the service. With the service configured, the service is authoritative for method choice. Phase 1 makes the skill decision tree an output of the knowledge build, thus the two carry one rule set, and removes the duplicated prompt prose.</li>
+    <li><strong>Evaluation validity.</strong> Tutorial datasets are memorized, judges drift, and the noise floor is wide. Fresh simulations, held-out GEO sets with relabeled samples, a calibrated judge, and a pre-registered margin are the mitigation.</li>
+  </ul>
+</section>
+
+<section id="decisions" class="prose">
+  <h2>Decisions for you</h2>
+  <p>These six changed the work. All six are decided, on 2026-09-03 and 2026-09-04, and the sections above carry the consequences.</p>
+  <ol class="decisions">
+    <li><b>The service language.</b> Decided: TypeScript on Bun with a Python build pipeline, as Section 9 describes.</li>
+    <li><b>The Phase 0 grounding home.</b> Decided: one additive <code>grounding</code> field on the plan step, optional in both schemas, as Section 5 describes. The decision record file stays as the signed copy.</li>
+    <li><b>The target small models.</b> Decided: GLM 5.3 Flash and Qwen 3.8 27B, through the direct connection mode of the CLI, gated by the smoke test of Section 10.</li>
+    <li><b>Operation without the service.</b> Decided: the open-source CLI has no access by default, and a license enables it. Absent means no tools attached and no field required, and the run works from the skills as today. Configured but unreachable means the typed unavailable result and a run that continues from the skills. Section 5 gives the mechanism.</li>
+    <li><b>Licensing.</b> Decided: the path with the fewest legal questions. Attribution-only vocabularies, EDAM as cross-reference IRIs only, no KEGG in the snapshot, paraphrase with a section anchor, and verbatim spans under 25 words. Section 8 gives the rules.</li>
+    <li><b>Data minimization.</b> Decided: typed fields only in Phase 0, no free text, no normalizer. A constrained free-text field with the normalizer is a Phase 1 option, taken only if the fill quality of the small models is poor.</li>
+  </ol>
+</section>
+
+<section id="references" class="refs">
+  <h2>References</h2>
+  <p class="prose">Every reference below was opened during this research and its metadata checked. Locators are DOIs, arXiv identifiers, or stable URLs. The full verified record, with the supporting spans and the status of each check, is in the research digest files of this session.</p>
+
+  <h3>Knowledge graphs and LLMs</h3>
+  <ol>
+    <li>Lobentanzer S et al. Democratizing knowledge representation with BioCypher. Nature Biotechnology 41:1056–1059, 2023. doi:10.1038/s41587-023-01848-y</li>
+    <li>Lobentanzer S et al. A platform for the biomedical application of large language models (BioChatter). Nature Biotechnology 43:166–169, 2025. doi:10.1038/s41587-024-02534-3</li>
+    <li>Edge D et al. From Local to Global: A Graph RAG Approach to Query-Focused Summarization. arXiv:2404.16130, 2024.</li>
+    <li>Microsoft Research. LazyGraphRAG: Setting a new standard for quality and cost. 2024-11-25. microsoft.com/en-us/research/blog</li>
+    <li>When to use Graphs in RAG: A Comprehensive Analysis for Graph RAG (GraphRAG-Bench). arXiv:2506.05690, 2025.</li>
+    <li>Soman K et al. Biomedical knowledge graph-optimized prompt generation for large language models (KG-RAG on SPOKE). Bioinformatics 40(9):btae560, 2024. doi:10.1093/bioinformatics/btae560</li>
+    <li>Feng Y et al. CypherBench: Towards Precise Retrieval over Full-scale Modern Knowledge Graphs in the LLM Era. arXiv:2412.18702, 2024.</li>
+    <li>Achieving Precise Text-To-Cypher Via Grounded Knowledge Graph Data Generation (CYQUARK). arXiv:2606.14325, 2026.</li>
+    <li>dbt Labs. Semantic Layer vs. Text-to-SQL: 2026 Benchmark Update. 2026-04-07. docs.getdbt.com/blog/semantic-layer-vs-text-to-sql-2026</li>
+    <li>Semantic Layers for Reliable LLM-Powered Data Analytics: A Paired Benchmark of Accuracy and Hallucination. arXiv:2604.25149, 2026.</li>
+    <li>Kambhampati S et al. LLMs Can't Plan, But Can Help Planning in LLM-Modulo Frameworks. ICML 2024. arXiv:2402.01817</li>
+    <li>Robust Planning with Compound LLM Architectures: An LLM-Modulo Approach. arXiv:2411.14484, 2024.</li>
+    <li>Reliable Answers for Recurring Questions: Boosting Text-to-SQL Accuracy with Template Constrained Decoding. arXiv:2604.28028, 2026.</li>
+    <li>Lei F et al. Spider 2.0: Evaluating Language Models on Real-World Enterprise Text-to-SQL Workflows. arXiv:2411.07763, 2024.</li>
+  </ol>
+
+  <h3>The query interface and small models</h3>
+  <ol start="15">
+    <li>Model Context Protocol. Specification 2026-07-28: transports, tools, authorization. modelcontextprotocol.io/specification/2026-07-28</li>
+    <li>Anthropic. Writing effective tools for AI agents, 2025; Advanced tool use, 2025; Tool search tool, 2026. anthropic.com/engineering, platform.claude.com/docs</li>
+    <li>Berkeley Function Calling Leaderboard V4, overall scores, updated 2026-04-12. gorilla.cs.berkeley.edu/leaderboard.html</li>
+    <li>Karmakar R, Chatterjee J. AgentFloor: How Far Up the Tool Use Ladder Can Small Open-Weight Models Go? arXiv:2605.00334, 2026.</li>
+    <li>Small Language Models for Agentic Systems: A Survey of Architectures, Capabilities, and Deployment Trade offs. arXiv:2510.03847, 2025.</li>
+    <li>HumanMCP: A Human-Like Query Dataset for Evaluating MCP Tool Retrieval Performance. arXiv:2602.23367, 2025.</li>
+    <li>Kate K et al. LongFuncEval: Measuring the effectiveness of long context models for function calling. arXiv:2505.10570, 2025.</li>
+    <li>Chroma. Context Rot: How Increasing Input Tokens Impacts LLM Performance, 2025; Liu NF et al. Lost in the Middle. TACL 2024. arXiv:2307.03172</li>
+    <li>Anthropic. Prompt caching. platform.claude.com/docs/en/build-with-claude/prompt-caching, 2026.</li>
+    <li>Anthropic. Code execution with MCP: Building more efficient agents. 2025-11-04. anthropic.com/engineering/code-execution-with-mcp</li>
+    <li>Es S et al. RAGAS: Automated Evaluation of Retrieval Augmented Generation. EACL 2024 demo; Gao T et al. Enabling LLMs to Generate Text with Citations (ALCE). EMNLP 2023. arXiv:2305.14627</li>
+    <li>LLM hallucinations in the wild: Large-scale evidence from non-existent citations. arXiv:2605.07723, 2026; Cited but Not Verified. arXiv:2605.06635, 2026.</li>
+    <li>MCP-Universe. arXiv:2508.14704, 2025; MCP-Bench. arXiv:2508.20453, 2025.</li>
+  </ol>
+
+  <h3>Bioinformatics agents and skills</h3>
+  <ol start="28">
+    <li>BioAgents: Bridging the gap in bioinformatics analysis with multi-agent systems. Scientific Reports 15:39036, 2025. doi:10.1038/s41598-025-25919-z</li>
+    <li>Chen Z et al. ScienceAgentBench. ICLR 2025. arXiv:2410.05080; Mitchener L et al. BixBench. arXiv:2503.00096, 2025.</li>
+    <li>Nano Bio-Agents: Small Language Model Agents for Genomics. arXiv:2509.19566, 2025.</li>
+    <li>BioAgent Bench: An AI Agent Evaluation Suite for Bioinformatics. ICML 2026. arXiv:2601.21800</li>
+    <li>Huang K et al. Biomni: A General-Purpose Biomedical AI Agent. bioRxiv, 2025. doi:10.1101/2025.05.30.656746; Science 2026. doi:10.1126/science.adz4351</li>
+    <li>Demystifying Agent Skills: Why They Work—Until They Don't. arXiv:2608.14036, 2026; SkillsBench. arXiv:2602.12670, 2026.</li>
+    <li>BioMaster: Multi-agent System for Automated Bioinformatics Analysis Workflow. bioRxiv, 2025. doi:10.1101/2025.01.23.634608</li>
+    <li>Spracklen J et al. We Have a Package for You! A Comprehensive Analysis of Package Hallucinations. USENIX Security 2025. arXiv:2406.10279</li>
+    <li>Misra N et al. GitChameleon 2.0: Evaluating AI Code Generation Against Python Library Version Incompatibilities. arXiv:2507.12367, 2025.</li>
+    <li>BiomniBench: Process-level Evaluation of LLM Agents for Real-world Biomedical Research. bioRxiv, 2026. doi:10.64898/2026.05.12.724604; FlowBench. bioRxiv, 2026. doi:10.64898/2026.06.12.731844</li>
+    <li>Zhu Y et al. KnowAgent: Knowledge-Augmented Planning for LLM-Based Agents. NAACL 2025 Findings. arXiv:2403.03101</li>
+    <li>Patil SG et al. Gorilla: Large Language Model Connected with Massive APIs. NeurIPS 2024. arXiv:2305.15334</li>
+    <li>Bioconductor release announcements and the BioC 3.23 workflows build report, 2026-09-01. bioconductor.org</li>
+  </ol>
+
+  <h3>Ontologies, schema, and claim provenance</h3>
+  <ol start="41">
+    <li>Ison J et al. EDAM: an ontology of bioinformatics operations, types of data and identifiers, topics and formats. Bioinformatics 2013. doi:10.1093/bioinformatics/btt113; releases at github.com/edamontology/edamontology/releases</li>
+    <li>Bandrowski A et al. The Ontology for Biomedical Investigations. PLoS ONE 2016. doi:10.1371/journal.pone.0154556; OBI release 2026-07-27</li>
+    <li>STATO, the statistics ontology. Releases 2025-01-07, 2025-02-23, 2026-04-20. github.com/ISA-tools/stato; OLS4 record</li>
+    <li>Nadendla S et al. ECO: the Evidence and Conclusion Ontology, an update for 2022. Nucleic Acids Research 2022. doi:10.1093/nar/gkab1025</li>
+    <li>Matentzoglu N et al. A Simple Standard for Sharing Ontological Mappings (SSSOM). Database 2022. doi:10.1093/database/baac035</li>
+    <li>W3C. SKOS Simple Knowledge Organization System Reference, 2009. w3.org/TR/skos-reference</li>
+    <li>OBO Foundry. Principle 4: Versioning; OBO Academy, How to obsolete a term. obofoundry.org, oboacademy.github.io</li>
+    <li>Kuhn T et al. Nanopublications: A Growing Resource of Provenance-Centric Scientific Linked Data. IEEE eScience 2018. arXiv:1809.06532; Semantic micro-contributions with decentralized nanopublication services. PeerJ CS 2021. doi:10.7717/peerj-cs.387</li>
+    <li>Kuhn T, Dumontier M. Trusty URIs: Verifiable, Immutable, and Permanent Digital Artifacts for Linked Data. ESWC 2014. arXiv:1401.5775</li>
+    <li>Moxon S et al. LinkML: an open data modeling framework. GigaScience 15, 2026. doi:10.1093/gigascience/giaf152</li>
+    <li>Gene Ontology Consortium. GO annotations and the GAF 2.2 format. geneontology.org/docs</li>
+    <li>Guyatt GH et al. GRADE: an emerging consensus on rating quality of evidence and strength of recommendations. BMJ 2008. doi:10.1136/bmj.39489.470347.AD; Weber LM et al. Essential guidelines for computational method benchmarking. Genome Biology 2019.</li>
+    <li>GOFlowLLM: curating miRNA literature with large language models and flowcharts. Bioinformatics 2026. doi:10.1093/bioinformatics/btaf683; AI in biocuration: a roadmap. Bioinformatics Advances 2026. doi:10.1093/bioadv/vbag102</li>
+    <li>Karp PD. How much does curation cost? Database 2016. doi:10.1093/database/baw110</li>
+    <li>SEPIO information model (LinkML). sepio-framework.github.io/sepio-linkml; Ontology Development Kit. Database 2022. doi:10.1093/database/baac087; ROBOT. BMC Bioinformatics 2019. doi:10.1186/s12859-019-3002-3</li>
+    <li>HL7 FHIR Clinical Guidelines (CPG-on-FHIR) 2.0.0, 2024; OMG Decision Model and Notation 1.5, 2024; Lichtner G et al. Representation of evidence-based clinical practice guideline recommendations on FHIR. J Biomed Inform 2023. doi:10.1016/j.jbi.2023.104305</li>
+    <li>CiTO, the Citation Typing Ontology, 2.8.2, 2026. sparontologies.github.io/cito; W3C PROV-O, 2013; P-Plan 1.3, 2014. vocab.linkeddata.es/p-plan</li>
+  </ol>
+
+  <h3>Executable knowledge</h3>
+  <ol start="58">
+    <li>nf-core/rnaseq 3.26.0 (2026-05-07) and nf-core/differentialabundance 2.0.0 (2026-06-23): nextflow_schema.json, parameters, usage. nf-co.re; Ewels PA et al. The nf-core framework. Nature Biotechnology 2020. doi:10.1038/s41587-020-0439-x</li>
+    <li>nf-core/modules deseq2/differential: meta.yml, main.nf, environment.yml, templates, tests. github.com/nf-core/modules</li>
+    <li>Galaxy Tool XML schema and the tools-iuc DESeq2 wrapper 2.11.40.8+galaxy4. docs.galaxyproject.org, github.com/galaxyproject/tools-iuc; Snakemake wrappers bio/deseq2, v9.17.1. snakemake-wrappers.readthedocs.io</li>
+    <li>Love MI, Anders S, Kim V, Huber W. RNA-Seq workflow: gene-level exploratory analysis and differential expression. F1000Research 2015. doi:10.12688/f1000research.7035.1; Law CW et al. RNA-seq analysis is easy as 1-2-3 with limma, Glimma and edgeR. F1000Research 2016/2018. doi:10.12688/f1000research.9005.3; Law CW et al. A guide to creating design matrices. F1000Research 2020. doi:10.12688/f1000research.27893.1</li>
+    <li>Himmelstein DS et al. Systematic integration of biomedical knowledge prioritizes drugs for repurposing (Hetionet). eLife 2017. doi:10.7554/eLife.26726</li>
+    <li>Oxigraph 0.5.11, 2026-09-02. github.com/oxigraph/oxigraph; W3C RDF Dataset Canonicalization 1.0, 2024; kuzudb/kuzu archived 2025-10-10; LadybugDB.</li>
+    <li>Fly.io pricing; Cloudflare Containers pricing; Cloudflare R2 pricing, 2026.</li>
+    <li>OCI image-spec descriptors; ORAS 1.3.0 backup and restore, 2025; Sigstore cosign.</li>
+    <li>MCPTox: A Benchmark for Tool Poisoning Attack on Real-World MCP Servers. arXiv:2508.14925, 2025; Parasites in the Toolchain. arXiv:2509.06572, 2025.</li>
+    <li>Huang et al. Model Context Protocol Threat Modeling and Analyzing Vulnerabilities to Prompt Injection with Tool Poisoning. arXiv:2603.22489, 2026.</li>
+    <li>Love MI et al. Tximeta: Reference sequence checksums for provenance identification in RNA-seq. PLoS Comput Biol 2020. doi:10.1371/journal.pcbi.1007664</li>
+  </ol>
+
+  <h3>Evaluation</h3>
+  <ol start="69">
+    <li>Kaliyev, Maryanskyy. How Much Coordination Gain Is Real? A Paired Noise-Floor Protocol for Multi-Agent LLM Benchmarks. arXiv:2606.20695, 2026; How Many Tasks Are Enough for Agent Benchmark Decisions? arXiv:2607.12338, 2026.</li>
+    <li>Bhat V et al. Benchmarking the Benchmarks: A Validity Audit of Tool-Calling Evaluation. arXiv:2607.02577, 2026; Piaggio G et al. Reporting of noninferiority and equivalence randomized trials, CONSORT extension. JAMA 2012. doi:10.1001/jama.2012.87802</li>
+    <li>MSigDB License Terms; KEGG Copyright and Usage, 2024-10-01; GO citation policy; Bioregistry records for Reactome and WikiPathways (CC0).</li>
+    <li>Directive (EU) 2019/790, Articles 3 and 4, text and data mining exceptions.</li>
+    <li>Soneson C, Delorenzi M. compcodeR. Bioinformatics 2014. doi:10.1093/bioinformatics/btu324; Frazee AC et al. Polyester. Bioinformatics 2015. doi:10.1093/bioinformatics/btv272</li>
+    <li>SEQC/MAQC-III Consortium. A comprehensive assessment of RNA-seq accuracy, reproducibility and information content. Nature Biotechnology 2014. doi:10.1038/nbt.2957</li>
+  </ol>
+
+  <h3>The bulk RNA-seq rule sources, primary</h3>
+  <ol start="75">
+    <li>Love MI, Huber W, Anders S. Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2. Genome Biology 2014. doi:10.1186/s13059-014-0550-8; the DESeq2 vignette, 1.52.0</li>
+    <li>Robinson MD, McCarthy DJ, Smyth GK. edgeR. Bioinformatics 2010. doi:10.1093/bioinformatics/btp616; Chen Y et al. edgeR v4. Nucleic Acids Research 2025. doi:10.1093/nar/gkaf018; the edgeR User's Guide, revised 2026-04-25</li>
+    <li>Law CW et al. voom. Genome Biology 2014. doi:10.1186/gb-2014-15-2-r29; Ritchie ME et al. limma powers differential expression analyses. NAR 2015. doi:10.1093/nar/gkv007; the limma User's Guide, revised 2026-05-19</li>
+    <li>Soneson C, Love MI, Robinson MD. Differential analyses for RNA-seq: transcript-level estimates improve gene-level inferences. F1000Research 2015. doi:10.12688/f1000research.7563.2; the tximport vignette, 2026-04-28</li>
+    <li>Schurch NJ et al. How many biological replicates are needed in an RNA-seq experiment and which differential expression tool should you use? RNA 2016. doi:10.1261/rna.053959.115</li>
+    <li>Conesa A et al. A survey of best practices for RNA-seq data analysis. Genome Biology 2016. doi:10.1186/s13059-016-0881-8; Van den Berge K et al. RNA Sequencing Data: Hitchhiker's Guide to Expression Analysis. Annual Review of Biomedical Data Science 2019. doi:10.1146/annurev-biodatasci-072018-021255</li>
+    <li>Zhang Y, Parmigiani G, Johnson WE. ComBat-seq. NAR Genomics and Bioinformatics 2020. doi:10.1093/nargab/lqaa078; Leek JT et al. Tackling the widespread and critical impact of batch effects. Nature Reviews Genetics 2010. doi:10.1038/nrg2825; Nygaard V et al. Biostatistics 2016. doi:10.1093/biostatistics/kxv027</li>
+    <li>Ignatiadis N et al. Data-driven hypothesis weighting (IHW). Nature Methods 2016. doi:10.1038/nmeth.3885; Bourgon R et al. Independent filtering. PNAS 2010. doi:10.1073/pnas.0914005107; Benjamini Y, Hochberg Y. JRSS B 1995.</li>
+    <li>Zhu A, Ibrahim JG, Love MI. Heavy-tailed prior distributions for sequence count data (apeglm). Bioinformatics 2019. doi:10.1093/bioinformatics/bty895; Stephens M. False discovery rates: a new deal (ashr). Biostatistics 2017. doi:10.1093/biostatistics/kxw041; McCarthy DJ, Smyth GK. TREAT. Bioinformatics 2009. doi:10.1093/bioinformatics/btp053</li>
+    <li>Li Y et al. Exaggerated false positives by popular differential expression methods when analyzing human population samples. Genome Biology 2022. doi:10.1186/s13059-022-02648-4</li>
+    <li>Subramanian A et al. Gene set enrichment analysis. PNAS 2005. doi:10.1073/pnas.0506580102; Korotkevich G et al. Fast gene set enrichment analysis. bioRxiv 2021. doi:10.1101/060012; Reimand J et al. Pathway enrichment analysis and visualization of omics data. Nature Protocols 2019. doi:10.1038/s41596-018-0103-9</li>
+    <li>Wijesooriya K et al. Urgent need for consistent standards in functional enrichment analysis. PLoS Comput Biol 2022. doi:10.1371/journal.pcbi.1009935; Timmons JA et al. Multiple sources of bias confound functional enrichment analysis. Genome Biology 2015. doi:10.1186/s13059-015-0761-7; Geistlinger L et al. Toward a gold standard for benchmarking gene set enrichment analysis. Briefings in Bioinformatics 2021. doi:10.1093/bib/bbz158</li>
+    <li>Wu D, Smyth GK. Camera. NAR 2012. doi:10.1093/nar/gks461; Liberzon A et al. The MSigDB hallmark gene set collection. Cell Systems 2015. doi:10.1016/j.cels.2015.12.004; Castanza AS et al. Extending support for mouse data in MSigDB. Nature Methods 2023. doi:10.1038/s41592-023-02014-7</li>
+    <li>Patro R et al. Salmon. Nature Methods 2017. doi:10.1038/nmeth.4197; Bray NL et al. kallisto. Nature Biotechnology 2016. doi:10.1038/nbt.3519; Dobin A et al. STAR. Bioinformatics 2013. doi:10.1093/bioinformatics/bts635; Srivastava A et al. Alignment and mapping methodology influence transcript abundance estimation. Genome Biology 2020. doi:10.1186/s13059-020-02151-8</li>
+    <li>Ewels P et al. MultiQC. Bioinformatics 2016. doi:10.1093/bioinformatics/btw354; Toker L et al. Whose sample is it anyway? F1000Research 2016. doi:10.12688/f1000research.9471.2; Simoneau J et al. Current RNA-seq methodology reporting limits reproducibility. Briefings in Bioinformatics 2021. doi:10.1093/bib/bbz124</li>
+  </ol>
+</section>
+
+</div>
+
+</body></html>
