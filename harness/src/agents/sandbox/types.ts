@@ -48,7 +48,10 @@ export type SandboxToolName =
     | "searchGeoDatasets"
     // Safety / toxicology.
     | "targetSafety"
-    | "comptox";
+    | "comptox"
+    // The knowledge plane: render a tested script template into the step workspace.
+    // Resolves to nothing when the embedder binds no knowledge client.
+    | "knowledgeTemplate";
 
 /** Planner-facing metadata + tool allowlist for one sandbox agent. */
 export interface AgentMeta {

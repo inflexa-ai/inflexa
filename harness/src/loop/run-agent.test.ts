@@ -1023,6 +1023,23 @@ describe("runAgent — finish signal", () => {
         });
     });
 
+    it("takes the wrap-up path when the early cap of the host answers true, before the iteration cap", async () => {
+        let toolCalls = 0;
+        const provider = scriptedProvider((callIndex, request) => {
+            if (request.tools !== undefined && Object.keys(request.tools).length === 0) return makeMessage([textBlock("wrapped up")], "end_turn");
+            toolCalls += 1;
+            return makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use");
+        });
+
+        const { finish, messages } = await runAgent(agentDef([echoTool()], 8), GO, makeSession(), opts(provider, { stopWhen: () => toolCalls >= 2 }));
+
+        expect(finish.cappedOut).toBe(true);
+        expect(finish.reason).toBe("max_iterations");
+        expect(toolCalls).toBe(2);
+        expect(messages.at(-1)!.role).toBe("assistant");
+        expect(messages.at(-1)!.content).toEqual([{ type: "text", text: "wrapped up" }]);
+    });
+
     it("reports cappedOut with reason max_iterations on the wrap-up path", async () => {
         const provider = scriptedProvider((callIndex, request) =>
             request.tools !== undefined && Object.keys(request.tools).length === 0
