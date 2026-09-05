@@ -1,7 +1,7 @@
 import { Command, Option } from "commander";
 
 import pkg from "../../package.json";
-import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc, updateEnvDoc, type EnvDocEntry } from "../lib/env.ts";
+import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc, type EnvDocEntry } from "../lib/env.ts";
 // Type-only, so the registry keeps its lazy-import discipline: nothing of the setup module loads until
 // the action runs. It is the shape of `setup`'s answer flags — see the batch options declared below.
 import type { SetupAnswerFlags } from "../modules/infra/setup_answers.ts";
@@ -32,7 +32,7 @@ function renderEnvHelp(): string {
     }
     // The direct-connection and embedding secret vars are not `env`-field-backed (their resolvers read them
     // on demand), so they live in their own doc lists; render them among the other var rows.
-    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc, ...updateEnvDoc]) {
+    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc, ...knowledgeEnvDoc, ...updateEnvDoc]) {
         varRows.push([doc.name, doc.description]);
     }
     for (const [name, labels] of baseVarLabels) {

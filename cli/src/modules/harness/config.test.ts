@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { env } from "../../lib/env.ts";
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { resolveHarnessConfig, resolveModelConnection, writeAgentModel } from "./config.ts";
+import { resolveHarnessConfig, resolveKnowledgeConfig, resolveModelConnection, writeAgentModel } from "./config.ts";
 
 // Drives resolveModelConnection through the real readConfig() surface against the sandboxed
 // env.configPath (set by the test preload), exercising the fail-closed + protocol-implication paths
@@ -365,5 +365,55 @@ describe("writeAgentModel — persists models.agents spread-preserving", () => {
         expect(writeAgentModel("conversation", "claude-opus-4-8").isOk()).toBe(true);
         const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { telemetry: boolean };
         expect(parsed.telemetry).toBe(false);
+    });
+});
+
+// The knowledge plane: the endpoint comes from the `knowledge` config block and the key from the
+// environment only. An absent block is the default state of the open-source CLI and resolves to
+// null, thus the boot binds no client. An endpoint without a key names the variable instead of a
+// silent unauthenticated client.
+describe("resolveKnowledgeConfig", () => {
+    const KEY_VAR = "INFLEXA_KNOWLEDGE_API_KEY";
+    let savedKey: string | undefined;
+
+    function writeConfigWithKnowledge(knowledge: unknown): void {
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, ...(knowledge === undefined ? {} : { knowledge }) }));
+    }
+
+    // `Bun.env` is the sanctioned test seam for an ambient variable (see setup.test.ts); the
+    // production reader stays `lib/env.ts`.
+    beforeEach(() => {
+        savedKey = Bun.env[KEY_VAR];
+        delete Bun.env[KEY_VAR];
+    });
+    afterEach(() => {
+        if (savedKey === undefined) delete Bun.env[KEY_VAR];
+        else Bun.env[KEY_VAR] = savedKey;
+    });
+
+    test("an absent block resolves to null, with or without a key in the environment", () => {
+        writeConfigWithKnowledge(undefined);
+        expect(resolveKnowledgeConfig()).toBeNull();
+        Bun.env[KEY_VAR] = "k";
+        expect(resolveKnowledgeConfig()).toBeNull();
+    });
+
+    test("an endpoint with the key in the environment resolves to a configured client", () => {
+        writeConfigWithKnowledge({ baseUrl: "https://knowledge.example.test/" });
+        Bun.env[KEY_VAR] = "secret";
+        expect(resolveKnowledgeConfig()).toEqual({ kind: "configured", baseUrl: "https://knowledge.example.test/", apiKey: "secret" });
+    });
+
+    test("an endpoint without the key resolves to missing_key, never to a keyless client", () => {
+        writeConfigWithKnowledge({ baseUrl: "https://knowledge.example.test" });
+        expect(resolveKnowledgeConfig()).toEqual({ kind: "missing_key", baseUrl: "https://knowledge.example.test" });
+    });
+
+    test("a malformed block degrades to null instead of failing the whole config", () => {
+        writeConfigWithKnowledge({ baseUrl: 42 });
+        Bun.env[KEY_VAR] = "secret";
+        expect(resolveKnowledgeConfig()).toBeNull();
+        expect(readConfig().telemetry).toBe(false);
     });
 });
