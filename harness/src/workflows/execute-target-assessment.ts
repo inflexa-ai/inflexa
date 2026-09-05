@@ -43,6 +43,7 @@ import { forSubAgent } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { ATTR_INFLEXA_FANOUT_KEY, stableSpan } from "../lib/otel-spans.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { durableStep } from "../loop/run-step.js";
@@ -440,11 +441,17 @@ export async function runExecuteTargetAssessmentBody(
             fn: (item: TItem) => Promise<FanoutEnvelope<TOut>>,
         ): Promise<Array<FanoutEnvelope<TOut>>> {
             return Promise.all(
-                items.map((item) =>
-                    DBOS.runStep(() => fn(item), {
-                        name: `ta-fanout:${stepKindForName}:${keyOf(item)}`,
-                    }).catch((err: unknown) => wrapCollectorThrow(err) as FanoutEnvelope<TOut>),
-                ),
+                items.map((item) => {
+                    const key = keyOf(item);
+                    const stepName = `ta-fanout:${stepKindForName}:${key}`;
+                    return DBOS.runStep(
+                        () => {
+                            stableSpan(stepName, `ta-fanout:${stepKindForName}`, { [ATTR_INFLEXA_FANOUT_KEY]: key });
+                            return fn(item);
+                        },
+                        { name: stepName },
+                    ).catch((err: unknown) => wrapCollectorThrow(err) as FanoutEnvelope<TOut>);
+                }),
             );
         }
 
