@@ -5,6 +5,8 @@ import {
     bootHarness,
     createAskGateway,
     createConfiguredAiSdkProvider,
+    createHttpKnowledgeClient,
+    createKnowledgeRecommendTool,
     createDbosRunLauncher,
     createLocalRunAuthorizer,
     createNoopBillingResolver,
@@ -43,7 +45,7 @@ import {
 
 import { ensureRuntime, readConfig } from "../../lib/config.ts";
 import { resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
-import { env, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
+import { env, KNOWLEDGE_API_KEY_VAR, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialSource } from "../../lib/credential.ts";
 import { acquireInstanceLock, HARNESS_RUNTIME_LOCK_KEY, releaseInstanceLock } from "../../lib/lock.ts";
 import { harnessLogger } from "../../lib/log.ts";
@@ -58,6 +60,7 @@ import type { PostgresConnection, PostgresError } from "../infra/postgres_types.
 import { modelMatchesProvider, readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
 import {
     resolveHarnessConfig,
+    resolveKnowledgeConfig,
     resolveModelConnection,
     pickRequestBounds,
     AGENT_NAMES,
@@ -1021,6 +1024,23 @@ async function bootHarnessRuntimeOnce(
         // a created session carries one claim whichever surface drives it.
         installProvenanceSeam(provenance);
 
+        // The knowledge plane. The config names the endpoint and the environment holds the key,
+        // which is the license. An endpoint without a key is a configuration fault that the boot
+        // names once and then runs without the service, because a client with no key would only
+        // fail every call with a 401. Absent, the harness sees no client, attaches no knowledge
+        // tool, and runs from the prose skills as it does today.
+        const knowledgeConfig = resolveKnowledgeConfig();
+        if (knowledgeConfig?.kind === "missing_key") {
+            logger.warn("the knowledge endpoint is configured but the key is absent; the run continues without the knowledge service", {
+                baseUrl: knowledgeConfig.baseUrl,
+                variable: KNOWLEDGE_API_KEY_VAR,
+            });
+        }
+        const knowledge =
+            knowledgeConfig?.kind === "configured"
+                ? createHttpKnowledgeClient({ baseUrl: knowledgeConfig.baseUrl, apiKey: knowledgeConfig.apiKey })
+                : undefined;
+
         const composition: RunEngineComposition = {
             pool,
             logger,
@@ -1052,6 +1072,7 @@ async function bootHarnessRuntimeOnce(
             // acquisition is a host action behind its own approval.
             extendAnalysisFarm: (id, requests) => linkPackagesIntoFarm(env.packageStoreDir, id, requests),
             bioKeys: cfg.bioKeys,
+            ...(knowledge ? { knowledge } : {}),
         };
 
         // Registration cohort — ONE pre-launch call. `assembleCoreRuntime`
@@ -1119,6 +1140,8 @@ async function bootHarnessRuntimeOnce(
             runAuthorizer,
             runLauncher,
             bioKeys: cfg.bioKeys,
+            // The planner of `generate_plan` gains the two knowledge tools when the client is bound.
+            ...(knowledge ? { knowledge } : {}),
             skillsDir: cfg.skillsDir,
             // Gives the planner reference discovery over the same store the sandbox
             // mounts, so a plan can name what this install actually holds.
@@ -1154,7 +1177,14 @@ async function bootHarnessRuntimeOnce(
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove
             // this analysis's inputs in-process (manage_inputs) — the last must be in-process so it
             // mutates under the chat's own lock and its provenance/parity events stay on this bus.
-            hostTools: [createRunInflexaTool(), createLaunchDirTool(), createManageInputsTool()],
+            // `knowledge_recommend` rides the same seam when the knowledge plane is bound, thus the
+            // conversation agent can orient a method question before it plans, with no harness change.
+            hostTools: [
+                createRunInflexaTool(),
+                createLaunchDirTool(),
+                createManageInputsTool(),
+                ...(knowledge ? [createKnowledgeRecommendTool({ client: knowledge })] : []),
+            ],
         };
         // Re-point the sandbox agent's provenance emitters when its model switches live.
         // The run-engine bundles injected the holder's STABLE `artifactRegistry` / `emitProvenance`

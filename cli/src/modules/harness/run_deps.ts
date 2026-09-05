@@ -10,6 +10,7 @@ import {
     type EmbeddingProvider,
     type ExecuteAnalysisDeps,
     type ExtendAnalysisFarm,
+    type KnowledgeClient,
     type Logger,
     type Pool,
     type ResolveWorkspaceRoot,
@@ -124,6 +125,12 @@ export type RunEngineComposition = {
     readonly extendAnalysisFarm: ExtendAnalysisFarm;
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
     readonly bioKeys: ResolvedHarnessConfig["bioKeys"];
+    /**
+     * The knowledge plane client, when the `knowledge` config block names an endpoint and the
+     * environment holds the key. Absent, no sandbox agent gets `knowledge_template` and the
+     * planner gets no knowledge tool: the default state of the open-source CLI.
+     */
+    readonly knowledge?: KnowledgeClient;
 };
 
 /**
@@ -156,6 +163,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         imagePackagesFile: comp.imagePackagesFile,
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
+        ...(comp.knowledge ? { knowledge: comp.knowledge } : {}),
         blockerHolder: ctx.blockerHolder,
         step: {
             sandbox: ctx.sandbox,
