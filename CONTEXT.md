@@ -43,6 +43,12 @@ results in a report session.
 - **`skills/` — shared runtime content.** The harness reads the skill packs at
   runtime. They are not code, and no package holds them. They are at the root,
   thus the two hosts load the same content.
+- **`knowledge/` — the knowledge plane, Phase 0.** The knowledge as code (cited
+  rules, methods, and tested script templates for bulk RNA-seq), the LinkML
+  schema, the snapshot build, the typed service, and the Phase 0 evaluation.
+  The harness reaches it through three tools that attach only when the embedder
+  binds a client. In the product the service is closed and remote, and this
+  directory is its source. Refer to `knowledge/CONTEXT.md`.
 - **`images/` — the execution boundary, and the package store.** `sandbox-base/`
   is the one runtime image, and each step runs one container of it. Its Go
   `sandbox-server` is the counterpart of the sandbox client in the harness.
